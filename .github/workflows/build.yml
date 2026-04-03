@@ -13,13 +13,11 @@ permissions:
   packages: write
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [macos-latest, windows-latest]
-
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.version_check.outputs.changed }}
+      version: ${{ steps.version_check.outputs.version }}
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v4
@@ -28,7 +26,7 @@ jobs:
 
       - name: Check if package.json version changed
         id: version_check
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
@@ -53,20 +51,31 @@ jobs:
             const changed = previousVersion === null ? true : (previousVersion !== currentVersion);
             core.info(`previousVersion=${previousVersion ?? '(unknown)'}, currentVersion=${currentVersion}, changed=${changed}`);
             core.setOutput('changed', String(changed));
+            core.setOutput('version', currentVersion);
+
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
 
       - name: Install Node.js
-        if: steps.version_check.outputs.changed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
 
       - name: Install dependencies
-        if: steps.version_check.outputs.changed == 'true'
         run: npm ci || (echo "Retry 1..." && sleep 10 && npm ci) || (echo "Retry 2..." && sleep 10 && npm ci)
 
       - name: Build/Release Electron app
-        if: steps.version_check.outputs.changed == 'true'
         uses: samuelmeuli/action-electron-builder@v1
         with:
           github_token: ${{ secrets.github_token }}
@@ -76,16 +85,56 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.github_token }}
 
-      - name: Send Feishu Notification
-        if: always()
-        uses: actions/github-script@v6
+  # electron-builder 仍会附带 latest*.yml、blockmap 等；仅保留固定文件名的两枚安装包，便于 https://github.com/.../releases/latest/download/ 稳定直链
+  prune-release-assets:
+    needs: [check-version, build]
+    if: success() && needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove extra release assets
+        uses: actions/github-script@v7
         with:
           script: |
-            const status = '${{ job.status }}';
+            const keep = new Set(['yishe-client.exe', 'yishe-client.dmg']);
+            const tag = `v${{ needs.check-version.outputs.version }}`;
+
+            let release;
+            try {
+              const res = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag,
+              });
+              release = res.data;
+            } catch (e) {
+              core.warning(`未找到 tag ${tag} 的 release，跳过修剪：${e.message}`);
+              return;
+            }
+
+            const assets = release.assets || [];
+            for (const asset of assets) {
+              if (keep.has(asset.name)) continue;
+              await github.rest.repos.deleteReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: asset.id,
+              });
+              core.info(`已删除 release 附加文件: ${asset.name}`);
+            }
+
+  notify-feishu:
+    needs: [check-version, build]
+    if: always() && needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Feishu Notification
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ needs.build.result }}';
             const emoji = status === 'success' ? '🚀' : '❌';
             const commitSha = '${{ github.sha }}'.substring(0, 7);
-            const platforms = '${{ matrix.os }}';
-            
+
             const message = {
               msg_type: "text",
               content: {
@@ -93,19 +142,22 @@ jobs:
                       `项目: ${{ github.repository }}\n` +
                       `分支: main\n` +
                       `提交: ${commitSha}\n` +
-                      `平台: ${platforms}\n` +
+                      `矩阵: macOS + Windows（单条通知汇总）\n` +
                       `提交者: ${{ github.actor }}\n` +
                       `提交信息: ${{ github.event.head_commit.message }}\n` +
                       `构建时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
                       `状态: ${status === 'success' ? '✅ 成功' : '❌ 失败'}\n\n` +
-                      `下载地址: https://github.com/${{ github.repository }}/releases/latest\n` +                      `支持平台: 抖音、小红书、微博、快手、咸鱼、速卖通、亚马逊、希音\n` +                      `注意: 仓库为私有，但 releases 已设置为公开访问`
-              }
+                      `Windows 固定地址: https://github.com/${{ github.repository }}/releases/latest/download/yishe-client.exe\n` +
+                      `macOS 固定地址: https://github.com/${{ github.repository }}/releases/latest/download/yishe-client.dmg\n` +
+                      `支持平台: 抖音、小红书、微博、快手、咸鱼、速卖通、亚马逊、希音\n` +
+                      `注意: 仓库为私有，但 releases 可设置为公开访问`
+              },
             };
-            
+
             await fetch('${{ secrets.FEISHU_WEBHOOK_URL }}', {
               method: 'POST',
               headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
               },
-              body: JSON.stringify(message)
+              body: JSON.stringify(message),
             });

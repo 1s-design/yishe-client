@@ -1,21 +1,20 @@
 <script setup lang="ts">
-// 系统设置页面
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { ElMessageBox } from "element-plus";
+import { updateApiBaseUrl } from "../api/request";
 import {
-  getServiceMode,
-  setServiceMode,
   getRemoteApiBase,
+  getServiceMode,
   getWsEndpoint,
+  setServiceMode,
   type ServiceMode,
 } from "../config/api";
-import { updateApiBaseUrl } from "../api/request";
-import { websocketClient } from "../services/websocketClient";
 import { useToast } from "../composables/useToast";
 import {
   useThemeMode,
   type ThemePreference,
 } from "../composables/useThemeMode";
-import { ElMessageBox } from "element-plus";
+import { websocketClient } from "../services/websocketClient";
 
 const { showToast } = useToast();
 const { themePreference, resolvedThemeLabel, setThemePreference } =
@@ -31,8 +30,8 @@ const currentApiBase = computed(() => getRemoteApiBase());
 const currentWsEndpoint = computed(() => getWsEndpoint());
 const themeDescription = computed(() =>
   themePreference.value === "auto"
-    ? `当前为${resolvedThemeLabel.value}，系统会在 07:00-19:00 使用浅色，其余时间自动切换深色。`
-    : `当前已固定为${resolvedThemeLabel.value}。`,
+    ? `当前显示：${resolvedThemeLabel.value}`
+    : `当前固定为${resolvedThemeLabel.value}`,
 );
 const themeOptions: Array<{ label: string; value: ThemePreference }> = [
   { label: "跟随时间", value: "auto" },
@@ -40,25 +39,22 @@ const themeOptions: Array<{ label: string; value: ThemePreference }> = [
   { label: "深色模式", value: "dark" },
 ];
 const workspaceDescription = computed(() =>
-  workspaceDirectory.value
-    ? "当前工作目录会被用于文件缓存、本地下载、图片处理中间产物以及部分自动化执行的导出目录。"
-    : "工作目录未设置时，依赖本地缓存和文件落地的功能会受到影响。",
+  workspaceDirectory.value ? "已设置工作目录" : "未设置工作目录",
 );
 
-// 根据服务模式获取状态配置
 const serviceStatusConfig = computed(() => {
   const mode = serviceMode.value;
   if (mode === "local") {
     return {
       tone: "warning",
-      text: "本地服务",
-    };
-  } else {
-    return {
-      tone: "success",
-      text: "生产服务",
+      text: "本地",
     };
   }
+
+  return {
+    tone: "success",
+    text: "远程",
+  };
 });
 
 const handleServiceModeChange = async (mode: ServiceMode) => {
@@ -68,15 +64,14 @@ const handleServiceModeChange = async (mode: ServiceMode) => {
       icon: "mdi-alert",
       message: "生产环境不允许切换服务模式",
     });
-    serviceMode.value = getServiceMode(); // 恢复原值
+    serviceMode.value = getServiceMode();
     return;
   }
 
   try {
-    // 提示用户可能需要重新登录
     await ElMessageBox.confirm(
-      "切换服务后，如果不同服务的账号不同，您可能需要重新登录。是否继续？",
-      "切换服务提示",
+      "切换服务后可能需要重新登录，是否继续？",
+      "切换服务",
       {
         confirmButtonText: "继续",
         cancelButtonText: "取消",
@@ -84,14 +79,9 @@ const handleServiceModeChange = async (mode: ServiceMode) => {
       },
     );
 
-    // 更新配置
     setServiceMode(mode);
     serviceMode.value = mode;
-
-    // 更新API baseURL
     updateApiBaseUrl(getRemoteApiBase());
-
-    // 切换WebSocket连接（会先断开旧连接，再连接新地址）
     websocketClient.switchService(mode);
 
     showToast({
@@ -99,8 +89,7 @@ const handleServiceModeChange = async (mode: ServiceMode) => {
       icon: "mdi-check-circle",
       message: `已切换到${mode === "local" ? "本地" : "远程"}服务`,
     });
-  } catch (error) {
-    // 用户取消，恢复原值
+  } catch {
     serviceMode.value = getServiceMode();
   }
 };
@@ -198,7 +187,6 @@ const handleServiceModeChanged = ((
   serviceMode.value = event.detail.mode;
 }) as EventListener;
 
-// 监听服务模式变化（从其他地方切换时同步）
 onMounted(() => {
   window.addEventListener("service-mode-changed", handleServiceModeChanged);
   void loadWorkspaceDirectory();
@@ -211,177 +199,136 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="settings-page">
-    <section class="settings-stage">
-      <div class="settings-stage__eyebrow">System Preferences</div>
-      <h2 class="settings-stage__title">客户端设置</h2>
-      <p class="settings-stage__desc">
-        统一管理主题模式、工作目录和服务连接策略。这里保留的是客户端真正需要长期维护的少量配置。
-      </p>
-    </section>
-
     <section class="settings-grid">
       <article class="settings-panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">
-              <i class="mdi mdi-theme-light-dark"></i>
-              界面主题
-            </div>
-            <div class="panel-desc">{{ themeDescription }}</div>
-          </div>
+        <div class="settings-panel__head">
+          <div class="settings-panel__title">显示</div>
+          <div class="settings-panel__hint">{{ themeDescription }}</div>
         </div>
-        <div class="info-content">
-          <el-radio-group
-            v-model="themePreference"
-            class="theme-radio-group"
-            @change="(value) => setThemePreference(value as ThemePreference)"
+        <el-radio-group
+          v-model="themePreference"
+          class="segmented-group"
+          @change="(value) => setThemePreference(value as ThemePreference)"
+        >
+          <el-radio-button
+            v-for="item in themeOptions"
+            :key="item.value"
+            :label="item.value"
           >
-            <el-radio-button
-              v-for="item in themeOptions"
-              :key="item.value"
-              :label="item.value"
-            >
-              {{ item.label }}
-            </el-radio-button>
+            {{ item.label }}
+          </el-radio-button>
+        </el-radio-group>
+      </article>
+
+      <article class="settings-panel settings-panel--wide">
+        <div class="settings-panel__head">
+          <div class="settings-panel__title">工作目录</div>
+          <div class="settings-panel__hint">{{ workspaceDescription }}</div>
+        </div>
+
+        <div class="workspace-block">
+          <div class="field-label">当前目录</div>
+          <el-input
+            :model-value="workspaceDirectory || '未设置工作目录'"
+            readonly
+            class="workspace-path-input"
+          />
+        </div>
+
+        <div class="workspace-actions">
+          <el-button
+            type="primary"
+            :loading="selectingWorkspace"
+            @click="selectWorkspaceDirectory"
+          >
+            选择目录
+          </el-button>
+          <el-button
+            :disabled="!workspaceDirectory"
+            @click="openWorkspaceDirectory"
+          >
+            打开目录
+          </el-button>
+          <el-button
+            :disabled="!workspaceDirectory || workspaceLoading"
+            @click="clearWorkspaceDirectory"
+          >
+            清除目录
+          </el-button>
+          <el-button
+            text
+            :loading="workspaceLoading"
+            @click="loadWorkspaceDirectory"
+          >
+            刷新
+          </el-button>
+        </div>
+
+        <div v-if="!workspaceDirectory" class="settings-note is-warning">
+          工作目录未设置
+        </div>
+      </article>
+
+      <article class="settings-panel settings-panel--wide">
+        <div class="settings-panel__head">
+          <div class="settings-panel__title">服务配置</div>
+          <div class="settings-panel__hint">当前 API 与 WebSocket 连接信息</div>
+        </div>
+
+        <div v-if="isDevelopment" class="service-mode">
+          <div class="field-label">服务模式</div>
+          <el-radio-group
+            v-model="serviceMode"
+            class="segmented-group"
+            @change="handleServiceModeChange"
+          >
+            <el-radio-button label="local">本地服务</el-radio-button>
+            <el-radio-button label="remote">远程服务</el-radio-button>
           </el-radio-group>
         </div>
-      </article>
 
-      <article class="settings-panel settings-panel--wide">
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">
-              <i class="mdi mdi-folder-cog-outline"></i>
-              工作目录
+        <div class="address-list">
+          <div class="address-item">
+            <div class="field-label">API</div>
+            <div class="address-item__value">
+              <span
+                class="status-dot"
+                :class="`is-${serviceStatusConfig.tone}`"
+              ></span>
+              <span class="address-text">{{ currentApiBase }}</span>
+              <span
+                class="status-text"
+                :class="`is-${serviceStatusConfig.tone}`"
+              >
+                {{ serviceStatusConfig.text }}
+              </span>
             </div>
-            <div class="panel-desc">{{ workspaceDescription }}</div>
-          </div>
-        </div>
-        <div class="info-content">
-          <div class="workspace-field">
-            <div class="address-label">当前目录</div>
-            <el-input
-              :model-value="workspaceDirectory || '未设置工作目录'"
-              readonly
-              class="workspace-path-input"
-            />
           </div>
 
-          <div class="workspace-actions">
-            <el-button
-              type="primary"
-              :loading="selectingWorkspace"
-              @click="selectWorkspaceDirectory"
-            >
-              选择目录
-            </el-button>
-            <el-button
-              :disabled="!workspaceDirectory"
-              @click="openWorkspaceDirectory"
-            >
-              打开目录
-            </el-button>
-            <el-button
-              :disabled="!workspaceDirectory || workspaceLoading"
-              @click="clearWorkspaceDirectory"
-            >
-              清除目录
-            </el-button>
-            <el-button
-              text
-              :loading="workspaceLoading"
-              @click="loadWorkspaceDirectory"
-            >
-              刷新
-            </el-button>
-          </div>
-
-          <el-alert
-            v-if="!workspaceDirectory"
-            type="warning"
-            :closable="false"
-            show-icon
-          >
-            工作目录未设置，下载缓存、文件落地和部分自动化导出能力会受影响。
-          </el-alert>
-        </div>
-      </article>
-
-      <article class="settings-panel settings-panel--wide">
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">
-              <i class="mdi mdi-server-network"></i>
-              服务配置
-            </div>
-            <div class="panel-desc">
-              当前客户端所使用的 API 与 WebSocket 连接信息。
+          <div class="address-item">
+            <div class="field-label">WebSocket</div>
+            <div class="address-item__value">
+              <span
+                class="status-dot"
+                :class="`is-${serviceStatusConfig.tone}`"
+              ></span>
+              <span class="address-text">{{ currentWsEndpoint }}</span>
+              <span
+                class="status-text"
+                :class="`is-${serviceStatusConfig.tone}`"
+              >
+                {{ serviceStatusConfig.text }}
+              </span>
             </div>
           </div>
         </div>
-        <div class="info-content">
-          <el-alert
-            v-if="!isDevelopment"
-            type="info"
-            :closable="false"
-            show-icon
-          >
-            生产环境固定使用远程服务
-          </el-alert>
 
-          <el-form-item label="服务模式" v-if="isDevelopment">
-            <el-radio-group
-              v-model="serviceMode"
-              @change="handleServiceModeChange"
-            >
-              <el-radio label="local">本地服务</el-radio>
-              <el-radio label="remote">远程服务</el-radio>
-            </el-radio-group>
-          </el-form-item>
-
-          <div class="address-info">
-            <div class="address-item">
-              <div class="address-label">当前 API 地址</div>
-              <div class="address-value-with-status">
-                <span
-                  class="status-dot"
-                  :class="`is-${serviceStatusConfig.tone}`"
-                ></span>
-                <span class="address-text">{{ currentApiBase }}</span>
-                <span
-                  class="status-text"
-                  :class="`is-${serviceStatusConfig.tone}`"
-                >
-                  {{ serviceStatusConfig.text }}
-                </span>
-              </div>
-            </div>
-            <div class="address-item">
-              <div class="address-label">当前 WebSocket 地址</div>
-              <div class="address-value-with-status">
-                <span
-                  class="status-dot"
-                  :class="`is-${serviceStatusConfig.tone}`"
-                ></span>
-                <span class="address-text">{{ currentWsEndpoint }}</span>
-                <span
-                  class="status-text"
-                  :class="`is-${serviceStatusConfig.tone}`"
-                >
-                  {{ serviceStatusConfig.text }}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <el-alert
-            v-if="isDevelopment"
-            type="warning"
-            :closable="false"
-            show-icon
-          >
-            切换服务可能需要重新登录
-          </el-alert>
+        <div class="settings-note">
+          {{
+            isDevelopment
+              ? "切换服务后可能需要重新登录"
+              : "生产环境固定使用远程服务"
+          }}
         </div>
       </article>
     </section>
@@ -392,155 +339,173 @@ onBeforeUnmount(() => {
 .settings-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-}
-
-.settings-stage {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-width: 780px;
-}
-
-.settings-stage__eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--theme-text-soft);
-  font-weight: 700;
-}
-
-.settings-stage__title {
-  margin: 0;
-  font-size: 34px;
-  font-weight: 700;
-  color: var(--theme-text);
-  line-height: 1.08;
-}
-
-.settings-stage__desc {
-  margin: 0;
-  font-size: 14px;
-  color: var(--theme-text-muted);
-  line-height: 1.8;
 }
 
 .settings-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.82fr) minmax(420px, 1.18fr);
-  gap: 16px;
-}
-
-.settings-panel {
-  border-radius: 24px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-surface);
-  box-shadow: var(--theme-shadow-xs);
-}
-
-.settings-panel--wide {
-  grid-column: 2;
-}
-
-.panel-head {
-  margin-bottom: 18px;
-}
-
-.panel-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  color: var(--theme-text);
-  font-size: 18px;
-}
-
-.panel-title i {
-  color: var(--theme-primary);
-  font-size: 18px;
-}
-
-.panel-desc {
-  margin-top: 8px;
-  color: var(--theme-text-muted);
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.info-content {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.settings-panel {
-  padding: 22px;
-}
-
-.theme-radio-group {
-  display: inline-flex;
-  flex-wrap: wrap;
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
-.theme-radio-group :deep(.el-radio-button__inner) {
-  min-width: 112px;
-  border-radius: 12px !important;
-  border: 1px solid var(--theme-border) !important;
-  box-shadow: none !important;
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--theme-border);
+  border-radius: 12px;
+  background: var(--theme-surface);
+}
+
+.settings-panel__head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-panel__title {
+  color: var(--theme-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-panel__hint {
+  color: var(--theme-text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.field-label {
+  color: var(--theme-text-soft);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.segmented-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.segmented-group :deep(.el-radio-button__inner) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 82px;
+  min-height: 28px;
+  border-radius: 9px !important;
+  padding: 0 10px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.segmented-group :deep(.el-radio-button:first-child .el-radio-button__inner),
+.segmented-group :deep(.el-radio-button:last-child .el-radio-button__inner) {
+  border-radius: 9px !important;
+}
+
+.segmented-group
+  :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: var(--theme-text) !important;
+  border-color: var(--theme-text) !important;
+  color: var(--theme-contrast) !important;
+}
+
+.workspace-block,
+.service-mode,
+.address-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--theme-border);
+  border-radius: 10px;
   background: var(--theme-surface-strong);
 }
 
-.theme-radio-group :deep(.el-radio-button:first-child .el-radio-button__inner),
-.theme-radio-group :deep(.el-radio-button:last-child .el-radio-button__inner) {
-  border-radius: 12px !important;
+.workspace-path-input :deep(.el-input__wrapper) {
+  min-height: 32px;
+  border-radius: 10px;
+  background: var(--theme-surface-strong);
+  border: 1px solid var(--theme-border);
+  box-shadow: none;
 }
 
-.address-info {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.workspace-path-input :deep(.el-input__inner) {
+  color: var(--theme-text);
+  font-size: 11px;
+}
+
+.workspace-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.workspace-actions :deep(.el-button) {
+  min-height: 30px;
+  margin: 0;
+  border-radius: 9px;
+  font-size: 10px;
+}
+
+.workspace-actions :deep(.el-button--primary) {
+  border-color: var(--theme-text);
+  background: var(--theme-text);
+  color: var(--theme-contrast);
+}
+
+.address-list {
+  gap: 6px;
 }
 
 .address-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--theme-border-strong);
+  border-radius: 10px;
+  background: var(--theme-surface);
 }
 
-.address-label {
-  color: var(--theme-text-muted);
-  font-size: 13px;
-  font-weight: 500;
+.address-item__value {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
 }
 
-.address-value {
+.address-text {
+  min-width: 0;
+  flex: 1;
   color: var(--theme-text);
-  font-size: 14px;
+  font-size: 10px;
+  line-height: 1.4;
   word-break: break-all;
-}
-
-.address-value-with-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--theme-border-strong);
 }
 
 .status-dot.is-success {
-  background-color: var(--theme-success);
+  background: var(--theme-success);
 }
 
 .status-dot.is-warning {
-  background-color: var(--theme-warning);
+  background: var(--theme-warning);
+}
+
+.status-text {
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .status-text.is-success {
@@ -551,63 +516,45 @@ onBeforeUnmount(() => {
   color: var(--theme-warning);
 }
 
-.address-text {
-  color: var(--theme-text);
-  font-size: 14px;
-  word-break: break-all;
-  flex: 1;
-  min-width: 0;
+.settings-note {
+  padding: 8px;
+  border: 1px solid var(--theme-border);
+  border-radius: 10px;
+  background: var(--theme-surface);
+  color: var(--theme-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
-.status-text {
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  flex-shrink: 0;
-  background: transparent;
-}
-
-.workspace-field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.workspace-path-input :deep(.el-input__wrapper) {
-  min-height: 44px;
-  border-radius: 12px;
-  background: var(--theme-surface-strong);
-  box-shadow: none;
-}
-
-.workspace-path-input :deep(.el-input__inner) {
-  color: var(--theme-text);
-}
-
-.workspace-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-@media (max-width: 1080px) {
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-panel--wide {
-    grid-column: auto;
-  }
+.settings-note.is-warning {
+  border-color: color-mix(
+    in srgb,
+    var(--theme-warning) 32%,
+    var(--theme-border)
+  );
+  color: var(--theme-warning);
 }
 
 @media (max-width: 767px) {
-  .settings-stage__title {
-    font-size: 28px;
+  .settings-panel {
+    padding: 10px;
   }
 
-  .settings-panel {
-    padding: 18px;
-    border-radius: 20px;
+  .segmented-group,
+  .workspace-actions {
+    width: 100%;
+  }
+
+  .workspace-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .address-item__value {
+    grid-template-columns: 8px minmax(0, 1fr);
+  }
+
+  .status-text {
+    grid-column: 2;
   }
 }
 </style>

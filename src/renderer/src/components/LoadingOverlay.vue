@@ -1,8 +1,17 @@
 <template>
   <Teleport to="body">
     <Transition name="fade">
-      <div v-if="visible" class="loading-overlay" :class="{ 'minimal-mode': minimal }" @click.self="handleClick">
-        <div v-if="!minimal" class="loading-container" :class="{ 'with-progress': showProgress }">
+      <div
+        v-if="visible"
+        class="loading-overlay"
+        :class="{ 'minimal-mode': minimal }"
+        @click.self="handleClick"
+      >
+        <div
+          v-if="!minimal"
+          class="loading-container"
+          :class="{ 'with-progress': showProgress }"
+        >
           <!-- 图标区域 -->
           <div class="loading-icon-wrapper">
             <div v-if="icon" class="loading-icon">
@@ -24,8 +33,8 @@
           <!-- 进度条 -->
           <div v-if="showProgress" class="loading-progress">
             <div class="progress-bar-wrapper">
-              <div 
-                class="progress-bar" 
+              <div
+                class="progress-bar"
                 :style="{ width: `${progressPercentage}%` }"
               ></div>
             </div>
@@ -60,20 +69,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed } from "vue";
 
 interface Props {
-  visible: boolean
-  title?: string
-  message?: string
-  icon?: string
-  progress?: number
-  total?: number
-  showProgress?: boolean
-  showProgressText?: boolean
-  showPercentage?: boolean
-  closable?: boolean
-  minimal?: boolean // 简洁模式：无白色卡片，文字更小
+  visible: boolean;
+  title?: string;
+  message?: string;
+  icon?: string;
+  progress?: number;
+  total?: number;
+  showProgress?: boolean;
+  showProgressText?: boolean;
+  showPercentage?: boolean;
+  closable?: boolean;
+  minimal?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -82,25 +91,25 @@ const props = withDefaults(defineProps<Props>(), {
   showProgressText: true,
   showPercentage: false,
   closable: false,
-  minimal: false
-})
+  minimal: false,
+});
 
 const emit = defineEmits<{
-  close: []
-}>()
+  close: [];
+}>();
 
 const progressPercentage = computed(() => {
   if (!props.showProgress || !props.total || props.total === 0) {
-    return 0
+    return 0;
   }
-  return Math.round((props.progress || 0) / props.total * 100)
-})
+  return Math.round(((props.progress || 0) / props.total) * 100);
+});
 
 const handleClick = () => {
   if (props.closable) {
-    emit('close')
+    emit("close");
   }
-}
+};
 </script>
 
 <style scoped>
@@ -110,57 +119,60 @@ const handleClick = () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: fadeIn 0.3s ease-out;
+  z-index: 9999;
+  background: color-mix(in srgb, var(--theme-bg) 72%, rgba(0, 0, 0, 0.2));
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  animation: fadeIn 0.2s ease-out;
 }
 
 .loading-container {
-  background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
-  border-radius: 20px;
-  box-shadow: 
-    0 25px 70px rgba(0, 0, 0, 0.4),
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset;
-  padding: 40px 56px;
-  min-width: 360px;
-  max-width: 500px;
-  width: 90%;
-  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  width: min(360px, calc(100vw - 40px));
+  padding: 22px 22px 20px;
+  border-radius: 24px;
+  background: color-mix(
+    in srgb,
+    var(--theme-surface-elevated) 92%,
+    transparent
+  );
   text-align: center;
+  animation: slideUp 0.24s ease-out;
 }
 
 .loading-container.with-progress {
-  padding: 48px 56px;
+  padding-bottom: 24px;
 }
 
-/* 图标区域 */
 .loading-icon-wrapper {
-  margin-bottom: 24px;
   display: flex;
   justify-content: center;
   align-items: center;
+  margin-bottom: 14px;
 }
 
 .loading-icon {
-  font-size: 48px;
-  color: #6366f1;
-  animation: pulse 2s ease-in-out infinite;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--theme-text) 4%, transparent);
+  color: var(--theme-text);
+  font-size: 18px;
 }
 
 .loading-icon i {
   display: block;
 }
 
-/* 旋转加载动画 */
 .loading-spinner {
   position: relative;
-  width: 64px;
-  height: 64px;
+  width: 38px;
+  height: 38px;
   margin: 0 auto;
 }
 
@@ -168,84 +180,57 @@ const handleClick = () => {
   position: absolute;
   width: 100%;
   height: 100%;
-  border: 4px solid transparent;
-  border-top-color: #6366f1;
+  border: 3px solid transparent;
+  border-top-color: var(--theme-text);
   border-radius: 50%;
-  animation: spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  animation: spin 0.9s linear infinite;
 }
 
 .spinner-ring:nth-child(1) {
-  animation-delay: -0.45s;
+  opacity: 1;
 }
 
 .spinner-ring:nth-child(2) {
-  animation-delay: -0.3s;
-  border-top-color: #8b5cf6;
+  opacity: 0.55;
 }
 
 .spinner-ring:nth-child(3) {
-  animation-delay: -0.15s;
-  border-top-color: #a78bfa;
+  opacity: 0.25;
 }
 
-/* 标题 */
 .loading-title {
-  font-size: 22px;
+  margin: 0;
+  color: var(--theme-text);
+  font-size: 18px;
   font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 12px;
-  letter-spacing: 0.3px;
+  line-height: 1.3;
 }
 
-/* 消息 */
 .loading-message {
-  font-size: 16px;
-  color: #6b7280;
-  margin-bottom: 24px;
-  min-height: 24px;
-  line-height: 1.5;
+  margin-top: 6px;
+  color: var(--theme-text-muted);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
-/* 进度条区域 */
 .loading-progress {
-  margin-top: 8px;
+  margin-top: 14px;
 }
 
 .progress-bar-wrapper {
   width: 100%;
-  height: 10px;
-  background: #e5e7eb;
-  border-radius: 10px;
+  height: 6px;
+  background: color-mix(in srgb, var(--theme-text) 8%, transparent);
+  border-radius: 999px;
   overflow: hidden;
-  margin-bottom: 12px;
-  position: relative;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.06);
+  margin-bottom: 10px;
 }
 
 .progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
-  border-radius: 10px;
-  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
-}
-
-.progress-bar::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.3),
-    transparent
-  );
-  animation: shimmer 2s infinite;
+  background: var(--theme-text);
+  border-radius: 999px;
+  transition: width 0.24s ease;
 }
 
 .progress-text {
@@ -253,33 +238,31 @@ const handleClick = () => {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  font-size: 14px;
-  color: #9ca3af;
-  font-weight: 500;
+  font-size: 12px;
+  color: var(--theme-text-soft);
+  font-weight: 600;
 }
 
 .progress-current {
-  color: #6366f1;
+  color: var(--theme-text);
   font-weight: 600;
 }
 
 .progress-separator {
-  color: #d1d5db;
+  color: var(--theme-text-soft);
 }
 
 .progress-total {
-  color: #6b7280;
+  color: var(--theme-text-muted);
 }
 
-/* 百分比显示 */
 .loading-percentage {
-  margin-top: 8px;
-  font-size: 18px;
+  margin-top: 6px;
+  font-size: 14px;
   font-weight: 600;
-  color: #6366f1;
+  color: var(--theme-text);
 }
 
-/* 动画 */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -292,11 +275,11 @@ const handleClick = () => {
 @keyframes slideUp {
   from {
     opacity: 0;
-    transform: translateY(20px) scale(0.95);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
@@ -309,30 +292,9 @@ const handleClick = () => {
   }
 }
 
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.8;
-    transform: scale(1.05);
-  }
-}
-
-@keyframes shimmer {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
-}
-
-/* 过渡动画 */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.3s ease-out;
+  transition: opacity 0.2s ease-out;
 }
 
 .fade-enter-from,
@@ -340,9 +302,8 @@ const handleClick = () => {
   opacity: 0;
 }
 
-/* 简洁模式样式 */
 .loading-overlay.minimal-mode {
-  background: rgba(0, 0, 0, 0.6);
+  background: color-mix(in srgb, var(--theme-bg) 78%, rgba(0, 0, 0, 0.16));
 }
 
 .loading-minimal {
@@ -350,14 +311,28 @@ const handleClick = () => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 8px;
+  width: min(280px, calc(100vw - 40px));
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: color-mix(
+    in srgb,
+    var(--theme-surface-elevated) 88%,
+    transparent
+  );
   text-align: center;
 }
 
 .minimal-icon {
-  font-size: 32px;
-  color: rgba(255, 255, 255, 0.9);
-  animation: pulse 2s ease-in-out infinite;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--theme-text) 4%, transparent);
+  color: var(--theme-text);
+  font-size: 16px;
 }
 
 .minimal-icon i {
@@ -366,35 +341,33 @@ const handleClick = () => {
 
 .minimal-spinner {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 28px;
   margin: 0 auto;
 }
 
 .minimal-spinner .spinner-ring {
   border-width: 3px;
-  border-top-color: rgba(255, 255, 255, 0.9);
+  border-top-color: var(--theme-text);
 }
 
 .minimal-spinner .spinner-ring:nth-child(2) {
-  border-top-color: rgba(255, 255, 255, 0.7);
+  opacity: 0.55;
 }
 
 .minimal-spinner .spinner-ring:nth-child(3) {
-  border-top-color: rgba(255, 255, 255, 0.5);
+  opacity: 0.25;
 }
 
 .minimal-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.95);
-  margin-top: 4px;
+  color: var(--theme-text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .minimal-message {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.75);
-  margin-top: -4px;
+  color: var(--theme-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 </style>
-

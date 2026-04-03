@@ -34,12 +34,8 @@ interface ExtensionConnectionStatus {
 }
 
 const { showToast } = useToast();
-const {
-  themePreferenceLabel,
-  resolvedThemeLabel,
-  themeToggleIcon,
-  setThemePreference,
-} = useThemeMode();
+const { themePreferenceLabel, themeToggleIcon, setThemePreference } =
+  useThemeMode();
 
 const activePage = ref<AppPageKey>("overview");
 const appVersion = ref("");
@@ -668,13 +664,6 @@ const currentPage = computed(() => pageMap[activePage.value]);
 const currentUserLabel = computed(
   () => userInfo.value?.username || userInfo.value?.account || "未命名账号",
 );
-const currentUserSubtitle = computed(() => {
-  if (userCompanyLabel.value) {
-    return userCompanyLabel.value;
-  }
-
-  return userInfo.value?.isAdmin ? "管理员账号" : "客户端执行账号";
-});
 const serviceModeLabel = computed(() =>
   currentServiceMode.value === "local" ? "本地服务模式" : "远程服务模式",
 );
@@ -717,7 +706,8 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     key: "ws",
     title: "远程连接",
     value: websocketText(wsState.status),
-    description: `当前服务模式为${currentServiceMode.value === "local" ? "本地" : "远程"}。`,
+    description:
+      currentServiceMode.value === "local" ? "本地服务模式" : "远程服务模式",
     icon: "mdi-connection",
     tone: websocketTone(wsState.status),
   },
@@ -725,9 +715,7 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     key: "client",
     title: "客户端服务",
     value: serverStatus.value ? "在线" : "离线",
-    description: serverStatus.value
-      ? "本地客户端服务可访问。"
-      : "本地客户端服务未响应。",
+    description: serverStatus.value ? "1519 可访问" : "1519 未响应",
     icon: "mdi-monitor-cellphone",
     tone: serviceToneByState(serverStatus.value),
   },
@@ -744,12 +732,12 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
             : "未启动",
     description:
       uploaderServiceStatus.value === "running"
-        ? "服务与浏览器实例已连接。"
+        ? "服务与浏览器已连接"
         : uploaderServiceStatus.value === "warning"
-          ? "自动化服务已启动，等待浏览器实例连接。"
+          ? "等待浏览器实例连接"
           : uploaderServiceStatus.value === "error"
-            ? "自动化服务状态检测异常，请检查本地服务日志。"
-            : "详细控制已迁移到 admin，客户端仅保留桥接能力。",
+            ? "状态检测异常"
+            : "服务未启动",
     icon: "mdi-robot-outline",
     tone: browserAutomationToneByState(uploaderServiceStatus.value),
   },
@@ -757,7 +745,11 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     key: "ps",
     title: "Photoshop",
     value: `${photoshopRuntimeMeta.value.serviceText} / ${photoshopRuntimeMeta.value.appText}`,
-    description: photoshopRuntimeMeta.value.description,
+    description: photoshopRuntimeMeta.value.busy
+      ? "任务执行中"
+      : photoshopRuntimeMeta.value.connected
+        ? "桌面桥接已连接"
+        : "服务未启动",
     icon: "mdi-image-filter-drama",
     tone: photoshopRuntimeMeta.value.tone,
   },
@@ -766,27 +758,27 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
 const dashboardQuickActions = computed<DashboardQuickAction[]>(() => [
   {
     key: "open-workspace",
-    title: "打开工作目录",
-    description: "快速进入当前工作目录，便于检查缓存、下载和导出结果。",
+    title: "工作目录",
+    description: "打开当前目录",
     icon: "mdi-folder-open-outline",
   },
   {
-    key: "settings",
-    title: "打开客户端设置",
-    description: "切换主题模式，查看当前服务地址与运行配置。",
-    icon: "mdi-cog-outline",
-  },
-  {
     key: "reconnect",
-    title: "重新连接远程服务",
-    description: "主动触发 WebSocket 重连，适合网络切换后使用。",
+    title: "刷新连接",
+    description: "重新连接远程服务",
     icon: "mdi-rotate-right",
   },
   {
     key: "refresh-location",
-    title: "刷新位置信息",
-    description: "更新当前设备网络环境与定位信息。",
-    icon: "mdi-map-marker-refresh-outline",
+    title: "刷新位置",
+    description: "更新网络位置信息",
+    icon: "mdi-crosshairs-gps",
+  },
+  {
+    key: "settings",
+    title: "客户端设置",
+    description: "打开设置页面",
+    icon: "mdi-cog-outline",
   },
 ]);
 
@@ -832,7 +824,7 @@ const dashboardMetaItems = computed<DashboardMetaItem[]>(() => [
 ]);
 
 const appFooterText = computed(
-  () => `${themePreferenceLabel.value} · ${resolvedThemeLabel.value}`,
+  () => `版本 ${appVersion.value || "--"} · ${serviceModeLabel.value}`,
 );
 
 const userCompanyLabel = computed(() => {
@@ -968,7 +960,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="client-app">
+  <div
+    class="client-app"
+    :class="{ 'client-app--auth': checkingAuth || !isLoggedIn }"
+  >
     <div v-if="checkingAuth" class="auth-checking">
       <div class="auth-checking__spinner"></div>
       <div class="auth-checking__title">正在进入客户端</div>
@@ -981,9 +976,8 @@ onBeforeUnmount(() => {
       <LoadingOverlay
         :visible="isLoggingOut"
         title="正在退出登录"
-        message="请稍候..."
+        message="正在结束当前会话"
         icon="mdi-logout"
-        :minimal="true"
       />
 
       <div class="app-shell" :class="{ 'is-logging-out': isLoggingOut }">
@@ -993,23 +987,8 @@ onBeforeUnmount(() => {
               <div class="app-brand__icon">
                 <i class="mdi mdi-creation-outline"></i>
               </div>
-              <div>
-                <div class="app-brand__title">衣设客户端</div>
-                <div class="app-brand__subtitle">Yishe Client Console</div>
-              </div>
+              <div class="app-brand__title">衣设客户端</div>
             </div>
-
-            <section class="sidebar-spotlight">
-              <div class="sidebar-spotlight__eyebrow">Workspace</div>
-              <div class="sidebar-spotlight__title">{{ currentUserLabel }}</div>
-              <div class="sidebar-spotlight__desc">
-                {{ currentUserSubtitle }}
-              </div>
-              <div class="sidebar-spotlight__chips">
-                <span class="sidebar-chip">{{ serviceModeLabel }}</span>
-                <span class="sidebar-chip">版本 {{ appVersion || "--" }}</span>
-              </div>
-            </section>
 
             <nav class="app-nav">
               <button
@@ -1023,19 +1002,12 @@ onBeforeUnmount(() => {
                 <span class="app-nav__icon">
                   <i :class="['mdi', item.icon]"></i>
                 </span>
-                <span class="app-nav__content">
-                  <span class="app-nav__text">{{ item.label }}</span>
-                  <span class="app-nav__hint">{{
-                    pageMap[item.key].description
-                  }}</span>
-                </span>
+                <span class="app-nav__text">{{ item.label }}</span>
                 <span class="app-nav__marker"></span>
               </button>
             </nav>
-          </div>
 
-          <div class="app-sidebar__bottom">
-            <div class="sidebar-section">
+            <div class="app-sidebar__status">
               <div class="sidebar-section__title">运行状态</div>
               <div class="sidebar-runtime-list">
                 <div
@@ -1050,17 +1022,30 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
+          </div>
 
+          <div class="app-sidebar__bottom">
             <div class="app-sidebar__footer">
-              <div class="app-sidebar__meta">{{ appFooterText }}</div>
+              <div class="app-sidebar__meta">{{ currentUserLabel }}</div>
+              <div class="app-sidebar__meta app-sidebar__meta--muted">
+                {{ appFooterText }}
+              </div>
+              <el-button
+                class="sidebar-logout"
+                type="danger"
+                :loading="isLoggingOut"
+                @click="handleLogout"
+              >
+                <i class="mdi mdi-logout"></i>
+                <span>{{ isLoggingOut ? "退出中..." : "退出登录" }}</span>
+              </el-button>
             </div>
           </div>
         </aside>
 
         <main class="app-main">
           <header class="app-header">
-            <div class="app-header__intro">
-              <div class="app-header__eyebrow">Yishe Client</div>
+            <div class="app-header__text">
               <h1 class="app-header__title">{{ currentPage.label }}</h1>
               <p class="app-header__desc">{{ currentPage.description }}</p>
             </div>
@@ -1100,43 +1085,6 @@ onBeforeUnmount(() => {
                 <i class="mdi mdi-bug-outline"></i>
                 <span>调试</span>
               </el-button>
-
-              <el-dropdown trigger="click" placement="bottom-end">
-                <button type="button" class="user-entry">
-                  <el-avatar :size="36" class="user-entry__avatar">
-                    <span>{{
-                      (userInfo?.username ||
-                        userInfo?.account ||
-                        "U")[0].toUpperCase()
-                    }}</span>
-                  </el-avatar>
-                  <div class="user-entry__meta">
-                    <div class="user-entry__name">
-                      {{ userInfo?.username || userInfo?.account }}
-                    </div>
-                    <div class="user-entry__desc">
-                      {{ userInfo?.isAdmin ? "管理员" : "已登录" }}
-                    </div>
-                  </div>
-                  <i class="mdi mdi-chevron-down user-entry__arrow"></i>
-                </button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item disabled>
-                      {{ userInfo?.account || "--" }}
-                    </el-dropdown-item>
-                    <el-dropdown-item v-if="userCompanyLabel" disabled>
-                      {{ userCompanyLabel }}
-                    </el-dropdown-item>
-                    <el-dropdown-item
-                      @click="handleLogout"
-                      :disabled="isLoggingOut"
-                    >
-                      {{ isLoggingOut ? "退出中..." : "退出登录" }}
-                    </el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
             </div>
           </header>
 
@@ -1161,6 +1109,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .client-app {
   height: 100vh;
+  min-height: 100vh;
+  padding: 18px;
+  overflow: auto;
+}
+
+.client-app--auth {
+  padding: 0;
   overflow: hidden;
 }
 
@@ -1195,9 +1150,15 @@ onBeforeUnmount(() => {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 168px minmax(0, 1fr);
   gap: 0;
-  height: 100vh;
+  width: min(840px, 100%);
+  height: min(580px, calc(100vh - 24px));
+  margin: 0 auto;
+  border: 1px solid var(--theme-border);
+  border-radius: 16px;
+  background: var(--theme-surface-elevated);
+  box-shadow: var(--theme-shadow-xs);
   overflow: hidden;
 }
 
@@ -1209,133 +1170,80 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 18px;
+  gap: 10px;
   min-height: 0;
-  max-height: 100vh;
-  padding: 18px 14px 14px;
+  padding: 10px;
   border-right: 1px solid var(--theme-border);
   background: var(--theme-sidebar);
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .app-sidebar__top,
 .app-sidebar__bottom {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .app-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 18px;
-  background: var(--theme-surface);
-  border: 1px solid var(--theme-border);
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 6px;
+  border-radius: 10px;
+  color: var(--theme-text);
 }
 
 .app-brand__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  background: color-mix(
-    in srgb,
-    var(--theme-primary) 10%,
-    var(--theme-surface)
-  );
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--theme-surface-strong);
   color: var(--theme-primary);
-  font-size: 19px;
+  font-size: 13px;
 }
 
 .app-brand__title {
   color: var(--theme-text);
-  font-size: 15px;
+  font-size: 11px;
   font-weight: 700;
 }
 
-.app-brand__subtitle {
-  margin-top: 2px;
-  color: var(--theme-text-muted);
-  font-size: 12px;
+.app-sidebar__status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
 }
 
-.sidebar-spotlight {
-  padding: 14px;
-  border-radius: 20px;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--theme-primary) 10%, var(--theme-surface)),
-    var(--theme-surface)
-  );
-  border: 1px solid
-    color-mix(in srgb, var(--theme-primary) 12%, var(--theme-border));
-}
-
-.sidebar-spotlight__eyebrow,
-.app-header__eyebrow,
 .sidebar-section__title {
   color: var(--theme-text-soft);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.sidebar-spotlight__title {
-  margin-top: 10px;
-  color: var(--theme-text);
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1.15;
-}
-
-.sidebar-spotlight__desc {
-  margin-top: 8px;
-  color: var(--theme-text-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.sidebar-spotlight__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.sidebar-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: var(--theme-surface);
-  border: 1px solid var(--theme-border);
-  color: var(--theme-text-muted);
-  font-size: 11px;
-  font-weight: 600;
 }
 
 .app-nav {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .app-nav__item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  min-height: 62px;
-  padding: 0 14px;
+  min-height: 32px;
+  padding: 0 8px;
   border: 1px solid transparent;
-  border-radius: 18px;
+  border-radius: 10px;
   background: transparent;
   color: var(--theme-text-muted);
   cursor: pointer;
@@ -1343,26 +1251,19 @@ onBeforeUnmount(() => {
   transition:
     background-color 0.18s ease,
     border-color 0.18s ease,
-    color 0.18s ease,
-    transform 0.18s ease;
+    color 0.18s ease;
 }
 
 .app-nav__item:hover {
-  background: var(--theme-surface);
+  background: var(--theme-surface-strong);
   border-color: var(--theme-border);
   color: var(--theme-text);
-  transform: translateX(2px);
 }
 
 .app-nav__item.is-active {
-  background: var(--theme-surface);
-  border-color: color-mix(
-    in srgb,
-    var(--theme-primary) 16%,
-    var(--theme-border)
-  );
+  background: var(--theme-surface-strong);
+  border-color: var(--theme-border-strong);
   color: var(--theme-text);
-  box-shadow: var(--theme-shadow-xs);
 }
 
 .app-nav__icon {
@@ -1370,46 +1271,25 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  background: var(--theme-surface-strong);
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: var(--theme-surface-muted);
   color: inherit;
-  font-size: 18px;
-}
-
-.app-nav__item.is-active .app-nav__icon {
-  background: color-mix(
-    in srgb,
-    var(--theme-primary) 10%,
-    var(--theme-surface)
-  );
-  color: var(--theme-primary-strong);
-}
-
-.app-nav__content {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
+  font-size: 11px;
 }
 
 .app-nav__text {
+  flex: 1;
+  min-width: 0;
   color: inherit;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.app-nav__hint {
-  color: var(--theme-text-soft);
   font-size: 11px;
-  line-height: 1.4;
+  font-weight: 600;
 }
 
 .app-nav__marker {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 14px;
   border-radius: 999px;
   background: transparent;
   transition: background-color 0.18s ease;
@@ -1422,25 +1302,25 @@ onBeforeUnmount(() => {
 .sidebar-runtime-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sidebar-runtime {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  min-height: 38px;
-  padding: 0 12px;
-  border-radius: 14px;
-  background: var(--theme-surface);
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 10px;
+  background: var(--theme-surface-strong);
   border: 1px solid var(--theme-border);
   color: var(--theme-text-muted);
 }
 
 .sidebar-runtime__signal {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: currentColor;
 }
@@ -1448,13 +1328,13 @@ onBeforeUnmount(() => {
 .sidebar-runtime__label {
   min-width: 0;
   color: var(--theme-text);
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 600;
 }
 
 .sidebar-runtime__value {
   color: inherit;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
 }
 
@@ -1475,13 +1355,46 @@ onBeforeUnmount(() => {
 }
 
 .app-sidebar__footer {
-  padding: 4px 2px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--theme-surface-strong);
 }
 
 .app-sidebar__meta {
+  color: var(--theme-text);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.app-sidebar__meta--muted {
   color: var(--theme-text-soft);
+}
+
+.sidebar-logout {
+  width: 100%;
+  min-height: 30px;
+  border: none;
+  border-radius: 10px;
+  background: var(--theme-danger) !important;
+  color: #fff !important;
   font-size: 12px;
-  line-height: 1.6;
+  font-weight: 700;
+}
+
+.sidebar-logout:hover,
+.sidebar-logout:focus-visible {
+  background: color-mix(in srgb, var(--theme-danger) 88%, #000 12%) !important;
+  color: #fff !important;
+}
+
+.sidebar-logout :deep(span) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .app-main {
@@ -1489,37 +1402,40 @@ onBeforeUnmount(() => {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  height: 100vh;
-  overflow-y: auto;
+  height: 100%;
+  overflow: hidden;
 }
 
 .app-header {
-  position: sticky;
-  top: 0;
-  z-index: 5;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 18px;
-  padding: 22px 28px 12px;
-  background: linear-gradient(180deg, var(--theme-bg) 74%, transparent 100%);
-  backdrop-filter: blur(10px);
+  gap: 10px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--theme-border);
+  background: var(--theme-surface);
+}
+
+.app-header__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .app-header__title {
-  margin: 6px 0 0;
+  margin: 0;
   color: var(--theme-text);
-  font-size: 32px;
+  font-size: 16px;
   font-weight: 700;
-  line-height: 1.08;
+  line-height: 1.2;
 }
 
 .app-header__desc {
-  margin: 10px 0 0;
-  max-width: 720px;
+  margin: 0;
   color: var(--theme-text-muted);
-  font-size: 14px;
-  line-height: 1.72;
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .app-header__actions {
@@ -1527,16 +1443,17 @@ onBeforeUnmount(() => {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 6px;
 }
 
 .header-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 999px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 9px;
   border: 1px solid var(--theme-border);
-  background: var(--theme-surface);
+  background: var(--theme-surface-strong);
   color: var(--theme-text);
+  font-size: 10px;
 }
 
 .header-button :deep(span) {
@@ -1545,58 +1462,15 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
-.user-entry {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 42px;
-  padding: 4px 10px 4px 4px;
-  border: 1px solid var(--theme-border);
-  border-radius: 999px;
-  background: var(--theme-surface);
-  color: inherit;
-  cursor: pointer;
-}
-
-.user-entry__avatar {
-  background: color-mix(
-    in srgb,
-    var(--theme-primary) 12%,
-    var(--theme-surface)
-  );
-  color: var(--theme-primary-strong);
-}
-
-.user-entry__meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.user-entry__name {
-  color: var(--theme-text);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.user-entry__desc {
-  color: var(--theme-text-muted);
-  font-size: 11px;
-}
-
-.user-entry__arrow {
-  color: var(--theme-text-soft);
-  font-size: 18px;
-}
-
 .page-shell {
   flex: 1;
   min-height: 0;
-  padding: 0 28px 28px;
+  padding: 10px 12px 12px;
+  overflow: auto;
 }
 
 .page-shell__inner {
-  max-width: 1380px;
+  max-width: 100%;
   margin: 0 auto;
 }
 
@@ -1610,15 +1484,12 @@ onBeforeUnmount(() => {
   .app-shell {
     grid-template-columns: 1fr;
     height: auto;
-    min-height: 100vh;
-    overflow: visible;
   }
 
   .app-sidebar {
-    gap: 12px;
-    max-height: none;
     border-right: none;
     border-bottom: 1px solid var(--theme-border);
+    overflow: visible;
   }
 
   .app-nav {
@@ -1626,20 +1497,18 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .app-main {
-    height: auto;
+  .app-sidebar__status {
+    display: none;
   }
 }
 
 @media (max-width: 767px) {
   .client-app {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
+    padding: 8px;
   }
 
   .app-sidebar {
-    padding: 12px;
+    padding: 8px;
   }
 
   .app-nav {
@@ -1654,11 +1523,11 @@ onBeforeUnmount(() => {
 
   .app-header {
     flex-direction: column;
-    padding-top: 16px;
+    align-items: flex-start;
   }
 
   .app-header__title {
-    font-size: 26px;
+    font-size: 15px;
   }
 
   .app-header__actions {
@@ -1666,8 +1535,7 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
   }
 
-  .header-button,
-  .user-entry {
+  .header-button {
     width: 100%;
     justify-content: center;
   }

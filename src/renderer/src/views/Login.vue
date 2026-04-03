@@ -1,49 +1,12 @@
 <template>
   <div class="login-page">
-    <div class="login-page__ambient login-page__ambient--primary"></div>
-    <div class="login-page__ambient login-page__ambient--accent"></div>
+    <section class="login-panel">
+      <header class="login-panel__header">
+        <div class="login-brandline">
+          <div class="login-brandline__title">衣设客户端</div>
 
-    <section class="login-stage">
-      <div class="login-stage__intro">
-        <div class="login-stage__brand">
-          <span class="login-stage__brand-icon">
-            <i class="mdi mdi-creation-outline"></i>
-          </span>
-          <div>
-            <div class="login-stage__brand-title">衣设客户端</div>
-            <div class="login-stage__brand-subtitle">Yishe Client Console</div>
-          </div>
-        </div>
-
-        <div class="login-stage__hero">
-          <div class="login-stage__eyebrow">Workspace Access</div>
-          <h1 class="login-stage__title">进入更轻量的执行工作台</h1>
-          <p class="login-stage__desc">
-            参考图的核心不是复杂装饰，而是把注意力拉回到工作本身。这里保留登录、主题和运行环境切换，让客户端更像一个安静的入口页。
-          </p>
-        </div>
-
-        <div class="login-highlights">
-          <article
-            v-for="item in loginHighlights"
-            :key="item.title"
-            class="login-highlight"
-          >
-            <span class="login-highlight__icon">
-              <i :class="['mdi', item.icon]"></i>
-            </span>
-            <div>
-              <div class="login-highlight__title">{{ item.title }}</div>
-              <div class="login-highlight__desc">{{ item.description }}</div>
-            </div>
-          </article>
-        </div>
-      </div>
-
-      <div class="login-panel">
-        <div class="login-panel__topbar">
           <el-dropdown trigger="click" placement="bottom-end">
-            <el-button text class="theme-switcher__button">
+            <el-button text class="login-theme">
               <i :class="['mdi', themeToggleIcon]"></i>
               <span>{{ themePreferenceLabel }}</span>
             </el-button>
@@ -61,119 +24,102 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-
-          <span class="login-panel__mode">{{ serviceModeLabel }}</span>
         </div>
 
-        <div class="login-panel__header">
-          <div class="login-panel__eyebrow">Sign In</div>
-          <h2 class="login-panel__title">欢迎回来</h2>
-          <p class="login-panel__desc">
-            登录后即可继续使用任务执行链路、桌面桥接能力和运行状态面板。
-          </p>
-        </div>
+        <h1 class="login-title">登录</h1>
+        <p class="login-desc">输入账号密码后进入客户端</p>
+      </header>
 
-        <el-form
-          class="login-form"
-          label-position="top"
-          @submit.prevent="handleLogin"
-          autocomplete="on"
+      <el-form
+        class="login-form"
+        label-position="top"
+        @submit.prevent="handleLogin"
+        autocomplete="on"
+      >
+        <el-form-item
+          label="账号"
+          :error="accountHelp || undefined"
+          class="login-form__item"
         >
-          <el-form-item
-            label="账号"
-            :error="accountHelp || undefined"
-            class="custom-form-item"
-          >
-            <el-input
-              v-model="form.account"
-              size="large"
-              clearable
-              autocomplete="username"
-              placeholder="请输入账号"
-              class="login-input"
-            />
-          </el-form-item>
-
-          <el-form-item
-            label="密码"
-            :error="passwordHelp || undefined"
-            class="custom-form-item"
-          >
-            <el-input
-              v-model="form.password"
-              size="large"
-              autocomplete="current-password"
-              placeholder="请输入密码"
-              show-password
-              class="login-input"
-            />
-          </el-form-item>
-
-          <div class="login-form__meta">
-            <el-checkbox v-model="rememberMe" class="custom-checkbox">
-              记住我
-            </el-checkbox>
-            <span class="login-form__tip">客户端已切换为轻量工作台布局</span>
-          </div>
-
-          <el-alert
-            v-if="errorMessage"
-            class="form-error-alert"
-            type="error"
-            :title="errorMessage"
-            show-icon
-          />
-
-          <el-button
-            class="button-submit"
-            type="primary"
+          <el-input
+            v-model="form.account"
             size="large"
-            :loading="loading"
-            :disabled="!formValid"
-            native-type="submit"
-          >
-            立即登录
-          </el-button>
+            clearable
+            autocomplete="username"
+            placeholder="请输入账号"
+            class="login-input"
+          />
+        </el-form-item>
 
-          <div class="service-panel">
-            <div class="service-panel__head">
-              <div>
-                <div class="service-panel__title">运行环境</div>
-                <div class="service-panel__desc">
-                  切换服务模式时会同步更新 API 与 WebSocket 配置。
-                </div>
-              </div>
-            </div>
+        <el-form-item
+          label="密码"
+          :error="passwordHelp || undefined"
+          class="login-form__item"
+        >
+          <el-input
+            v-model="form.password"
+            size="large"
+            autocomplete="current-password"
+            placeholder="请输入密码"
+            show-password
+            class="login-input"
+          />
+        </el-form-item>
 
+        <el-alert
+          v-if="errorMessage"
+          class="login-form__error"
+          type="error"
+          :title="errorMessage"
+          show-icon
+        />
+
+        <el-button
+          class="login-form__submit"
+          type="primary"
+          size="large"
+          :loading="loading"
+          :disabled="!formValid"
+          native-type="submit"
+        >
+          登录
+        </el-button>
+
+        <div class="login-sideinfo">
+          <div class="login-sideinfo__row">
+            <span class="login-sideinfo__label">服务模式</span>
             <el-radio-group
               v-model="serviceMode"
               @change="handleServiceModeChange"
-              class="service-radio-group"
+              class="segmented-group"
               :disabled="!isDevelopment"
             >
-              <el-radio-button label="local">本地服务</el-radio-button>
-              <el-radio-button label="remote">远程服务</el-radio-button>
+              <el-radio-button label="local">本地</el-radio-button>
+              <el-radio-button label="remote">远程</el-radio-button>
             </el-radio-group>
+          </div>
 
-            <div class="service-addresses">
-              <div class="service-address">
-                <span class="service-address__label">API</span>
-                <span class="service-address__value">{{ currentApiBase }}</span>
+          <div class="login-sideinfo__row login-sideinfo__row--stack">
+            <span class="login-sideinfo__label">连接地址</span>
+            <div class="login-endpoints">
+              <div class="login-endpoints__item">
+                <span class="login-endpoints__tag">API</span>
+                <span class="login-endpoints__text">{{ currentApiBase }}</span>
               </div>
-              <div class="service-address">
-                <span class="service-address__label">WebSocket</span>
-                <span class="service-address__value">{{
+              <div class="login-endpoints__item">
+                <span class="login-endpoints__tag">WS</span>
+                <span class="login-endpoints__text">{{
                   currentWsEndpoint
                 }}</span>
               </div>
             </div>
-
-            <div v-if="!isDevelopment" class="service-tip">
-              生产环境固定使用远程服务
-            </div>
           </div>
-        </el-form>
-      </div>
+
+          <div class="login-sideinfo__note">
+            {{ isDevelopment ? serviceModeLabel : "生产环境固定为远程服务" }}
+          </div>
+        </div>
+      </el-form>
     </section>
   </div>
 </template>
@@ -197,7 +143,6 @@ const emit = defineEmits<{
 }>();
 
 const loading = ref(false);
-const rememberMe = ref(false);
 const errorMessage = ref("");
 const serviceMode = ref<ServiceMode>(getServiceMode());
 const isDevelopment = process.env.NODE_ENV === "development";
@@ -208,24 +153,6 @@ const form = reactive({
   account: "",
   password: "",
 });
-
-const loginHighlights = [
-  {
-    icon: "mdi-connection",
-    title: "持续在线",
-    description: "保持客户端状态、网络位置和远程链路同步。",
-  },
-  {
-    icon: "mdi-robot-outline",
-    title: "桥接自动化",
-    description: "承接浏览器自动化和本地执行能力，不把复杂操作堆到客户端。",
-  },
-  {
-    icon: "mdi-monitor-dashboard",
-    title: "简洁工作台",
-    description: "保留核心入口、设置与状态视图，让日常使用更专注。",
-  },
-];
 
 const formValid = computed(
   () => form.account.trim().length >= 3 && form.password.length >= 6,
@@ -247,12 +174,6 @@ const handleServiceModeChange = async (mode: ServiceMode) => {
     serviceMode.value = mode;
     updateApiBaseUrl(getRemoteApiBase());
     websocketClient.switchService(mode);
-
-    console.log("服务配置已切换:", {
-      mode,
-      apiBase: getRemoteApiBase(),
-      wsEndpoint: getWsEndpoint(),
-    });
   } catch (error) {
     console.error("切换服务配置失败:", error);
     serviceMode.value = getServiceMode();
@@ -299,469 +220,281 @@ const handleLogin = async () => {
 
 <style scoped>
 .login-page {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 100%;
+  padding: 8px;
   overflow: hidden;
-  padding: 28px;
 }
 
-.login-page__ambient {
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(36px);
-  opacity: 0.72;
-  pointer-events: none;
-}
-
-.login-page__ambient--primary {
-  top: 8%;
-  left: 10%;
-  width: 320px;
-  height: 320px;
-  background: color-mix(in srgb, var(--theme-primary) 20%, transparent);
-}
-
-.login-page__ambient--accent {
-  right: 8%;
-  bottom: 10%;
-  width: 260px;
-  height: 260px;
-  background: color-mix(in srgb, var(--theme-accent) 18%, transparent);
-}
-
-.login-stage {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(360px, 1.06fr) minmax(360px, 0.94fr);
-  gap: 22px;
-  width: min(1180px, 100%);
-  padding: 22px;
-  border-radius: 32px;
-  border: 1px solid var(--theme-border);
-  background: color-mix(
-    in srgb,
-    var(--theme-surface-elevated) 94%,
-    transparent
-  );
-  box-shadow: var(--theme-shadow-md);
-  backdrop-filter: blur(18px);
-}
-
-.login-stage__intro,
 .login-panel {
-  border-radius: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 320px;
+  max-height: 100%;
+  padding: 12px;
   border: 1px solid var(--theme-border);
+  border-radius: 16px;
   background: var(--theme-surface);
+  overflow: hidden;
 }
 
-.login-stage__intro {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 26px;
-  padding: 28px;
-  background:
-    radial-gradient(
-      circle at top left,
-      color-mix(in srgb, var(--theme-primary) 9%, transparent),
-      transparent 34%
-    ),
-    var(--theme-surface);
-}
-
-.login-stage__brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.login-stage__brand-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  background: var(--theme-primary-light);
-  color: var(--theme-primary);
-  font-size: 20px;
-}
-
-.login-stage__brand-title {
-  color: var(--theme-text);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.login-stage__brand-subtitle {
-  margin-top: 2px;
-  color: var(--theme-text-muted);
-  font-size: 12px;
-}
-
-.login-stage__hero {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 520px;
-}
-
-.login-stage__eyebrow,
-.login-panel__eyebrow {
-  color: var(--theme-text-soft);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.login-stage__title,
-.login-panel__title {
-  margin: 0;
-  color: var(--theme-text);
-  font-weight: 700;
-  line-height: 1.08;
-}
-
-.login-stage__title {
-  font-size: 40px;
-}
-
-.login-stage__desc,
-.login-panel__desc {
-  margin: 0;
-  color: var(--theme-text-muted);
-  font-size: 14px;
-  line-height: 1.8;
-}
-
-.login-highlights {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.login-highlight {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 12px;
-  padding: 14px;
-  border-radius: 18px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-surface-strong);
-}
-
-.login-highlight__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  background: var(--theme-primary-light);
-  color: var(--theme-primary);
-  font-size: 18px;
-}
-
-.login-highlight__title {
-  color: var(--theme-text);
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.login-highlight__desc {
-  margin-top: 4px;
-  color: var(--theme-text-muted);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.login-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-  padding: 24px;
-}
-
-.login-panel__topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.theme-switcher__button {
-  border-radius: 999px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-surface-strong);
-  color: var(--theme-text);
-}
-
-.theme-switcher__button :deep(span) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.login-panel__mode {
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: 999px;
-  background: var(--theme-surface-strong);
-  border: 1px solid var(--theme-border);
-  color: var(--theme-text-muted);
-  font-size: 12px;
-  font-weight: 600;
+.login-panel__header,
+.login-form,
+.login-sideinfo {
+  width: 100%;
 }
 
 .login-panel__header {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
+  padding-bottom: 2px;
 }
 
-.login-panel__title {
-  font-size: 32px;
+.login-brandline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.login-brandline__title {
+  color: var(--theme-text-soft);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.login-theme {
+  min-height: 24px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface-strong);
+  color: var(--theme-text);
+  font-size: 9px;
+}
+
+.login-theme :deep(span) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
+}
+
+.login-title {
+  margin: 0;
+  color: var(--theme-text);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.login-desc {
+  margin: 0;
+  color: var(--theme-text-muted);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  align-items: stretch;
 }
 
-.custom-form-item {
+.login-form__item {
   margin-bottom: 0;
 }
 
-.custom-form-item :deep(.el-form-item__label) {
+.login-form__item :deep(.el-form-item__label) {
   color: var(--theme-text);
+  font-size: 10px;
   font-weight: 600;
-  font-size: 12px;
   margin-bottom: 4px;
   padding-bottom: 0;
+  line-height: 1.1;
+}
+
+.login-form__item :deep(.el-form-item__content) {
+  display: flex;
+  align-items: center;
+}
+
+.login-input {
+  width: 100%;
 }
 
 .login-input :deep(.el-input__wrapper) {
-  min-height: 46px;
-  border-radius: 14px;
-  border: 1px solid var(--theme-border-strong);
+  min-height: 34px;
+  border: 1px solid var(--theme-border);
+  border-radius: 10px;
+  background: var(--theme-surface);
   box-shadow: none;
-  padding: 0 12px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-  background-color: var(--theme-surface-strong);
-}
-
-.login-input :deep(.el-input__wrapper):hover {
-  border-color: color-mix(
-    in srgb,
-    var(--theme-primary) 28%,
-    var(--theme-border-strong)
-  );
-}
-
-.login-input :deep(.el-input__wrapper.is-focus) {
-  border-color: var(--theme-primary);
-  box-shadow: var(--theme-shadow-focus);
-}
-
-.login-input :deep(.el-input__wrapper.is-error) {
-  border-color: var(--theme-danger);
-}
-
-.login-input :deep(.el-input__wrapper.is-error.is-focus) {
-  border-color: var(--theme-danger);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-danger) 12%, transparent);
 }
 
 .login-input :deep(.el-input__inner) {
-  height: 42px;
-  line-height: 42px;
-  font-size: 13px;
-}
-
-.login-input :deep(.el-input__inner::placeholder) {
-  color: var(--theme-text-soft);
-}
-
-.login-form__meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin: 2px 0 0;
   font-size: 12px;
 }
 
-.custom-checkbox :deep(.el-checkbox__label) {
-  font-size: 12px;
-  color: var(--theme-text);
+.login-input :deep(.el-input__wrapper:hover) {
+  border-color: var(--theme-border-strong);
 }
 
-.login-form__tip {
-  color: var(--theme-text-muted);
-  font-size: 12px;
+.login-input :deep(.el-input__wrapper.is-focus) {
+  border-color: var(--theme-text);
+  box-shadow: var(--theme-shadow-focus);
 }
 
-.service-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 12px;
-  padding: 16px;
-  border-radius: 18px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-surface-strong);
+.login-form__error {
+  margin: 0;
 }
 
-.service-panel__title {
-  color: var(--theme-text);
-  font-size: 15px;
+.login-form__error :deep(.el-alert) {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.login-form__error :deep(.el-alert__title) {
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.login-form__submit {
+  width: 100%;
+  height: 34px;
+  margin-top: 2px;
+  border-radius: 10px;
+  border-color: var(--theme-text);
+  background: var(--theme-text);
+  color: var(--theme-contrast);
+  font-size: 11px;
   font-weight: 700;
 }
 
-.service-panel__desc {
-  margin-top: 4px;
-  color: var(--theme-text-muted);
-  font-size: 12px;
-  line-height: 1.7;
+.login-sideinfo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--theme-border);
 }
 
-.service-radio-group {
+.login-sideinfo__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-sideinfo__row--stack {
+  gap: 5px;
+}
+
+.login-sideinfo__label {
+  color: var(--theme-text-soft);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.segmented-group {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 5px;
+  align-self: stretch;
 }
 
-.service-radio-group :deep(.el-radio-button__inner) {
-  min-width: 110px;
-  border-radius: 12px !important;
-  border: 1px solid var(--theme-border) !important;
-  box-shadow: none !important;
-  background: var(--theme-surface);
+.segmented-group :deep(.el-radio-button__inner) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  min-height: 26px;
+  border-radius: 9px !important;
+  padding: 0 8px;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
 }
 
-.service-radio-group
-  :deep(.el-radio-button:first-child .el-radio-button__inner),
-.service-radio-group
-  :deep(.el-radio-button:last-child .el-radio-button__inner) {
-  border-radius: 12px !important;
+.segmented-group :deep(.el-radio-button:first-child .el-radio-button__inner),
+.segmented-group :deep(.el-radio-button:last-child .el-radio-button__inner) {
+  border-radius: 9px !important;
 }
 
-.service-addresses {
-  display: grid;
-  gap: 10px;
+.segmented-group
+  :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: var(--theme-text) !important;
+  border-color: var(--theme-text) !important;
+  color: var(--theme-contrast) !important;
 }
 
-.service-address {
+.login-endpoints {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: var(--theme-surface);
-  border: 1px solid var(--theme-border);
 }
 
-.service-address__label {
+.login-endpoints__item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.login-endpoints__tag {
   color: var(--theme-text-soft);
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  line-height: 1.3;
 }
 
-.service-address__value {
-  color: var(--theme-text);
-  font-size: 12px;
-  line-height: 1.7;
+.login-endpoints__text {
+  min-width: 0;
+  color: var(--theme-text-muted);
+  font-size: 9px;
+  line-height: 1.3;
   word-break: break-all;
 }
 
-.service-tip {
+.login-sideinfo__note {
   color: var(--theme-text-muted);
-  font-size: 12px;
+  font-size: 9px;
+  line-height: 1.25;
 }
 
-.form-error-alert {
-  margin: 0;
-  font-size: 12px;
-}
-
-.button-submit {
-  width: 100%;
-  margin: 6px 0 0;
-  border: none;
-  border-radius: 14px;
-  height: 44px;
-  font-size: 13px;
-  font-weight: 700;
-  transition: 0.2s ease-in-out;
-}
-
-@media (max-width: 980px) {
-  .login-page {
-    padding: 18px;
-  }
-
-  .login-stage {
-    grid-template-columns: 1fr;
-    padding: 16px;
-    border-radius: 26px;
-  }
-
-  .login-stage__title {
-    font-size: 32px;
-  }
-}
-
-@media (max-width: 767px) {
-  .login-page {
-    padding: 14px;
-  }
-
-  .login-stage {
-    gap: 14px;
-    padding: 14px;
-    border-radius: 22px;
-  }
-
-  .login-stage__intro,
+@media (max-height: 620px) {
   .login-panel {
-    padding: 18px;
-    border-radius: 20px;
+    max-width: 304px;
+    padding: 10px;
   }
 
-  .login-panel__topbar,
-  .login-form__meta {
-    flex-direction: column;
-    align-items: stretch;
+  .login-title {
+    font-size: 20px;
   }
 
-  .login-stage__title,
-  .login-panel__title {
-    font-size: 28px;
+  .login-form {
+    gap: 6px;
   }
 
-  .theme-switcher__button,
-  .login-panel__mode,
-  .button-submit {
-    width: 100%;
-    justify-content: center;
+  .login-input :deep(.el-input__wrapper) {
+    min-height: 32px;
   }
 
-  .service-radio-group {
-    display: grid;
-    grid-template-columns: 1fr;
+  .login-form__submit {
+    height: 32px;
   }
 }
 </style>
