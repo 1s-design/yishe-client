@@ -1316,13 +1316,18 @@ onBeforeUnmount(() => {
   background: var(--theme-surface-strong);
   border: 1px solid var(--theme-border);
   color: var(--theme-text-muted);
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease;
 }
 
 .sidebar-runtime__signal {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   background: currentColor;
+  box-shadow: 0 0 0 0 currentColor;
+  animation: sidebarRuntimePulse 2s ease-in-out infinite;
 }
 
 .sidebar-runtime__label {
@@ -1477,6 +1482,18 @@ onBeforeUnmount(() => {
 @keyframes client-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes sidebarRuntimePulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 32%, transparent 68%);
+  }
+  70% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 0%, transparent 100%);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent 100%);
   }
 }
 

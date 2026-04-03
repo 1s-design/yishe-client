@@ -51,8 +51,8 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
           :class="toneClass(item.tone)"
         >
           <div class="dashboard-card__top">
-            <span class="dashboard-card__badge" :class="toneClass(item.tone)">
-              <i :class="['mdi', item.icon]"></i>
+            <span class="dashboard-card__signal" :class="toneClass(item.tone)">
+              <span class="dashboard-card__signal-dot"></span>
             </span>
             <span class="dashboard-card__title">{{ item.title }}</span>
           </div>
@@ -159,27 +159,37 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
 .dashboard-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-height: 102px;
-  padding: 12px;
+  gap: 7px;
+  min-height: 92px;
+  padding: 12px 13px;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
 }
 
 .dashboard-card__top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 
-.dashboard-card__badge {
+.dashboard-card__signal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 8px;
-  background: var(--theme-surface-strong);
-  color: var(--theme-text);
-  font-size: 12px;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.dashboard-card__signal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--theme-text-soft);
+  box-shadow: 0 0 0 0 rgba(138, 138, 138, 0.35);
+  animation: dashboardPulseMuted 2s ease-in-out infinite;
 }
 
 .dashboard-card__title {
@@ -190,28 +200,87 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
 
 .dashboard-card__value {
   color: var(--theme-text);
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.15;
   word-break: break-word;
+  letter-spacing: -0.02em;
 }
 
 .dashboard-card__desc {
   color: var(--theme-text-muted);
   font-size: 10px;
-  line-height: 1.45;
+  line-height: 1.35;
 }
 
-.dashboard-card__badge.is-success {
-  color: var(--theme-success);
+.dashboard-card.is-success .dashboard-card__signal-dot {
+  background: var(--theme-success);
+  box-shadow: 0 0 0 0 rgba(23, 163, 74, 0.35);
+  animation-name: dashboardPulseSuccess;
 }
 
-.dashboard-card__badge.is-warning {
-  color: var(--theme-warning);
+.dashboard-card.is-warning .dashboard-card__signal-dot {
+  background: var(--theme-warning);
+  box-shadow: 0 0 0 0 rgba(197, 139, 17, 0.34);
+  animation-name: dashboardPulseWarning;
 }
 
-.dashboard-card__badge.is-danger {
-  color: var(--theme-danger);
+.dashboard-card.is-danger .dashboard-card__signal-dot {
+  background: var(--theme-danger);
+  box-shadow: 0 0 0 0 rgba(213, 67, 67, 0.34);
+  animation-name: dashboardPulseDanger;
+}
+
+.dashboard-card.is-muted .dashboard-card__signal-dot {
+  background: var(--theme-text-soft);
+}
+
+@keyframes dashboardPulseSuccess {
+  0% {
+    box-shadow: 0 0 0 0 rgba(23, 163, 74, 0.34);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(23, 163, 74, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(23, 163, 74, 0);
+  }
+}
+
+@keyframes dashboardPulseWarning {
+  0% {
+    box-shadow: 0 0 0 0 rgba(197, 139, 17, 0.34);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(197, 139, 17, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(197, 139, 17, 0);
+  }
+}
+
+@keyframes dashboardPulseDanger {
+  0% {
+    box-shadow: 0 0 0 0 rgba(213, 67, 67, 0.34);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(213, 67, 67, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(213, 67, 67, 0);
+  }
+}
+
+@keyframes dashboardPulseMuted {
+  0% {
+    box-shadow: 0 0 0 0 rgba(138, 138, 138, 0.28);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(138, 138, 138, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(138, 138, 138, 0);
+  }
 }
 
 .dashboard-action {
