@@ -2294,12 +2294,12 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
           file.export_path.split(/[/\\]/).pop() ||
           `psd-set-${psdSetId}-${timestamp}-${i}.png`;
 
-        // 使用新的 generateCosKey 生成路径
-        // 路径格式：sticker-psd-set/{dateYYYYMMDD}/{account}/{psdSetId}/{timestamp}_{filename}
+        // 使用统一的用户目录结构生成路径
+        // 路径格式：users/{userId}_{account}/sticker-psd-set/{dateYYYYMMDD}/{psdSetId}/{timestamp}_{filename}
         const keyResult = await (window.api as any).generateCosKey({
           category: "sticker-psd-set",
           filename: fileName,
-          subDirectory: psdSetId,
+          entityId: psdSetId,
           timestamp: timestamp + i, // 为每个文件添加索引，确保唯一性
         });
 

@@ -54,7 +54,16 @@ const api = {
     ipcRenderer.invoke('google-art:sync', payload),
   uploadFileToCos: (payload: { filePath: string; key?: string }) =>
     ipcRenderer.invoke('cos:upload-file', payload),
-  generateCosKey: (payload: { category: string; filename: string; subDirectory?: string; timestamp?: number }) =>
+  generateCosKey: (payload: {
+    category: string
+    filename: string
+    account?: string
+    userId?: string | number
+    entityId?: string | number
+    subDirectory?: string
+    isThumbnail?: boolean
+    timestamp?: number
+  }) =>
     ipcRenderer.invoke('cos:generate-key', payload),
   // 本地服务管理
   startLocalService: () => ipcRenderer.invoke('start-local-service'),

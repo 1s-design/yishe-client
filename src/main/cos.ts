@@ -5,6 +5,11 @@ import http from 'http'
 import https from 'https'
 import { URL } from 'url'
 import { createDecipheriv, createHash } from 'crypto'
+import {
+  buildCosObjectKey,
+  sanitizeCosAccount,
+  sanitizeCosUserId,
+} from './cosPath'
 
 type CosConfig = {
   SecretId: string
@@ -308,113 +313,93 @@ async function getCosConfig(): Promise<CosConfig | null> {
   return fetchRemoteCosConfig()
 }
 
-/**
- * 清理文件名，移除特殊字符
- */
-function sanitizeFilename(filename: string): string {
-  if (!filename) return 'file'
-  
-  // 移除路径分隔符和特殊字符
-  let sanitized = filename.replace(/[<>:"/\\|?*]/g, '_')
-  
-  // 保留字母、数字、下划线、连字符、点号
-  sanitized = sanitized.replace(/[^a-zA-Z0-9._-]/g, '_')
-  
-  // 最大长度限制：200 字符（保留扩展名）
-  const extMatch = sanitized.match(/\.([^.]+)$/)
-  const ext = extMatch ? extMatch[1] : ''
-  const nameWithoutExt = extMatch ? sanitized.slice(0, -(ext.length + 1)) : sanitized
-  
-  if (nameWithoutExt.length > 200) {
-    sanitized = nameWithoutExt.substring(0, 200) + (ext ? `.${ext}` : '')
-  }
-  
-  return sanitized || 'file'
-}
-
-/**
- * 获取当前用户账号
- * 优先级：已登录用户账号（account）> 已登录用户ID > anonymous
- * 注意：不使用系统用户名，只使用客户端登录的用户账号
- * 从 localStorage 读取用户信息（getUserInfo 接口返回的信息）
- */
-async function getCurrentUserAccount(): Promise<string> {
+async function getCurrentUserIdentity(): Promise<{ userId: string; account: string }> {
   try {
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (!mainWindow || mainWindow.isDestroyed()) {
-      return 'anonymous'
-    }
-    
-    const account = await mainWindow.webContents.executeJavaScript(`
-      (() => {
-        try {
-          const stored = localStorage.getItem('userInfo')
-          if (stored) {
-            const info = JSON.parse(stored)
-            return info?.account || info?.id || null
-          }
-        } catch (e) {}
-        return null
-      })()
-    `)
-    
-    if (account && typeof account === 'string' && account.trim()) {
-      const cleaned = account.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().substring(0, 50)
-      if (cleaned) {
-        return cleaned
+      return {
+        userId: sanitizeCosUserId(),
+        account: sanitizeCosAccount(),
       }
     }
-  } catch (e) {
-    console.warn('[COS] 无法从 localStorage 获取用户信息:', e)
+
+    const identity = await mainWindow.webContents.executeJavaScript(`
+      (() => {
+        try {
+          const candidates = ['USER', 'userInfo']
+
+          for (const key of candidates) {
+            const stored = localStorage.getItem(key)
+            if (!stored) {
+              continue
+            }
+
+            const parsed = JSON.parse(stored)
+            const user = parsed?.user || parsed || {}
+            const userId = user?.id ?? parsed?.id ?? null
+            const account =
+              user?.account
+              ?? user?.shortName
+              ?? user?.name
+              ?? parsed?.account
+              ?? parsed?.shortName
+              ?? parsed?.name
+              ?? null
+
+            if (userId != null || account) {
+              return { userId, account }
+            }
+          }
+
+          return null
+        } catch (error) {
+          return null
+        }
+      })()
+    `)
+
+    return {
+      userId: sanitizeCosUserId(identity?.userId),
+      account: sanitizeCosAccount(identity?.account),
+    }
+  } catch (error) {
+    console.warn('[COS] 无法从 localStorage 获取用户信息:', error)
   }
-  
-  return 'anonymous'
+
+  return {
+    userId: sanitizeCosUserId(),
+    account: sanitizeCosAccount(),
+  }
 }
 
 /**
  * 生成 COS Key（文件路径）
- * 格式：{category}/{dateYYYYMMDD}/{account}/{subDirectory}/{timestamp}_{filename}
- * 例如：google-art/20250115/admin/1736937600000_artwork.jpg
- * 例如（带子目录）：sticker-psd-set/20250115/admin/psdSetId123/1736937600000_image.png
+ * 格式：users/{userId}_{account}/{category}/{dateYYYYMMDD}/{entityId?}/{timestamp}_{filename}
  */
 export interface CosKeyOptions {
-  category: string        // 大类
-  account?: string         // 用户账号（可选，会自动获取）
-  filename: string        // 文件名
-  timestamp?: number      // 时间戳（可选，默认当前时间）
-  date?: Date            // 日期（可选，默认当前日期）
-  subDirectory?: string   // 子目录（可选，如 psdSetId）
+  category?: string
+  account?: string
+  userId?: string | number
+  filename: string
+  timestamp?: number
+  date?: Date
+  entityId?: string | number
+  subDirectory?: string
+  isThumbnail?: boolean
 }
 
 export async function generateCosKey(options: CosKeyOptions): Promise<string> {
-  const { category, filename, timestamp, date, subDirectory } = options
-  
-  // 获取用户账号（如果未提供，则自动获取）
-  const account = options.account || await getCurrentUserAccount()
-  
-  // 获取日期并格式化为 YYYYMMDD
-  const now = date || new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  const dateStr = `${year}${month}${day}` // 格式：20250115
-  
-  // 获取时间戳
-  const ts = timestamp || now.getTime()
-  
-  // 清理文件名
-  const sanitizedFilename = sanitizeFilename(filename)
-  
-  // 清理子目录（如果提供）
-  const sanitizedSubDir = subDirectory ? sanitizeFilename(subDirectory) : ''
-  
-  // 生成路径：{category}/{dateYYYYMMDD}/{account}/{subDirectory}/{timestamp}_{filename}
-  // 如果有子目录，则包含子目录；否则直接是 {category}/{dateYYYYMMDD}/{account}/{timestamp}_{filename}
-  const cosKey = subDirectory && sanitizedSubDir
-    ? `${category}/${dateStr}/${account}/${sanitizedSubDir}/${ts}_${sanitizedFilename}`
-    : `${category}/${dateStr}/${account}/${ts}_${sanitizedFilename}`
-  
-  return cosKey
+  const identity = await getCurrentUserIdentity()
+
+  return buildCosObjectKey(options.filename, {
+    category: options.category,
+    account: options.account ?? identity.account,
+    userId: options.userId ?? identity.userId,
+    entityId: options.entityId ?? options.subDirectory,
+    isThumbnail: options.isThumbnail,
+    timestamp: options.timestamp,
+    date: options.date,
+  })
 }
 
 export async function uploadFileToCos(filePath: string, key?: string): Promise<UploadResult> {
@@ -439,7 +424,10 @@ export async function uploadFileToCos(filePath: string, key?: string): Promise<U
   })
 
   const fileName = path.basename(filePath)
-  const cosKey = key || `google-art/${Date.now()}_${fileName}`
+  const cosKey = key || await generateCosKey({
+    category: 'uncategorized',
+    filename: fileName,
+  })
   const fileBuffer = fs.readFileSync(filePath)
 
   return new Promise((resolve) => {

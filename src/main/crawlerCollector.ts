@@ -8,7 +8,7 @@ import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import https from 'https'
-import { uploadFileToCos } from './cos'
+import { generateCosKey, uploadFileToCos } from './cos'
 
 type CrawlerSite = 'sora' | 'pinterest'
 
@@ -350,7 +350,10 @@ class CrawlerCollectorService {
           fs.writeFileSync(tempFilePath, imageBuffer)
 
           // 上传到 COS
-          const cosKey = `${config.category || 'crawler'}/${Date.now()}_${filename}`
+          const cosKey = await generateCosKey({
+            category: config.category || 'crawler',
+            filename,
+          })
           const cosResult = await uploadFileToCos(tempFilePath, cosKey)
 
           // 删除临时文件

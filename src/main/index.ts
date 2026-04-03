@@ -1912,7 +1912,11 @@ ipcMain.handle(
     payload: {
       category: string;
       filename: string;
+      account?: string;
+      userId?: string | number;
+      entityId?: string | number;
       subDirectory?: string;
+      isThumbnail?: boolean;
       timestamp?: number;
     },
   ) => {
@@ -1921,7 +1925,11 @@ ipcMain.handle(
       const key = await generateCosKey({
         category: payload.category,
         filename: payload.filename,
+        account: payload.account,
+        userId: payload.userId,
+        entityId: payload.entityId,
         subDirectory: payload.subDirectory,
+        isThumbnail: payload.isThumbnail,
         timestamp: payload.timestamp,
       });
       return { ok: true, key };

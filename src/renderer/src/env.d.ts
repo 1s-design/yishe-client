@@ -130,7 +130,16 @@ interface Window {
       url?: string
       key?: string
     }>
-    generateCosKey(payload: { category: string; filename: string; subDirectory?: string; timestamp?: number }): Promise<{
+    generateCosKey(payload: {
+      category: string
+      filename: string
+      account?: string
+      userId?: string | number
+      entityId?: string | number
+      subDirectory?: string
+      isThumbnail?: boolean
+      timestamp?: number
+    }): Promise<{
       ok: boolean
       msg?: string
       key?: string
