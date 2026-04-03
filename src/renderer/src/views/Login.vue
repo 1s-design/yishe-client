@@ -39,6 +39,7 @@
         <el-form-item
           label="账号"
           :error="accountHelp || undefined"
+          :show-message="false"
           class="login-form__item"
         >
           <el-input
@@ -49,11 +50,19 @@
             placeholder="请输入账号"
             class="login-input"
           />
+          <div
+            class="login-form__hint"
+            :class="{ 'is-empty': !accountHelp }"
+            aria-live="polite"
+          >
+            {{ accountHelp || "\u00A0" }}
+          </div>
         </el-form-item>
 
         <el-form-item
           label="密码"
           :error="passwordHelp || undefined"
+          :show-message="false"
           class="login-form__item"
         >
           <el-input
@@ -64,6 +73,13 @@
             show-password
             class="login-input"
           />
+          <div
+            class="login-form__hint"
+            :class="{ 'is-empty': !passwordHelp }"
+            aria-live="polite"
+          >
+            {{ passwordHelp || "\u00A0" }}
+          </div>
         </el-form-item>
 
         <el-alert
@@ -308,7 +324,7 @@ const handleLogin = async () => {
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   align-items: stretch;
 }
 
@@ -327,7 +343,21 @@ const handleLogin = async () => {
 
 .login-form__item :deep(.el-form-item__content) {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.login-form__hint {
+  min-height: 14px;
+  color: var(--theme-danger);
+  font-size: 10px;
+  line-height: 1.35;
+  padding-left: 2px;
+}
+
+.login-form__hint.is-empty {
+  visibility: hidden;
 }
 
 .login-input {
@@ -370,6 +400,18 @@ const handleLogin = async () => {
 }
 
 .login-form__submit {
+  --el-button-bg-color: var(--theme-text);
+  --el-button-border-color: var(--theme-text);
+  --el-button-text-color: var(--theme-contrast);
+  --el-button-hover-bg-color: var(--theme-text);
+  --el-button-hover-border-color: var(--theme-text);
+  --el-button-hover-text-color: var(--theme-contrast);
+  --el-button-active-bg-color: var(--theme-text);
+  --el-button-active-border-color: var(--theme-text);
+  --el-button-active-text-color: var(--theme-contrast);
+  --el-button-disabled-bg-color: var(--theme-surface-muted);
+  --el-button-disabled-border-color: var(--theme-border);
+  --el-button-disabled-text-color: var(--theme-text-soft);
   width: 100%;
   height: 34px;
   margin-top: 2px;
@@ -379,6 +421,10 @@ const handleLogin = async () => {
   color: var(--theme-contrast);
   font-size: 11px;
   font-weight: 700;
+}
+
+.login-form__submit :deep(span) {
+  color: inherit;
 }
 
 .login-sideinfo {
@@ -486,7 +532,7 @@ const handleLogin = async () => {
   }
 
   .login-form {
-    gap: 6px;
+    gap: 8px;
   }
 
   .login-input :deep(.el-input__wrapper) {
