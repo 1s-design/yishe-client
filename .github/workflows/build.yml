@@ -59,8 +59,15 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      max-parallel: 1
       matrix:
-        os: [macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            build_args: --mac dmg --config package.json
+            csc_identity_auto_discovery: 'false'
+          - os: windows-latest
+            build_args: --win portable --config package.json
+            csc_identity_auto_discovery: ''
 
     steps:
       - name: Check out Git repository
@@ -82,8 +89,10 @@ jobs:
           release: true
           draft: false
           prerelease: false
+          args: ${{ matrix.build_args }}
         env:
           GH_TOKEN: ${{ secrets.github_token }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
 
   # electron-builder 仍会附带 latest*.yml、blockmap 等；仅保留固定文件名的两枚安装包，便于 https://github.com/.../releases/latest/download/ 稳定直链
   prune-release-assets:
