@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  linux-build:
+    build:
+      context: .
+      dockerfile: Dockerfile.linux-build
+    volumes:
+      - ./release:/app/release
+    environment:
+      - ELECTRON_CACHE=/root/.cache/electron
+      - ELECTRON_BUILDER_CACHE=/root/.cache/electron-builder
+    command: npm run build:linux 

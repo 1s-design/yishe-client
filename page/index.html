@@ -1,0 +1,352 @@
+<!--
+ * @Author: chan-max jackieontheway666@gmail.com
+ * @Date: 2025-06-19 08:44:34
+ * @LastEditors: chan-max jackieontheway666@gmail.com
+ * @LastEditTime: 2025-07-19 02:52:54
+ * @FilePath: /yishe-electron/page/index.html
+ * @Description: 极简黑色风格客户端下载页
+-->
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>衣设客户端下载</title>
+  <meta name="description" content="衣设客户端，专业设计工具，支持 Windows 和 macOS。">
+  <link rel="icon" href="logo-pure.png">
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      background: #000;
+      background-size: cover;
+      color: #f5f5f7;
+      font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    .lang-switch {
+      position: absolute;
+      top: 1.2rem;
+      right: 1.2rem;
+      font-size: 0.98rem;
+      color: #b0b0b8;
+      z-index: 10;
+      user-select: none;
+    }
+    .lang-switch button {
+      background: none;
+      border: none;
+      color: #b0b0b8;
+      font-size: 0.98rem;
+      margin: 0 0.15em;
+      cursor: pointer;
+      padding: 0.08em 0.4em;
+      border-radius: 7px;
+      transition: background 0.2s, color 0.2s;
+    }
+    .lang-switch button.active, .lang-switch button:hover {
+      background: #23232a;
+      color: #fff;
+    }
+    .center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: fit-content;
+      width: fit-content;
+      max-width: 700px;
+      background: rgba(0, 0, 0, 0.4);
+      /* backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); */
+      border-radius: 20px;
+      margin: 2rem;
+      padding: 6em;
+
+    }
+    .logo-card {
+      position: relative;
+      width: 64px;
+      height: 64px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 1.1rem;
+      border-radius: 10px;
+      overflow: visible;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      z-index: 2;
+    }
+    .logo-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(315deg,#03a9f4,#ff0058);
+      border-radius: 6px;
+      z-index: 1;
+      pointer-events: none;
+      transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .logo-card::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(315deg,#03a9f4,#ff0058);
+      filter: blur(30px);
+      border-radius: 6px;
+      z-index: 0;
+      pointer-events: none;
+    }
+    .logo-card b {
+      position: absolute;
+      inset: 3px;
+      background: rgba(0,0,0,0.6);
+      border-radius: 4px;
+      z-index: 2;
+    }
+    .logo-card img.logo {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%,-50%);
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+      z-index: 3;
+      scale: 1;
+      opacity: 1;
+      transition: none;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin: 0 0 0.5rem 0;
+      letter-spacing: 0.01em;
+      color: #fff;
+      z-index: 11;
+    }
+    .title-cool {
+      font-size: 2.1rem;
+      font-weight: 400;
+      color: #fff;
+      letter-spacing: 0.08em;
+      /* 立体阴影 */
+      text-shadow:
+        0 2px 4px rgba(0,0,0,0.35),
+        0 6px 16px rgba(0,0,0,0.25),
+        0 1px 0 #333,
+        1px 1px 0 #333,
+        2px 2px 0 #222;
+      /* 白色描边 */
+      -webkit-text-stroke: 1.2px #fff;
+      text-stroke: 1.2px #fff;
+      margin-bottom: 0.7rem;
+      margin-top: -0.2rem;
+      font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+      transition: all 0.3s;
+    }
+    .desc {
+      font-size: 0.98rem;
+      color: #ffffff;
+      margin-bottom: 1rem;
+      text-align: center;
+      line-height: 1.6;
+      z-index: 11;
+      max-width: 320px;
+      min-width: 320px;
+    }
+    .download-btns {
+      display: flex;
+      flex-direction: row;
+      gap: 0.8rem;
+      width: 100%;
+      align-items: stretch;
+      justify-content: center;
+      margin-bottom: 1rem;
+      max-width: 340px;
+    }
+    .download-col {
+      flex: 1 1 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 0;
+    }
+    .btn {
+      position: relative;
+      display: block;
+      width: 100%;
+      max-width: 110px;
+      padding: 8px 16px;
+      border-radius: 7px;
+      border-bottom: 1px solid rgb(61, 106, 255);
+      font-size: 12px;
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 2px;
+      background: transparent;
+      color: #fff;
+      text-decoration: none;
+      margin-bottom: 0.18rem;
+      overflow: hidden;
+      box-shadow: 0 0 0 0 transparent;
+      -webkit-transition: all 0.2s ease-in;
+      -moz-transition: all 0.2s ease-in;
+      transition: all 0.2s ease-in;
+      text-align: center;
+      outline: none;
+    }
+    .btn:hover {
+      background: rgb(61, 106, 255);
+      box-shadow: 0 0 30px 5px rgba(0, 142, 236, 0.815);
+      -webkit-transition: all 0.2s ease-out;
+      -moz-transition: all 0.2s ease-out;
+      transition: all 0.2s ease-out;
+    }
+    .btn:hover::before {
+      -webkit-animation: sh02 0.5s 0s linear;
+      -moz-animation: sh02 0.5s 0s linear;
+      animation: sh02 0.5s 0s linear;
+    }
+    .btn::before {
+      content: '';
+      display: block;
+      width: 0px;
+      height: 86%;
+      position: absolute;
+      top: 7%;
+      left: 0%;
+      opacity: 0;
+      background: #fff;
+      box-shadow: 0 0 50px 30px #fff;
+      -webkit-transform: skewX(-20deg);
+      -moz-transform: skewX(-20deg);
+      -ms-transform: skewX(-20deg);
+      -o-transform: skewX(-20deg);
+      transform: skewX(-20deg);
+    }
+    @keyframes sh02 {
+      from {
+        opacity: 0;
+        left: 0%;
+      }
+      50% {
+        opacity: 1;
+      }
+      to {
+        opacity: 0;
+        left: 100%;
+      }
+    }
+    .btn:active {
+      box-shadow: 0 0 0 0 transparent;
+      -webkit-transition: box-shadow 0.2s ease-in;
+      -moz-transition: box-shadow 0.2s ease-in;
+      transition: box-shadow 0.2s ease-in;
+    }
+    .tip {
+      font-size: 0.89rem;
+      color: #ffffff;
+      margin-bottom: 0.3rem;
+      text-align: center;
+    }
+    @media (max-width: 600px) {
+      .download-btns {
+        flex-direction: column;
+        gap: 0.7rem;
+        max-width: 90vw;
+      }
+      .btn { max-width: 100%; width: 100%; }
+    }
+    footer {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 100vw;
+      text-align: center;
+      color: #6b7280;
+      font-size: 0.89rem;
+      padding: 1rem 0 0.7rem 0;
+      background: rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
+      z-index: 2;
+    }
+    @media (max-width: 500px) {
+      .center { 
+        height: fit-content;
+        width: fit-content;
+        margin: 1rem;
+        padding: 1rem 1rem;
+        max-width: 90vw;
+      }
+      .logo-card { width: 60px; height: 60px; }
+      .logo-card::before {
+        width: 84px;
+        height: 84px;
+        left: -12px;
+        top: -12px;
+      }
+      h1 { font-size: 1rem; }
+      .btn { font-size: 0.95rem; }
+      .title-cool {
+        font-size: 1.3rem;
+        -webkit-text-stroke: 0.8px #fff;
+        text-stroke: 0.8px #fff;
+      }
+    }
+    .bg-decor {
+      position: fixed;
+      left: 50%;
+      top: 0;
+      transform: translateX(-50%);
+      height: 100vh;
+      width: auto;
+      min-width: 100vw;
+      object-fit: contain;
+      z-index: 0;
+      pointer-events: none;
+      user-select: none;
+    }
+
+  </style>
+</head>
+<body>
+  <!-- 背景装饰元素 -->
+  <img src="bg.jpg" alt="background" class="bg-decor" />
+  <div class="center">
+    <div class="logo-card">
+        <b></b>
+        <img src="logo-pure.png" class="logo" alt="logo" />
+    </div>
+    <h1 class="title-cool lang-zh">衣设客户端</h1>
+    <!-- <h1 class="lang-zh">衣设</h1> -->
+    <p class="desc lang-zh"> 商品有价，创意无价 </p>
+    <div class="download-btns">
+      <div class="download-col">
+        <a href="https://github.com/chan-max/yishe-client/releases/download/v1.0.6/yishe-client-1.0.6.exe" class="btn lang-zh"> Windows 版</a>
+      </div>
+      <div class="download-col">
+        <a href="https://github.com/chan-max/yishe-client/releases/download/v1.0.6/yishe-client-1.0.6.dmg" class="btn lang-zh"> macOS 版</a
+      </div>
+    </div>
+  </div>
+  <footer>
+    <span>© 2024 衣设客户端</span>
+    <div style="margin-top: 0.5rem; font-size: 0.7rem; color: #6b7280; letter-spacing: 0.5px;">
+      by Chen Zheng · Tel：18742539196
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,411 @@
+/* ============================================
+   Vuetify 扁平化风格覆盖样式
+   通用样式，适用于所有页面
+   ============================================ */
+
+/* 基础圆角设置 */
+:root {
+  --vuetify-border-radius-sm: 8px;
+  --vuetify-border-radius-md: 12px;
+  --vuetify-border-radius-lg: 16px;
+  --vuetify-border-radius-xl: 20px;
+  --vuetify-border-color: var(--theme-border, rgba(36, 49, 39, 0.08));
+  --vuetify-border-color-strong: var(
+    --theme-border-strong,
+    rgba(36, 49, 39, 0.14)
+  );
+  --vuetify-surface: var(--theme-surface, #fffdf9);
+  --vuetify-surface-soft: var(--theme-surface-strong, #f6f1e8);
+  --vuetify-surface-muted: var(--theme-surface-muted, #f3eee6);
+  --vuetify-text: var(--theme-text, #2f2a29);
+  --vuetify-text-soft: var(--theme-text-muted, #7b766e);
+  --vuetify-primary: var(--theme-primary, #7d8d79);
+  --vuetify-primary-soft: var(--theme-primary-light, rgba(125, 141, 121, 0.12));
+}
+
+/* ============================================
+   移除所有阴影，使用边框代替
+   ============================================ */
+
+/* 卡片组件 - 强制扁平化风格 */
+.v-card,
+.v-sheet,
+.v-card[class*="elevation"],
+.v-sheet[class*="elevation"] {
+  box-shadow: none !important;
+  border: 1px solid var(--vuetify-border-color) !important;
+  border-radius: var(--vuetify-border-radius-md) !important;
+  background: var(--vuetify-surface) !important;
+  color: var(--vuetify-text) !important;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease !important;
+}
+
+/* 无论 elevation 属性如何设置，都移除阴影 */
+.v-card[elevation],
+.v-card[elevation="0"],
+.v-card[elevation="1"],
+.v-card[elevation="2"],
+.v-card[elevation="3"],
+.v-card[elevation="4"],
+.v-card[elevation="5"],
+.v-card[elevation="6"],
+.v-card[elevation="7"],
+.v-card[elevation="8"],
+.v-card[elevation="9"],
+.v-card[elevation="10"],
+.v-card[elevation="11"],
+.v-card[elevation="12"],
+.v-card[elevation="13"],
+.v-card[elevation="14"],
+.v-card[elevation="15"],
+.v-card[elevation="16"],
+.v-card[elevation="17"],
+.v-card[elevation="18"],
+.v-card[elevation="19"],
+.v-card[elevation="20"],
+.v-card[elevation="21"],
+.v-card[elevation="22"],
+.v-card[elevation="23"],
+.v-card[elevation="24"] {
+  box-shadow: none !important;
+}
+
+.v-card:hover,
+.v-sheet:hover {
+  border-color: var(--vuetify-border-color-strong) !important;
+  background: var(--vuetify-surface-soft) !important;
+}
+
+/* 按钮组件 */
+.v-btn {
+  box-shadow: none !important;
+  border-radius: var(--vuetify-border-radius-sm) !important;
+  border: 1px solid transparent !important;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease !important;
+}
+
+.v-btn--variant-elevated,
+.v-btn--variant-flat {
+  border: 1px solid transparent !important;
+}
+
+.v-btn--variant-elevated:hover,
+.v-btn--variant-flat:hover {
+  border-color: var(--vuetify-border-color-strong) !important;
+}
+
+.v-btn--variant-outlined {
+  border-width: 1px !important;
+}
+
+/* Chip 组件 */
+.v-chip {
+  box-shadow: none !important;
+  border-radius: var(--vuetify-border-radius-sm) !important;
+  border: 1px solid var(--vuetify-border-color) !important;
+  background: var(--vuetify-surface) !important;
+  color: var(--vuetify-text-soft) !important;
+}
+
+/* 输入框组件 */
+.v-text-field .v-field,
+.v-textarea .v-field,
+.v-select .v-field {
+  box-shadow: none !important;
+  border: 1px solid var(--vuetify-border-color-strong) !important;
+  border-radius: var(--vuetify-border-radius-sm) !important;
+  background: var(--vuetify-surface) !important;
+  transition:
+    border-color 0.2s ease,
+    border-width 0.2s ease !important;
+}
+
+.v-text-field .v-field--focused,
+.v-textarea .v-field--focused,
+.v-select .v-field--focused {
+  border-color: var(--vuetify-primary) !important;
+  border-width: 2px !important;
+}
+
+.v-text-field .v-field--error,
+.v-textarea .v-field--error,
+.v-select .v-field--error {
+  border-color: rgb(var(--v-theme-error)) !important;
+}
+
+/* 菜单和对话框 */
+.v-menu .v-overlay__content,
+.v-dialog .v-card {
+  box-shadow: none !important;
+  border: 1px solid var(--vuetify-border-color) !important;
+  border-radius: var(--vuetify-border-radius-md) !important;
+  background: var(--vuetify-surface) !important;
+}
+
+/* 导航抽屉 - 扁平化设计 */
+.v-navigation-drawer {
+  box-shadow: none !important;
+  border-right: 1px solid var(--vuetify-border-color) !important;
+  background: var(--vuetify-surface) !important;
+}
+
+/* App Bar */
+.v-app-bar {
+  box-shadow: none !important;
+  border-bottom: 1px solid var(--vuetify-border-color) !important;
+  background: color-mix(
+    in srgb,
+    var(--vuetify-surface) 92%,
+    transparent
+  ) !important;
+}
+
+/* 列表项 - 扁平化设计，黑色主题 */
+.v-list-item {
+  border-radius: var(--vuetify-border-radius-md) !important;
+  transition: all 0.2s ease !important;
+  border: 1px solid transparent !important;
+}
+
+.v-list-item--active {
+  background-color: var(--vuetify-primary-soft) !important;
+  border-left: 3px solid var(--vuetify-primary) !important;
+  border-color: var(--vuetify-border-color-strong) !important;
+}
+
+.v-list-item:hover {
+  background-color: color-mix(
+    in srgb,
+    var(--vuetify-surface-soft) 84%,
+    white 16%
+  ) !important;
+  border-color: var(--vuetify-border-color) !important;
+}
+
+/* 导航栏中的列表项 - 黑色主题 */
+.v-navigation-drawer .v-list-item {
+  margin: 0 8px 4px !important;
+}
+
+.v-navigation-drawer .v-list-item--active .v-icon {
+  color: var(--vuetify-primary) !important;
+}
+
+.v-navigation-drawer .v-list-item--active .v-list-item-title {
+  color: var(--vuetify-primary) !important;
+  font-weight: 600 !important;
+}
+
+.v-navigation-drawer .v-list-item .v-icon {
+  color: var(--vuetify-text-soft) !important;
+  transition: color 0.2s ease !important;
+}
+
+.v-navigation-drawer .v-list-item:hover .v-icon {
+  color: var(--vuetify-text) !important;
+}
+
+.v-navigation-drawer .v-list-item-title {
+  color: var(--vuetify-text) !important;
+  transition: color 0.2s ease !important;
+}
+
+.v-navigation-drawer .v-list-item:hover .v-list-item-title {
+  color: var(--vuetify-text) !important;
+}
+
+/* Avatar 组件 - 保留轻微圆角 */
+.v-avatar {
+  border-radius: var(--vuetify-border-radius-sm) !important;
+}
+
+/* 移除所有 ripple 效果 */
+.v-ripple__container {
+  display: none !important;
+}
+
+/* 移除按钮的 elevation 动画 */
+.v-btn::before {
+  display: none !important;
+}
+
+/* 移除按钮的 elevation 伪元素 */
+.v-btn--elevated::before {
+  display: none !important;
+}
+
+/* ============================================
+   特殊圆角设置（需要更圆角的组件）
+   ============================================ */
+
+/* Pill 形状的 Chip（如果需要） */
+.v-chip--pill {
+  border-radius: 999px !important;
+}
+
+/* 圆形按钮（如果需要） */
+.v-btn--icon {
+  border-radius: var(--vuetify-border-radius-sm) !important;
+}
+
+/* 大圆角卡片（用于特殊场景） */
+.v-card--rounded-xl,
+.v-sheet--rounded-xl {
+  border-radius: var(--vuetify-border-radius-xl) !important;
+}
+
+.v-card--rounded-lg,
+.v-sheet--rounded-lg {
+  border-radius: var(--vuetify-border-radius-lg) !important;
+}
+
+/* ============================================
+   表单组件特殊处理
+   ============================================ */
+
+/* 开关组件 */
+.v-switch .v-switch__track {
+  border-radius: 999px !important;
+}
+
+.v-switch .v-switch__thumb {
+  border-radius: 50% !important;
+}
+
+/* 滑块组件 */
+.v-slider .v-slider__track {
+  border-radius: 999px !important;
+}
+
+.v-slider .v-slider__thumb {
+  border-radius: 50% !important;
+}
+
+/* 进度条 */
+.v-progress-linear .v-progress-linear__determinate {
+  border-radius: 999px !important;
+}
+
+/* ============================================
+   表格组件
+   ============================================ */
+
+.v-data-table {
+  border: 1px solid var(--vuetify-border-color) !important;
+  border-radius: var(--vuetify-border-radius-md) !important;
+  overflow: hidden;
+  background: var(--vuetify-surface) !important;
+}
+
+.v-data-table__thead th {
+  border-bottom: 1px solid var(--vuetify-border-color) !important;
+  background: var(--vuetify-surface-soft) !important;
+}
+
+.v-data-table__tbody tr {
+  border-bottom: 1px solid rgba(36, 49, 39, 0.05) !important;
+}
+
+.v-data-table__tbody tr:hover {
+  background-color: var(--vuetify-primary-soft) !important;
+}
+
+/* ============================================
+   对话框和抽屉
+   ============================================ */
+
+.v-dialog > .v-overlay__content {
+  border-radius: var(--vuetify-border-radius-lg) !important;
+}
+
+.v-bottom-sheet {
+  border-radius: var(--vuetify-border-radius-lg) var(--vuetify-border-radius-lg)
+    0 0 !important;
+}
+
+/* ============================================
+   工具提示
+   ============================================ */
+
+.v-tooltip .v-overlay__content {
+  border-radius: var(--vuetify-border-radius-sm) !important;
+  box-shadow: none !important;
+  border: 1px solid var(--vuetify-border-color) !important;
+  background: var(--vuetify-surface) !important;
+  color: var(--vuetify-text) !important;
+}
+
+/* ============================================
+   确保所有 elevation 都被移除
+   ============================================ */
+
+/* 移除所有 elevation 类的阴影 */
+[class*="elevation-"],
+[class*="elevation"],
+.elevation-0,
+.elevation-1,
+.elevation-2,
+.elevation-3,
+.elevation-4,
+.elevation-5,
+.elevation-6,
+.elevation-7,
+.elevation-8,
+.elevation-9,
+.elevation-10,
+.elevation-11,
+.elevation-12,
+.elevation-13,
+.elevation-14,
+.elevation-15,
+.elevation-16,
+.elevation-17,
+.elevation-18,
+.elevation-19,
+.elevation-20,
+.elevation-21,
+.elevation-22,
+.elevation-23,
+.elevation-24 {
+  box-shadow: none !important;
+}
+
+/* 强制移除所有 Vuetify 组件的阴影，无论是否有 elevation 属性 */
+.v-card,
+.v-sheet,
+.v-btn,
+.v-chip,
+.v-list-item,
+.v-menu .v-overlay__content,
+.v-dialog .v-card,
+.v-navigation-drawer,
+.v-app-bar,
+.v-toolbar,
+.v-tooltip .v-overlay__content,
+.v-bottom-sheet,
+.v-expansion-panels .v-expansion-panel,
+.v-item-group .v-item,
+.v-stepper .v-stepper__step,
+.v-timeline .v-timeline-item {
+  box-shadow: none !important;
+}
+
+/* ============================================
+   保持过渡动画流畅
+   ============================================ */
+
+.v-card,
+.v-btn,
+.v-chip,
+.v-list-item,
+.v-text-field .v-field,
+.v-textarea .v-field {
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease !important;
+}

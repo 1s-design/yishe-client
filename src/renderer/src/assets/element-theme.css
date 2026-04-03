@@ -1,0 +1,106 @@
+:root,
+:host {
+  --el-color-primary: var(--theme-primary) !important;
+  --el-color-primary-light-3: color-mix(
+    in srgb,
+    var(--theme-primary) 72%,
+    white 28%
+  ) !important;
+  --el-color-primary-light-5: color-mix(
+    in srgb,
+    var(--theme-primary) 56%,
+    white 44%
+  ) !important;
+  --el-color-primary-light-7: color-mix(
+    in srgb,
+    var(--theme-primary) 36%,
+    white 64%
+  ) !important;
+  --el-color-primary-light-8: color-mix(
+    in srgb,
+    var(--theme-primary) 24%,
+    white 76%
+  ) !important;
+  --el-color-primary-light-9: color-mix(
+    in srgb,
+    var(--theme-primary) 14%,
+    white 86%
+  ) !important;
+  --el-color-primary-dark-2: color-mix(
+    in srgb,
+    var(--theme-primary) 80%,
+    black 20%
+  ) !important;
+
+  --el-bg-color: var(--theme-surface) !important;
+  --el-bg-color-page: var(--theme-bg) !important;
+  --el-bg-color-overlay: var(--theme-surface) !important;
+  --el-fill-color-blank: var(--theme-surface) !important;
+  --el-fill-color-light: var(--theme-surface-muted) !important;
+  --el-fill-color-lighter: color-mix(
+    in srgb,
+    var(--theme-surface-muted) 88%,
+    transparent
+  ) !important;
+  --el-fill-color-extra-light: color-mix(
+    in srgb,
+    var(--theme-surface-muted) 72%,
+    transparent
+  ) !important;
+
+  --el-border-color: var(--theme-border) !important;
+  --el-border-color-light: color-mix(
+    in srgb,
+    var(--theme-border) 86%,
+    transparent
+  ) !important;
+  --el-border-color-lighter: color-mix(
+    in srgb,
+    var(--theme-border) 62%,
+    transparent
+  ) !important;
+  --el-border-color-extra-light: color-mix(
+    in srgb,
+    var(--theme-border) 44%,
+    transparent
+  ) !important;
+
+  --el-text-color-primary: var(--theme-text) !important;
+  --el-text-color-regular: color-mix(
+    in srgb,
+    var(--theme-text) 78%,
+    var(--theme-text-muted) 22%
+  ) !important;
+  --el-text-color-secondary: var(--theme-text-muted) !important;
+  --el-text-color-placeholder: var(--theme-text-soft) !important;
+
+  --el-mask-color: var(--theme-overlay) !important;
+  --el-box-shadow: var(--theme-shadow-sm) !important;
+  --el-box-shadow-light: var(--theme-shadow-xs) !important;
+  --el-border-radius-base: 14px !important;
+  --el-border-radius-small: 10px !important;
+  --el-border-radius-round: 999px !important;
+}
+
+html[data-theme="dark"] {
+  --el-color-success: var(--theme-success) !important;
+  --el-color-warning: var(--theme-warning) !important;
+  --el-color-danger: var(--theme-danger) !important;
+}
+
+.el-button,
+.el-input__wrapper,
+.el-select__wrapper,
+.el-card,
+.el-dialog,
+.el-dropdown-menu,
+.el-tag,
+.el-alert,
+.el-switch,
+.el-checkbox-button__inner {
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
+}

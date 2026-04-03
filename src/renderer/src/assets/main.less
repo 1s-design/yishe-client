@@ -1,0 +1,159 @@
+@import "@mdi/font/css/materialdesignicons.css";
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+}
+
+html,
+body {
+  scrollbar-width: thin;
+}
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --theme-bg: #f6f6f1;
+  --theme-surface: #ffffff;
+  --theme-surface-strong: #f2f3ed;
+  --theme-surface-muted: #ecefe8;
+  --theme-surface-elevated: rgba(255, 255, 255, 0.9);
+  --theme-sidebar: rgba(250, 250, 246, 0.92);
+  --theme-header: rgba(246, 246, 241, 0.86);
+  --theme-border: rgba(22, 28, 22, 0.08);
+  --theme-border-strong: rgba(22, 28, 22, 0.14);
+  --theme-text: #1f261f;
+  --theme-text-muted: #5f695f;
+  --theme-text-soft: #8b9389;
+  --theme-primary: #1f9d66;
+  --theme-primary-strong: #16784d;
+  --theme-primary-light: rgba(31, 157, 102, 0.1);
+  --theme-primary-dark: rgba(31, 157, 102, 0.18);
+  --theme-accent: #8f9b72;
+  --theme-accent-light: rgba(143, 155, 114, 0.12);
+  --theme-success: #1f9d66;
+  --theme-success-light: rgba(31, 157, 102, 0.12);
+  --theme-warning: #c0821e;
+  --theme-warning-light: rgba(192, 130, 30, 0.14);
+  --theme-danger: #cb6350;
+  --theme-danger-light: rgba(203, 99, 80, 0.14);
+  --theme-overlay: rgba(20, 26, 20, 0.42);
+  --theme-shadow-xs: 0 1px 2px rgba(18, 24, 18, 0.03);
+  --theme-shadow-sm: 0 16px 34px rgba(18, 24, 18, 0.07);
+  --theme-shadow-md: 0 24px 48px rgba(18, 24, 18, 0.12);
+  --theme-shadow-focus: 0 0 0 4px rgba(31, 157, 102, 0.12);
+
+  --sb-track: rgba(148, 163, 184, 0.1);
+  --sb-thumb: rgba(100, 116, 139, 0.28);
+  --sb-thumb-hover: rgba(71, 85, 105, 0.4);
+  --sb-thumb-active: rgba(71, 85, 105, 0.54);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --theme-bg: #111411;
+  --theme-surface: #171b17;
+  --theme-surface-strong: #1c221d;
+  --theme-surface-muted: #232924;
+  --theme-surface-elevated: rgba(23, 27, 23, 0.92);
+  --theme-sidebar: rgba(14, 17, 14, 0.94);
+  --theme-header: rgba(14, 17, 14, 0.84);
+  --theme-border: rgba(156, 167, 156, 0.14);
+  --theme-border-strong: rgba(156, 167, 156, 0.24);
+  --theme-text: #edf2ec;
+  --theme-text-muted: #a7b1a6;
+  --theme-text-soft: #788278;
+  --theme-primary: #58c78f;
+  --theme-primary-strong: #7ad8a8;
+  --theme-primary-light: rgba(88, 199, 143, 0.16);
+  --theme-primary-dark: rgba(88, 199, 143, 0.24);
+  --theme-accent: #b4c285;
+  --theme-accent-light: rgba(180, 194, 133, 0.16);
+  --theme-success: #58c78f;
+  --theme-success-light: rgba(88, 199, 143, 0.14);
+  --theme-warning: #f0ad4e;
+  --theme-warning-light: rgba(240, 173, 78, 0.16);
+  --theme-danger: #f08876;
+  --theme-danger-light: rgba(240, 136, 118, 0.18);
+  --theme-overlay: rgba(6, 10, 15, 0.62);
+  --theme-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --theme-shadow-sm: 0 18px 38px rgba(0, 0, 0, 0.28);
+  --theme-shadow-md: 0 28px 54px rgba(0, 0, 0, 0.36);
+  --theme-shadow-focus: 0 0 0 4px rgba(88, 199, 143, 0.16);
+
+  --sb-track: rgba(148, 163, 184, 0.08);
+  --sb-thumb: rgba(148, 163, 184, 0.2);
+  --sb-thumb-hover: rgba(148, 163, 184, 0.34);
+  --sb-thumb-active: rgba(148, 163, 184, 0.46);
+}
+
+body {
+  background:
+    radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--theme-primary) 7%, transparent),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at bottom right,
+      color-mix(in srgb, var(--theme-accent) 7%, transparent),
+      transparent 28%
+    ),
+    var(--theme-bg);
+  color: var(--theme-text);
+  font-family:
+    "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  transition:
+    background-color 0.24s ease,
+    color 0.24s ease;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--sb-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb);
+  border-radius: 999px;
+  transition: background-color 0.18s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-thumb-hover);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: var(--sb-thumb-active);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

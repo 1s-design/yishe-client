@@ -1,0 +1,111 @@
+name: Build and Release Electron App
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if package.json version changed
+        id: version_check
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            const before = context.payload.before;
+            const isAllZero = (sha) => typeof sha === 'string' && /^0+$/.test(sha);
+
+            const currentPkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const currentVersion = currentPkg.version;
+
+            let previousVersion = null;
+            if (before && !isAllZero(before)) {
+              try {
+                const prevPkgText = execSync(`git show ${before}:package.json`, { encoding: 'utf8' });
+                previousVersion = JSON.parse(prevPkgText).version ?? null;
+              } catch (e) {
+                core.warning(`无法读取上一个提交的 package.json：${e.message}`);
+              }
+            }
+
+            const changed = previousVersion === null ? true : (previousVersion !== currentVersion);
+            core.info(`previousVersion=${previousVersion ?? '(unknown)'}, currentVersion=${currentVersion}, changed=${changed}`);
+            core.setOutput('changed', String(changed));
+
+      - name: Install Node.js
+        if: steps.version_check.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.version_check.outputs.changed == 'true'
+        run: npm ci || (echo "Retry 1..." && sleep 10 && npm ci) || (echo "Retry 2..." && sleep 10 && npm ci)
+
+      - name: Build/Release Electron app
+        if: steps.version_check.outputs.changed == 'true'
+        uses: samuelmeuli/action-electron-builder@v1
+        with:
+          github_token: ${{ secrets.github_token }}
+          release: true
+          draft: false
+          prerelease: false
+        env:
+          GH_TOKEN: ${{ secrets.github_token }}
+
+      - name: Send Feishu Notification
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const status = '${{ job.status }}';
+            const emoji = status === 'success' ? '🚀' : '❌';
+            const commitSha = '${{ github.sha }}'.substring(0, 7);
+            const platforms = '${{ matrix.os }}';
+            
+            const message = {
+              msg_type: "text",
+              content: {
+                text: `${emoji} 衣设Electron应用构建${status === 'success' ? '成功' : '失败'}通知\n\n` +
+                      `项目: ${{ github.repository }}\n` +
+                      `分支: main\n` +
+                      `提交: ${commitSha}\n` +
+                      `平台: ${platforms}\n` +
+                      `提交者: ${{ github.actor }}\n` +
+                      `提交信息: ${{ github.event.head_commit.message }}\n` +
+                      `构建时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
+                      `状态: ${status === 'success' ? '✅ 成功' : '❌ 失败'}\n\n` +
+                      `下载地址: https://github.com/${{ github.repository }}/releases/latest\n` +                      `支持平台: 抖音、小红书、微博、快手、咸鱼、速卖通、亚马逊、希音\n` +                      `注意: 仓库为私有，但 releases 已设置为公开访问`
+              }
+            };
+            
+            await fetch('${{ secrets.FEISHU_WEBHOOK_URL }}', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(message)
+            });
