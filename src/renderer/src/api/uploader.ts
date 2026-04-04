@@ -487,6 +487,23 @@ export interface UploaderTaskLogsResponse {
   message?: string;
 }
 
+export interface UploaderEcomCollectPlatformItem {
+  platform: string;
+  label: string;
+  supportedScenes?: string[];
+}
+
+export interface UploaderEcomCollectResult {
+  runId?: string | null;
+  taskId?: string | null;
+  platform?: string;
+  collectScene?: string;
+  records?: Array<Record<string, any>>;
+  snapshots?: Array<Record<string, any>>;
+  summary?: Record<string, any>;
+  debugMeta?: Record<string, any>;
+}
+
 /**
  * 检测 yishe-uploader 服务是否已启动（可连接）
  */
@@ -1015,6 +1032,83 @@ export async function getUploaderPlatforms(): Promise<{
     };
   } catch (e: any) {
     return { success: false, message: e?.message || "获取平台列表失败" };
+  }
+}
+
+export async function getUploaderEcomCollectPlatforms(): Promise<{
+  success: boolean;
+  data?: {
+    platforms?: UploaderEcomCollectPlatformItem[];
+    scenes?: Array<{ value: string; label: string }>;
+  };
+  message?: string;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/ecom-collect/platforms`, {
+      method: "GET",
+      signal: AbortSignal.timeout(10000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `获取电商采集目录失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: {
+        platforms: Array.isArray(json?.data?.platforms)
+          ? json.data.platforms
+          : [],
+        scenes: Array.isArray(json?.data?.scenes) ? json.data.scenes : [],
+      },
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "获取电商采集目录失败" };
+  }
+}
+
+export async function runUploaderEcomCollect(
+  data: Record<string, unknown>,
+): Promise<{
+  success: boolean;
+  status?: string;
+  data?: UploaderEcomCollectResult;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/ecom-collect/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data || {}),
+      signal: AbortSignal.timeout(
+        typeof data?.timeoutMs === "number" && Number.isFinite(data.timeoutMs)
+          ? Math.max(60_000, Number(data.timeoutMs) + 60_000)
+          : 21 * 60 * 1000,
+      ),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        status: json?.status || "failed",
+        message: json?.message ?? `执行电商采集失败: ${res.status}`,
+        data: json?.data,
+      };
+    }
+    return {
+      success: !!json?.success,
+      status: json?.status || (json?.success ? "success" : "failed"),
+      message: json?.message,
+      data: json?.data,
+    };
+  } catch (e: any) {
+    return {
+      success: false,
+      status: "failed",
+      message: e?.message || "执行电商采集失败",
+    };
   }
 }
 

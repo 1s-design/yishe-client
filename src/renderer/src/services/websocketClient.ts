@@ -14,6 +14,7 @@ import {
   getUploaderLoginStatus,
   getUploaderBrowserPages,
   getUploaderBrowserStatus,
+  getUploaderEcomCollectPlatforms,
   getUploaderPlatforms,
   getUploaderTaskDetail,
   getUploaderTaskList,
@@ -22,6 +23,7 @@ import {
   openUploaderLink,
   openUploaderPlatform,
   publishByUploader,
+  runUploaderEcomCollect,
 } from "../api/uploader";
 import { AUTO_PROCESS_TIMING } from "../config/autoProcessTiming";
 import {
@@ -594,6 +596,7 @@ function buildBrowserAutomationRuntimePatch(
           ? previous.supportedCommands
           : []),
         "executePublishTask",
+        "ecomCollectRun",
         "setAutoDispatch",
       ]),
     ),
@@ -674,6 +677,173 @@ async function emitPublishTaskRuntime(snapshot: PublishTaskRuntimeSnapshot) {
     currentTaskId: browserAutomationExecutionState.taskId,
     lastError: browserAutomationExecutionState.lastError,
   });
+}
+
+async function uploadEcomSnapshotsToCos(
+  command: ServiceCommandEnvelope,
+  snapshots: Array<Record<string, any>>,
+) {
+  const apiBridge = window.api as any;
+  if (!apiBridge?.generateCosKey || !apiBridge?.uploadFileToCos) {
+    return snapshots;
+  }
+
+  const userId = String(command.tenant?.userId || "").trim() || undefined;
+  const account = String(command.tenant?.account || "").trim() || undefined;
+  const entityId =
+    String(command.payload?.runId || command.payload?.taskId || "").trim() ||
+    undefined;
+
+  const uploadedSnapshots: Array<Record<string, any>> = [];
+  for (const snapshot of snapshots) {
+    const localPath = String(snapshot?.path || "").trim();
+    if (!localPath) {
+      uploadedSnapshots.push(snapshot);
+      continue;
+    }
+
+    try {
+      const filename =
+        localPath.split(/[/\\\\]/).filter(Boolean).pop() ||
+        `snapshot-${Date.now()}.png`;
+      const key = await apiBridge.generateCosKey({
+        category: "ecom-collect",
+        filename,
+        account,
+        userId,
+        entityId,
+      });
+      const uploadResult = await apiBridge.uploadFileToCos({
+        filePath: localPath,
+        key,
+      });
+
+      uploadedSnapshots.push({
+        ...snapshot,
+        url: uploadResult?.url || null,
+        key: uploadResult?.key || key || null,
+        uploaded: !!uploadResult?.ok,
+        uploadError:
+          uploadResult?.ok === false
+            ? uploadResult?.msg || "COS 上传失败"
+            : null,
+      });
+    } catch (error) {
+      uploadedSnapshots.push({
+        ...snapshot,
+        uploaded: false,
+        uploadError: serializeError(error),
+      });
+    }
+  }
+
+  return uploadedSnapshots;
+}
+
+async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
+  const runId = String(command.payload?.runId || "").trim();
+  const taskId = String(command.payload?.taskId || "").trim();
+  const platform = String(command.payload?.platform || "").trim();
+  const collectScene = String(command.payload?.collectScene || "").trim();
+  const timeoutMs = Number(command.payload?.timeoutMs) || 20 * 60 * 1000;
+
+  if (!runId) {
+    throw new Error("缺少 runId");
+  }
+  if (!platform) {
+    throw new Error("缺少 platform");
+  }
+  if (!collectScene) {
+    throw new Error("缺少 collectScene");
+  }
+
+  const now = new Date().toISOString();
+  Object.assign(browserAutomationExecutionState, {
+    running: true,
+    taskId: runId,
+    taskType: "ecom-collect",
+    queue: platform,
+    currentStep: `执行电商采集：${platform}/${collectScene}`,
+    progress: null,
+    lastError: null,
+    runtime: {
+      runId,
+      taskId,
+      platform,
+      collectScene,
+    },
+    startedAt: now,
+    finishedAt: null,
+    updatedAt: now,
+  });
+
+  await syncUploaderRuntimeFromLocalState({
+    busy: true,
+    state: "busy",
+    currentTaskId: runId,
+    lastError: null,
+  });
+
+  const response = await runUploaderEcomCollect({
+    runId,
+    taskId,
+    platform,
+    collectScene,
+    timeoutMs,
+    configData:
+      command.payload?.configData &&
+      typeof command.payload.configData === "object"
+        ? command.payload.configData
+        : {},
+  });
+
+  const uploadedSnapshots = await uploadEcomSnapshotsToCos(
+    command,
+    Array.isArray(response.data?.snapshots) ? response.data.snapshots : [],
+  );
+
+  const finishedAt = new Date().toISOString();
+  Object.assign(browserAutomationExecutionState, {
+    running: false,
+    taskId: runId,
+    taskType: "ecom-collect",
+    queue: platform,
+    currentStep: response.success ? "电商采集完成" : "电商采集失败",
+    progress: response.success ? 100 : null,
+    lastError: response.success ? null : response.message || "电商采集失败",
+    runtime: {
+      runId,
+      taskId,
+      platform,
+      collectScene,
+      status: response.status || (response.success ? "success" : "failed"),
+      summary: response.data?.summary || null,
+    },
+    finishedAt,
+    updatedAt: finishedAt,
+  });
+
+  await syncUploaderRuntimeFromLocalState({
+    busy: false,
+    state: undefined,
+    currentTaskId: null,
+    lastError: response.success ? null : response.message || "电商采集失败",
+  });
+
+  return {
+    success: response.success,
+    message:
+      response.message || (response.success ? "电商采集完成" : "电商采集失败"),
+    data: {
+      ...(response.data || {}),
+      runId,
+      taskId,
+      platform,
+      collectScene,
+      status: response.status || (response.success ? "success" : "failed"),
+      snapshots: uploadedSnapshots,
+    },
+  };
 }
 
 async function fetchPendingBatch() {
@@ -2695,6 +2865,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       "getLoginStatus",
       "publish",
       "executePublishTask",
+      "ecomCollectRun",
       "setAutoDispatch",
     ],
     supportedTaskTypes: capabilitySummary.map((item) => item.taskType),
@@ -3110,6 +3281,18 @@ function registerBuiltInLocalServices() {
         };
       }
 
+      if (action === "getEcomCollectPlatforms") {
+        const response = await getUploaderEcomCollectPlatforms();
+        await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "电商采集目录已加载" : "获取电商采集目录失败"),
+          data: response.data || { platforms: [], scenes: [] },
+        };
+      }
+
       if (action === "getLoginStatus") {
         const response = await getUploaderLoginStatus(
           !!command.payload?.refresh,
@@ -3187,6 +3370,22 @@ function registerBuiltInLocalServices() {
             queue,
           },
         };
+      }
+
+      if (action === "ecomCollectRun") {
+        if (browserAutomationExecutionState.running) {
+          return {
+            success: false,
+            message: "浏览器自动化节点繁忙，暂时无法执行电商采集",
+            data: {
+              runId: command.payload?.runId || null,
+              taskId: command.payload?.taskId || null,
+              status: "skipped",
+            },
+          };
+        }
+
+        return executeEcomCollectCommand(command);
       }
 
       if (action === "publish") {
