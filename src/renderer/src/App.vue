@@ -68,6 +68,14 @@ let lastServerCheck = 0;
 const THROTTLE_DELAY = 5000;
 const ACTIVE_WS_STATUSES = ["connecting", "connected", "reconnecting"];
 
+function getNativeApi() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (window as typeof window & { api?: typeof window.api }).api;
+}
+
 const pageMap: Record<
   AppPageKey,
   { label: string; description: string; icon: string }
@@ -441,9 +449,27 @@ async function checkUploaderServiceStatus() {
 
 async function checkLocalServiceStatus() {
   const lastCheckedAt = new Date().toISOString();
+  const nativeApi = getNativeApi();
+
+  if (!nativeApi?.checkLocalServiceStatus) {
+    localServiceStatus.value = "stopped";
+    websocketClient.updateServiceStatus("localService", {
+      label: "本地服务",
+      connected: false,
+      available: false,
+      status: "disconnected",
+      state: "offline",
+      busy: false,
+      message: "当前为浏览器环境，未注入桌面端本地服务能力",
+      lastCheckedAt,
+      lastError: null,
+      supportedCommands: ["refreshRuntime", "health"],
+    });
+    return;
+  }
 
   try {
-    const status = await window.api.checkLocalServiceStatus();
+    const status = await nativeApi.checkLocalServiceStatus();
     localServiceStatus.value = status?.running ? "running" : "stopped";
     websocketClient.updateServiceStatus("localService", {
       label: "本地服务",
@@ -827,23 +853,6 @@ const appFooterText = computed(
   () => `版本 ${appVersion.value || "--"} · ${serviceModeLabel.value}`,
 );
 
-const userCompanyLabel = computed(() => {
-  const company = userInfo.value?.company as
-    | string
-    | Record<string, unknown>
-    | undefined;
-
-  if (!company) {
-    return "";
-  }
-
-  if (typeof company === "object") {
-    return String(company.name || company.label || "--");
-  }
-
-  return String(company);
-});
-
 watch(isLoggedIn, (loggedIn) => {
   if (loggedIn) {
     ensureWebsocketConnected();
@@ -868,14 +877,28 @@ const handleServiceModeChanged = ((
 }) as EventListener;
 
 onMounted(() => {
+  const nativeApi = getNativeApi();
+
   startServerPolling();
   websocketClient.events.on("toast", showToast);
   websocketClient.events.on("log", logHandler);
 
-  void (window.api as any).getAppVersion().then((version: string) => {
-    appVersion.value = version;
-    websocketClient.updateClientInfo({ appVersion: version });
-  });
+  if (typeof nativeApi?.getAppVersion === "function") {
+    void nativeApi
+      .getAppVersion()
+      .then((version: string) => {
+        appVersion.value = version;
+        websocketClient.updateClientInfo({ appVersion: version });
+      })
+      .catch((error) => {
+        console.warn("获取客户端版本失败:", error);
+      });
+  } else {
+    const fallbackVersion =
+      (import.meta.env.VITE_APP_VERSION as string | undefined) || "web";
+    appVersion.value = fallbackVersion;
+    websocketClient.updateClientInfo({ appVersion: fallbackVersion });
+  }
 
   void checkAuthAndGetUserInfo();
 
@@ -894,8 +917,8 @@ onMounted(() => {
   window.addEventListener("auth:logout", handleAuthLogout);
   window.addEventListener("service-mode-changed", handleServiceModeChanged);
 
-  if (window.api.onExtensionConnectionStatus) {
-    window.api.onExtensionConnectionStatus(
+  if (typeof nativeApi?.onExtensionConnectionStatus === "function") {
+    nativeApi.onExtensionConnectionStatus(
       (status: ExtensionConnectionStatus) => {
         extensionConnectionStatus.value = status;
       },

@@ -1,140 +1,210 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { ElMessageBox } from 'element-plus'
-import { useToast } from '../composables/useToast'
+import { computed, ref, onMounted, onUnmounted } from "vue";
+import { ElMessageBox } from "element-plus";
+import { useToast } from "../composables/useToast";
 
-const { showToast } = useToast()
+const { showToast } = useToast();
 
-type ServiceStatus = 'running' | 'stopped' | 'checking'
+type ServiceStatus = "running" | "stopped" | "checking";
 
-const loading = ref(false)
-const acting = ref(false)
-const serviceStatus = ref<ServiceStatus>('stopped')
-const serviceAvailable = ref(false)
-const servicePort = ref(1519)
+const loading = ref(false);
+const acting = ref(false);
+const serviceStatus = ref<ServiceStatus>("stopped");
+const serviceAvailable = ref(false);
+const servicePort = ref(1519);
+const browserEnvMessage = "当前为浏览器环境，未注入桌面端本地服务能力";
+
+function getNativeApi() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (window as typeof window & { api?: typeof window.api }).api;
+}
+
+const supportsNativeApi = computed(() => !!getNativeApi());
 
 const statusMap: Record<
-  'running' | 'stopped',
-  { label: string; type: 'success' | 'danger' | 'warning'; color: string; icon: string }
+  "running" | "stopped",
+  {
+    label: string;
+    type: "success" | "danger" | "warning";
+    color: string;
+    icon: string;
+  }
 > = {
-  running: { label: '运行中', type: 'success', color: '#22c55e', icon: 'mdi-check-circle' },
-  stopped: { label: '未运行', type: 'danger', color: '#ef4444', icon: 'mdi-circle-outline' }
-}
+  running: {
+    label: "运行中",
+    type: "success",
+    color: "#22c55e",
+    icon: "mdi-check-circle",
+  },
+  stopped: {
+    label: "未运行",
+    type: "danger",
+    color: "#ef4444",
+    icon: "mdi-circle-outline",
+  },
+};
 
 async function checkServiceStatus(silent = false) {
   if (!silent) {
-    loading.value = true
+    loading.value = true;
   }
   try {
-    const status = await window.api.checkLocalServiceStatus()
-    serviceStatus.value = status.running ? 'running' : 'stopped'
-    serviceAvailable.value = status.available
-    servicePort.value = status.port
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.checkLocalServiceStatus) {
+      serviceStatus.value = "stopped";
+      serviceAvailable.value = false;
+      servicePort.value = 1519;
+      return;
+    }
+
+    const status = await nativeApi.checkLocalServiceStatus();
+    serviceStatus.value = status.running ? "running" : "stopped";
+    serviceAvailable.value = status.available;
+    servicePort.value = status.port;
   } catch (error: any) {
     if (!silent) {
       showToast({
-        color: 'error',
-        icon: 'mdi-alert-circle-outline',
-        message: error?.message || '检查服务状态失败'
-      })
+        color: "error",
+        icon: "mdi-alert-circle-outline",
+        message: error?.message || "检查服务状态失败",
+      });
     }
-    serviceStatus.value = 'stopped'
-    serviceAvailable.value = false
+    serviceStatus.value = "stopped";
+    serviceAvailable.value = false;
   } finally {
     if (!silent) {
-      loading.value = false
+      loading.value = false;
     }
   }
 }
 
 async function startService() {
-  acting.value = true
+  const nativeApi = getNativeApi();
+  if (!nativeApi?.startLocalService) {
+    showToast({
+      color: "warning",
+      icon: "mdi-monitor-off",
+      message: browserEnvMessage,
+    });
+    return;
+  }
+
+  acting.value = true;
   try {
-    const result = await window.api.startLocalService()
+    const result = await nativeApi.startLocalService();
     if (result.success) {
       showToast({
-        color: 'success',
-        icon: 'mdi-check-circle',
-        message: result.message || '本地服务启动成功'
-      })
+        color: "success",
+        icon: "mdi-check-circle",
+        message: result.message || "本地服务启动成功",
+      });
       // 等待服务启动后检查状态
       setTimeout(() => {
-        checkServiceStatus()
-      }, 1000)
+        checkServiceStatus();
+      }, 1000);
     } else {
       showToast({
-        color: 'error',
-        icon: 'mdi-alert-circle-outline',
-        message: result.message || '启动服务失败'
-      })
+        color: "error",
+        icon: "mdi-alert-circle-outline",
+        message: result.message || "启动服务失败",
+      });
     }
   } catch (error: any) {
     showToast({
-      color: 'error',
-      icon: 'mdi-alert-circle-outline',
-      message: error?.message || '启动服务失败'
-    })
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "启动服务失败",
+    });
   } finally {
-    acting.value = false
+    acting.value = false;
   }
 }
 
 async function stopService() {
-  try {
-    await ElMessageBox.confirm('确认停止本地服务吗？停止后端口 1519 将无法访问。', '确认操作', {
-      confirmButtonText: '停止',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-  } catch {
-    return
+  const nativeApi = getNativeApi();
+  if (!nativeApi?.stopLocalService) {
+    showToast({
+      color: "warning",
+      icon: "mdi-monitor-off",
+      message: browserEnvMessage,
+    });
+    return;
   }
 
-  acting.value = true
   try {
-    const result = await window.api.stopLocalService()
+    await ElMessageBox.confirm(
+      "确认停止本地服务吗？停止后端口 1519 将无法访问。",
+      "确认操作",
+      {
+        confirmButtonText: "停止",
+        cancelButtonText: "取消",
+        type: "warning",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  acting.value = true;
+  try {
+    const result = await nativeApi.stopLocalService();
     if (result.success) {
       showToast({
-        color: 'success',
-        icon: 'mdi-check-circle',
-        message: result.message || '本地服务已停止'
-      })
+        color: "success",
+        icon: "mdi-check-circle",
+        message: result.message || "本地服务已停止",
+      });
     } else {
       showToast({
-        color: 'error',
-        icon: 'mdi-alert-circle-outline',
-        message: result.message || '停止服务失败'
-      })
+        color: "error",
+        icon: "mdi-alert-circle-outline",
+        message: result.message || "停止服务失败",
+      });
     }
   } catch (error: any) {
     showToast({
-      color: 'error',
-      icon: 'mdi-alert-circle-outline',
-      message: error?.message || '停止服务失败'
-    })
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "停止服务失败",
+    });
   } finally {
-    acting.value = false
+    acting.value = false;
     setTimeout(() => {
-      checkServiceStatus()
-    }, 500)
+      checkServiceStatus();
+    }, 500);
   }
 }
 
 function openServiceUrl() {
-  window.open(`http://localhost:${servicePort.value}`, '_blank')
+  if (!supportsNativeApi.value || serviceStatus.value !== "running") {
+    return;
+  }
+
+  window.open(`http://localhost:${servicePort.value}`, "_blank");
 }
 
 function openApiDocs() {
-  window.open(`http://localhost:${servicePort.value}/api-docs`, '_blank')
+  if (!supportsNativeApi.value || serviceStatus.value !== "running") {
+    return;
+  }
+
+  window.open(`http://localhost:${servicePort.value}/api-docs`, "_blank");
 }
 
 onMounted(() => {
-  checkServiceStatus()
-  const interval = setInterval(() => checkServiceStatus(true), 3000)
+  checkServiceStatus();
+  if (!supportsNativeApi.value) {
+    return;
+  }
+
+  const interval = setInterval(() => checkServiceStatus(true), 3000);
   onUnmounted(() => {
-    clearInterval(interval)
-  })
-})
+    clearInterval(interval);
+  });
+});
 </script>
 
 <template>
@@ -144,14 +214,18 @@ onMounted(() => {
         <div class="eyebrow">本地服务</div>
         <h2 class="hero-title">本地服务管理</h2>
         <p class="hero-desc">
-          管理运行在 <strong>1519 端口</strong> 的本地服务，提供 API 接口和 WebSocket 连接功能。
+          管理运行在 <strong>1519 端口</strong> 的本地服务，提供 API 接口和
+          WebSocket 连接功能。
         </p>
       </div>
       <div class="hero-badge" v-if="serviceStatus !== 'checking'">
         <i class="mdi mdi-server-network"></i>
         <div class="badge-meta">
           <span class="badge-label">服务状态</span>
-          <span class="badge-value" :style="{ color: statusMap[serviceStatus]?.color }">
+          <span
+            class="badge-value"
+            :style="{ color: statusMap[serviceStatus]?.color }"
+          >
             {{ statusMap[serviceStatus]?.label }}
           </span>
         </div>
@@ -169,6 +243,15 @@ onMounted(() => {
             </div>
           </div>
 
+          <el-alert
+            v-if="!supportsNativeApi"
+            title="当前为浏览器调试环境，本地服务管理仅在桌面客户端内可用"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 12px"
+          />
+
           <div class="service-info">
             <div class="field-row">
               <div class="field">
@@ -178,7 +261,9 @@ onMounted(() => {
                     :type="statusMap[serviceStatus]?.type || 'info'"
                     effect="plain"
                   >
-                    <i :class="['mdi', statusMap[serviceStatus]?.icon, 'mr-1']"></i>
+                    <i
+                      :class="['mdi', statusMap[serviceStatus]?.icon, 'mr-1']"
+                    ></i>
                     {{ statusMap[serviceStatus]?.label }}
                   </el-tag>
                   <el-tag
@@ -213,6 +298,7 @@ onMounted(() => {
               <el-button
                 v-if="serviceStatus !== 'running'"
                 type="primary"
+                :disabled="!supportsNativeApi"
                 :loading="acting"
                 @click="startService"
                 size="default"
@@ -223,6 +309,7 @@ onMounted(() => {
               <el-button
                 v-else
                 type="danger"
+                :disabled="!supportsNativeApi"
                 :loading="acting"
                 @click="stopService"
                 size="default"
@@ -231,6 +318,7 @@ onMounted(() => {
                 停止服务
               </el-button>
               <el-button
+                :disabled="!supportsNativeApi"
                 :loading="loading"
                 @click="checkServiceStatus"
                 size="default"
@@ -243,15 +331,23 @@ onMounted(() => {
             <div class="tips">
               <div class="tip-item">
                 <i class="mdi mdi-information-outline tip-icon"></i>
-                <span>服务启动后，可以通过 <code>http://localhost:{{ servicePort }}</code> 访问服务。</span>
+                <span
+                  >服务启动后，可以通过
+                  <code>http://localhost:{{ servicePort }}</code>
+                  访问服务。</span
+                >
               </div>
               <div class="tip-item">
                 <i class="mdi mdi-refresh tip-icon"></i>
-                <span>服务状态每 3 秒自动刷新一次，也可以手动点击刷新按钮。</span>
+                <span
+                  >服务状态每 3 秒自动刷新一次，也可以手动点击刷新按钮。</span
+                >
               </div>
               <div class="tip-item">
                 <i class="mdi mdi-alert-circle-outline tip-icon"></i>
-                <span>如果服务显示"运行中"但"不可用"，请检查端口是否被占用或服务是否正常响应。</span>
+                <span
+                  >如果服务显示"运行中"但"不可用"，请检查端口是否被占用或服务是否正常响应。</span
+                >
               </div>
             </div>
           </div>
@@ -269,7 +365,7 @@ onMounted(() => {
           <div class="actions">
             <el-button
               type="primary"
-              :disabled="serviceStatus !== 'running'"
+              :disabled="serviceStatus !== 'running' || !supportsNativeApi"
               @click="openServiceUrl"
               size="default"
             >
@@ -278,7 +374,7 @@ onMounted(() => {
             </el-button>
             <el-button
               type="success"
-              :disabled="serviceStatus !== 'running'"
+              :disabled="serviceStatus !== 'running' || !supportsNativeApi"
               @click="openApiDocs"
               size="default"
             >
@@ -288,7 +384,13 @@ onMounted(() => {
           </div>
 
           <div class="service-urls">
-            <div class="url-item" @click="openServiceUrl" :class="{ disabled: serviceStatus !== 'running' }">
+            <div
+              class="url-item"
+              @click="openServiceUrl"
+              :class="{
+                disabled: serviceStatus !== 'running' || !supportsNativeApi,
+              }"
+            >
               <div class="url-icon">
                 <i class="mdi mdi-web"></i>
               </div>
@@ -300,13 +402,21 @@ onMounted(() => {
                 <i class="mdi mdi-open-in-new"></i>
               </div>
             </div>
-            <div class="url-item" @click="openApiDocs" :class="{ disabled: serviceStatus !== 'running' }">
+            <div
+              class="url-item"
+              @click="openApiDocs"
+              :class="{
+                disabled: serviceStatus !== 'running' || !supportsNativeApi,
+              }"
+            >
               <div class="url-icon">
                 <i class="mdi mdi-book-open-page-variant"></i>
               </div>
               <div class="url-content">
                 <div class="url-label">API 文档</div>
-                <div class="url-value">http://localhost:{{ servicePort }}/api-docs</div>
+                <div class="url-value">
+                  http://localhost:{{ servicePort }}/api-docs
+                </div>
               </div>
               <div class="url-action">
                 <i class="mdi mdi-open-in-new"></i>
@@ -318,7 +428,9 @@ onMounted(() => {
               </div>
               <div class="url-content">
                 <div class="url-label">健康检查</div>
-                <div class="url-value">http://localhost:{{ servicePort }}/api/health</div>
+                <div class="url-value">
+                  http://localhost:{{ servicePort }}/api/health
+                </div>
               </div>
             </div>
           </div>
@@ -381,7 +493,11 @@ onMounted(() => {
   gap: 6px;
   padding: 6px 10px;
   border-radius: 8px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(79, 70, 229, 0.08));
+  background: linear-gradient(
+    135deg,
+    rgba(99, 102, 241, 0.12),
+    rgba(79, 70, 229, 0.08)
+  );
   color: #1f2937;
   min-width: 180px;
   justify-content: flex-start;
@@ -505,7 +621,7 @@ onMounted(() => {
   border-radius: 6px;
   font-size: 13px;
   font-weight: 600;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
 }
 
 .actions {
@@ -549,7 +665,7 @@ onMounted(() => {
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
 }
 
 .service-urls {
@@ -589,7 +705,11 @@ onMounted(() => {
   justify-content: center;
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(79, 70, 229, 0.05));
+  background: linear-gradient(
+    135deg,
+    rgba(99, 102, 241, 0.1),
+    rgba(79, 70, 229, 0.05)
+  );
   border-radius: 8px;
   flex-shrink: 0;
 }
@@ -617,7 +737,7 @@ onMounted(() => {
   font-size: 13px;
   font-weight: 500;
   color: #0f172a;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
   word-break: break-all;
 }
 
@@ -659,4 +779,3 @@ onMounted(() => {
   font-size: 12px;
 }
 </style>
-

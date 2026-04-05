@@ -20,11 +20,20 @@ const { showToast } = useToast();
 const { themePreference, resolvedThemeLabel, setThemePreference } =
   useThemeMode();
 
+function getNativeApi() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (window as typeof window & { api?: typeof window.api }).api;
+}
+
 const isDevelopment = process.env.NODE_ENV === "development";
 const serviceMode = ref<ServiceMode>(getServiceMode());
 const workspaceDirectory = ref("");
 const workspaceLoading = ref(false);
 const selectingWorkspace = ref(false);
+const supportsNativeApi = computed(() => !!getNativeApi());
 
 const currentApiBase = computed(() => getRemoteApiBase());
 const currentWsEndpoint = computed(() => getWsEndpoint());
@@ -97,7 +106,13 @@ const handleServiceModeChange = async (mode: ServiceMode) => {
 const loadWorkspaceDirectory = async () => {
   try {
     workspaceLoading.value = true;
-    const path = await window.api.getWorkspaceDirectory();
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.getWorkspaceDirectory) {
+      workspaceDirectory.value = "";
+      return;
+    }
+
+    const path = await nativeApi.getWorkspaceDirectory();
     workspaceDirectory.value = path || "";
   } catch (error) {
     console.error("加载工作目录失败:", error);
@@ -114,7 +129,17 @@ const loadWorkspaceDirectory = async () => {
 const selectWorkspaceDirectory = async () => {
   try {
     selectingWorkspace.value = true;
-    const selectedPath = await window.api.selectWorkspaceDirectory();
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.selectWorkspaceDirectory) {
+      showToast({
+        color: "warning",
+        icon: "mdi-monitor-off",
+        message: "当前为浏览器环境，未注入桌面端工作目录能力",
+      });
+      return;
+    }
+
+    const selectedPath = await nativeApi.selectWorkspaceDirectory();
     if (!selectedPath) {
       return;
     }
@@ -148,7 +173,17 @@ const openWorkspaceDirectory = async () => {
   }
 
   try {
-    await window.api.openPath(workspaceDirectory.value);
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.openPath) {
+      showToast({
+        color: "warning",
+        icon: "mdi-monitor-off",
+        message: "当前为浏览器环境，未注入桌面端工作目录能力",
+      });
+      return;
+    }
+
+    await nativeApi.openPath(workspaceDirectory.value);
   } catch (error: any) {
     console.error("打开工作目录失败:", error);
     showToast({
@@ -162,7 +197,17 @@ const openWorkspaceDirectory = async () => {
 const clearWorkspaceDirectory = async () => {
   try {
     workspaceLoading.value = true;
-    await window.api.setWorkspaceDirectory("");
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.setWorkspaceDirectory) {
+      showToast({
+        color: "warning",
+        icon: "mdi-monitor-off",
+        message: "当前为浏览器环境，未注入桌面端工作目录能力",
+      });
+      return;
+    }
+
+    await nativeApi.setWorkspaceDirectory("");
     workspaceDirectory.value = "";
     showToast({
       color: "success",
@@ -238,25 +283,29 @@ onBeforeUnmount(() => {
         <div class="workspace-actions">
           <el-button
             type="primary"
+            :disabled="!supportsNativeApi"
             :loading="selectingWorkspace"
             @click="selectWorkspaceDirectory"
           >
             选择目录
           </el-button>
           <el-button
-            :disabled="!workspaceDirectory"
+            :disabled="!workspaceDirectory || !supportsNativeApi"
             @click="openWorkspaceDirectory"
           >
             打开目录
           </el-button>
           <el-button
-            :disabled="!workspaceDirectory || workspaceLoading"
+            :disabled="
+              !workspaceDirectory || workspaceLoading || !supportsNativeApi
+            "
             @click="clearWorkspaceDirectory"
           >
             清除目录
           </el-button>
           <el-button
             text
+            :disabled="!supportsNativeApi"
             :loading="workspaceLoading"
             @click="loadWorkspaceDirectory"
           >
@@ -266,6 +315,9 @@ onBeforeUnmount(() => {
 
         <div v-if="!workspaceDirectory" class="settings-note is-warning">
           工作目录未设置
+        </div>
+        <div v-if="!supportsNativeApi" class="settings-note is-warning">
+          当前为浏览器调试环境，工作目录配置仅在桌面客户端内可用
         </div>
       </article>
 

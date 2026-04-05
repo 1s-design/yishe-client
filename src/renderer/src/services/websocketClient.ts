@@ -33,6 +33,7 @@ import {
   executePublishQueueTask,
   type PublishTaskRuntimeSnapshot,
 } from "./publishTaskDispatch";
+import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
 
 type WsStatus =
   | "idle"
@@ -69,6 +70,14 @@ const LEGACY_SERVICE_KEYS: Record<string, string> = {
   "browser-automation": "uploader",
   "local-service": "localService",
 };
+
+function getNativeApi() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (window as typeof window & { api?: typeof window.api }).api;
+}
 
 // 将图片文件（SVG, WebP等）转换为PNG文件
 async function convertImageFileToPng(
@@ -130,7 +139,12 @@ interface NetworkProfile {
 }
 
 type ClientServiceState = "connected" | "disconnected" | "error" | "unknown";
-type ClientServiceRuntimeState = "idle" | "busy" | "offline" | "error" | "connected";
+type ClientServiceRuntimeState =
+  | "idle"
+  | "busy"
+  | "offline"
+  | "error"
+  | "connected";
 
 interface ClientServiceStatus {
   key: string;
@@ -629,6 +643,7 @@ function buildBrowserAutomationRuntimePatch(
           : []),
         "executePublishTask",
         "ecomCollectRun",
+        "ecomSelectionSupplyMatchRun",
         "setAutoDispatch",
       ]),
     ),
@@ -714,6 +729,7 @@ async function emitPublishTaskRuntime(snapshot: PublishTaskRuntimeSnapshot) {
 async function uploadEcomSnapshotsToCos(
   command: ServiceCommandEnvelope,
   snapshots: Array<Record<string, any>>,
+  category = "ecom-collect",
 ) {
   const apiBridge = window.api as any;
   if (!apiBridge?.generateCosKey || !apiBridge?.uploadFileToCos) {
@@ -736,15 +752,22 @@ async function uploadEcomSnapshotsToCos(
 
     try {
       const filename =
-        localPath.split(/[/\\\\]/).filter(Boolean).pop() ||
-        `snapshot-${Date.now()}.png`;
-      const key = await apiBridge.generateCosKey({
-        category: "ecom-collect",
+        localPath
+          .split(/[/\\\\]/)
+          .filter(Boolean)
+          .pop() || `snapshot-${Date.now()}.png`;
+      const keyResult = await apiBridge.generateCosKey({
+        category,
         filename,
         account,
         userId,
         entityId,
       });
+      if (!keyResult?.ok || !keyResult?.key) {
+        throw new Error(keyResult?.msg || "生成 COS Key 失败");
+      }
+
+      const key = keyResult.key;
       const uploadResult = await apiBridge.uploadFileToCos({
         filePath: localPath,
         key,
@@ -770,6 +793,45 @@ async function uploadEcomSnapshotsToCos(
   }
 
   return uploadedSnapshots;
+}
+
+function mergeUploadedSnapshotsIntoValue(
+  value: unknown,
+  uploadedSnapshotMap: Map<string, Record<string, any>>,
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      mergeUploadedSnapshotsIntoValue(item, uploadedSnapshotMap),
+    );
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const source = value as Record<string, any>;
+  const localPath = String(source.path || "").trim();
+  const nextValue =
+    localPath && uploadedSnapshotMap.has(localPath)
+      ? {
+          ...source,
+          ...uploadedSnapshotMap.get(localPath),
+        }
+      : {
+          ...source,
+        };
+
+  Object.keys(nextValue).forEach((key) => {
+    const current = nextValue[key];
+    if (current && typeof current === "object") {
+      nextValue[key] = mergeUploadedSnapshotsIntoValue(
+        current,
+        uploadedSnapshotMap,
+      );
+    }
+  });
+
+  return nextValue;
 }
 
 async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
@@ -816,11 +878,17 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
     lastError: null,
   });
 
+  const workspaceDir =
+    typeof (window.api as any)?.getWorkspaceDirectory === "function"
+      ? String((await (window.api as any).getWorkspaceDirectory()) || "").trim()
+      : "";
+
   const response = await runUploaderEcomCollect({
     runId,
     taskId,
     platform,
     collectScene,
+    workspaceDir,
     timeoutMs,
     configData:
       command.payload?.configData &&
@@ -832,7 +900,18 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
   const uploadedSnapshots = await uploadEcomSnapshotsToCos(
     command,
     Array.isArray(response.data?.snapshots) ? response.data.snapshots : [],
+    "ecom-collect",
   );
+  const uploadedSnapshotMap = new Map(
+    uploadedSnapshots
+      .map((item) => [String(item?.path || "").trim(), item] as const)
+      .filter(([path]) => !!path),
+  );
+  const uploadedRecords = Array.isArray(response.data?.records)
+    ? response.data.records.map((item) =>
+        mergeUploadedSnapshotsIntoValue(item, uploadedSnapshotMap),
+      )
+    : [];
 
   const finishedAt = new Date().toISOString();
   Object.assign(browserAutomationExecutionState, {
@@ -868,6 +947,7 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
       response.message || (response.success ? "电商采集完成" : "电商采集失败"),
     data: {
       ...(response.data || {}),
+      records: uploadedRecords,
       runId,
       taskId,
       platform,
@@ -876,6 +956,186 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
       snapshots: uploadedSnapshots,
     },
   };
+}
+
+async function executeEcomSelectionSupplyMatchCommand(
+  command: ServiceCommandEnvelope,
+) {
+  const runId = String(command.payload?.runId || "").trim();
+  const taskId = String(command.payload?.taskId || "").trim();
+  const matchType = String(command.payload?.matchType || "supply_match").trim();
+  const timeoutMs = Number(command.payload?.timeoutMs) || 30 * 60 * 1000;
+  const sourceProducts = Array.isArray(command.payload?.sourceProducts)
+    ? command.payload.sourceProducts
+    : [];
+  const optionsData =
+    command.payload?.optionsData &&
+    typeof command.payload.optionsData === "object"
+      ? command.payload.optionsData
+      : {};
+  const supplierPlatforms = Array.isArray(optionsData?.supplierPlatforms)
+    ? optionsData.supplierPlatforms
+    : [];
+
+  if (!runId) {
+    throw new Error("缺少 runId");
+  }
+  if (!sourceProducts.length) {
+    throw new Error("缺少 sourceProducts");
+  }
+
+  const queueLabel = supplierPlatforms.length
+    ? supplierPlatforms.join(",")
+    : "supply-match";
+  const now = new Date().toISOString();
+  Object.assign(browserAutomationExecutionState, {
+    running: true,
+    taskId: runId,
+    taskType: "ecom-selection-supply-match",
+    queue: queueLabel,
+    currentStep: `执行找同款：${queueLabel}`,
+    progress: null,
+    lastError: null,
+    runtime: {
+      runId,
+      taskId,
+      matchType,
+      supplierPlatforms,
+      sourceCount: sourceProducts.length,
+    },
+    startedAt: now,
+    finishedAt: null,
+    updatedAt: now,
+  });
+
+  await syncUploaderRuntimeFromLocalState({
+    busy: true,
+    state: "busy",
+    currentTaskId: runId,
+    lastError: null,
+  });
+
+  const workspaceDir =
+    typeof (window.api as any)?.getWorkspaceDirectory === "function"
+      ? String((await (window.api as any).getWorkspaceDirectory()) || "").trim()
+      : "";
+
+  try {
+    const response = await executeEcomSelectionSupplyMatchTask({
+      runId,
+      taskId,
+      matchType,
+      sourceProducts,
+      sourceSummary:
+        command.payload?.sourceSummary &&
+        typeof command.payload.sourceSummary === "object"
+          ? command.payload.sourceSummary
+          : null,
+      optionsData,
+      timeoutMs,
+      workspaceDir,
+      runCollect: runUploaderEcomCollect,
+    });
+
+    const uploadedSnapshots = await uploadEcomSnapshotsToCos(
+      command,
+      Array.isArray(response.data?.snapshots) ? response.data.snapshots : [],
+      "ecom-selection-supply-match",
+    );
+    const uploadedSnapshotMap = new Map(
+      uploadedSnapshots
+        .map((item) => [String(item?.path || "").trim(), item] as const)
+        .filter(([path]) => !!path),
+    );
+    const uploadedMatchedItems = Array.isArray(response.data?.matchedItems)
+      ? response.data.matchedItems.map((item) =>
+          mergeUploadedSnapshotsIntoValue(item, uploadedSnapshotMap),
+        )
+      : [];
+
+    const finishedAt = new Date().toISOString();
+    Object.assign(browserAutomationExecutionState, {
+      running: false,
+      taskId: runId,
+      taskType: "ecom-selection-supply-match",
+      queue: queueLabel,
+      currentStep: response.success ? "找同款完成" : "找同款失败",
+      progress: response.success ? 100 : null,
+      lastError: response.success ? null : response.message || "找同款失败",
+      runtime: {
+        runId,
+        taskId,
+        matchType,
+        supplierPlatforms,
+        status: response.status || (response.success ? "success" : "failed"),
+        summary: response.data?.summary || null,
+      },
+      finishedAt,
+      updatedAt: finishedAt,
+    });
+
+    await syncUploaderRuntimeFromLocalState({
+      busy: false,
+      state: undefined,
+      currentTaskId: null,
+      lastError: response.success ? null : response.message || "找同款失败",
+    });
+
+    return {
+      success: response.success,
+      message:
+        response.message || (response.success ? "找同款完成" : "找同款失败"),
+      data: {
+        ...(response.data || {}),
+        matchedItems: uploadedMatchedItems,
+        runId,
+        taskId,
+        matchType,
+        status: response.status || (response.success ? "success" : "failed"),
+        snapshots: uploadedSnapshots,
+      },
+    };
+  } catch (error) {
+    const finishedAt = new Date().toISOString();
+    const errorMessage = serializeError(error);
+
+    Object.assign(browserAutomationExecutionState, {
+      running: false,
+      taskId: runId,
+      taskType: "ecom-selection-supply-match",
+      queue: queueLabel,
+      currentStep: "找同款失败",
+      progress: null,
+      lastError: errorMessage,
+      runtime: {
+        runId,
+        taskId,
+        matchType,
+        supplierPlatforms,
+        status: "failed",
+      },
+      finishedAt,
+      updatedAt: finishedAt,
+    });
+
+    await syncUploaderRuntimeFromLocalState({
+      busy: false,
+      state: undefined,
+      currentTaskId: null,
+      lastError: errorMessage,
+    });
+
+    return {
+      success: false,
+      message: errorMessage,
+      data: {
+        runId,
+        taskId,
+        matchType,
+        status: "failed",
+      },
+    };
+  }
 }
 
 async function fetchPendingBatch() {
@@ -2718,6 +2978,33 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
 async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
   const lastCheckedAt = new Date().toISOString();
   const isBusy = isProductionInProgress;
+  const nativeApi = getNativeApi();
+
+  if (!nativeApi) {
+    return {
+      label: "Photoshop",
+      connected: false,
+      available: false,
+      status: "disconnected",
+      state: "offline",
+      busy: isBusy,
+      currentTaskId: currentProductionTaskId,
+      message: "当前为浏览器环境，未注入桌面端 Photoshop 能力",
+      endpoint: "http://localhost:1595",
+      lastCheckedAt,
+      lastError: null,
+      debugAvailable: false,
+      supportedCommands: ["refreshRuntime", "health"],
+      details: {
+        serviceHealthy: false,
+        serviceStatus: "offline",
+        photoshopRunning: false,
+        photoshopReady: false,
+        photoshopStatus: "unsupported",
+        runtime: "browser",
+      },
+    };
+  }
 
   try {
     const health = await photoshopApi.checkHealth();
@@ -2853,6 +3140,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         "getPages",
         "executePublishTask",
         "getEcomCollectCapabilities",
+        "ecomSelectionSupplyMatchRun",
         "setAutoDispatch",
       ],
       supportedTaskTypes: capabilitySummary.map((item) => item.taskType),
@@ -2873,7 +3161,8 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
     });
   }
 
-  const ecomCollectCapability = await getCachedUploaderEcomCollectCapabilities();
+  const ecomCollectCapability =
+    await getCachedUploaderEcomCollectCapabilities();
   const browser = await getUploaderBrowserStatus();
   const available = browser.success && isUploaderBrowserReady(browser.data);
   const browserData = browser.data;
@@ -2907,6 +3196,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       "publish",
       "executePublishTask",
       "ecomCollectRun",
+      "ecomSelectionSupplyMatchRun",
       "setAutoDispatch",
     ],
     supportedTaskTypes: capabilitySummary.map((item) => item.taskType),
@@ -2931,7 +3221,24 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
 }
 
 async function getLocalServiceRuntime(): Promise<Partial<ClientServiceStatus>> {
-  const status = await (window.api as any).checkLocalServiceStatus();
+  const nativeApi = getNativeApi();
+
+  if (!nativeApi?.checkLocalServiceStatus) {
+    return {
+      label: "本地服务",
+      connected: false,
+      available: false,
+      status: "disconnected",
+      state: "offline",
+      busy: false,
+      message: "当前为浏览器环境，未注入桌面端本地服务能力",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+      supportedCommands: ["refreshRuntime", "health"],
+    };
+  }
+
+  const status = await nativeApi.checkLocalServiceStatus();
   return {
     label: "本地服务",
     connected: !!status?.running,
@@ -2947,7 +3254,39 @@ async function getLocalServiceRuntime(): Promise<Partial<ClientServiceStatus>> {
 }
 
 async function getGoogleArtRuntime(): Promise<Partial<ClientServiceStatus>> {
-  const status = await (window.api as any).getGoogleArtStatus();
+  const nativeApi = getNativeApi();
+
+  if (!nativeApi?.getGoogleArtStatus) {
+    return {
+      label: "Google Art",
+      connected: false,
+      available: false,
+      status: "disconnected",
+      state: "offline",
+      busy: false,
+      message: "当前为浏览器环境，未注入桌面端 Google Art 能力",
+      endpoint: "",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+      supportedCommands: ["refreshRuntime", "health"],
+      details: {
+        platform: null,
+        platformName: null,
+        binaryExists: false,
+        binaryPath: null,
+        siteUrl: null,
+        siteAvailable: false,
+        siteStatus: null,
+        siteLatencyMs: null,
+        siteCheckedAt: null,
+        siteError: null,
+        supported: false,
+        runtime: "browser",
+      },
+    };
+  }
+
+  const status = await nativeApi.getGoogleArtStatus();
   const connected = true;
   const siteAvailable = !!status?.siteAvailable;
   const available = siteAvailable;
@@ -3346,11 +3685,10 @@ function registerBuiltInLocalServices() {
         return {
           success: !!data,
           message: data ? "电商采集能力已加载" : "获取电商采集能力失败",
-          data:
-            data || {
-              schemaVersion: 1,
-              platforms: [],
-            },
+          data: data || {
+            schemaVersion: 1,
+            platforms: [],
+          },
         };
       }
 
@@ -3449,6 +3787,22 @@ function registerBuiltInLocalServices() {
         return executeEcomCollectCommand(command);
       }
 
+      if (action === "ecomSelectionSupplyMatchRun") {
+        if (browserAutomationExecutionState.running) {
+          return {
+            success: false,
+            message: "浏览器自动化节点繁忙，暂时无法执行同款匹配",
+            data: {
+              runId: command.payload?.runId || null,
+              taskId: command.payload?.taskId || null,
+              status: "skipped",
+            },
+          };
+        }
+
+        return executeEcomSelectionSupplyMatchCommand(command);
+      }
+
       if (action === "publish") {
         const response = await publishByUploader(
           (command.payload || {}) as Record<string, unknown>,
@@ -3482,10 +3836,15 @@ function registerBuiltInLocalServices() {
     execute: async (command) => {
       if (command.action === "getZooms") {
         const url = command.payload?.url;
+        const nativeApi = getNativeApi();
         if (!url) {
           throw new Error("缺少 Google Art 链接");
         }
-        const data = await (window.api as any).getGoogleArtZooms(url);
+        if (!nativeApi?.getGoogleArtZooms) {
+          throw new Error("当前环境未注入桌面端 Google Art 能力");
+        }
+
+        const data = await nativeApi.getGoogleArtZooms(url);
         await syncServiceRuntime("google-art");
         return {
           success: !!data?.ok,
@@ -3499,6 +3858,7 @@ function registerBuiltInLocalServices() {
       if (command.action === "sync") {
         const url = command.payload?.url;
         const zoomLevel = Number(command.payload?.zoomLevel);
+        const nativeApi = getNativeApi();
 
         if (!url) {
           throw new Error("缺少 Google Art 链接");
@@ -3506,8 +3866,11 @@ function registerBuiltInLocalServices() {
         if (!Number.isFinite(zoomLevel)) {
           throw new Error("缺少分辨率参数");
         }
+        if (!nativeApi?.syncGoogleArtToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Google Art 能力");
+        }
 
-        const data = await (window.api as any).syncGoogleArtToMaterialLibrary({
+        const data = await nativeApi.syncGoogleArtToMaterialLibrary({
           url,
           zoomLevel,
         });
@@ -3633,7 +3996,10 @@ function updateServiceStatus(
     payload,
     "currentTaskId",
   );
-  const hasLastError = Object.prototype.hasOwnProperty.call(payload, "lastError");
+  const hasLastError = Object.prototype.hasOwnProperty.call(
+    payload,
+    "lastError",
+  );
   const next: ClientServiceStatus = {
     key: pluginKey,
     pluginKey,
@@ -3650,7 +4016,9 @@ function updateServiceStatus(
     currentTaskId: hasCurrentTaskId
       ? (payload.currentTaskId ?? null)
       : (previous?.currentTaskId ?? null),
-    lastError: hasLastError ? (payload.lastError ?? null) : (previous?.lastError ?? null),
+    lastError: hasLastError
+      ? (payload.lastError ?? null)
+      : (previous?.lastError ?? null),
     debugAvailable: payload.debugAvailable ?? previous?.debugAvailable ?? false,
     supportedCommands:
       payload.supportedCommands ?? previous?.supportedCommands ?? [],

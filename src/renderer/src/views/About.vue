@@ -1,16 +1,31 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted } from "vue";
 
-const appVersion = ref('')
-const iconSrc = new URL('../assets/icon.png', import.meta.url).href
+const appVersion = ref("");
+const iconSrc = new URL("../assets/icon.png", import.meta.url).href;
+
+function getNativeApi() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (window as typeof window & { api?: typeof window.api }).api;
+}
 
 onMounted(async () => {
   try {
-    appVersion.value = await window.api.getAppVersion()
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.getAppVersion) {
+      appVersion.value =
+        (import.meta.env.VITE_APP_VERSION as string | undefined) || "web";
+      return;
+    }
+
+    appVersion.value = await nativeApi.getAppVersion();
   } catch (error) {
-    console.error('获取版本信息失败:', error)
+    console.error("获取版本信息失败:", error);
   }
-})
+});
 </script>
 
 <template>
@@ -36,4 +51,3 @@ onMounted(async () => {
     </el-card>
   </div>
 </template>
-
