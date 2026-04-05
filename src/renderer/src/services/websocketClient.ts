@@ -14,6 +14,7 @@ import {
   getUploaderLoginStatus,
   getUploaderBrowserPages,
   getUploaderBrowserStatus,
+  getUploaderEcomCollectCapabilities,
   getUploaderEcomCollectPlatforms,
   getUploaderPlatforms,
   getUploaderTaskDetail,
@@ -24,6 +25,7 @@ import {
   openUploaderPlatform,
   publishByUploader,
   runUploaderEcomCollect,
+  type UploaderEcomCollectCapabilitySchema,
 } from "../api/uploader";
 import { AUTO_PROCESS_TIMING } from "../config/autoProcessTiming";
 import {
@@ -462,10 +464,40 @@ const browserAutomationExecutionState = reactive({
   updatedAt: null as string | null,
 });
 
+const uploaderEcomCollectCapabilityCache = {
+  fetchedAt: 0,
+  data: null as UploaderEcomCollectCapabilitySchema | null,
+};
+
+const UPLOADER_ECOM_CAPABILITY_CACHE_TTL = 60_000;
+
 function sleep(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function getCachedUploaderEcomCollectCapabilities(
+  force = false,
+): Promise<UploaderEcomCollectCapabilitySchema | null> {
+  const now = Date.now();
+  if (
+    !force &&
+    uploaderEcomCollectCapabilityCache.data &&
+    now - uploaderEcomCollectCapabilityCache.fetchedAt <
+      UPLOADER_ECOM_CAPABILITY_CACHE_TTL
+  ) {
+    return uploaderEcomCollectCapabilityCache.data;
+  }
+
+  const response = await getUploaderEcomCollectCapabilities();
+  if (!response.success) {
+    return uploaderEcomCollectCapabilityCache.data;
+  }
+
+  uploaderEcomCollectCapabilityCache.fetchedAt = now;
+  uploaderEcomCollectCapabilityCache.data = response.data || null;
+  return uploaderEcomCollectCapabilityCache.data;
 }
 
 function loadBrowserAutomationAutoDispatchEnabled() {
@@ -2820,6 +2852,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         "forceClose",
         "getPages",
         "executePublishTask",
+        "getEcomCollectCapabilities",
         "setAutoDispatch",
       ],
       supportedTaskTypes: capabilitySummary.map((item) => item.taskType),
@@ -2830,10 +2863,17 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         serviceMessage: status.message ?? null,
         autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
         capabilities: capabilitySummary,
+        ecomCollect: uploaderEcomCollectCapabilityCache.data
+          ? {
+              ...uploaderEcomCollectCapabilityCache.data,
+              source: "cache",
+            }
+          : null,
       },
     });
   }
 
+  const ecomCollectCapability = await getCachedUploaderEcomCollectCapabilities();
   const browser = await getUploaderBrowserStatus();
   const available = browser.success && isUploaderBrowserReady(browser.data);
   const browserData = browser.data;
@@ -2862,6 +2902,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       "getTaskDetail",
       "getTaskLogs",
       "getPlatforms",
+      "getEcomCollectCapabilities",
       "getLoginStatus",
       "publish",
       "executePublishTask",
@@ -2879,6 +2920,12 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       pages: Array.isArray(browserData?.pages) ? browserData?.pages : [],
       autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
       capabilities: capabilitySummary,
+      ecomCollect: ecomCollectCapability
+        ? {
+            ...ecomCollectCapability,
+            source: "uploader",
+          }
+        : null,
     },
   });
 }
@@ -3289,7 +3336,21 @@ function registerBuiltInLocalServices() {
           message:
             response.message ||
             (response.success ? "电商采集目录已加载" : "获取电商采集目录失败"),
-          data: response.data || { platforms: [], scenes: [] },
+          data: response.data || { platforms: [] },
+        };
+      }
+
+      if (action === "getEcomCollectCapabilities") {
+        const data = await getCachedUploaderEcomCollectCapabilities(true);
+        await syncServiceRuntime("uploader");
+        return {
+          success: !!data,
+          message: data ? "电商采集能力已加载" : "获取电商采集能力失败",
+          data:
+            data || {
+              schemaVersion: 1,
+              platforms: [],
+            },
         };
       }
 

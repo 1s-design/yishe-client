@@ -488,9 +488,77 @@ export interface UploaderTaskLogsResponse {
 }
 
 export interface UploaderEcomCollectPlatformItem {
+  value: string;
   platform: string;
   label: string;
+  status?: string;
+  statusLabel?: string;
+  runnable?: boolean;
+  reason?: string | null;
+  regions?: string[];
   supportedScenes?: string[];
+  scenes?: UploaderEcomCollectSceneSchema[];
+  docs?: Record<string, any>;
+  maintenance?: Record<string, any>;
+}
+
+export interface UploaderEcomCollectFieldOption {
+  label: string;
+  value: string | number | boolean;
+  description?: string;
+}
+
+export interface UploaderEcomCollectFieldSchema {
+  key: string;
+  label: string;
+  component:
+    | "input"
+    | "textarea"
+    | "input-number"
+    | "url"
+    | "select"
+    | "switch"
+    | "json"
+    | "array-text";
+  valueType?: string;
+  required?: boolean;
+  placeholder?: string;
+  description?: string;
+  defaultValue?: any;
+  rows?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  examples?: any[];
+  options?: UploaderEcomCollectFieldOption[];
+}
+
+export interface UploaderEcomCollectSceneSchema {
+  value: string;
+  label: string;
+  description?: string;
+  availability?: string;
+  availabilityLabel?: string;
+  runnable?: boolean;
+  verification?: string;
+  verificationLabel?: string;
+  reason?: string | null;
+  fields?: UploaderEcomCollectFieldSchema[];
+  docs?: {
+    overview?: string;
+    notes?: string[];
+    examples?: Array<{
+      title?: string;
+      description?: string;
+      payload?: Record<string, any>;
+    }>;
+  };
+}
+
+export interface UploaderEcomCollectCapabilitySchema {
+  schemaVersion?: number;
+  generatedAt?: string;
+  platforms?: UploaderEcomCollectPlatformItem[];
 }
 
 export interface UploaderEcomCollectResult {
@@ -1039,7 +1107,6 @@ export async function getUploaderEcomCollectPlatforms(): Promise<{
   success: boolean;
   data?: {
     platforms?: UploaderEcomCollectPlatformItem[];
-    scenes?: Array<{ value: string; label: string }>;
   };
   message?: string;
 }> {
@@ -1061,11 +1128,51 @@ export async function getUploaderEcomCollectPlatforms(): Promise<{
         platforms: Array.isArray(json?.data?.platforms)
           ? json.data.platforms
           : [],
-        scenes: Array.isArray(json?.data?.scenes) ? json.data.scenes : [],
       },
     };
   } catch (e: any) {
     return { success: false, message: e?.message || "获取电商采集目录失败" };
+  }
+}
+
+export async function getUploaderEcomCollectCapabilities(): Promise<{
+  success: boolean;
+  data?: UploaderEcomCollectCapabilitySchema;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(
+      `${UPLOADER_API_BASE}/api/ecom-collect/capabilities`,
+      {
+        method: "GET",
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `获取电商采集能力失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: {
+        schemaVersion:
+          typeof json?.data?.schemaVersion === "number"
+            ? json.data.schemaVersion
+            : undefined,
+        generatedAt:
+          typeof json?.data?.generatedAt === "string"
+            ? json.data.generatedAt
+            : undefined,
+        platforms: Array.isArray(json?.data?.platforms)
+          ? json.data.platforms
+          : [],
+      },
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "获取电商采集能力失败" };
   }
 }
 
