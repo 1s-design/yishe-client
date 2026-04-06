@@ -31,7 +31,7 @@ import {
   syncGoogleArtToMaterialLibrary,
   getGoogleArtStatus,
 } from "./googleArt";
-import { uploadFileToCos } from "./cos";
+import { generateCosKey, uploadFileToCos } from "./cos";
 import sharp from "sharp";
 import { createHash } from "crypto";
 import {
@@ -1920,7 +1920,6 @@ ipcMain.handle(
       timestamp?: number;
     },
   ) => {
-    const { generateCosKey } = await import("./cos");
     try {
       const key = await generateCosKey({
         category: payload.category,

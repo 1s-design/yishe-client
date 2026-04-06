@@ -63,11 +63,11 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            build_args: --mac dmg --config package.json
-            csc_identity_auto_discovery: 'false'
+            build_args: --mac dmg --config electron-builder.yml
+            csc_identity_auto_discovery: "false"
           - os: windows-latest
-            build_args: --win portable --config package.json
-            csc_identity_auto_discovery: ''
+            build_args: --win portable --config electron-builder.yml
+            csc_identity_auto_discovery: ""
 
     steps:
       - name: Check out Git repository
@@ -77,7 +77,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci || (echo "Retry 1..." && sleep 10 && npm ci) || (echo "Retry 2..." && sleep 10 && npm ci)

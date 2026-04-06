@@ -1,24 +1,30 @@
-appId: com.electron.app
-productName: yishe-electron
+appId: com.yishe.electron
+productName: Yishe Electron
 directories:
   buildResources: build
+  output: release
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - "!**/.vscode/*"
+  - "!src/*"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
+  - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
+  - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
 asarUnpack:
   - resources/**
+generateUpdatesFilesForAllChannels: false
 win:
-  executableName: yishe-electron
+  target:
+    - portable
+  executableName: yishe-client
+  artifactName: yishe-client.${ext}
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
-  shortcutName: ${productName}
-  uninstallDisplayName: ${productName}
-  createDesktopShortcut: always
+  differentialPackage: false
 mac:
+  category: public.app-category.utilities
+  target:
+    - dmg
+  artifactName: yishe-client.${ext}
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
@@ -27,19 +33,37 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
 dmg:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: yishe-client.${ext}
+  writeUpdateInfo: false
 linux:
   target:
-    - AppImage
-    - snap
-    - deb
-  maintainer: electronjs.org
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+    - target: rpm
+      arch:
+        - x64
+        - arm64
+    - target: snap
+      arch:
+        - x64
   category: Utility
-appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: yishe-client-${version}-${arch}.${ext}
+  icon: resources/icon.png
+  desktop:
+    Name: Yishe Client
+    Comment: 衣设客户端
+    GenericName: Yishe Client
+    Categories: Utility;
+    Keywords: yishe;client;
 npmRebuild: false
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  releaseType: release
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/

@@ -34,6 +34,7 @@ import {
   type PublishTaskRuntimeSnapshot,
 } from "./publishTaskDispatch";
 import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
+import { getWsEndpoint, setServiceMode } from "../config/api";
 
 type WsStatus =
   | "idle"
@@ -3902,14 +3903,11 @@ function emitClientInfo() {
 }
 
 async function connect(endpoint?: string) {
-  // 如果没有指定endpoint，优先从配置管理模块动态获取
   let targetEndpoint = endpoint;
   if (!targetEndpoint) {
     try {
-      const { getWsEndpoint } = await import("../config/api");
       targetEndpoint = getWsEndpoint();
     } catch {
-      // 如果获取失败，使用 wsState.endpoint 或默认值
       targetEndpoint = wsState.endpoint || DEFAULT_WS_ENDPOINT;
     }
   }
@@ -4048,8 +4046,6 @@ void fetchNetworkProfile();
 
 // 服务切换方法
 async function switchService(mode: "local" | "remote") {
-  // 动态导入避免循环依赖
-  const { setServiceMode, getWsEndpoint } = await import("../config/api");
   setServiceMode(mode);
   const newEndpoint = getWsEndpoint();
   setEndpoint(newEndpoint); // 这会先断开旧连接，再连接新地址
