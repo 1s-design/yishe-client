@@ -51,20 +51,26 @@ export function setServiceMode(mode: ServiceMode): void {
   }
 }
 
+export function getApiBaseByMode(mode: ServiceMode): string {
+  return mode === 'local'
+    ? 'http://localhost:1520/api'
+    : 'https://1s.design:1520/api'
+}
+
+export function getWsEndpointByMode(mode: ServiceMode): string {
+  return mode === 'local'
+    ? 'http://localhost:1520/ws'
+    : 'https://1s.design:1520/ws'
+}
+
 // 动态获取远程API地址
 export function getRemoteApiBase(): string {
-  const mode = getServiceMode()
-  return mode === 'local' 
-    ? 'http://localhost:1520/api' 
-    : 'https://1s.design:1520/api'
+  return getApiBaseByMode(getServiceMode())
 }
 
 // 动态获取WebSocket地址
 export function getWsEndpoint(): string {
-  const mode = getServiceMode()
-  return mode === 'local'
-    ? 'http://localhost:1520/ws'
-    : 'https://1s.design:1520/ws'
+  return getWsEndpointByMode(getServiceMode())
 }
 
 // 本地 Electron 服务地址（健康检查、token 管理等，固定不变）
@@ -77,4 +83,3 @@ export const UPLOADER_API_BASE = 'http://127.0.0.1:7010'
 // 注意：这些值在模块加载时确定，如果需要动态获取，请使用上面的函数
 export const REMOTE_API_BASE = getRemoteApiBase()
 export const WS_ENDPOINT = getWsEndpoint()
-

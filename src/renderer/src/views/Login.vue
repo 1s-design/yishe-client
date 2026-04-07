@@ -3,7 +3,10 @@
     <section class="login-panel">
       <header class="login-panel__header">
         <div class="login-brandline">
-          <div class="login-brandline__title">衣设客户端</div>
+          <div class="login-brand">
+            <img :src="appIconSrc" alt="衣设客户端图标" class="login-brand__icon" />
+            <div class="login-brandline__title">衣设客户端</div>
+          </div>
 
           <el-dropdown trigger="click" placement="bottom-end">
             <el-button text class="login-theme">
@@ -25,9 +28,6 @@
             </template>
           </el-dropdown>
         </div>
-
-        <h1 class="login-title">登录</h1>
-        <p class="login-desc">输入账号密码后进入客户端</p>
       </header>
 
       <el-form
@@ -37,7 +37,6 @@
         autocomplete="on"
       >
         <el-form-item
-          label="账号"
           :error="accountHelp || undefined"
           :show-message="false"
           class="login-form__item"
@@ -47,7 +46,8 @@
             size="large"
             clearable
             autocomplete="username"
-            placeholder="请输入账号"
+            aria-label="账号"
+            placeholder="账号"
             class="login-input"
           />
           <div
@@ -60,7 +60,6 @@
         </el-form-item>
 
         <el-form-item
-          label="密码"
           :error="passwordHelp || undefined"
           :show-message="false"
           class="login-form__item"
@@ -69,7 +68,8 @@
             v-model="form.password"
             size="large"
             autocomplete="current-password"
-            placeholder="请输入密码"
+            aria-label="密码"
+            placeholder="密码"
             show-password
             class="login-input"
           />
@@ -102,37 +102,33 @@
         </el-button>
 
         <div class="login-sideinfo">
-          <div class="login-sideinfo__row">
+          <div class="login-sideinfo__row login-sideinfo__row--inline">
             <span class="login-sideinfo__label">服务模式</span>
-            <el-radio-group
-              v-model="serviceMode"
-              @change="handleServiceModeChange"
-              class="segmented-group"
-              :disabled="!isDevelopment"
+            <div
+              class="service-toggle"
+              :class="{ 'is-disabled': !isDevelopment }"
+              role="group"
+              aria-label="服务模式"
             >
-              <el-radio-button label="local">本地</el-radio-button>
-              <el-radio-button label="remote">远程</el-radio-button>
-            </el-radio-group>
-          </div>
-
-          <div class="login-sideinfo__row login-sideinfo__row--stack">
-            <span class="login-sideinfo__label">连接地址</span>
-            <div class="login-endpoints">
-              <div class="login-endpoints__item">
-                <span class="login-endpoints__tag">API</span>
-                <span class="login-endpoints__text">{{ currentApiBase }}</span>
-              </div>
-              <div class="login-endpoints__item">
-                <span class="login-endpoints__tag">WS</span>
-                <span class="login-endpoints__text">{{
-                  currentWsEndpoint
-                }}</span>
-              </div>
+              <button
+                type="button"
+                class="service-toggle__option"
+                :class="{ 'is-active': serviceMode === 'local' }"
+                :disabled="!isDevelopment"
+                @click="handleServiceModeChange('local')"
+              >
+                本地
+              </button>
+              <button
+                type="button"
+                class="service-toggle__option"
+                :class="{ 'is-active': serviceMode === 'remote' }"
+                :disabled="!isDevelopment"
+                @click="handleServiceModeChange('remote')"
+              >
+                远程
+              </button>
             </div>
-          </div>
-
-          <div class="login-sideinfo__note">
-            {{ isDevelopment ? serviceModeLabel : "生产环境固定为远程服务" }}
           </div>
         </div>
       </el-form>
@@ -144,10 +140,8 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { login } from "../api/auth";
 import {
-  getRemoteApiBase,
+  getApiBaseByMode,
   getServiceMode,
-  getWsEndpoint,
-  setServiceMode,
   type ServiceMode,
 } from "../config/api";
 import { updateApiBaseUrl } from "../api/request";
@@ -161,6 +155,7 @@ const emit = defineEmits<{
 const loading = ref(false);
 const errorMessage = ref("");
 const serviceMode = ref<ServiceMode>(getServiceMode());
+const appIconSrc = new URL("../assets/icon.png", import.meta.url).href;
 const isDevelopment = process.env.NODE_ENV === "development";
 const { themePreferenceLabel, themeToggleIcon, setThemePreference } =
   useThemeMode();
@@ -173,23 +168,21 @@ const form = reactive({
 const formValid = computed(
   () => form.account.trim().length >= 3 && form.password.length >= 6,
 );
-const serviceModeLabel = computed(() =>
-  serviceMode.value === "local" ? "本地服务模式" : "远程服务模式",
-);
-const currentApiBase = computed(() => getRemoteApiBase());
-const currentWsEndpoint = computed(() => getWsEndpoint());
 
 const handleServiceModeChange = async (mode: ServiceMode) => {
+  if (mode === serviceMode.value) {
+    return;
+  }
+
   if (!isDevelopment) {
     serviceMode.value = getServiceMode();
     return;
   }
 
   try {
-    setServiceMode(mode);
-    serviceMode.value = mode;
-    updateApiBaseUrl(getRemoteApiBase());
     websocketClient.switchService(mode);
+    serviceMode.value = mode;
+    updateApiBaseUrl(getApiBaseByMode(mode));
   } catch (error) {
     console.error("切换服务配置失败:", error);
     serviceMode.value = getServiceMode();
@@ -197,7 +190,7 @@ const handleServiceModeChange = async (mode: ServiceMode) => {
 };
 
 onMounted(() => {
-  updateApiBaseUrl(getRemoteApiBase());
+  updateApiBaseUrl(getApiBaseByMode(serviceMode.value));
 });
 
 const accountHelp = computed(() => {
@@ -236,40 +229,139 @@ const handleLogin = async () => {
 
 <style scoped>
 .login-page {
+  position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
   min-height: 100%;
   padding: 8px;
+  background:
+    radial-gradient(
+      circle at top,
+      color-mix(in srgb, var(--theme-text) 3%, transparent),
+      transparent 48%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--theme-bg) 84%, var(--theme-surface) 16%),
+      var(--theme-bg)
+    );
   overflow: hidden;
 }
 
+.login-page::before,
+.login-page::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.login-page::before {
+  inset: -16%;
+  z-index: -2;
+  background:
+    radial-gradient(
+      circle at 16% 18%,
+      color-mix(in srgb, var(--theme-warning) 18%, transparent),
+      transparent 26%
+    ),
+    radial-gradient(
+      circle at 82% 20%,
+      color-mix(in srgb, var(--theme-success) 16%, transparent),
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at 52% 86%,
+      color-mix(in srgb, var(--theme-text) 7%, transparent),
+      transparent 30%
+    );
+  filter: blur(14px);
+  opacity: 0.9;
+  transform: translate3d(0, 0, 0) scale(1.02);
+  animation: loginAmbientFloat 18s ease-in-out infinite alternate;
+}
+
+.login-page::after {
+  z-index: -1;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--theme-text) 4%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--theme-text) 3%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 68px 68px;
+  opacity: 0.3;
+  mask-image: radial-gradient(circle at center, black 18%, transparent 78%);
+  animation: loginGridDrift 26s linear infinite;
+}
+
 .login-panel {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  max-width: 320px;
+  max-width: 348px;
   max-height: 100%;
-  padding: 12px;
+  padding: 14px 14px 12px;
   border: 1px solid var(--theme-border);
   border-radius: 16px;
-  background: var(--theme-surface);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--theme-surface) 92%, var(--theme-surface-strong) 8%),
+      var(--theme-surface)
+    );
+  box-shadow:
+    0 24px 60px color-mix(in srgb, var(--theme-text) 8%, transparent),
+    0 8px 24px color-mix(in srgb, var(--theme-text) 4%, transparent);
   overflow: hidden;
+}
+
+.login-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--theme-success) 10%, transparent),
+      transparent 28%
+    ),
+    linear-gradient(
+      115deg,
+      transparent 0%,
+      color-mix(in srgb, var(--theme-warning) 8%, transparent) 46%,
+      transparent 68%
+    );
+  opacity: 0.7;
+  transform: translate3d(-10%, -4%, 0);
+  animation: loginPanelSheen 12s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .login-panel__header,
 .login-form,
 .login-sideinfo {
+  position: relative;
+  z-index: 1;
   width: 100%;
 }
 
 .login-panel__header {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 2px;
+  gap: 4px;
 }
 
 .login-brandline {
@@ -277,6 +369,22 @@ const handleLogin = async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.login-brand {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-brand__icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--theme-text) 10%, transparent);
+  object-fit: cover;
 }
 
 .login-brandline__title {
@@ -305,55 +413,40 @@ const handleLogin = async () => {
   line-height: 1;
 }
 
-.login-title {
-  margin: 0;
-  color: var(--theme-text);
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.02em;
-}
-
-.login-desc {
-  margin: 0;
-  color: var(--theme-text-muted);
-  font-size: 10px;
-  line-height: 1.4;
-}
-
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   align-items: stretch;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--theme-border) 92%, transparent);
+  border-radius: 14px;
+  background: var(--theme-surface);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--theme-contrast) 18%, transparent) inset;
 }
 
 .login-form__item {
   margin-bottom: 0;
 }
 
-.login-form__item :deep(.el-form-item__label) {
-  color: var(--theme-text);
-  font-size: 10px;
-  font-weight: 600;
-  margin-bottom: 4px;
-  padding-bottom: 0;
-  line-height: 1.1;
-}
-
 .login-form__item :deep(.el-form-item__content) {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 3px;
+  gap: 2px;
+  padding-bottom: 14px;
 }
 
 .login-form__hint {
-  min-height: 14px;
+  position: absolute;
+  left: 1px;
+  right: 0;
+  bottom: 0;
+  min-height: 12px;
   color: var(--theme-danger);
   font-size: 10px;
-  line-height: 1.35;
-  padding-left: 2px;
+  line-height: 1.25;
 }
 
 .login-form__hint.is-empty {
@@ -365,9 +458,9 @@ const handleLogin = async () => {
 }
 
 .login-input :deep(.el-input__wrapper) {
-  min-height: 34px;
+  min-height: 32px;
   border: 1px solid var(--theme-border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--theme-surface);
   box-shadow: none;
 }
@@ -413,9 +506,9 @@ const handleLogin = async () => {
   --el-button-disabled-border-color: var(--theme-border);
   --el-button-disabled-text-color: var(--theme-text-soft);
   width: 100%;
-  height: 34px;
-  margin-top: 2px;
-  border-radius: 10px;
+  height: 32px;
+  margin-top: 0;
+  border-radius: 9px;
   border-color: var(--theme-text);
   background: var(--theme-text);
   color: var(--theme-contrast);
@@ -430,20 +523,21 @@ const handleLogin = async () => {
 .login-sideinfo {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 2px;
-  padding-top: 8px;
+  gap: 6px;
+  padding-top: 6px;
   border-top: 1px solid var(--theme-border);
 }
 
 .login-sideinfo__row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 4px;
 }
 
-.login-sideinfo__row--stack {
-  gap: 5px;
+.login-sideinfo__row--inline {
+  align-items: center;
 }
 
 .login-sideinfo__label {
@@ -452,87 +546,65 @@ const handleLogin = async () => {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  line-height: 1;
+  line-height: 1.2;
 }
 
-.segmented-group {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  align-self: stretch;
+.service-toggle {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(46px, auto);
+  justify-self: start;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid var(--theme-border);
+  border-radius: 9px;
+  background: var(--theme-surface-strong);
 }
 
-.segmented-group :deep(.el-radio-button__inner) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 72px;
-  min-height: 26px;
-  border-radius: 9px !important;
+.service-toggle.is-disabled {
+  opacity: 0.7;
+}
+
+.service-toggle__option {
+  min-height: 24px;
   padding: 0 8px;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 600;
-}
-
-.segmented-group :deep(.el-radio-button:first-child .el-radio-button__inner),
-.segmented-group :deep(.el-radio-button:last-child .el-radio-button__inner) {
-  border-radius: 9px !important;
-}
-
-.segmented-group
-  :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: var(--theme-text) !important;
-  border-color: var(--theme-text) !important;
-  color: var(--theme-contrast) !important;
-}
-
-.login-endpoints {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.login-endpoints__item {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 6px;
-  align-items: start;
-}
-
-.login-endpoints__tag {
-  color: var(--theme-text-soft);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-muted);
   font-size: 9px;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
-.login-endpoints__text {
-  min-width: 0;
-  color: var(--theme-text-muted);
-  font-size: 9px;
-  line-height: 1.3;
-  word-break: break-all;
+.service-toggle__option:hover:not(:disabled) {
+  color: var(--theme-text);
 }
 
-.login-sideinfo__note {
-  color: var(--theme-text-muted);
-  font-size: 9px;
-  line-height: 1.25;
+.service-toggle__option.is-active {
+  background: var(--theme-text);
+  color: var(--theme-contrast);
+  box-shadow: var(--theme-shadow-xs);
+}
+
+.service-toggle__option:disabled {
+  cursor: not-allowed;
 }
 
 @media (max-height: 620px) {
   .login-panel {
-    max-width: 304px;
-    padding: 10px;
-  }
-
-  .login-title {
-    font-size: 20px;
+    max-width: 332px;
+    padding: 12px 12px 10px;
   }
 
   .login-form {
-    gap: 8px;
+    gap: 7px;
+    padding: 9px;
   }
 
   .login-input :deep(.el-input__wrapper) {
@@ -541,6 +613,63 @@ const handleLogin = async () => {
 
   .login-form__submit {
     height: 32px;
+  }
+
+  .login-sideinfo__row {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-page::before,
+  .login-page::after,
+  .login-panel::before {
+    animation: none;
+  }
+}
+
+@keyframes loginAmbientFloat {
+  0% {
+    transform: translate3d(-2%, 0, 0) scale(1.01);
+  }
+
+  50% {
+    transform: translate3d(1.5%, -2.5%, 0) scale(1.04);
+  }
+
+  100% {
+    transform: translate3d(3%, 1.5%, 0) scale(1.03);
+  }
+}
+
+@keyframes loginGridDrift {
+  0% {
+    background-position:
+      0 0,
+      0 0;
+  }
+
+  100% {
+    background-position:
+      68px 0,
+      0 68px;
+  }
+}
+
+@keyframes loginPanelSheen {
+  0% {
+    transform: translate3d(-12%, -5%, 0);
+    opacity: 0.45;
+  }
+
+  50% {
+    transform: translate3d(8%, 3%, 0);
+    opacity: 0.72;
+  }
+
+  100% {
+    transform: translate3d(-4%, 6%, 0);
+    opacity: 0.52;
   }
 }
 </style>

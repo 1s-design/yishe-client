@@ -3,10 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessageBox } from "element-plus";
 import { updateApiBaseUrl } from "../api/request";
 import {
-  getRemoteApiBase,
+  getApiBaseByMode,
   getServiceMode,
-  getWsEndpoint,
-  setServiceMode,
+  getWsEndpointByMode,
   type ServiceMode,
 } from "../config/api";
 import { useToast } from "../composables/useToast";
@@ -35,8 +34,8 @@ const workspaceLoading = ref(false);
 const selectingWorkspace = ref(false);
 const supportsNativeApi = computed(() => !!getNativeApi());
 
-const currentApiBase = computed(() => getRemoteApiBase());
-const currentWsEndpoint = computed(() => getWsEndpoint());
+const currentApiBase = computed(() => getApiBaseByMode(serviceMode.value));
+const currentWsEndpoint = computed(() => getWsEndpointByMode(serviceMode.value));
 const themeDescription = computed(() =>
   themePreference.value === "auto"
     ? `当前显示：${resolvedThemeLabel.value}`
@@ -88,10 +87,9 @@ const handleServiceModeChange = async (mode: ServiceMode) => {
       },
     );
 
-    setServiceMode(mode);
-    serviceMode.value = mode;
-    updateApiBaseUrl(getRemoteApiBase());
     websocketClient.switchService(mode);
+    serviceMode.value = mode;
+    updateApiBaseUrl(getApiBaseByMode(mode));
 
     showToast({
       color: "success",
