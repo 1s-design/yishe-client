@@ -22,6 +22,7 @@ export interface PublishTaskRuntimeSnapshot {
   taskType: string;
   queue: string;
   status: PublishTaskRuntimeStatus;
+  profileId?: string | null;
   message?: string;
   currentStep?: string | null;
   progress?: number | null;
@@ -31,6 +32,7 @@ export interface PublishTaskRuntimeSnapshot {
 
 type ExecutePublishTaskOptions = {
   onRuntime?: (snapshot: PublishTaskRuntimeSnapshot) => void | Promise<void>;
+  profileId?: string;
 };
 
 class PublishTaskRetryableError extends Error {
@@ -95,6 +97,7 @@ export async function executePublishQueueTask(
   const normalizedTaskId = String(taskId || "").trim();
   const normalizedTaskType = String(taskType || "").trim();
   const normalizedQueue = String(queue || normalizedTaskType || "").trim();
+  const forcedProfileId = String(options?.profileId || "").trim() || null;
 
   if (!normalizedTaskId) {
     throw new Error("缺少 taskId");
@@ -111,6 +114,7 @@ export async function executePublishQueueTask(
     taskType: normalizedTaskType,
     queue: normalizedQueue,
     status: "assigned",
+    profileId: forcedProfileId,
     message: `任务已分配，准备执行 ${getTaskLabel(normalizedTaskType)}`,
     currentStep: "加载任务详情",
     progress: 0,
@@ -121,6 +125,25 @@ export async function executePublishQueueTask(
     detail = resolveResponseData<QueueMessage | null>(response);
     if (!detail) {
       throw new Error("任务不存在或已被删除");
+    }
+
+    if (forcedProfileId) {
+      detail = {
+        ...detail,
+        metadata: {
+          ...(detail.metadata || {}),
+          profileId: forcedProfileId,
+          browserAutomationProfileId: forcedProfileId,
+        },
+        data: {
+          ...(detail.data || {}),
+          meta: {
+            ...(detail.data?.meta || {}),
+            profileId: forcedProfileId,
+            browserAutomationProfileId: forcedProfileId,
+          },
+        },
+      };
     }
 
     if (detail.status === "waiting") {
@@ -146,6 +169,10 @@ export async function executePublishQueueTask(
           taskId: detail!.id,
           taskType: detail!.type,
           queue: resolveQueueName(detail, normalizedQueue),
+          profileId:
+            forcedProfileId ||
+            String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
+            null,
           status:
             status === "failed"
               ? "failed"
@@ -173,6 +200,10 @@ export async function executePublishQueueTask(
           taskId: detail!.id,
           taskType: detail!.type,
           queue: resolveQueueName(detail, normalizedQueue),
+          profileId:
+            forcedProfileId ||
+            String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
+            null,
           status:
             mappedStatus === "failed"
               ? "failed"
@@ -209,6 +240,10 @@ export async function executePublishQueueTask(
       taskType: detail.type,
       queue: resolveQueueName(detail, normalizedQueue),
       status: "running",
+      profileId:
+        forcedProfileId ||
+        String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
+        null,
       message: `开始执行 ${getTaskLabel(detail.type)}`,
       currentStep: "开始执行",
       progress: 0,
@@ -221,6 +256,10 @@ export async function executePublishQueueTask(
       taskType: detail.type,
       queue: resolveQueueName(detail, normalizedQueue),
       status: "completed",
+      profileId:
+        forcedProfileId ||
+        String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
+        null,
       message: `执行完成：${getTaskLabel(detail.type)}`,
       currentStep: "执行完成",
       progress: 100,
@@ -250,6 +289,10 @@ export async function executePublishQueueTask(
       taskType: detail?.type || normalizedTaskType,
       queue: resolveQueueName(detail, normalizedQueue),
       status: fallbackStatus,
+      profileId:
+        forcedProfileId ||
+        String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
+        null,
       message: errorMessage,
       currentStep: fallbackStatus === "pending" ? "等待重新调度" : "执行失败",
       error: errorMessage,

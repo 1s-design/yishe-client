@@ -9,9 +9,14 @@ import {
   checkUploaderStatus,
   closeUploaderBrowser,
   connectUploaderBrowser,
+  createUploaderProfile,
+  deleteUploaderProfile,
   executeUploaderBrowserDebug,
+  focusUploaderBrowser,
   forceCloseUploaderBrowser,
   getUploaderLoginStatus,
+  getUploaderProfileDetail,
+  getUploaderProfiles,
   getUploaderBrowserPages,
   getUploaderBrowserStatus,
   getUploaderEcomCollectCapabilities,
@@ -25,6 +30,8 @@ import {
   openUploaderPlatform,
   publishByUploader,
   runUploaderEcomCollect,
+  switchUploaderProfile,
+  updateUploaderProfile,
   type UploaderEcomCollectCapabilitySchema,
 } from "../api/uploader";
 import { AUTO_PROCESS_TIMING } from "../config/autoProcessTiming";
@@ -470,6 +477,7 @@ const browserAutomationExecutionState = reactive({
   taskId: null as string | null,
   taskType: null as string | null,
   queue: null as string | null,
+  profileId: null as string | null,
   currentStep: null as string | null,
   progress: null as number | null,
   lastError: null as string | null,
@@ -478,6 +486,104 @@ const browserAutomationExecutionState = reactive({
   finishedAt: null as string | null,
   updatedAt: null as string | null,
 });
+
+const browserAutomationExecutionSlots = reactive<
+  Record<
+    string,
+    {
+      slotKey: string;
+      running: boolean;
+      taskId: string | null;
+      taskType: string | null;
+      queue: string | null;
+      profileId: string | null;
+      currentStep: string | null;
+      progress: number | null;
+      lastError: string | null;
+      runtime: Record<string, any> | null;
+      startedAt: string | null;
+      finishedAt: string | null;
+      updatedAt: string | null;
+    }
+  >
+>({});
+
+function resolveBrowserAutomationExecutionSlotKey(
+  profileId?: string | null,
+  fallbackTaskType?: string | null,
+) {
+  const normalizedProfileId = String(profileId || "").trim();
+  if (normalizedProfileId) {
+    return `profile:${normalizedProfileId}`;
+  }
+  const normalizedTaskType = String(fallbackTaskType || "").trim();
+  return normalizedTaskType ? `task:${normalizedTaskType}` : "task:default";
+}
+
+function getBrowserAutomationExecutionEntries() {
+  return Object.values(browserAutomationExecutionSlots);
+}
+
+function syncBrowserAutomationAggregateExecutionState() {
+  const entries = getBrowserAutomationExecutionEntries().sort((a, b) => {
+    if (!!a.running !== !!b.running) {
+      return a.running ? -1 : 1;
+    }
+    return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+  });
+
+  const primary = entries[0] || null;
+  Object.assign(browserAutomationExecutionState, {
+    running: entries.some((item) => item.running),
+    taskId: primary?.taskId || null,
+    taskType: primary?.taskType || null,
+    queue: primary?.queue || null,
+    profileId: primary?.profileId || null,
+    currentStep: primary?.currentStep || null,
+    progress:
+      typeof primary?.progress === "number" ? primary.progress : primary?.progress ?? null,
+    lastError: primary?.lastError || null,
+    runtime: primary?.runtime || null,
+    startedAt: primary?.startedAt || null,
+    finishedAt: primary?.finishedAt || null,
+    updatedAt: primary?.updatedAt || null,
+  });
+}
+
+function upsertBrowserAutomationExecutionSlot(
+  slotKey: string,
+  patch: Partial<(typeof browserAutomationExecutionSlots)[string]>,
+) {
+  if (!browserAutomationExecutionSlots[slotKey]) {
+    browserAutomationExecutionSlots[slotKey] = {
+      slotKey,
+      running: false,
+      taskId: null,
+      taskType: null,
+      queue: null,
+      profileId: null,
+      currentStep: null,
+      progress: null,
+      lastError: null,
+      runtime: null,
+      startedAt: null,
+      finishedAt: null,
+      updatedAt: null,
+    };
+  }
+
+  Object.assign(browserAutomationExecutionSlots[slotKey], patch);
+  syncBrowserAutomationAggregateExecutionState();
+  return browserAutomationExecutionSlots[slotKey];
+}
+
+function isBrowserAutomationExecutionSlotRunning(
+  profileId?: string | null,
+  fallbackTaskType?: string | null,
+) {
+  const slotKey = resolveBrowserAutomationExecutionSlotKey(profileId, fallbackTaskType);
+  return !!browserAutomationExecutionSlots[slotKey]?.running;
+}
 
 const uploaderEcomCollectCapabilityCache = {
   fetchedAt: 0,
@@ -591,11 +697,21 @@ function emitPsAutomationStatus(patch?: Partial<typeof autoPsdBatchState>) {
 }
 
 function buildBrowserAutomationExecutionSnapshot() {
+  const items = getBrowserAutomationExecutionEntries()
+    .map((item) => ({ ...item }))
+    .sort((a, b) => {
+      if (!!a.running !== !!b.running) {
+        return a.running ? -1 : 1;
+      }
+      return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+    });
+
   return {
     running: browserAutomationExecutionState.running,
     taskId: browserAutomationExecutionState.taskId,
     taskType: browserAutomationExecutionState.taskType,
     queue: browserAutomationExecutionState.queue,
+    profileId: browserAutomationExecutionState.profileId,
     currentStep: browserAutomationExecutionState.currentStep,
     progress: browserAutomationExecutionState.progress,
     lastError: browserAutomationExecutionState.lastError,
@@ -603,7 +719,48 @@ function buildBrowserAutomationExecutionSnapshot() {
     startedAt: browserAutomationExecutionState.startedAt,
     finishedAt: browserAutomationExecutionState.finishedAt,
     updatedAt: browserAutomationExecutionState.updatedAt,
+    items,
+    runningCount: items.filter((item) => item.running).length,
   };
+}
+
+function mergeBrowserAutomationInstancesWithExecutions(
+  instances: Array<Record<string, any>>,
+  executionSnapshot: ReturnType<typeof buildBrowserAutomationExecutionSnapshot>,
+) {
+  const runningExecutionMap = new Map(
+    executionSnapshot.items
+      .filter((item) => item.running && item.profileId)
+      .map((item) => [String(item.profileId || "").trim(), item] as const),
+  );
+
+  return instances.map((instance) => {
+    const profileId = String(instance?.profileId || instance?.id || "").trim();
+    if (!profileId) {
+      return instance;
+    }
+
+    const runningExecution = runningExecutionMap.get(profileId) || null;
+    const connected =
+      instance?.connected === true || instance?.isConnected === true;
+    const available =
+      typeof instance?.available === "boolean" ? instance.available : connected;
+
+    return {
+      ...instance,
+      connected,
+      isConnected: instance?.isConnected === true || connected,
+      busy: !!runningExecution,
+      available: runningExecution ? false : available,
+      currentTaskId: runningExecution?.taskId || instance?.currentTaskId || null,
+      taskType: runningExecution?.taskType || instance?.taskType || null,
+      currentStep: runningExecution?.currentStep || instance?.currentStep || null,
+      lastError:
+        runningExecution?.lastError !== undefined
+          ? runningExecution.lastError
+          : instance?.lastError || null,
+    };
+  });
 }
 
 function buildBrowserAutomationRuntimePatch(
@@ -614,22 +771,89 @@ function buildBrowserAutomationRuntimePatch(
     clientInfo.services?.uploader ||
     {};
   const executionSnapshot = buildBrowserAutomationExecutionSnapshot();
+  const previousDetails: Record<string, any> = previous?.details || {};
+  const payloadDetails: Record<string, any> = payload.details || {};
+  const baseProfiles = Array.isArray(payloadDetails.profiles)
+    ? payloadDetails.profiles
+    : Array.isArray(previousDetails.profiles)
+      ? previousDetails.profiles
+      : [];
+  const baseInstances = Array.isArray(payloadDetails.instances)
+    ? payloadDetails.instances
+    : Array.isArray(previousDetails.instances)
+      ? previousDetails.instances
+      : baseProfiles.length
+        ? buildBrowserAutomationProfileInstances(baseProfiles, null)
+        : [];
+  const mergedInstances = mergeBrowserAutomationInstancesWithExecutions(
+    baseInstances,
+    executionSnapshot,
+  );
+  const runningProfileIds = Array.from(
+    new Set(
+      [
+        ...mergedInstances
+          .filter((item) => item?.busy)
+          .map((item) => String(item?.profileId || "").trim()),
+        ...executionSnapshot.items
+          .filter((item) => item.running && item.profileId)
+          .map((item) => String(item.profileId || "").trim()),
+      ].filter(Boolean),
+    ),
+  );
+  const availableProfileIds = mergedInstances.length
+    ? mergedInstances
+        .filter((item) => item?.available)
+        .map((item) => String(item?.profileId || "").trim())
+        .filter(Boolean)
+    : [
+        ...(Array.isArray(payloadDetails.availableProfileIds)
+          ? payloadDetails.availableProfileIds
+          : []),
+        ...(Array.isArray(previousDetails.availableProfileIds)
+          ? previousDetails.availableProfileIds
+          : []),
+      ]
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+  const hasBusy = Object.prototype.hasOwnProperty.call(payload, "busy");
+  const hasState = Object.prototype.hasOwnProperty.call(payload, "state");
+  const hasCurrentTaskId = Object.prototype.hasOwnProperty.call(
+    payload,
+    "currentTaskId",
+  );
+  const connected = payload.connected ?? previous?.connected ?? false;
+  const available = payload.available ?? previous?.available ?? false;
+  const busy = executionSnapshot.running
+    ? true
+    : hasBusy
+      ? !!payload.busy
+      : false;
+  const currentTaskId = executionSnapshot.running
+    ? executionSnapshot.taskId ||
+      (hasCurrentTaskId
+        ? (payload.currentTaskId ?? null)
+        : (previous?.currentTaskId ?? null))
+    : hasCurrentTaskId
+      ? (payload.currentTaskId ?? null)
+      : null;
+  const state = executionSnapshot.running
+    ? "busy"
+    : hasState && payload.state
+      ? payload.state
+      : payload.status === "error"
+        ? "error"
+        : connected
+          ? available
+            ? "idle"
+            : "offline"
+          : "offline";
 
   return {
     ...payload,
-    busy:
-      browserAutomationExecutionState.running ||
-      payload.busy ||
-      previous?.busy ||
-      false,
-    state: browserAutomationExecutionState.running
-      ? "busy"
-      : payload.state || previous?.state || "offline",
-    currentTaskId:
-      browserAutomationExecutionState.taskId ||
-      payload.currentTaskId ||
-      previous?.currentTaskId ||
-      null,
+    busy,
+    state,
+    currentTaskId,
     autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
     supportedTaskTypes: buildPublishTaskCapabilitySummary().map(
       (item) => item.taskType,
@@ -649,14 +873,18 @@ function buildBrowserAutomationRuntimePatch(
       ]),
     ),
     details: {
-      ...(previous?.details || {}),
-      ...(payload.details || {}),
+      ...previousDetails,
+      ...payloadDetails,
       autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
       executableTaskTypes: buildPublishTaskCapabilitySummary().map(
         (item) => item.taskType,
       ),
       executableTaskLabels: buildPublishTaskCapabilitySummary(),
       currentExecution: executionSnapshot,
+      executions: executionSnapshot.items,
+      ...(mergedInstances.length ? { instances: mergedInstances } : {}),
+      runningProfileIds,
+      availableProfileIds,
     },
     lastError:
       payload.lastError !== undefined
@@ -678,51 +906,92 @@ async function syncUploaderRuntimeFromLocalState(
   return nextRuntime;
 }
 
+function buildBrowserAutomationProfileInstances(
+  profileItems: Array<Record<string, any>>,
+  browserData?: Record<string, any> | null,
+) {
+  const browserInstances = Array.isArray(browserData?.instances)
+    ? browserData.instances
+    : [];
+  const browserInstanceMap = new Map(
+    browserInstances
+      .map((item) => [String(item?.profileId || "").trim(), item] as const)
+      .filter(([profileId]) => !!profileId),
+  );
+  const runningExecutionMap = new Map(
+    getBrowserAutomationExecutionEntries()
+      .filter((item) => item.running)
+      .map((item) => [String(item.profileId || "").trim(), item] as const),
+  );
+
+  return profileItems.map((profile) => {
+    const profileId = String(profile?.id || "").trim();
+    const browserInstance = browserInstanceMap.get(profileId) || null;
+    const runningExecution = runningExecutionMap.get(profileId) || null;
+
+    return {
+      profileId,
+      profileName: String(profile?.name || profileId).trim() || profileId,
+      connected: !!browserInstance?.isConnected,
+      available: !!browserInstance?.isConnected && !runningExecution,
+      busy: !!runningExecution,
+      currentTaskId: runningExecution?.taskId || null,
+      taskType: runningExecution?.taskType || null,
+      currentStep: runningExecution?.currentStep || null,
+      pageCount: browserInstance?.pageCount ?? 0,
+      lastActivity: browserInstance?.lastActivity ?? null,
+      pages: Array.isArray(browserInstance?.pages) ? browserInstance.pages : [],
+      browserVersion:
+        String(
+          browserInstance?.browserVersion ||
+            profile?.browserVersion ||
+            "",
+        ).trim() || "",
+      hasInstance: browserInstance?.hasInstance === true,
+      connecting: browserInstance?.connecting === true,
+      lastError: runningExecution?.lastError || browserInstance?.lastError || null,
+      userDataDir:
+        String(browserInstance?.userDataDir || profile?.userDataDir || "").trim() ||
+        null,
+      isActiveProfile: profile?.isActive === true,
+    };
+  });
+}
+
 async function emitPublishTaskRuntime(snapshot: PublishTaskRuntimeSnapshot) {
   const now = new Date().toISOString();
   const currentStatus =
     snapshot.status === "pending" ? "pending" : snapshot.status;
   const running = currentStatus === "assigned" || currentStatus === "running";
-
-  Object.assign(browserAutomationExecutionState, {
+  const slotKey = resolveBrowserAutomationExecutionSlotKey(
+    snapshot.profileId,
+    snapshot.taskType,
+  );
+  const previousSlot = browserAutomationExecutionSlots[slotKey];
+  upsertBrowserAutomationExecutionSlot(slotKey, {
+    slotKey,
     running,
     taskId: snapshot.taskId,
     taskType: snapshot.taskType,
     queue: snapshot.queue,
+    profileId: String(snapshot.profileId || "").trim() || null,
     currentStep: snapshot.currentStep ?? snapshot.message ?? null,
     progress: snapshot.progress ?? null,
     lastError: snapshot.error ?? null,
     runtime: snapshot.runtime ?? null,
-    startedAt: running
-      ? browserAutomationExecutionState.startedAt || now
-      : browserAutomationExecutionState.startedAt || now,
+    startedAt: running ? previousSlot?.startedAt || now : previousSlot?.startedAt || now,
     finishedAt: running ? null : now,
     updatedAt: now,
   });
-
-  if (
-    currentStatus === "completed" ||
-    currentStatus === "failed" ||
-    currentStatus === "pending"
-  ) {
-    browserAutomationExecutionState.running = false;
-    if (currentStatus === "pending") {
-      browserAutomationExecutionState.taskId = null;
-      browserAutomationExecutionState.taskType = null;
-      browserAutomationExecutionState.queue = null;
-      browserAutomationExecutionState.runtime = null;
-      browserAutomationExecutionState.progress = null;
-      browserAutomationExecutionState.currentStep =
-        snapshot.currentStep ?? snapshot.message ?? null;
-    }
-  }
 
   emitter.emit("publishTaskRuntime", snapshot);
   socket?.emit("publish-task-runtime", snapshot);
   await syncUploaderRuntimeFromLocalState({
     busy: browserAutomationExecutionState.running,
     state: browserAutomationExecutionState.running ? "busy" : undefined,
-    currentTaskId: browserAutomationExecutionState.taskId,
+    currentTaskId: browserAutomationExecutionState.running
+      ? browserAutomationExecutionState.taskId
+      : null,
     lastError: browserAutomationExecutionState.lastError,
   });
 }
@@ -3118,6 +3387,25 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
 async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
   const checkedAt = new Date().toISOString();
   const capabilitySummary = buildPublishTaskCapabilitySummary();
+  const profilesResponse = await getUploaderProfiles().catch(() => ({
+    success: false,
+    data: {
+      activeProfileId: null,
+      workspaceDir: undefined,
+      profilesRootDir: undefined,
+      items: [],
+    },
+  }));
+  const profileItems = Array.isArray(profilesResponse?.data?.items)
+    ? profilesResponse.data.items
+    : [];
+  const activeProfile =
+    profileItems.find(
+      (item) =>
+        item?.isActive === true ||
+        item?.id === profilesResponse?.data?.activeProfileId,
+    ) || null;
+  const executionSnapshot = buildBrowserAutomationExecutionSnapshot();
   const status = await checkUploaderStatus();
   if (!status.connected) {
     return buildBrowserAutomationRuntimePatch({
@@ -3139,6 +3427,12 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         "close",
         "forceClose",
         "getPages",
+        "listProfiles",
+        "getProfileDetail",
+        "createProfile",
+        "updateProfile",
+        "deleteProfile",
+        "switchProfile",
         "executePublishTask",
         "getEcomCollectCapabilities",
         "ecomSelectionSupplyMatchRun",
@@ -3149,12 +3443,23 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       details: {
         browserConnected: false,
         pageCount: 0,
-        serviceMessage: status.message ?? null,
-        autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
-        capabilities: capabilitySummary,
-        ecomCollect: uploaderEcomCollectCapabilityCache.data
-          ? {
-              ...uploaderEcomCollectCapabilityCache.data,
+          serviceMessage: status.message ?? null,
+          autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
+          capabilities: capabilitySummary,
+          profiles: profileItems,
+          instances: buildBrowserAutomationProfileInstances(profileItems, null),
+          availableProfileIds: [],
+          runningProfileIds: executionSnapshot.items
+            .filter((item) => item.running && item.profileId)
+            .map((item) => String(item.profileId || "").trim())
+            .filter(Boolean),
+          activeProfileId: profilesResponse?.data?.activeProfileId || null,
+          activeProfile,
+          profilesRootDir: profilesResponse?.data?.profilesRootDir || null,
+          workspaceDir: profilesResponse?.data?.workspaceDir || null,
+          ecomCollect: uploaderEcomCollectCapabilityCache.data
+            ? {
+                ...uploaderEcomCollectCapabilityCache.data,
               source: "cache",
             }
           : null,
@@ -3167,6 +3472,10 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
   const browser = await getUploaderBrowserStatus();
   const available = browser.success && isUploaderBrowserReady(browser.data);
   const browserData = browser.data;
+  const profileInstances = buildBrowserAutomationProfileInstances(
+    profileItems,
+    (browserData as Record<string, any> | undefined) || null,
+  );
   return buildBrowserAutomationRuntimePatch({
     label: "浏览器自动化",
     connected: true,
@@ -3188,12 +3497,18 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       "close",
       "forceClose",
       "getPages",
-      "getTasks",
-      "getTaskDetail",
-      "getTaskLogs",
-      "getPlatforms",
-      "getEcomCollectCapabilities",
-      "getLoginStatus",
+        "getTasks",
+        "getTaskDetail",
+        "getTaskLogs",
+        "listProfiles",
+        "getProfileDetail",
+        "createProfile",
+        "updateProfile",
+        "deleteProfile",
+        "switchProfile",
+        "getPlatforms",
+        "getEcomCollectCapabilities",
+        "getLoginStatus",
       "publish",
       "executePublishTask",
       "ecomCollectRun",
@@ -3209,6 +3524,27 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       lastActivity: browserData?.lastActivity ?? null,
       connection: browserData?.connection ?? null,
       pages: Array.isArray(browserData?.pages) ? browserData?.pages : [],
+      profiles: profileItems,
+      instances: profileInstances,
+      availableProfileIds: profileInstances
+        .filter((item) => item.available)
+        .map((item) => item.profileId),
+      runningProfileIds: profileInstances
+        .filter((item) => item.busy)
+        .map((item) => item.profileId),
+      activeProfileId:
+        browserData?.connection?.activeProfileId ||
+        profilesResponse?.data?.activeProfileId ||
+        null,
+      activeProfile:
+        activeProfile ||
+        (browserData?.connection?.activeProfileId
+          ? profileItems.find(
+              (item) => item?.id === browserData.connection?.activeProfileId,
+            ) || null
+          : null),
+      profilesRootDir: profilesResponse?.data?.profilesRootDir || null,
+      workspaceDir: profilesResponse?.data?.workspaceDir || null,
       autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
       capabilities: capabilitySummary,
       ecomCollect: ecomCollectCapability
@@ -3490,7 +3826,9 @@ function registerBuiltInLocalServices() {
       }
 
       if (action === "close") {
-        const response = await closeUploaderBrowser();
+        const response = await closeUploaderBrowser(
+          String(command.payload?.profileId || "").trim() || undefined,
+        );
         const runtime = await syncServiceRuntime("uploader");
         return {
           success: response.success,
@@ -3498,6 +3836,23 @@ function registerBuiltInLocalServices() {
             response.message ||
             (response.success ? "浏览器实例已关闭" : "关闭浏览器失败"),
           data: {
+            runtime,
+          },
+        };
+      }
+
+      if (action === "focus") {
+        const response = await focusUploaderBrowser(
+          String(command.payload?.profileId || "").trim() || undefined,
+        );
+        const runtime = await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "浏览器窗口已聚焦" : "聚焦浏览器失败"),
+          data: {
+            result: response.data ?? null,
             runtime,
           },
         };
@@ -3521,7 +3876,9 @@ function registerBuiltInLocalServices() {
       }
 
       if (action === "getPages") {
-        const response = await getUploaderBrowserPages();
+        const response = await getUploaderBrowserPages(
+          String(command.payload?.profileId || "").trim() || undefined,
+        );
         let runtime = await syncServiceRuntime("uploader");
         if (response.success) {
           runtime = updateServiceStatus("uploader", {
@@ -3568,10 +3925,11 @@ function registerBuiltInLocalServices() {
 
       if (action === "openPlatform") {
         const platform = String(command.payload?.platform || "").trim();
+        const profileId = String(command.payload?.profileId || "").trim() || undefined;
         if (!platform) {
           throw new Error("缺少 platform");
         }
-        const response = await openUploaderPlatform(platform);
+        const response = await openUploaderPlatform(platform, profileId);
         const runtime = await syncServiceRuntime("uploader");
         return {
           success: response.success,
@@ -3580,6 +3938,7 @@ function registerBuiltInLocalServices() {
             (response.success ? "平台页面已打开" : "打开平台页面失败"),
           data: {
             platform,
+            profileId: profileId || null,
             runtime,
           },
         };
@@ -3590,7 +3949,8 @@ function registerBuiltInLocalServices() {
         if (!url) {
           throw new Error("缺少 url");
         }
-        const response = await openUploaderLink(url);
+        const profileId = String(command.payload?.profileId || "").trim() || undefined;
+        const response = await openUploaderLink(url, profileId);
         const runtime = await syncServiceRuntime("uploader");
         return {
           success: response.success,
@@ -3599,6 +3959,7 @@ function registerBuiltInLocalServices() {
             (response.success ? "链接已打开" : "打开链接失败"),
           data: {
             url,
+            profileId: profileId || null,
             runtime,
           },
         };
@@ -3693,9 +4054,119 @@ function registerBuiltInLocalServices() {
         };
       }
 
+      if (action === "listProfiles") {
+        const response = await getUploaderProfiles();
+        await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "环境列表已加载" : "获取环境列表失败"),
+          data:
+            response.data || {
+              activeProfileId: null,
+              items: [],
+            },
+        };
+      }
+
+      if (action === "getProfileDetail") {
+        const profileId = String(command.payload?.profileId || "").trim();
+        if (!profileId) {
+          throw new Error("缺少 profileId");
+        }
+        const response = await getUploaderProfileDetail(profileId);
+        await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "环境详情已加载" : "获取环境详情失败"),
+          data: response.data || null,
+        };
+      }
+
+      if (action === "createProfile") {
+        const response = await createUploaderProfile(
+          (command.payload || {}) as Record<string, unknown>,
+        );
+        const runtime = await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "环境已创建" : "创建环境失败"),
+          data: {
+            profile: response.data || null,
+            runtime,
+          },
+        };
+      }
+
+      if (action === "updateProfile") {
+        const profileId = String(command.payload?.profileId || "").trim();
+        if (!profileId) {
+          throw new Error("缺少 profileId");
+        }
+        const response = await updateUploaderProfile(
+          profileId,
+          (command.payload || {}) as Record<string, unknown>,
+        );
+        const runtime = await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "环境已更新" : "更新环境失败"),
+          data: {
+            profile: response.data || null,
+            runtime,
+          },
+        };
+      }
+
+      if (action === "deleteProfile") {
+        const profileId = String(command.payload?.profileId || "").trim();
+        if (!profileId) {
+          throw new Error("缺少 profileId");
+        }
+        const response = await deleteUploaderProfile(profileId);
+        const runtime = await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "环境已删除" : "删除环境失败"),
+          data: {
+            ...(response.data || {}),
+            runtime,
+          },
+        };
+      }
+
+      if (action === "switchProfile") {
+        const profileId = String(command.payload?.profileId || "").trim();
+        if (!profileId) {
+          throw new Error("缺少 profileId");
+        }
+        const response = await switchUploaderProfile(profileId);
+        const runtime = await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "环境已切换" : "切换环境失败"),
+          data: {
+            profile: response.data || null,
+            runtime,
+          },
+        };
+      }
+
       if (action === "getLoginStatus") {
         const response = await getUploaderLoginStatus(
           !!command.payload?.refresh,
+          String(command.payload?.profileId || "").trim() || undefined,
         );
         await syncServiceRuntime("uploader");
         return {
@@ -3729,6 +4200,8 @@ function registerBuiltInLocalServices() {
         const taskId = String(command.payload?.taskId || "").trim();
         const taskType = String(command.payload?.taskType || "").trim();
         const queue = String(command.payload?.queue || taskType).trim();
+        const profileId =
+          String(command.payload?.profileId || "").trim() || undefined;
 
         if (!taskId) {
           throw new Error("缺少 taskId");
@@ -3736,12 +4209,13 @@ function registerBuiltInLocalServices() {
         if (!taskType) {
           throw new Error("缺少 taskType");
         }
-        if (browserAutomationExecutionState.running) {
+        if (isBrowserAutomationExecutionSlotRunning(profileId, taskType)) {
           const busyMessage = "浏览器自动化节点繁忙，任务已回退待调度";
           await emitPublishTaskRuntime({
             taskId,
             taskType,
             queue,
+            profileId: profileId || null,
             status: "pending",
             message: busyMessage,
             currentStep: "节点繁忙，等待重新调度",
@@ -3760,6 +4234,7 @@ function registerBuiltInLocalServices() {
 
         await executePublishQueueTask(taskId, taskType, queue, {
           onRuntime: emitPublishTaskRuntime,
+          profileId,
         });
         return {
           success: true,

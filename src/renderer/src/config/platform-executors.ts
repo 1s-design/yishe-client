@@ -234,6 +234,27 @@ function buildUploaderTaskSourceId(row: any, platform: string): UploaderTaskSour
   return rowId
 }
 
+function resolveBrowserProfileId(row: any): string | undefined {
+  const candidates = [
+    row?.metadata?.browserAutomationProfileId,
+    row?.metadata?.profileId,
+    row?.metadata?.publishDispatch?.profileId,
+    row?.data?.meta?.browserAutomationProfileId,
+    row?.data?.meta?.profileId,
+    row?.data?.publishData?.profileId,
+    row?.data?.publishData?.meta?.profileId,
+  ]
+
+  for (const candidate of candidates) {
+    const normalized = String(candidate || '').trim()
+    if (normalized) {
+      return normalized
+    }
+  }
+
+  return undefined
+}
+
 function mapUploaderTaskStatus(status?: string): 'processing' | 'completed' | 'failed' {
   if (status === 'success') return 'completed'
   if (status === 'failed') return 'failed'
@@ -735,6 +756,7 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     const task = await preparePublishTask(row, this.platform)
     const body = buildPublishRequestBody(task)
     const sourceId = buildUploaderTaskSourceId(row, this.platform)
+    const profileId = resolveBrowserProfileId(row)
 
     await this.updateTaskRuntime(row, buildRuntimeSnapshot(sourceId))
 
@@ -746,7 +768,9 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
       sourceId,
       metadata: {
         clientTaskType: row?.type,
+        ...(profileId ? { profileId } : {}),
       },
+      ...(profileId ? { profileId } : {}),
       ...body,
     })
 

@@ -19,9 +19,17 @@ export interface UploaderBrowserStatus {
   connection?: {
     mode?: string;
     profileDir?: string;
+    profileId?: string | null;
+    activeProfileId?: string | null;
+    browserName?: string;
+    browserVersion?: string;
+    userDataDir?: string;
+    activeProfile?: UploaderBrowserProfileSummary | null;
   };
   timestamp?: string;
   pages?: UploaderBrowserPage[];
+  profiles?: UploaderBrowserProfileSummary[];
+  instances?: UploaderBrowserInstanceSummary[];
 }
 
 export interface UploaderBrowserPage {
@@ -31,6 +39,39 @@ export interface UploaderBrowserPage {
   title?: string;
   url?: string;
   type?: string;
+  isActive?: boolean;
+  profileId?: string;
+  profileName?: string;
+}
+
+export interface UploaderBrowserInstanceSummary {
+  profileId: string;
+  profileName?: string;
+  hasInstance?: boolean;
+  isConnected?: boolean;
+  connecting?: boolean;
+  pageCount?: number;
+  lastActivity?: string | null;
+  lastError?: string | null;
+  browserVersion?: string;
+  userDataDir?: string;
+  pages?: UploaderBrowserPage[];
+  isActiveProfile?: boolean;
+}
+
+export interface UploaderBrowserProfileSummary {
+  id: string;
+  name: string;
+  remark?: string;
+  account?: string;
+  platforms?: string[];
+  browserVersion?: string;
+  loginSummary?: Record<string, any>;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  lastUsedAt?: string | null;
+  userDataDir?: string;
+  exists?: boolean;
   isActive?: boolean;
 }
 
@@ -164,10 +205,19 @@ function normalizeUploaderBrowserStatus(data: unknown): UploaderBrowserStatus {
   const source =
     data && typeof data === "object" ? (data as Record<string, any>) : {};
   const pages = normalizeUploaderBrowserPages(source.pages);
+  const profiles = Array.isArray(source.profiles) ? source.profiles : [];
+  const instances = Array.isArray(source.instances) ? source.instances : [];
   const connection =
     source.connection && typeof source.connection === "object"
       ? source.connection
       : undefined;
+  const normalizedLastActivity =
+    typeof source.lastActivity === "string" && source.lastActivity.trim()
+      ? source.lastActivity
+      : typeof source.lastActivity === "number" &&
+          Number.isFinite(source.lastActivity)
+        ? new Date(source.lastActivity).toISOString()
+        : null;
   const isConnected = resolveUploaderBrowserConnectionFlag(source);
   const hasInstance =
     source.hasInstance === true ||
@@ -184,16 +234,15 @@ function normalizeUploaderBrowserStatus(data: unknown): UploaderBrowserStatus {
     isConnected,
     pageCount:
       typeof source.pageCount === "number" ? source.pageCount : pages.length,
-    lastActivity:
-      typeof source.lastActivity === "string" && source.lastActivity.trim()
-        ? source.lastActivity
-        : null,
+    lastActivity: normalizedLastActivity,
     connection,
     timestamp:
       typeof source.timestamp === "string" && source.timestamp.trim()
         ? source.timestamp
         : undefined,
     pages,
+    profiles,
+    instances: instances as UploaderBrowserInstanceSummary[],
   };
 }
 
@@ -688,7 +737,9 @@ export async function connectUploaderBrowser(
 /**
  * 请求浏览器自动化服务关闭浏览器实例
  */
-export async function closeUploaderBrowser(): Promise<{
+export async function closeUploaderBrowser(
+  profileId?: string,
+): Promise<{
   success: boolean;
   message?: string;
 }> {
@@ -696,7 +747,11 @@ export async function closeUploaderBrowser(): Promise<{
     const res = await fetch(`${UPLOADER_API_BASE}/api/browser/close`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(
+        String(profileId || "").trim()
+          ? { profileId: String(profileId || "").trim() }
+          : {},
+      ),
       signal: AbortSignal.timeout(30000),
     });
     const json = await res.json().catch(() => ({}));
@@ -719,6 +774,45 @@ export async function closeUploaderBrowser(): Promise<{
       err?.code === "ECONNREFUSED" || err?.message?.includes("fetch")
         ? "无法连接自动操作服务，请先启动浏览器自动化服务"
         : (err?.message ?? "关闭浏览器失败");
+    return { success: false, message };
+  }
+}
+
+export async function focusUploaderBrowser(
+  profileId?: string,
+): Promise<{
+  success: boolean;
+  message?: string;
+  data?: unknown;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/browser/focus`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        String(profileId || "").trim()
+          ? { profileId: String(profileId || "").trim() }
+          : {},
+      ),
+      signal: AbortSignal.timeout(15000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? json?.error ?? `请求失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: json?.data,
+    };
+  } catch (e: unknown) {
+    const err = e as Error & { code?: string };
+    const message =
+      err?.code === "ECONNREFUSED" || err?.message?.includes("fetch")
+        ? "无法连接自动操作服务，请先启动浏览器自动化服务"
+        : (err?.message ?? "聚焦浏览器失败");
     return { success: false, message };
   }
 }
@@ -760,12 +854,18 @@ export async function forceCloseUploaderBrowser(port = 9222): Promise<{
  */
 export async function openPlatform(
   platform: string,
+  profileId?: string,
 ): Promise<{ success: boolean; message?: string }> {
   try {
     const res = await fetch(`${UPLOADER_API_BASE}/api/browser/open-platform`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform }),
+      body: JSON.stringify({
+        platform,
+        ...(String(profileId || "").trim()
+          ? { profileId: String(profileId || "").trim() }
+          : {}),
+      }),
       signal: AbortSignal.timeout(30000), // 打开页面可能较慢
     });
     const json = await res.json().catch(() => ({}));
@@ -786,12 +886,18 @@ export async function openPlatform(
  */
 export async function openLink(
   url: string,
+  profileId?: string,
 ): Promise<{ success: boolean; message?: string }> {
   try {
     const res = await fetch(`${UPLOADER_API_BASE}/api/browser/open-link`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        ...(String(profileId || "").trim()
+          ? { profileId: String(profileId || "").trim() }
+          : {}),
+      }),
       signal: AbortSignal.timeout(30000),
     });
     const json = await res.json().catch(() => ({}));
@@ -807,17 +913,26 @@ export async function openLink(
   }
 }
 
-export async function getUploaderBrowserPages(): Promise<{
+export async function getUploaderBrowserPages(
+  profileId?: string,
+): Promise<{
   success: boolean;
   data?: UploaderBrowserPage[];
   message?: string;
   errorDetail?: BrowserAutomationErrorDetail;
 }> {
   try {
-    const res = await fetch(`${UPLOADER_API_BASE}/api/browser/pages`, {
-      method: "GET",
-      signal: AbortSignal.timeout(15000),
-    });
+    const query = new URLSearchParams();
+    if (String(profileId || "").trim()) {
+      query.set("profileId", String(profileId || "").trim());
+    }
+    const res = await fetch(
+      `${UPLOADER_API_BASE}/api/browser/pages${query.toString() ? `?${query.toString()}` : ""}`,
+      {
+        method: "GET",
+        signal: AbortSignal.timeout(15000),
+      },
+    );
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json?.success) {
       const errorDetail = buildBrowserAutomationErrorDetail(
@@ -964,14 +1079,16 @@ export async function executeUploaderBrowserDebug(
 
 export async function openUploaderPlatform(
   platform: string,
+  profileId?: string,
 ): Promise<{ success: boolean; message?: string }> {
-  return openPlatform(platform);
+  return openPlatform(platform, profileId);
 }
 
 export async function openUploaderLink(
   url: string,
+  profileId?: string,
 ): Promise<{ success: boolean; message?: string }> {
-  return openLink(url);
+  return openLink(url, profileId);
 }
 
 export async function getUploaderTaskList(
@@ -1219,14 +1336,25 @@ export async function runUploaderEcomCollect(
   }
 }
 
-export async function getUploaderLoginStatus(refresh = false): Promise<{
+export async function getUploaderLoginStatus(
+  refresh = false,
+  profileId?: string,
+): Promise<{
   success: boolean;
   data?: Record<string, any>;
   message?: string;
 }> {
   try {
+    const query = new URLSearchParams();
+    if (refresh) {
+      query.set("refresh", "1");
+    }
+    const normalizedProfileId = String(profileId || "").trim();
+    if (normalizedProfileId) {
+      query.set("profileId", normalizedProfileId);
+    }
     const res = await fetch(
-      `${UPLOADER_API_BASE}/api/login-status${refresh ? "?refresh=1" : ""}`,
+      `${UPLOADER_API_BASE}/api/login-status${query.toString() ? `?${query.toString()}` : ""}`,
       {
         method: "GET",
         signal: AbortSignal.timeout(20000),
@@ -1310,6 +1438,208 @@ export async function createUploaderExecutionTask(
     };
   } catch (e: any) {
     return { success: false, message: e?.message || "请求失败" };
+  }
+}
+
+export async function getUploaderProfiles(): Promise<{
+  success: boolean;
+  data?: {
+    activeProfileId?: string | null;
+    workspaceDir?: string;
+    profilesRootDir?: string;
+    items: UploaderBrowserProfileSummary[];
+  };
+  message?: string;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/browser/profiles`, {
+      method: "GET",
+      signal: AbortSignal.timeout(10000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `获取环境列表失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: {
+        activeProfileId:
+          typeof json?.data?.activeProfileId === "string"
+            ? json.data.activeProfileId
+            : null,
+        workspaceDir:
+          typeof json?.data?.workspaceDir === "string"
+            ? json.data.workspaceDir
+            : undefined,
+        profilesRootDir:
+          typeof json?.data?.profilesRootDir === "string"
+            ? json.data.profilesRootDir
+            : undefined,
+        items: Array.isArray(json?.data?.items) ? json.data.items : [],
+      },
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "获取环境列表失败" };
+  }
+}
+
+export async function getUploaderProfileDetail(profileId: string): Promise<{
+  success: boolean;
+  data?: UploaderBrowserProfileSummary | null;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(
+      `${UPLOADER_API_BASE}/api/browser/profiles/${encodeURIComponent(profileId)}`,
+      {
+        method: "GET",
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `获取环境详情失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: json?.data || null,
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "获取环境详情失败" };
+  }
+}
+
+export async function createUploaderProfile(
+  data: Record<string, unknown>,
+): Promise<{
+  success: boolean;
+  data?: UploaderBrowserProfileSummary | null;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/browser/profiles`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data || {}),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `创建环境失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: json?.data || null,
+      message: json?.message,
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "创建环境失败" };
+  }
+}
+
+export async function updateUploaderProfile(
+  profileId: string,
+  data: Record<string, unknown>,
+): Promise<{
+  success: boolean;
+  data?: UploaderBrowserProfileSummary | null;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(
+      `${UPLOADER_API_BASE}/api/browser/profiles/${encodeURIComponent(profileId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data || {}),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `更新环境失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: json?.data || null,
+      message: json?.message,
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "更新环境失败" };
+  }
+}
+
+export async function deleteUploaderProfile(profileId: string): Promise<{
+  success: boolean;
+  data?: Record<string, any>;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(
+      `${UPLOADER_API_BASE}/api/browser/profiles/${encodeURIComponent(profileId)}`,
+      {
+        method: "DELETE",
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `删除环境失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: json?.data || null,
+      message: json?.message,
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "删除环境失败" };
+  }
+}
+
+export async function switchUploaderProfile(profileId: string): Promise<{
+  success: boolean;
+  data?: UploaderBrowserProfileSummary | null;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(
+      `${UPLOADER_API_BASE}/api/browser/profiles/${encodeURIComponent(profileId)}/switch`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `切换环境失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: json?.data || null,
+      message: json?.message,
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "切换环境失败" };
   }
 }
 
