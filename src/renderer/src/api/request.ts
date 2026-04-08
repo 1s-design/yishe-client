@@ -35,8 +35,6 @@ const legacyOwnershipWriteKeywords = [
   '/publish-config',
   '/design-request',
   '/common-url',
-  '/product',
-  '/product-model',
   '/ai/tti-record',
   '/ai/tts-record',
   '/ai/tts/custom-voice',

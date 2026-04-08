@@ -11,27 +11,20 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 // Custom APIs for renderer
 const api = {
-  startPublish: (params: Record<string, unknown>) => ipcRenderer.invoke('start-publish', params),
   showTrayNotification: (options: { title: string; body: string }) => ipcRenderer.invoke('show-tray-notification', options),
   updateTrayTooltip: (tooltip: string) => ipcRenderer.invoke('update-tray-tooltip', tooltip),
   hideMainWindow: () => ipcRenderer.invoke('hide-main-window'),
   showMainWindow: () => ipcRenderer.invoke('show-main-window'),
   confirmExit: () => ipcRenderer.invoke('confirm-exit'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
-  checkSocialMediaLogin: (forceRefresh: boolean = false) => ipcRenderer.invoke('check-social-media-login', forceRefresh),
-  testPublishToSocialMedia: () => ipcRenderer.invoke('test-publish-to-social-media'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   toggleDevTools: () => ipcRenderer.invoke('toggle-devtools'),
   // 新增 token 相关方法
   saveToken: (token: string) => ipcRenderer.invoke('save-token', token),
   getToken: () => ipcRenderer.invoke('get-token'),
   isTokenExist: () => ipcRenderer.invoke('is-token-exist'),
-  // 连接状态相关方法
-  onConnectionStatus: (callback: (status: any) => void) => {
-    ipcRenderer.on('connection-status', (event, status) => callback(status));
-  },
   onExtensionConnectionStatus: (callback: (status: any) => void) => {
-    ipcRenderer.on('extension-connection-status', (event, status) => callback(status));
+    ipcRenderer.on('extension-connection-status', (_event, status) => callback(status));
   },
   // 工作目录相关方法
   selectWorkspaceDirectory: () => ipcRenderer.invoke('select-workspace-directory'),

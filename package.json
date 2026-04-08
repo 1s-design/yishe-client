@@ -1,6 +1,6 @@
 {
   "name": "yishe-client",
-  "version": "1.2.32",
+  "version": "1.2.33",
   "description": "1s client",
   "main": "./out/main/index.js",
   "author": "Jc",
@@ -19,8 +19,7 @@
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
-    "build:linux": "npm run build && electron-builder --linux",
-    "test:network": "node test-network-recovery.js"
+    "build:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
@@ -38,16 +37,12 @@
     "express": "^5.1.0",
     "mitt": "^3.0.1",
     "postcss": "^8.5.6",
-    "puppeteer": "^24.11.1",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "sharp": "^0.34.5",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
-    "tailwindcss": "^4.1.17",
-    "vue-router": "^4.6.3"
+    "tailwindcss": "^4.1.17"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "3.0.0",

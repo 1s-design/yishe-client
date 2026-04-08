@@ -10,6 +10,9 @@
 
 interface Window {
   electron: {
+    process: {
+      versions: Record<string, string>
+    }
     ipcRenderer: {
       send(channel: string, ...args: any[]): void
       on(channel: string, func: (...args: any[]) => void): void
@@ -17,35 +20,17 @@ interface Window {
     }
   }
   api: {
-    startPublish(params: Record<string, unknown>): Promise<void>
     showTrayNotification(options: { title: string; body: string }): Promise<void>
     updateTrayTooltip(tooltip: string): Promise<void>
     hideMainWindow(): Promise<void>
     showMainWindow(): Promise<void>
     confirmExit(): Promise<'tray' | 'quit' | 'cancel'>
     getAppVersion(): Promise<string>
-    checkSocialMediaLogin(forceRefresh?: boolean): Promise<Record<string, { isLoggedIn: boolean; status: string; message: string }>>
-    testPublishToSocialMedia(): Promise<{
-      code: number
-      status: boolean
-      message: string
-      data?: {
-        platforms: any[]
-        results: any[]
-        timestamp: string
-      }
-      msg?: string
-      error?: string
-    }>
     saveToken(token: string): Promise<boolean>
     getToken(): Promise<string | undefined>
     isTokenExist(): Promise<boolean>
-    onConnectionStatus(callback: (status: any) => void): void
     onExtensionConnectionStatus(callback: (status: any) => void): void
-    getConnectionStatus(): Promise<any>
-    reconnect(): Promise<any>
     openExternal(url: string): Promise<void>
-    openAllMediaPages(): Promise<any>
     toggleDevTools(): Promise<{ opened: boolean }>
     // 工作目录
     selectWorkspaceDirectory(): Promise<string | null>

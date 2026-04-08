@@ -10,23 +10,12 @@ import express from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { specs } from './swagger';  // 新增cors导入
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Browser } from 'puppeteer';
-// 暂时注释掉发布服务相关引用，代码保留但不使用
-// import { PublishService } from './publishService';
-import { app, ipcMain, BrowserWindow } from 'electron';
-import { connectionManager } from './connectionManager';
+import { BrowserWindow } from 'electron';
 import { Server as SocketIOServer } from 'socket.io';
 import { createServer } from 'http';
 import fs from 'fs';
 import path from 'path';
-import https from 'https';
-import http from 'http';
-import { URL } from 'url';
-import { createHash } from 'crypto';
 import ElectronStore from 'electron-store';
-import { homedir, platform } from 'os';
 import { uploadFileToCos, generateCosKey } from './cos';
 import { crawlerCollectorService } from './crawlerCollector';
 
@@ -36,9 +25,6 @@ import { crawlerCollectorService } from './crawlerCollector';
 if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === undefined) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
-
-// 使用 stealth 插件
-puppeteer.use(StealthPlugin());
 
 // 用内存变量存储 token
 let token: string | null = null;
@@ -56,383 +42,11 @@ export function isTokenExist(): boolean {
   return !!token;
 }
 
-// 全局浏览器实例管理
-let browserInstance: Browser | null = null;
-
-// 获取或创建浏览器实例
-export async function getOrCreateBrowser(): Promise<Browser> {
-  // 检查现有浏览器实例
-  if (browserInstance) {
-    try {
-      // 简单检查浏览器是否仍然连接
-      const pages = await browserInstance.pages();
-      console.log('浏览器已存在且连接正常，页面数量:', pages.length);
-      
-      // 设置连接管理器的浏览器实例
-      connectionManager.setBrowser(browserInstance);
-      return browserInstance;
-      
-    } catch (error) {
-      console.log('浏览器连接已断开，重新启动...');
-      browserInstance = null;
-    }
-  }
-
-  // 如果连接管理器正在重连，等待一下
-  const status = connectionManager.getStatus();
-  if (status.isReconnecting) {
-    console.log('等待重连完成...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  }
-
-  // 创建新的浏览器实例
-  console.log('启动新的浏览器实例...');
-  
-  try {
-    // 设置用户数据目录，用于保存登录信息
-    const userDataDir = process.platform === 'win32' 
-      ? 'C:\\temp\\puppeteer-user-data'  // Windows
-      : '/tmp/puppeteer-user-data';      // Linux/Mac
-    
-    browserInstance = await puppeteer.launch({
-      headless: false, // 设置为false以显示浏览器窗口
-      defaultViewport: null, // 使用默认视口大小
-      userDataDir: userDataDir, // 保存用户数据，包括登录信息
-      args: [
-        '--start-maximized',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-blink-features=AutomationControlled', // 隐藏自动化标识
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor',
-        '--disable-extensions-except',
-        '--disable-plugins-discovery',
-        '--disable-default-apps',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--disable-features=TranslateUI',
-        '--disable-ipc-flooding-protection',
-        '--disable-hang-monitor',
-        '--disable-prompt-on-repost',
-        '--disable-domain-reliability',
-        '--disable-component-extensions-with-background-pages',
-        '--disable-background-networking',
-        '--disable-sync',
-        '--metrics-recording-only',
-        '--no-report-upload',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--disable-features=TranslateUI',
-        '--disable-ipc-flooding-protection',
-        '--disable-hang-monitor',
-        '--disable-prompt-on-repost',
-        '--disable-domain-reliability',
-        '--disable-component-extensions-with-background-pages',
-        '--disable-background-networking',
-        '--disable-sync',
-        '--metrics-recording-only',
-        '--no-report-upload'
-      ]
-    });
-
-    console.log('新浏览器实例启动成功，用户数据目录:', userDataDir);
-    
-    // 设置连接管理器的浏览器实例
-    connectionManager.setBrowser(browserInstance);
-    
-    return browserInstance;
-    
-  } catch (error) {
-    console.error('❌ 浏览器启动失败:', error);
-    throw error;
-  }
-}
-
-// 新增：为页面添加反检测脚本
-export async function setupAntiDetection(page: any): Promise<void> {
-  // 设置更真实的 user-agent
-  await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-  
-  // 注入反检测脚本
-  await page.evaluateOnNewDocument(() => {
-    // 更彻底的 webdriver 伪装
-    // 方法1: 删除原型链上的 webdriver 属性
-    delete (navigator as any).__proto__.webdriver;
-    
-    // 方法2: 使用 Object.defineProperty 重新定义
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => false,
-      configurable: true,
-      enumerable: false
-    });
-    
-    // 方法3: 确保在 navigator 对象上也不存在
-    if ('webdriver' in navigator) {
-      delete (navigator as any).webdriver;
-    }
-    
-    // 方法4: 使用 Proxy 来拦截所有访问
-    const originalNavigator = navigator;
-    const navigatorProxy = new Proxy(originalNavigator, {
-      get: function(target, prop) {
-        if (prop === 'webdriver') {
-          return false;
-        }
-        return target[prop as keyof Navigator];
-      },
-      has: function(target, prop) {
-        if (prop === 'webdriver') {
-          return false;
-        }
-        return prop in target;
-      }
-    });
-    
-    // 尝试替换全局 navigator
-    try {
-      Object.defineProperty(window, 'navigator', {
-        value: navigatorProxy,
-        writable: false,
-        configurable: false
-      });
-    } catch (e) {
-      // 如果无法替换，至少确保 webdriver 返回 false
-      console.log('无法替换全局 navigator，使用备用方案');
-    }
-
-    // 伪装插件
-    Object.defineProperty(navigator, 'plugins', {
-      get: () => [1, 2, 3, 4, 5],
-    });
-
-    // 伪装语言
-    Object.defineProperty(navigator, 'languages', {
-      get: () => ['zh-CN', 'zh', 'en'],
-    });
-
-    // 伪装平台
-    Object.defineProperty(navigator, 'platform', {
-      get: () => 'MacIntel',
-    });
-
-    // 伪装硬件并发数
-    Object.defineProperty(navigator, 'hardwareConcurrency', {
-      get: () => 8,
-    });
-
-    // 伪装设备内存
-    Object.defineProperty(navigator, 'deviceMemory', {
-      get: () => 8,
-    });
-
-    // 伪装连接
-    Object.defineProperty(navigator, 'connection', {
-      get: () => ({
-        effectiveType: '4g',
-        rtt: 50,
-        downlink: 10,
-        saveData: false,
-      }),
-    });
-
-    // 伪装 Chrome 运行时
-    (window as any).chrome = {
-      runtime: {},
-    };
-
-    // 伪装 WebGL
-    const getParameter = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(parameter) {
-      if (parameter === 37445) {
-        return 'Intel Inc.';
-      }
-      if (parameter === 37446) {
-        return 'Intel(R) Iris(TM) Graphics 6100';
-      }
-      return getParameter.call(this, parameter);
-    };
-
-    // 伪装 Canvas
-    const originalGetContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function(type, ...args) {
-      const context = originalGetContext.call(this, type, ...args);
-      if (type === '2d') {
-        const originalFillText = context.fillText;
-        context.fillText = function(...args) {
-          return originalFillText.apply(this, args);
-        };
-      }
-      return context;
-    };
-
-    // 伪装 AudioContext
-    const originalAudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    if (originalAudioContext) {
-      window.AudioContext = originalAudioContext;
-      (window as any).webkitAudioContext = originalAudioContext;
-    }
-
-    // 伪装 MediaDevices
-    if (navigator.mediaDevices) {
-      const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
-      navigator.mediaDevices.getUserMedia = function(constraints) {
-        return Promise.reject(new Error('Not allowed'));
-      };
-    }
-
-    // 伪装 Battery API
-    if ('getBattery' in navigator) {
-      navigator.getBattery = () => Promise.resolve({
-        charging: true,
-        chargingTime: Infinity,
-        dischargingTime: Infinity,
-        level: 1,
-      });
-    }
-
-    // 伪装 Notification
-    if ('Notification' in window) {
-      Object.defineProperty(Notification, 'permission', {
-        get: () => 'granted',
-      });
-    }
-
-    // 伪装 ServiceWorker
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register = () => Promise.resolve({
-        scope: '',
-        updateViaCache: 'all',
-        scriptURL: '',
-        state: 'activated',
-        unregister: () => Promise.resolve(true),
-        update: () => Promise.resolve(),
-      } as any);
-    }
-
-    // 伪装 WebDriver
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => false,
-    });
-
-    // 伪装 Automation
-    Object.defineProperty(window, 'navigator', {
-      writable: true,
-      value: {
-        ...navigator,
-        webdriver: false,
-      },
-    });
-
-    // 伪装 Chrome 对象
-    (window as any).chrome = {
-      app: {
-        isInstalled: false,
-        InstallState: {
-          DISABLED: 'disabled',
-          INSTALLED: 'installed',
-          NOT_INSTALLED: 'not_installed',
-        },
-        RunningState: {
-          CANNOT_RUN: 'cannot_run',
-          READY_TO_RUN: 'ready_to_run',
-          RUNNING: 'running',
-        },
-      },
-      runtime: {
-        OnInstalledReason: {
-          CHROME_UPDATE: 'chrome_update',
-          INSTALL: 'install',
-          SHARED_MODULE_UPDATE: 'shared_module_update',
-          UPDATE: 'update',
-        },
-        OnRestartRequiredReason: {
-          APP_UPDATE: 'app_update',
-          OS_UPDATE: 'os_update',
-          PERIODIC: 'periodic',
-        },
-        PlatformArch: {
-          ARM: 'arm',
-          ARM64: 'arm64',
-          MIPS: 'mips',
-          MIPS64: 'mips64',
-          X86_32: 'x86-32',
-          X86_64: 'x86-64',
-        },
-        PlatformNaclArch: {
-          ARM: 'arm',
-          MIPS: 'mips',
-          MIPS64: 'mips64',
-          X86_32: 'x86-32',
-          X86_64: 'x86-64',
-        },
-        PlatformOs: {
-          ANDROID: 'android',
-          CROS: 'cros',
-          LINUX: 'linux',
-          MAC: 'mac',
-          OPENBSD: 'openbsd',
-          WIN: 'win',
-        },
-        RequestUpdateCheckStatus: {
-          NO_UPDATE: 'no_update',
-          THROTTLED: 'throttled',
-          UPDATE_AVAILABLE: 'update_available',
-        },
-      },
-    };
-  });
-
-  // 设置视口大小
-  await page.setViewport({
-    width: 1920,
-    height: 1080,
-    deviceScaleFactor: 1,
-  });
-
-  // 设置额外的请求头
-  await page.setExtraHTTPHeaders({
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-  });
-}
-
-// 关闭浏览器实例
-export async function closeBrowser(): Promise<void> {
-  try {
-    // 使用连接管理器清理资源
-    await connectionManager.cleanup();
-    
-    if (browserInstance) {
-      try {
-        await browserInstance.close();
-        console.log('浏览器实例已关闭');
-      } catch (error) {
-        console.error('关闭浏览器实例时出错:', error);
-      } finally {
-        browserInstance = null;
-      }
-    }
-  } catch (error) {
-    console.error('清理连接管理器时出错:', error);
-  }
-}
-
-let serverInstance: any = null;
 let stopServerFn: (() => Promise<void>) | null = null;
-let currentPort: number = 1519;
 let ioServer: SocketIOServer | null = null;
 let extensionConnections = new Map<string, { socketId: string; connectedAt: string }>();
 
 export function startServer(port: number = 1519): (() => Promise<void>) {
-  currentPort = port;
   // 如果服务器已经在运行，先停止它
   if (stopServerFn) {
     console.log('⚠️ 服务器已在运行，先停止旧实例');
@@ -494,7 +108,7 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // 设置路由
-  app.get('/', (req, res) => {
+  app.get('/', (_req, res) => {
     res.send('Yishe Client Server Running');
   });
 
@@ -525,21 +139,14 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
    *             schema:
    *               $ref: '#/components/schemas/ErrorResponse'
    */
-  app.get('/api/health', (req, res) => {
-    const connectionStatus = connectionManager.getStatus();
-    
+  app.get('/api/health', (_req, res) => {
     res.status(200).json({
       status: 'OK',
       timestamp: new Date().toISOString(),
       service: 'electron-server',
       version: '1.0.0',
       isAuthorized: !!token,
-      connection: {
-        isConnected: connectionStatus.isConnected,
-        lastError: connectionStatus.lastError,
-        retryCount: connectionStatus.retryCount,
-        lastAttempt: connectionStatus.lastAttempt?.toISOString()
-      }
+      mode: 'client-bridge'
     });
   });
 
@@ -618,7 +225,7 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
    *                   type: boolean
    *                   example: true
    */
-  app.post('/api/logoutToken', async (req, res) => {
+  app.post('/api/logoutToken', async (_req, res) => {
     token = null;
     // 登出时停止服务
     if (stopServerFn) {
@@ -716,7 +323,6 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     console.log(`   POST /api/saveToken                 - 保存 Token`);
     console.log(`   POST /api/logoutToken               - 退出授权`);
     console.log('📦 商品管理:');
-    console.log(`   GET  /api/product/social-media-export-local/:id - 获取商品的本地发布数据`);
     console.log('🖼️  爬图库:');
     console.log(`   POST /api/crawler-material-upload              - 上传图片到爬图库`);
     console.log('📋 任务队列:');
@@ -730,7 +336,7 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
   });
 
   // 添加获取插件连接状态的 API
-  app.get('/api/extension/connections', (req, res) => {
+  app.get('/api/extension/connections', (_req, res) => {
     const connections = Array.from(extensionConnections.entries()).map(([clientId, info]) => ({
       clientId,
       ...info
@@ -1299,266 +905,6 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
       });
     }
   });
-
-  /**
-   * @swagger
-   * /api/product/social-media-export-local/{id}:
-   *   get:
-   *     summary: 获取商品的本地发布数据
-   *     description: 根据商品ID获取社交媒体发布数据，并将所有在线文件转换为本地路径
-   *     tags: [商品管理]
-   *     parameters:
-   *       - in: path
-   *         name: id
-   *         required: true
-   *         schema:
-   *           type: string
-   *         description: 商品ID
-   *     responses:
-   *       200:
-   *         description: 成功获取本地发布数据
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 code:
-   *                   type: number
-   *                   example: 0
-   *                 status:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: '成功获取本地发布数据'
-   *                 data:
-   *                   type: object
-   *                   description: 转换后的发布数据，所有URL已替换为本地路径
-   *       400:
-   *         description: 请求参数错误
-   *       401:
-   *         description: 未授权，需要Token
-   *       500:
-   *         description: 服务器错误
-   */
-  app.get('/api/product/social-media-export-local/:id', async (req, res) => {
-    try {
-      const { id } = req.params;
-      
-      if (!id) {
-        res.status(400).json({
-          code: 1,
-          status: false,
-          message: '商品ID不能为空'
-        });
-        return;
-      }
-
-      // 检查token
-      if (!token) {
-        res.status(401).json({
-          code: 1,
-          status: false,
-          message: '未授权，请先登录'
-        });
-        return;
-      }
-
-      // 获取远程API地址
-      const isDev = process.env.NODE_ENV === 'development';
-      const REMOTE_API_BASE = isDev 
-        ? 'http://localhost:1520/api' 
-        : 'https://1s.design:1520/api';
-
-      // 1. 调用远程API获取发布数据
-      const response = await fetch(`${REMOTE_API_BASE}/product/social-media-export/${id}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`获取发布数据失败: ${response.status} ${errorText}`);
-      }
-
-      const socialMediaData = await response.json();
-
-      // 2. 获取工作目录
-      const Store = (ElectronStore as any).default || ElectronStore;
-      const store = new Store({
-        defaults: {
-          workspaceDirectory: ''
-        }
-      });
-      const workspaceDir = store.get('workspaceDirectory', '') as string;
-      
-      if (!workspaceDir || workspaceDir.trim() === '') {
-        res.status(500).json({
-          code: 1,
-          status: false,
-          message: '工作目录未设置，无法下载文件'
-        });
-        return;
-      }
-
-      // 3. 提取真正的业务数据层（远程接口返回通常是 { code, status, data } 结构）
-      const remotePayload = (socialMediaData && typeof socialMediaData === 'object')
-        ? (socialMediaData.data ?? socialMediaData)
-        : socialMediaData;
-
-      // 4. 转换 URL 为本地路径（只作用在业务数据层）
-      const localPayload = await convertUrlsToLocal(remotePayload, workspaceDir);
-
-      // 5. 直接返回扁平化后的业务数据，方便脚本/插件直接使用
-      // 结构类似：{ name, description, keywords, images, videos }
-      res.status(200).json(localPayload);
-    } catch (error: any) {
-      console.error('获取本地发布数据失败:', error);
-      res.status(500).json({
-        code: 1,
-        status: false,
-        message: error?.message || '获取本地发布数据失败',
-        error: error instanceof Error ? error.message : '未知错误'
-      });
-    }
-  });
-
-  // 辅助函数：检查文件是否已下载
-  async function checkFileDownloaded(url: string, workspaceDir: string): Promise<{ found: boolean; filePath?: string }> {
-    try {
-      const filesDir = path.join(workspaceDir, 'files');
-      if (!fs.existsSync(filesDir)) {
-        return { found: false };
-      }
-
-      // 从URL生成文件名（使用URL的hash作为文件名）
-      const urlHash = createHash('md5').update(url).digest('hex');
-      const urlPath = new URL(url).pathname;
-      const ext = path.extname(urlPath) || '.jpg';
-      const fileName = `${urlHash}${ext}`;
-      const filePath = path.join(filesDir, fileName);
-
-      if (fs.existsSync(filePath)) {
-        return { found: true, filePath };
-      }
-      return { found: false };
-    } catch (error) {
-      console.error('检查文件失败:', error);
-      return { found: false };
-    }
-  }
-
-  // 辅助函数：下载文件
-  async function downloadFile(url: string, workspaceDir: string): Promise<string> {
-    try {
-      const filesDir = path.join(workspaceDir, 'files');
-      if (!fs.existsSync(filesDir)) {
-        fs.mkdirSync(filesDir, { recursive: true });
-      }
-
-      // 从URL生成文件名
-      const urlHash = createHash('md5').update(url).digest('hex');
-      const urlPath = new URL(url).pathname;
-      const ext = path.extname(urlPath) || '.jpg';
-      const fileName = `${urlHash}${ext}`;
-      const filePath = path.join(filesDir, fileName);
-
-      // 如果文件已存在，直接返回
-      if (fs.existsSync(filePath)) {
-        return filePath;
-      }
-
-      // 下载文件
-      return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(filePath);
-        const protocol = url.startsWith('https') ? https : http;
-        
-        protocol.get(url, (response) => {
-          if (response.statusCode === 200) {
-            response.pipe(file);
-            file.on('finish', () => {
-              file.close();
-              resolve(filePath);
-            });
-          } else {
-            fs.unlinkSync(filePath);
-            reject(new Error(`下载失败: ${response.statusCode}`));
-          }
-        }).on('error', (err) => {
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-          reject(err);
-        });
-      });
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  // 辅助函数：确保文件本地化
-  async function ensureLocalFile(url: string, workspaceDir: string, processedUrls: Map<string, string>): Promise<string> {
-    if (!url || typeof url !== 'string' || !url.startsWith('http')) {
-      return url;
-    }
-
-    // 检查是否已处理过
-    if (processedUrls.has(url)) {
-      return processedUrls.get(url)!;
-    }
-
-    try {
-      // 先检查文件是否已下载
-      const checkResult = await checkFileDownloaded(url, workspaceDir);
-      if (checkResult.found && checkResult.filePath) {
-        processedUrls.set(url, checkResult.filePath);
-        return checkResult.filePath;
-      }
-
-      // 下载文件
-      const localPath = await downloadFile(url, workspaceDir);
-      processedUrls.set(url, localPath);
-      return localPath;
-    } catch (error: any) {
-      console.error(`处理文件失败 (${url}):`, error);
-      // 失败时返回原URL
-      return url;
-    }
-  }
-
-  // 辅助函数：递归转换URL为本地路径
-  async function convertUrlsToLocal(obj: any, workspaceDir: string, processedUrls = new Map<string, string>()): Promise<any> {
-    if (obj === null || obj === undefined) {
-      return obj;
-    }
-
-    // 如果是字符串且是HTTP URL
-    if (typeof obj === 'string' && obj.startsWith('http')) {
-      return await ensureLocalFile(obj, workspaceDir, processedUrls);
-    }
-
-    // 如果是数组
-    if (Array.isArray(obj)) {
-      return Promise.all(obj.map(item => convertUrlsToLocal(item, workspaceDir, processedUrls)));
-    }
-
-    // 如果是对象
-    if (typeof obj === 'object') {
-      const result: any = {};
-      for (const key in obj) {
-        if (Object.prototype.hasOwnProperty.call(obj, key)) {
-          result[key] = await convertUrlsToLocal(obj[key], workspaceDir, processedUrls);
-        }
-      }
-      return result;
-    }
-
-    // 其他类型直接返回
-    return obj;
-  }
 
   /**
    * @swagger

@@ -52,7 +52,7 @@ const options = {
           properties: {
             message: {
               type: 'string',
-              example: 'puppeteer测试成功'
+              example: '浏览器自动化服务测试成功'
             },
             status: {
               type: 'string',

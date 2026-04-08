@@ -6,7 +6,6 @@ import {
   ipcMain,
   Tray,
   Menu,
-  nativeImage,
   dialog,
   session,
 } from "electron";
@@ -14,16 +13,13 @@ import { join } from "path";
 import { resolve, dirname, extname, basename } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import icon from "../../resources/favicon.png?asset";
-import puppeteer from "puppeteer";
 // 暂时注释掉发布服务相关引用，代码保留但不使用
 // import { publishToXiaohongshu } from './xiaohongshu'
 // import { publishToDouyin } from './douyin'
 // import { publishToKuaishou } from './kuaishou'
-import { spawn } from "child_process";
 import { homedir, platform } from "os";
 import { join as pathJoin } from "path";
 import fs from "fs";
-import https from "https";
 import http from "http";
 import { URL } from "url";
 import {
@@ -39,14 +35,9 @@ import {
   stopServer,
   isServerRunning,
   saveToken,
-  getOrCreateBrowser,
   getTokenValue,
   isTokenExist,
 } from "./server";
-// 暂时注释掉发布服务相关引用，代码保留但不使用
-// import { PublishService } from './publishService';
-import { connectionManager } from "./connectionManager";
-import { networkMonitor } from "./networkMonitor";
 import ElectronStore from "electron-store";
 import {
   ExternalProcessManager,
@@ -135,227 +126,6 @@ function initializeDefaultWorkspaceDirectory(): void {
   }
 }
 
-// 防止重复显示协议错误弹窗的标记
-let protocolErrorDialogShown = false;
-let protocolErrorDialogTimeout: NodeJS.Timeout | null = null;
-
-// 设置连接管理器事件监听
-function setupConnectionManagerEvents(): void {
-  // 连接成功事件
-  connectionManager.on("connected", () => {
-    console.log("✅ 浏览器连接成功");
-    if (mainWindow) {
-      mainWindow.webContents.send("connection-status", { isConnected: true });
-    }
-  });
-
-  // 连接错误事件
-  connectionManager.on("error", async (error) => {
-    console.error("❌ 浏览器连接错误:", error);
-    if (mainWindow) {
-      mainWindow.webContents.send("connection-status", {
-        isConnected: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    // 检查是否是协议错误，如果是则显示用户弹窗
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    if (
-      errorMessage.includes("Protocol error") ||
-      errorMessage.includes("Connection closed")
-    ) {
-      console.log("🔄 检测到协议错误，显示用户提示弹窗...");
-      await showProtocolErrorDialog();
-    }
-  });
-
-  // 重连事件
-  connectionManager.on("reconnecting", () => {
-    console.log("🔄 正在重新连接...");
-    if (mainWindow) {
-      mainWindow.webContents.send("connection-status", {
-        isConnected: false,
-        reconnecting: true,
-      });
-    }
-  });
-
-  // 状态变化事件
-  connectionManager.on("statusChanged", (status) => {
-    console.log("📊 连接状态变化:", status);
-    if (mainWindow) {
-      mainWindow.webContents.send("connection-status", status);
-    }
-  });
-
-  // 操作成功事件
-  connectionManager.on("operationSuccess", (operationName) => {
-    console.log(`✅ 操作成功: ${operationName}`);
-  });
-
-  // 操作失败事件
-  connectionManager.on("operationFailed", async (operationName, error) => {
-    console.error(`❌ 操作失败: ${operationName}`, error);
-
-    // 检查是否是协议错误，如果是则显示用户弹窗
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    if (
-      errorMessage.includes("Protocol error") ||
-      errorMessage.includes("Connection closed")
-    ) {
-      console.log("🔄 操作失败检测到协议错误，显示用户提示弹窗...");
-      await showProtocolErrorDialog();
-    }
-  });
-
-  // 达到最大重试次数事件
-  connectionManager.on("maxRetriesReached", () => {
-    console.warn("⚠️ 已达到最大重试次数");
-    if (mainWindow) {
-      mainWindow.webContents.send("connection-status", {
-        isConnected: false,
-        maxRetriesReached: true,
-      });
-    }
-  });
-
-  // 重连准备就绪事件
-  connectionManager.on("reconnectReady", async () => {
-    console.log("🔄 重连准备就绪，重新创建浏览器实例...");
-    try {
-      // 重新创建浏览器实例
-      const newBrowser = await getOrCreateBrowser();
-      connectionManager.setBrowser(newBrowser);
-      console.log("✅ 浏览器实例重新创建成功");
-    } catch (error) {
-      console.error("❌ 重新创建浏览器实例失败:", error);
-    }
-  });
-
-  // 达到最大重连次数事件
-  connectionManager.on("maxReconnectAttemptsReached", async () => {
-    console.warn("⚠️ 已达到最大重连次数");
-    if (mainWindow) {
-      mainWindow.webContents.send("connection-status", {
-        isConnected: false,
-        maxReconnectAttemptsReached: true,
-      });
-    }
-
-    // 达到最大重连次数时也显示用户弹窗
-    await showProtocolErrorDialog();
-  });
-
-  // 网络监控事件
-  networkMonitor.on("networkLost", (status) => {
-    console.error("🌐 网络连接丢失");
-    if (mainWindow) {
-      mainWindow.webContents.send("network-status", {
-        isOnline: false,
-        status,
-      });
-    }
-  });
-
-  networkMonitor.on("networkRestored", (status) => {
-    console.log("🌐 网络连接已恢复");
-    if (mainWindow) {
-      mainWindow.webContents.send("network-status", {
-        isOnline: true,
-        status,
-      });
-    }
-  });
-
-  networkMonitor.on("statusChanged", (status) => {
-    if (mainWindow) {
-      mainWindow.webContents.send("network-status", status);
-    }
-  });
-}
-
-/**
- * 显示协议错误提示弹窗
- */
-async function showProtocolErrorDialog(): Promise<void> {
-  // 防止重复显示弹窗
-  if (protocolErrorDialogShown) {
-    console.log("协议错误弹窗已显示，跳过重复显示");
-    return;
-  }
-
-  if (!mainWindow) {
-    console.warn("主窗口不存在，无法显示弹窗");
-    return;
-  }
-
-  try {
-    // 设置弹窗显示标记
-    protocolErrorDialogShown = true;
-
-    // 清除之前的超时
-    if (protocolErrorDialogTimeout) {
-      clearTimeout(protocolErrorDialogTimeout);
-    }
-
-    // 设置5分钟后重置标记，允许再次显示弹窗
-    protocolErrorDialogTimeout = setTimeout(
-      () => {
-        protocolErrorDialogShown = false;
-        protocolErrorDialogTimeout = null;
-      },
-      5 * 60 * 1000,
-    ); // 5分钟
-
-    const result = await dialog.showMessageBox(mainWindow, {
-      type: "warning",
-      buttons: ["关闭客户端", "稍后重试", "取消"],
-      defaultId: 0,
-      cancelId: 2,
-      title: "连接错误",
-      message: "检测到浏览器连接协议错误",
-      detail:
-        "建议关闭客户端后重新启动以恢复连接。\n\n错误类型：Protocol error: Connection closed\n\n如果问题持续存在，请检查网络连接或联系技术支持。",
-      icon: icon,
-    });
-
-    switch (result.response) {
-      case 0: // 关闭客户端
-        console.log("用户选择关闭客户端");
-        (app as any).isQuiting = true;
-        app.quit();
-        break;
-      case 1: // 稍后重试
-        console.log("用户选择稍后重试");
-        // 重置弹窗标记，允许用户稍后再次看到弹窗
-        protocolErrorDialogShown = false;
-        if (protocolErrorDialogTimeout) {
-          clearTimeout(protocolErrorDialogTimeout);
-          protocolErrorDialogTimeout = null;
-        }
-        break;
-      case 2: // 取消
-        console.log("用户取消操作");
-        // 重置弹窗标记，允许用户稍后再次看到弹窗
-        protocolErrorDialogShown = false;
-        if (protocolErrorDialogTimeout) {
-          clearTimeout(protocolErrorDialogTimeout);
-          protocolErrorDialogTimeout = null;
-        }
-        break;
-    }
-  } catch (error) {
-    console.error("显示协议错误弹窗失败:", error);
-    // 出错时重置标记
-    protocolErrorDialogShown = false;
-    if (protocolErrorDialogTimeout) {
-      clearTimeout(protocolErrorDialogTimeout);
-      protocolErrorDialogTimeout = null;
-    }
-  }
-}
-
 const isMac = process.platform === "darwin";
 
 function shouldForceTrayMode(): boolean {
@@ -387,12 +157,6 @@ function createWindow(): void {
       contextIsolation: true,
     },
   });
-
-  // 设置连接管理器事件监听
-  setupConnectionManagerEvents();
-
-  // 启动网络监控
-  networkMonitor.start();
 
   mainWindow.on("ready-to-show", () => {
     mainWindow?.show();
@@ -464,7 +228,7 @@ function createWindow(): void {
   const ses = session.defaultSession;
 
   // 设置权限处理，允许加载所有外部资源
-  ses.setPermissionRequestHandler((webContents, permission, callback) => {
+  ses.setPermissionRequestHandler((_webContents, _permission, callback) => {
     // 允许所有权限请求（包括图片、视频等）
     callback(true);
   });
@@ -483,7 +247,7 @@ function createWindow(): void {
   // 监听资源加载失败
   mainWindow.webContents.on(
     "did-fail-load",
-    (event, errorCode, errorDescription, validatedURL) => {
+    (_event, errorCode, errorDescription, validatedURL) => {
       if (
         validatedURL &&
         (validatedURL.includes("http://") || validatedURL.includes("https://"))
@@ -793,7 +557,7 @@ if (!gotTheLock) {
   process.exit(0);
 } else {
   // 成功获取锁，监听第二个实例的启动
-  app.on("second-instance", (event, commandLine, workingDirectory) => {
+  app.on("second-instance", (_event, _commandLine, _workingDirectory) => {
     // 当第二个实例尝试启动时，在第一个实例中触发此事件
     console.log("⚠️ 检测到第二个实例尝试启动，激活第一个实例窗口");
 
@@ -858,7 +622,7 @@ app.whenReady().then(() => {
   // 监听 token 保存事件，启动服务
   // 注意：server.ts 中也有 save-token 处理器，但它在服务启动后才注册
   // 这里我们在服务启动前拦截，先启动服务并保存 token
-  ipcMain.handle("save-token", async (event, newToken) => {
+  ipcMain.handle("save-token", async (_event, newToken) => {
     // 先保存 token（无论服务是否启动）
     saveToken(newToken);
 
@@ -1051,41 +815,12 @@ app.on("before-quit", async () => {
     externalProcessManager.stopAll(true).catch(console.error);
   });
 
-  // 清理协议错误弹窗相关资源
-  if (protocolErrorDialogTimeout) {
-    clearTimeout(protocolErrorDialogTimeout);
-    protocolErrorDialogTimeout = null;
-  }
-  protocolErrorDialogShown = false;
-
-  // 停止网络监控
-  await networkMonitor.cleanup();
-
-  // 清理连接管理器
-  await connectionManager.cleanup();
-
   // 清理托盘
   if (tray) {
     tray.destroy();
   }
 
   console.log("✅ 资源清理完成");
-});
-
-// 添加 IPC 监听器
-ipcMain.handle("start-publish", async (_, params): Promise<void> => {
-  console.log("收到发布请求，参数:", params);
-  try {
-    // 并行执行发布操作
-    await Promise.all([
-      // publishToXiaohongshu(),
-      // publishToDouyin(),
-      // publishToKuaishou()
-    ]);
-  } catch (error) {
-    console.error("发布过程出错:", error);
-    throw error;
-  }
 });
 
 // 添加托盘相关的IPC监听器
@@ -1135,38 +870,9 @@ ipcMain.on("toggle-devtools", (event) => {
 });
 
 ipcMain.handle("get-app-version", () => app.getVersion());
-
-// 暂时注释掉发布服务相关功能
-// 在主进程暴露社交媒体登录状态检测方法
-// ipcMain.handle('check-social-media-login', async (_, forceRefresh: boolean = false) => {
-//   try {
-//     // 如果强制刷新，先清除缓存
-//     if (forceRefresh) {
-//       console.log('[IPC] 强制刷新模式，清除缓存');
-//       PublishService.clearLoginStatusCache();
-//     }
-//
-//     // 直接调用PublishService方法，传递forceRefresh参数
-//     const result = await PublishService.checkSocialMediaLoginStatus(forceRefresh);
-//     return {
-//       code: 0,
-//       status: true,
-//       data: result,
-//       timestamp: new Date().toISOString()
-//     };
-//   } catch (error) {
-//     console.error('检查社交媒体登录状态失败:', error);
-//     return {
-//       code: 1,
-//       status: false,
-//       msg: '检查失败',
-//       error: error instanceof Error ? error.message : '未知错误',
-//       timestamp: new Date().toISOString()
-//     };
-//   }
 // });
 
-ipcMain.handle("open-external", async (event, url: string) => {
+ipcMain.handle("open-external", async (_event, url: string) => {
   await shell.openExternal(url);
 });
 
@@ -1199,7 +905,7 @@ ipcMain.handle("get-workspace-directory", async () => {
   return store.get("workspaceDirectory", "") as string;
 });
 
-ipcMain.handle("set-workspace-directory", async (event, path: string) => {
+ipcMain.handle("set-workspace-directory", async (_event, path: string) => {
   if (path && typeof path === "string") {
     store.set("workspaceDirectory", path);
     return true;
@@ -1207,7 +913,7 @@ ipcMain.handle("set-workspace-directory", async (event, path: string) => {
   return false;
 });
 
-ipcMain.handle("open-path", async (event, path: string) => {
+ipcMain.handle("open-path", async (_event, path: string) => {
   if (!path || typeof path !== "string") {
     throw new Error("路径无效");
   }
@@ -1253,154 +959,13 @@ function ensureFileExtension(
   return fileName;
 }
 
-// 文件下载辅助函数：处理下载响应
-function handleDownloadResponse(
-  response: http.IncomingMessage,
-  filesDir: string,
-  resolve: (result: any) => void,
-  initialFileName?: string,
-  sourceUrl?: string,
-  downloadTimeout: number = 120000, // 默认120秒超时
-) {
-  if (
-    response.statusCode &&
-    (response.statusCode < 200 || response.statusCode >= 300)
-  ) {
-    resolve({
-      success: false,
-      message: `下载失败: HTTP ${response.statusCode}`,
-      error: "HTTP_ERROR",
-      statusCode: response.statusCode,
-    });
-    return;
-  }
-
-  // 从响应头获取文件名
-  let fileName = initialFileName || "download";
-  const contentDisposition = response.headers["content-disposition"];
-  const contentType = response.headers["content-type"];
-
-  if (contentDisposition) {
-    const filenameMatch = contentDisposition.match(
-      /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
-    );
-    if (filenameMatch && filenameMatch[1]) {
-      let suggestedFileName = filenameMatch[1].replace(/['"]/g, "");
-      try {
-        suggestedFileName = decodeURIComponent(suggestedFileName);
-      } catch (e) {
-        // 忽略解码错误
-      }
-      if (suggestedFileName) {
-        fileName = suggestedFileName.replace(/[<>:"/\\|?*]/g, "_");
-      }
-    }
-  }
-
-  // 确保文件名有正确的扩展名
-  fileName = ensureFileExtension(fileName, sourceUrl, contentType);
-
-  const finalFilePath = pathJoin(filesDir, fileName);
-
-  // 如果文件已存在，返回跳过
-  if (fs.existsSync(finalFilePath)) {
-    const stats = fs.statSync(finalFilePath);
-    resolve({
-      success: true,
-      message: "文件已存在，跳过下载",
-      filePath: finalFilePath,
-      skipped: true,
-      fileSize: stats.size,
-    });
-    return;
-  }
-
-  // 创建写入流
-  const fileStream = fs.createWriteStream(finalFilePath);
-  let downloadedBytes = 0;
-  let timeoutTimer: NodeJS.Timeout | null = null;
-
-  // 重置超时计时器的函数
-  const resetTimeout = () => {
-    if (timeoutTimer) {
-      clearTimeout(timeoutTimer);
-    }
-    timeoutTimer = setTimeout(() => {
-      fileStream.close();
-      if (fs.existsSync(finalFilePath)) {
-        fs.unlinkSync(finalFilePath); // 删除不完整的文件
-      }
-      resolve({
-        success: false,
-        message: "下载超时（数据传输中断）",
-        error: "TIMEOUT",
-      });
-    }, downloadTimeout);
-  };
-
-  // 初始化超时计时器
-  resetTimeout();
-
-  response.pipe(fileStream);
-
-  fileStream.on("finish", () => {
-    if (timeoutTimer) {
-      clearTimeout(timeoutTimer);
-    }
-    fileStream.close();
-    const stats = fs.statSync(finalFilePath);
-    resolve({
-      success: true,
-      message: "下载完成",
-      filePath: finalFilePath,
-      fileSize: stats.size,
-      downloadedBytes: downloadedBytes,
-    });
-  });
-
-  fileStream.on("error", (error) => {
-    if (timeoutTimer) {
-      clearTimeout(timeoutTimer);
-    }
-    if (fs.existsSync(finalFilePath)) {
-      fs.unlinkSync(finalFilePath); // 删除不完整的文件
-    }
-    resolve({
-      success: false,
-      message: `文件写入失败: ${error.message}`,
-      error: "FILE_WRITE_ERROR",
-    });
-  });
-
-  // 在数据传输过程中重置超时计时器
-  response.on("data", (chunk) => {
-    downloadedBytes += chunk.length;
-    resetTimeout(); // 有数据传输时重置超时
-  });
-
-  response.on("error", (error) => {
-    if (timeoutTimer) {
-      clearTimeout(timeoutTimer);
-    }
-    fileStream.close();
-    if (fs.existsSync(finalFilePath)) {
-      fs.unlinkSync(finalFilePath); // 删除不完整的文件
-    }
-    resolve({
-      success: false,
-      message: `下载失败: ${error.message}`,
-      error: "DOWNLOAD_ERROR",
-    });
-  });
-}
-
 // 文件下载相关 IPC 处理器
 /**
  * 从 URL 下载文件到工作目录下的 files 目录
  * @param url 文件下载链接
  * @returns 下载结果 { success: boolean, message: string, filePath?: string, skipped?: boolean }
  */
-ipcMain.handle("download-file", async (event, url: string) => {
+ipcMain.handle("download-file", async (_event, url: string) => {
   try {
     // 检查工作目录是否设置
     const workspaceDir = store.get("workspaceDirectory", "") as string;
@@ -1595,7 +1160,7 @@ ipcMain.handle("download-file", async (event, url: string) => {
  * @param url 文件下载链接
  * @returns 查询结果 { found: boolean, filePath?: string, fileSize?: number, message: string }
  */
-ipcMain.handle("check-file-downloaded", async (event, url: string) => {
+ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
   try {
     // 检查工作目录是否设置
     const workspaceDir = store.get("workspaceDirectory", "") as string;
@@ -1781,11 +1346,9 @@ ipcMain.handle(
         format: imageInfo.format,
       });
 
-      let result;
-
       if (width && height) {
         // 如果指定了尺寸，则按指定尺寸转换，保持宽高比，使用透明背景
-        result = await sharp(inputPath)
+        await sharp(inputPath)
           .resize(width, height, {
             fit: "inside", // 确保图像完全包含在内，保持原始宽高比
             background: { r: 0, g: 0, b: 0, alpha: 0 }, // 透明背景
@@ -1799,7 +1362,7 @@ ipcMain.handle(
           .toFile(pngPath);
       } else {
         // 如果没有指定尺寸，直接转换为PNG，保持原始尺寸和比例
-        result = await sharp(inputPath)
+        await sharp(inputPath)
           .png({
             compressionLevel: 6,
             quality: 100,
@@ -1942,7 +1505,7 @@ ipcMain.handle(
 ipcMain.handle(
   "crawler-material:download-and-upload",
   async (
-    event,
+    _event,
     params: {
       url: string;
       name?: string;
