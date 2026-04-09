@@ -19,6 +19,7 @@ export const EXECUTABLE_TASK_TYPES = [
   'publish-product-kuaishou',
   'publish-product-doudian',
   'publish-product-kuaishou_shop',
+  'publish-product-temu',
   'publish-product-xiaohongshu',
   'publish-product-weibo',
 ] as const
@@ -34,6 +35,7 @@ export const EXECUTABLE_TASK_DISPLAY_LABELS: Record<ExecutableTaskType, string> 
   'publish-product-kuaishou': '发布商品-快手',
   'publish-product-doudian': '发布商品-抖店',
   'publish-product-kuaishou_shop': '发布商品-快手小店',
+  'publish-product-temu': '发布商品-Temu',
   'publish-product-xiaohongshu': '发布商品-小红书',
   'publish-product-weibo': '发布商品-微博',
 }
@@ -96,6 +98,11 @@ async function executeKuaishouShopPublish(row: any, context?: PlatformTaskExecut
   await executePlatformTask('kuaishou_shop', row, context)
 }
 
+/** Temu 发布处理 */
+async function executeTemuPublish(row: any, context?: PlatformTaskExecutionContext) {
+  await executePlatformTask('temu', row, context)
+}
+
 /** 小红书发布处理 */
 async function executeXiaohongshuPublish(row: any, context?: PlatformTaskExecutionContext) {
   await executePlatformTask('xiaohongshu', row, context)
@@ -117,6 +124,7 @@ const TASK_EXECUTORS: Partial<Record<ExecutableTaskType, TaskExecutor>> = {
   'publish-product-kuaishou': executeKuaishouPublish,
   'publish-product-doudian': executeDoudianPublish,
   'publish-product-kuaishou_shop': executeKuaishouShopPublish,
+  'publish-product-temu': executeTemuPublish,
   'publish-product-xiaohongshu': executeXiaohongshuPublish,
   'publish-product-weibo': executeWeiboPublish,
 }

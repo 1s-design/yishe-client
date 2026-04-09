@@ -58,6 +58,12 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
     label: '发布商品-快手小店',
     executionBackend: 'uploader_api',
   },
+  temu: {
+    id: 'temu',
+    taskType: 'publish-product-temu',
+    label: '发布商品-Temu',
+    executionBackend: 'uploader_api',
+  },
   tiktok: {
     id: 'tiktok',
     taskType: 'publish-product-tiktok',
