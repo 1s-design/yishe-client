@@ -17,6 +17,7 @@ export interface UploaderBrowserStatus {
   pageCount: number;
   lastActivity: string | null;
   connection?: {
+    port?: number | null;
     mode?: string;
     profileDir?: string;
     profileId?: string | null;
@@ -47,6 +48,7 @@ export interface UploaderBrowserPage {
 export interface UploaderBrowserInstanceSummary {
   profileId: string;
   profileName?: string;
+  port?: number | null;
   hasInstance?: boolean;
   isConnected?: boolean;
   connecting?: boolean;

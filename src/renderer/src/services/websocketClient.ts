@@ -910,9 +910,34 @@ function buildBrowserAutomationProfileInstances(
   profileItems: Array<Record<string, any>>,
   browserData?: Record<string, any> | null,
 ) {
+  const resolveBrowserPort = (source: Record<string, any> | null | undefined) => {
+    const candidates = [
+      source?.port,
+      source?.debugPort,
+      source?.remoteDebuggingPort,
+      source?.remoteDebugPort,
+    ];
+
+    for (const candidate of candidates) {
+      const port = Number(candidate);
+      if (Number.isInteger(port) && port > 0) {
+        return port;
+      }
+    }
+
+    return null;
+  };
   const browserInstances = Array.isArray(browserData?.instances)
     ? browserData.instances
     : [];
+  const activeConnection =
+    browserData?.connection && typeof browserData.connection === "object"
+      ? browserData.connection
+      : null;
+  const activeConnectionProfileId =
+    String(
+      activeConnection?.activeProfileId || activeConnection?.profileId || "",
+    ).trim() || "";
   const browserInstanceMap = new Map(
     browserInstances
       .map((item) => [String(item?.profileId || "").trim(), item] as const)
@@ -928,10 +953,16 @@ function buildBrowserAutomationProfileInstances(
     const profileId = String(profile?.id || "").trim();
     const browserInstance = browserInstanceMap.get(profileId) || null;
     const runningExecution = runningExecutionMap.get(profileId) || null;
+    const port =
+      resolveBrowserPort(browserInstance) ??
+      (activeConnectionProfileId && activeConnectionProfileId === profileId
+        ? resolveBrowserPort(activeConnection)
+        : null);
 
     return {
       profileId,
       profileName: String(profile?.name || profileId).trim() || profileId,
+      port,
       connected: !!browserInstance?.isConnected,
       available: !!browserInstance?.isConnected && !runningExecution,
       busy: !!runningExecution,
