@@ -39,6 +39,15 @@ function normalizeText(value: unknown) {
   return String(value).replace(/\s+/g, " ").trim();
 }
 
+function buildCollectTaskType(platform: unknown, collectScene: string) {
+  const normalizedPlatform = normalizeText(platform);
+  const normalizedScene = normalizeText(collectScene);
+  if (!normalizedPlatform || !normalizedScene) {
+    return "";
+  }
+  return `${normalizedPlatform}.${normalizedScene}`;
+}
+
 function clampNumber(
   value: unknown,
   min: number,
@@ -758,7 +767,7 @@ export async function executeEcomSelectionSupplyMatchTask(
           ),
           taskId,
           platform: supplierPlatform,
-          collectScene: "search",
+          taskType: buildCollectTaskType(supplierPlatform, "search"),
           workspaceDir: options.workspaceDir || "",
           timeoutMs: getRemainingTimeout(deadline),
           configData: {
@@ -835,7 +844,7 @@ export async function executeEcomSelectionSupplyMatchTask(
           ),
           taskId,
           platform: supplierPlatform,
-          collectScene: "product_detail",
+          taskType: buildCollectTaskType(supplierPlatform, "product_detail"),
           workspaceDir: options.workspaceDir || "",
           timeoutMs: getRemainingTimeout(deadline),
           configData: {

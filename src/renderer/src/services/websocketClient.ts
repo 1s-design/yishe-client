@@ -14,6 +14,7 @@ import {
   executeUploaderBrowserDebug,
   focusUploaderBrowser,
   forceCloseUploaderBrowser,
+  getUploaderBrowserSmallFeatures,
   getUploaderLoginStatus,
   getUploaderProfileDetail,
   getUploaderProfiles,
@@ -29,6 +30,7 @@ import {
   openUploaderLink,
   openUploaderPlatform,
   publishByUploader,
+  runUploaderBrowserSmallFeature,
   runUploaderEcomCollect,
   switchUploaderProfile,
   updateUploaderProfile,
@@ -1139,17 +1141,18 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
   const runId = String(command.payload?.runId || "").trim();
   const taskId = String(command.payload?.taskId || "").trim();
   const platform = String(command.payload?.platform || "").trim();
-  const collectScene = String(command.payload?.collectScene || "").trim();
+  const taskType = String(command.payload?.taskType || "").trim();
   const timeoutMs = Number(command.payload?.timeoutMs) || 20 * 60 * 1000;
+  const taskLabel = taskType || platform;
 
   if (!runId) {
     throw new Error("缺少 runId");
   }
-  if (!platform) {
-    throw new Error("缺少 platform");
+  if (!platform && !taskType) {
+    throw new Error("缺少 platform/taskType");
   }
-  if (!collectScene) {
-    throw new Error("缺少 collectScene");
+  if (!taskType && !platform) {
+    throw new Error("缺少 platform");
   }
 
   const now = new Date().toISOString();
@@ -1157,15 +1160,15 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
     running: true,
     taskId: runId,
     taskType: "ecom-collect",
-    queue: platform,
-    currentStep: `执行电商采集：${platform}/${collectScene}`,
+    queue: taskLabel,
+    currentStep: `执行电商采集：${taskLabel || platform}`,
     progress: null,
     lastError: null,
     runtime: {
       runId,
       taskId,
       platform,
-      collectScene,
+      taskType,
     },
     startedAt: now,
     finishedAt: null,
@@ -1188,7 +1191,7 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
     runId,
     taskId,
     platform,
-    collectScene,
+    taskType,
     workspaceDir,
     timeoutMs,
     configData:
@@ -1219,7 +1222,7 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
     running: false,
     taskId: runId,
     taskType: "ecom-collect",
-    queue: platform,
+    queue: taskLabel,
     currentStep: response.success ? "电商采集完成" : "电商采集失败",
     progress: response.success ? 100 : null,
     lastError: response.success ? null : response.message || "电商采集失败",
@@ -1227,7 +1230,7 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
       runId,
       taskId,
       platform,
-      collectScene,
+      taskType,
       status: response.status || (response.success ? "success" : "failed"),
       summary: response.data?.summary || null,
     },
@@ -1252,7 +1255,7 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
       runId,
       taskId,
       platform,
-      collectScene,
+      taskType,
       status: response.status || (response.success ? "success" : "failed"),
       snapshots: uploadedSnapshots,
     },
@@ -4081,6 +4084,43 @@ function registerBuiltInLocalServices() {
           data: data || {
             schemaVersion: 1,
             platforms: [],
+          },
+        };
+      }
+
+      if (action === "listSmallFeatures") {
+        const response = await getUploaderBrowserSmallFeatures();
+        await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "工具目录已加载" : "获取工具目录失败"),
+          data: {
+            items: response.data || [],
+          },
+        };
+      }
+
+      if (action === "runSmallFeature") {
+        const featureKey = String(command.payload?.featureKey || "").trim();
+        if (!featureKey) {
+          throw new Error("缺少 featureKey");
+        }
+        const response = await runUploaderBrowserSmallFeature(
+          featureKey,
+          (command.payload || {}) as Record<string, unknown>,
+        );
+        const runtime = await syncServiceRuntime("uploader");
+        return {
+          success: response.success,
+          message:
+            response.message ||
+            (response.success ? "工具执行完成" : "工具执行失败"),
+          data: {
+            featureKey,
+            result: response.data || null,
+            runtime,
           },
         };
       }

@@ -548,7 +548,9 @@ export interface UploaderEcomCollectPlatformItem {
   reason?: string | null;
   regions?: string[];
   supportedScenes?: string[];
+  supportedTaskTypes?: string[];
   scenes?: UploaderEcomCollectSceneSchema[];
+  taskTypes?: UploaderEcomCollectTaskTypeSchema[];
   docs?: Record<string, any>;
   maintenance?: Record<string, any>;
 }
@@ -606,6 +608,32 @@ export interface UploaderEcomCollectSceneSchema {
   };
 }
 
+export interface UploaderEcomCollectTaskTypeSchema {
+  value: string;
+  taskType?: string;
+  label: string;
+  description?: string;
+  platform?: string;
+  collectScene?: string;
+  entityType?: string;
+  availability?: string;
+  availabilityLabel?: string;
+  runnable?: boolean;
+  verification?: string;
+  verificationLabel?: string;
+  reason?: string | null;
+  fields?: UploaderEcomCollectFieldSchema[];
+  docs?: {
+    overview?: string;
+    notes?: string[];
+    examples?: Array<{
+      title?: string;
+      description?: string;
+      payload?: Record<string, any>;
+    }>;
+  };
+}
+
 export interface UploaderEcomCollectCapabilitySchema {
   schemaVersion?: number;
   generatedAt?: string;
@@ -616,11 +644,38 @@ export interface UploaderEcomCollectResult {
   runId?: string | null;
   taskId?: string | null;
   platform?: string;
+  taskType?: string;
   collectScene?: string;
   records?: Array<Record<string, any>>;
   snapshots?: Array<Record<string, any>>;
   summary?: Record<string, any>;
   debugMeta?: Record<string, any>;
+}
+
+export interface UploaderBrowserSmallFeatureFieldOption {
+  label?: string;
+  value?: string | number | boolean;
+}
+
+export interface UploaderBrowserSmallFeatureFieldSchema {
+  key: string;
+  label: string;
+  type?: string;
+  required?: boolean;
+  placeholder?: string;
+  description?: string;
+  defaultValue?: unknown;
+  options?: UploaderBrowserSmallFeatureFieldOption[];
+}
+
+export interface UploaderBrowserSmallFeatureItem {
+  key: string;
+  name: string;
+  platform?: string;
+  category?: string;
+  description?: string;
+  tips?: string[];
+  fields?: UploaderBrowserSmallFeatureFieldSchema[];
 }
 
 /**
@@ -1254,6 +1309,32 @@ export async function getUploaderEcomCollectPlatforms(): Promise<{
   }
 }
 
+export async function getUploaderBrowserSmallFeatures(): Promise<{
+  success: boolean;
+  data?: UploaderBrowserSmallFeatureItem[];
+  message?: string;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/browser/small-features`, {
+      method: "GET",
+      signal: AbortSignal.timeout(10_000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `获取工具目录失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: Array.isArray(json?.data) ? json.data : [],
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "获取工具目录失败" };
+  }
+}
+
 export async function getUploaderEcomCollectCapabilities(): Promise<{
   success: boolean;
   data?: UploaderEcomCollectCapabilitySchema;
@@ -1334,6 +1415,57 @@ export async function runUploaderEcomCollect(
       success: false,
       status: "failed",
       message: e?.message || "执行电商采集失败",
+    };
+  }
+}
+
+export async function runUploaderBrowserSmallFeature(
+  featureKey: string,
+  data: Record<string, unknown> = {},
+): Promise<{
+  success: boolean;
+  data?: Record<string, any>;
+  message?: string;
+}> {
+  try {
+    const normalizedFeatureKey = String(featureKey || "").trim();
+    if (!normalizedFeatureKey) {
+      return {
+        success: false,
+        message: "缺少 featureKey",
+      };
+    }
+
+    const timeoutMs =
+      typeof data?.timeoutMs === "number" && Number.isFinite(data.timeoutMs)
+        ? Math.max(60_000, Number(data.timeoutMs) + 60_000)
+        : 10 * 60 * 1000;
+    const res = await fetch(`${UPLOADER_API_BASE}/api/browser/small-features/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        featureKey: normalizedFeatureKey,
+        ...(data || {}),
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? `执行工具失败: ${res.status}`,
+        data: json?.data,
+      };
+    }
+    return {
+      success: !!json?.success,
+      message: json?.message,
+      data: json?.data,
+    };
+  } catch (e: any) {
+    return {
+      success: false,
+      message: e?.message || "执行工具失败",
     };
   }
 }
