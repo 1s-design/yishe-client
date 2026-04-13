@@ -1173,7 +1173,9 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     await handleMaterialUpload(req, res, 'sticker');
   });
 
-  // 兼容旧接口：历史上这个接口名虽然带 crawler，但实际默认落图库
+  // 兼容旧接口：
+  // 历史上这个接口名虽然带 crawler，但现在统一转给通用上传逻辑。
+  // 未显式传 target 时默认仍落图片库；若 body.target='crawler-material'，仍会按爬图库处理。
   app.post('/api/crawler-material-upload', async (req, res) => {
     await handleMaterialUpload(req, res, 'sticker');
   });

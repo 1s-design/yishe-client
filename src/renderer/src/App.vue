@@ -903,6 +903,7 @@ onMounted(() => {
   void checkAuthAndGetUserInfo();
 
   (window as any).__materialUploadService = downloadImageAndUploadMaterial;
+  // 兼容旧主进程注入名，实际仍复用统一素材上传服务。
   (window as any).__crawlerMaterialUploadService = downloadImageAndUploadMaterial;
 
   void checkPsServiceStatus();

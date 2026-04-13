@@ -241,4 +241,5 @@ export async function downloadImageAndUploadMaterial(
 
 export type CrawlerMaterialUploadParams = MaterialUploadParams;
 export type CrawlerMaterialUploadResult = MaterialUploadResult;
+// 兼容旧命名，内部已统一到 downloadImageAndUploadMaterial。
 export const downloadImageAndUploadToCrawler = downloadImageAndUploadMaterial;
