@@ -716,7 +716,7 @@ export async function getUploaderBrowserStatus(): Promise<{
   try {
     const res = await fetch(`${UPLOADER_API_BASE}/api/browser/status`, {
       method: "GET",
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(8000),
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json?.success) {
