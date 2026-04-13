@@ -10,6 +10,10 @@ mac:
   category: public.app-category.utilities
   target:
     - dmg
+  icon: build/icon.icns
+  binaries:
+    - resources/plugin/dezoomify-rs-mac
+    - resources/plugin/yishe-auto-browser-mac
   artifactName: yishe-client-with-plugins.${ext}
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
@@ -20,5 +24,7 @@ mac:
   notarize: false
 
 dmg:
+  title: 衣设客户端
+  icon: build/icon.icns
   artifactName: yishe-client-with-plugins.${ext}
   writeUpdateInfo: false

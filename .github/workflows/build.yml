@@ -70,7 +70,7 @@ jobs:
           - os: macos-latest
             base_build_args: --mac dmg --config electron-builder.yml
             plugin_build_args: --mac dmg --config electron-builder.plugins.yml
-            csc_identity_auto_discovery: "false"
+            csc_identity_auto_discovery: "true"
           - os: windows-latest
             base_build_args: --win portable --config electron-builder.yml
             plugin_build_args: --win portable --config electron-builder.plugins.yml

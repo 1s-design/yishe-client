@@ -1,8 +1,9 @@
 appId: com.yishe.electron
-productName: Yishe Electron
+productName: 衣设客户端
 directories:
   buildResources: build
   output: release
+afterPack: ./scripts/after-pack-ad-hoc-sign.mjs
 files:
   - "!**/.vscode/*"
   - "!src/*"
@@ -16,6 +17,7 @@ generateUpdatesFilesForAllChannels: false
 win:
   target:
     - portable
+  icon: build/icon.ico
   executableName: yishe-client
   artifactName: yishe-client.${ext}
 nsis:
@@ -24,6 +26,9 @@ mac:
   category: public.app-category.utilities
   target:
     - dmg
+  icon: build/icon.icns
+  binaries:
+    - resources/plugin/dezoomify-rs-mac
   artifactName: yishe-client.${ext}
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
@@ -33,6 +38,8 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
 dmg:
+  title: 衣设客户端
+  icon: build/icon.icns
   artifactName: yishe-client.${ext}
   writeUpdateInfo: false
 linux:
