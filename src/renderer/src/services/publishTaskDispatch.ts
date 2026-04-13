@@ -85,7 +85,11 @@ async function emitRuntime(
   options: ExecutePublishTaskOptions | undefined,
   snapshot: PublishTaskRuntimeSnapshot,
 ) {
-  await options?.onRuntime?.(snapshot);
+  try {
+    await options?.onRuntime?.(snapshot);
+  } catch (error) {
+    console.warn("[publish-task] runtime callback failed:", error);
+  }
 }
 
 export async function executePublishQueueTask(

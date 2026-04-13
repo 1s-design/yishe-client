@@ -55,7 +55,7 @@ type WsStatus =
 
 const CLIENT_SOURCE = "客户端";
 const HEARTBEAT_INTERVAL = 15_000;
-const HEARTBEAT_TIMEOUT = 10_000;
+const HEARTBEAT_TIMEOUT = 30_000;
 const UPLOADER_RUNTIME_SYNC_INTERVAL = 5_000;
 const PHOTOSHOP_RUNTIME_SYNC_INTERVAL = 8_000;
 const PROD_WS_ENDPOINT = "https://1s.design:1520/ws";
@@ -440,6 +440,21 @@ const emitter = mitt<WebsocketEvents>();
 const localServiceHandlers = new Map<string, LocalServiceHandler>();
 registerBuiltInLocalServices();
 
+const WS_CLIENT_INFO_REFRESH_MS = 60_000;
+const WS_SERVICE_RUNTIME_REFRESH_MS = 20_000;
+const WS_TRANSIENT_TOAST_DEBOUNCE_MS = 15_000;
+const WS_FINGERPRINT_VOLATILE_KEYS = new Set([
+  "updatedAt",
+  "lastHeartbeatAt",
+  "lastCheckedAt",
+  "reportedAt",
+  "fetchedAt",
+  "timestamp",
+  "lastActivity",
+  "lastPingAt",
+  "lastPongAt",
+]);
+
 let socket: Socket | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -448,6 +463,13 @@ let photoshopRuntimeSyncInterval: ReturnType<typeof setInterval> | null = null;
 let lastPingTimestamp: number | null = null;
 let intentionalDisconnect = false;
 let networkFetchPromise: Promise<void> | null = null;
+let lastClientInfoFingerprint = "";
+let lastClientInfoEmittedAt = 0;
+const transientWsToastCache = new Map<string, number>();
+const lastServiceRuntimeEmitCache = new Map<
+  string,
+  { fingerprint: string; emittedAt: number }
+>();
 // 跟踪是否正在制作中
 let isProductionInProgress = false;
 let currentProductionTaskId: string | null = null;
@@ -764,7 +786,6 @@ function emitPsAutomationStatus(patch?: Partial<typeof autoPsdBatchState>) {
     clientInfo.psAutomation = buildPsAutomationSnapshot();
   }
 
-  emitClientInfo();
   if (!socket?.connected) {
     return;
   }
@@ -798,6 +819,288 @@ function buildBrowserAutomationExecutionSnapshot() {
     items,
     runningCount: items.filter((item) => item.running).length,
   };
+}
+
+function normalizeWsStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
+  }
+
+  return value
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+}
+
+function sanitizeBrowserAutomationExecutionForWs(value: unknown) {
+  const execution =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, any>)
+      : {};
+
+  return {
+    running: execution.running === true,
+    taskId: String(execution.taskId || "").trim() || null,
+    taskType: String(execution.taskType || "").trim() || null,
+    queue: String(execution.queue || "").trim() || null,
+    profileId: String(execution.profileId || "").trim() || null,
+    currentStep: String(execution.currentStep || "").trim() || null,
+    progress:
+      typeof execution.progress === "number" ? execution.progress : null,
+    lastError: String(execution.lastError || "").trim() || null,
+    startedAt: String(execution.startedAt || "").trim() || null,
+    finishedAt: String(execution.finishedAt || "").trim() || null,
+    updatedAt: String(execution.updatedAt || "").trim() || null,
+  };
+}
+
+function sanitizeBrowserAutomationProfileForWs(profile: unknown) {
+  const source =
+    profile && typeof profile === "object" && !Array.isArray(profile)
+      ? (profile as Record<string, any>)
+      : {};
+
+  return {
+    id: String(source.id || "").trim() || null,
+    name: String(source.name || "").trim() || null,
+    remark: String(source.remark || "").trim() || null,
+    account: String(source.account || "").trim() || null,
+    platforms: Array.isArray(source.platforms) ? source.platforms : [],
+    browserVersion: String(source.browserVersion || "").trim() || null,
+    loginSummary:
+      source.loginSummary &&
+      typeof source.loginSummary === "object" &&
+      !Array.isArray(source.loginSummary)
+        ? source.loginSummary
+        : null,
+    createdAt: String(source.createdAt || "").trim() || null,
+    updatedAt: String(source.updatedAt || "").trim() || null,
+    lastUsedAt: String(source.lastUsedAt || "").trim() || null,
+    userDataDir: String(source.userDataDir || "").trim() || null,
+    exists: source.exists === true,
+    isActive: source.isActive === true,
+  };
+}
+
+function sanitizeBrowserAutomationConnectionForWs(value: unknown) {
+  const source =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, any>)
+      : {};
+
+  return {
+    profileId: String(source.profileId || "").trim() || null,
+    activeProfileId: String(source.activeProfileId || "").trim() || null,
+    port: typeof source.port === "number" ? source.port : null,
+    debugPort:
+      typeof source.debugPort === "number" ? source.debugPort : null,
+    remoteDebuggingPort:
+      typeof source.remoteDebuggingPort === "number"
+        ? source.remoteDebuggingPort
+        : null,
+    remoteDebugPort:
+      typeof source.remoteDebugPort === "number" ? source.remoteDebugPort : null,
+    isConnected: source.isConnected === true,
+    connected: source.connected === true || source.isConnected === true,
+    hasInstance: source.hasInstance === true,
+    connecting: source.connecting === true,
+    pageCount:
+      typeof source.pageCount === "number" ? source.pageCount : null,
+    lastActivity: String(source.lastActivity || "").trim() || null,
+  };
+}
+
+function sanitizeBrowserAutomationInstanceForWs(instance: unknown) {
+  const source =
+    instance && typeof instance === "object" && !Array.isArray(instance)
+      ? (instance as Record<string, any>)
+      : {};
+
+  return {
+    profileId: String(source.profileId || source.id || "").trim() || null,
+    profileName: String(source.profileName || source.name || "").trim() || null,
+    port: typeof source.port === "number" ? source.port : null,
+    connected: source.connected === true || source.isConnected === true,
+    available: source.available === true,
+    busy: source.busy === true,
+    currentTaskId: String(source.currentTaskId || "").trim() || null,
+    taskType: String(source.taskType || "").trim() || null,
+    currentStep: String(source.currentStep || "").trim() || null,
+    pageCount:
+      typeof source.pageCount === "number" ? source.pageCount : null,
+    lastActivity: String(source.lastActivity || "").trim() || null,
+    lastError: String(source.lastError || "").trim() || null,
+    browserVersion: String(source.browserVersion || "").trim() || null,
+    hasInstance: source.hasInstance === true,
+    connecting: source.connecting === true,
+    userDataDir: String(source.userDataDir || "").trim() || null,
+    isActiveProfile: source.isActiveProfile === true,
+  };
+}
+
+function sanitizeClientServiceRuntimeForWs(
+  service: string,
+  runtime: ClientServiceStatus,
+): ClientServiceStatus {
+  const pluginKey = normalizePluginKey(
+    service || runtime.pluginKey || runtime.key,
+  );
+
+  if (pluginKey !== "browser-automation") {
+    return runtime;
+  }
+
+  const details =
+    runtime.details && typeof runtime.details === "object"
+      ? (runtime.details as Record<string, any>)
+      : {};
+  const supportedTaskTypes = normalizeWsStringArray(
+    details.supportedTaskTypes ?? runtime.supportedTaskTypes,
+  );
+  const executableTaskTypes = normalizeWsStringArray(
+    details.executableTaskTypes,
+  );
+  const runningProfileIds = normalizeWsStringArray(details.runningProfileIds);
+  const availableProfileIds = normalizeWsStringArray(
+    details.availableProfileIds,
+  );
+  const profiles = Array.isArray(details.profiles)
+    ? details.profiles.map((item: unknown) =>
+        sanitizeBrowserAutomationProfileForWs(item),
+      ).filter((item) => !!item.id)
+    : [];
+  const instances = Array.isArray(details.instances)
+    ? details.instances.map((item: unknown) =>
+        sanitizeBrowserAutomationInstanceForWs(item),
+      ).filter((item) => !!item.profileId)
+    : [];
+  const activeProfile =
+    details.activeProfile &&
+    typeof details.activeProfile === "object" &&
+    !Array.isArray(details.activeProfile)
+      ? sanitizeBrowserAutomationProfileForWs(details.activeProfile)
+      : null;
+
+  return {
+    ...runtime,
+    supportedTaskTypes,
+    details: {
+      autoDispatchEnabled:
+        details.autoDispatchEnabled ?? runtime.autoDispatchEnabled ?? true,
+      browserConnected: details.browserConnected === true,
+      hasInstance: details.hasInstance === true,
+      pageCount:
+        typeof details.pageCount === "number" ? details.pageCount : null,
+      lastActivity: String(details.lastActivity || "").trim() || null,
+      connection: sanitizeBrowserAutomationConnectionForWs(details.connection),
+      profiles,
+      instances,
+      activeProfileId: String(details.activeProfileId || "").trim() || null,
+      activeProfile,
+      profilesRootDir: String(details.profilesRootDir || "").trim() || null,
+      workspaceDir: String(details.workspaceDir || "").trim() || null,
+      currentExecution: sanitizeBrowserAutomationExecutionForWs(
+        details.currentExecution,
+      ),
+      ...(supportedTaskTypes.length ? { supportedTaskTypes } : {}),
+      ...(executableTaskTypes.length ? { executableTaskTypes } : {}),
+      ...(Array.isArray(details.executableTaskLabels)
+        ? { executableTaskLabels: details.executableTaskLabels }
+        : {}),
+      ...(Array.isArray(details.capabilities)
+        ? { capabilities: details.capabilities }
+        : {}),
+      ...(details.ecomCollect &&
+      typeof details.ecomCollect === "object" &&
+      !Array.isArray(details.ecomCollect)
+        ? { ecomCollect: details.ecomCollect }
+        : {}),
+      ...(runningProfileIds.length ? { runningProfileIds } : {}),
+      ...(availableProfileIds.length ? { availableProfileIds } : {}),
+    },
+  };
+}
+
+function buildClientInfoPayloadForWs() {
+  const services = Object.entries(clientInfo.services || {}).reduce(
+    (result, [serviceKey, runtime]) => {
+      if (!runtime || typeof runtime !== "object") {
+        return result;
+      }
+
+      result[serviceKey] = sanitizeClientServiceRuntimeForWs(
+        serviceKey,
+        runtime as ClientServiceStatus,
+      );
+      return result;
+    },
+    {} as Record<string, ClientServiceStatus>,
+  );
+
+  return {
+    ...clientInfo,
+    services,
+    notes: {
+      ...(clientInfo.notes || {}),
+      pluginRegistry: buildPluginRegistrySnapshot(),
+      pluginProtocolVersion: 1,
+    },
+  };
+}
+
+function stableStringifyForWs(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "null";
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringifyForWs(item)).join(",")}]`;
+  }
+
+  if (typeof value === "object") {
+    const source = value as Record<string, any>;
+    const keys = Object.keys(source).sort();
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${stableStringifyForWs(source[key])}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function stripVolatileWsFieldsForFingerprint(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripVolatileWsFieldsForFingerprint(item));
+  }
+
+  if (value && typeof value === "object") {
+    const source = value as Record<string, any>;
+    return Object.keys(source).reduce<Record<string, unknown>>((result, key) => {
+      if (WS_FINGERPRINT_VOLATILE_KEYS.has(key)) {
+        return result;
+      }
+      result[key] = stripVolatileWsFieldsForFingerprint(source[key]);
+      return result;
+    }, {});
+  }
+
+  return value;
+}
+
+function buildWsFingerprint(value: unknown) {
+  return stableStringifyForWs(stripVolatileWsFieldsForFingerprint(value));
+}
+
+function emitTransientWsToast(
+  key: string,
+  payload: { color: string; icon: string; message: string },
+) {
+  const now = Date.now();
+  const lastEmittedAt = transientWsToastCache.get(key) || 0;
+  if (now - lastEmittedAt < WS_TRANSIENT_TOAST_DEBOUNCE_MS) {
+    return;
+  }
+  transientWsToastCache.set(key, now);
+  emitter.emit("toast", payload);
 }
 
 function mergeBrowserAutomationInstancesWithExecutions(
@@ -986,6 +1289,7 @@ async function syncUploaderRuntimeFromLocalState(
   const nextRuntime = updateServiceStatus(
     "uploader",
     buildBrowserAutomationRuntimePatch(payload),
+    { emitClientInfo: false },
   );
   await emitServiceRuntime("uploader", nextRuntime);
   return nextRuntime;
@@ -1075,33 +1379,38 @@ function buildBrowserAutomationProfileInstances(
 }
 
 async function emitPublishTaskRuntime(snapshot: PublishTaskRuntimeSnapshot) {
+  const channelSnapshot: PublishTaskRuntimeSnapshot = {
+    ...snapshot,
+    // 运行日志通过既有任务数据落库链路同步，避免在执行中反复通过 ws 发送大包导致通道抖动。
+    runtime: undefined,
+  };
   const now = new Date().toISOString();
   const currentStatus =
-    snapshot.status === "pending" ? "pending" : snapshot.status;
+    channelSnapshot.status === "pending" ? "pending" : channelSnapshot.status;
   const running = currentStatus === "assigned" || currentStatus === "running";
   const slotKey = resolveBrowserAutomationExecutionSlotKey(
-    snapshot.profileId,
-    snapshot.taskType,
+    channelSnapshot.profileId,
+    channelSnapshot.taskType,
   );
   const previousSlot = browserAutomationExecutionSlots[slotKey];
   upsertBrowserAutomationExecutionSlot(slotKey, {
     slotKey,
     running,
-    taskId: snapshot.taskId,
-    taskType: snapshot.taskType,
-    queue: snapshot.queue,
-    profileId: String(snapshot.profileId || "").trim() || null,
-    currentStep: snapshot.currentStep ?? snapshot.message ?? null,
-    progress: snapshot.progress ?? null,
-    lastError: snapshot.error ?? null,
-    runtime: snapshot.runtime ?? null,
+    taskId: channelSnapshot.taskId,
+    taskType: channelSnapshot.taskType,
+    queue: channelSnapshot.queue,
+    profileId: String(channelSnapshot.profileId || "").trim() || null,
+    currentStep: channelSnapshot.currentStep ?? channelSnapshot.message ?? null,
+    progress: channelSnapshot.progress ?? null,
+    lastError: channelSnapshot.error ?? null,
+    runtime: null,
     startedAt: running ? previousSlot?.startedAt || now : previousSlot?.startedAt || now,
     finishedAt: running ? null : now,
     updatedAt: now,
   });
 
-  emitter.emit("publishTaskRuntime", snapshot);
-  socket?.emit("publish-task-runtime", snapshot);
+  emitter.emit("publishTaskRuntime", channelSnapshot);
+  socket?.emit("publish-task-runtime", channelSnapshot);
   await syncUploaderRuntimeFromLocalState({
     busy: browserAutomationExecutionState.running,
     state: browserAutomationExecutionState.running ? "busy" : undefined,
@@ -1698,11 +2007,11 @@ async function emitServiceRuntime(
 ) {
   const pluginKey = normalizePluginKey(service);
   const legacyServiceKey = getLegacyServiceKey(pluginKey);
-  const normalizedRuntime: ClientServiceStatus = {
+  const normalizedRuntime = sanitizeClientServiceRuntimeForWs(pluginKey, {
     ...runtime,
     key: pluginKey,
     pluginKey,
-  };
+  });
   emitter.emit("serviceRuntime", {
     service: legacyServiceKey,
     pluginKey,
@@ -1711,10 +2020,24 @@ async function emitServiceRuntime(
   if (!socket?.connected) {
     return;
   }
+  const now = Date.now();
+  const fingerprint = buildWsFingerprint(normalizedRuntime);
+  const previousEmit = lastServiceRuntimeEmitCache.get(pluginKey);
+  if (
+    previousEmit &&
+    previousEmit.fingerprint === fingerprint &&
+    now - previousEmit.emittedAt < WS_SERVICE_RUNTIME_REFRESH_MS
+  ) {
+    return;
+  }
   socket.emit("service-runtime", {
     service: legacyServiceKey,
     pluginKey,
     runtime: normalizedRuntime,
+  });
+  lastServiceRuntimeEmitCache.set(pluginKey, {
+    fingerprint,
+    emittedAt: now,
   });
 }
 
@@ -1727,22 +2050,28 @@ async function syncServiceRuntime(serviceKey: string) {
 
   try {
     const runtimePatch = await handler.getRuntime();
-    const nextRuntime = updateServiceStatus(pluginKey, runtimePatch);
+    const nextRuntime = updateServiceStatus(pluginKey, runtimePatch, {
+      emitClientInfo: false,
+    });
     await emitServiceRuntime(pluginKey, nextRuntime);
     return nextRuntime;
   } catch (error) {
-    const failedRuntime = updateServiceStatus(pluginKey, {
-      label: handler.label,
-      connected: false,
-      available: false,
-      status: "error",
-      state: "error",
-      busy: false,
-      message: serializeError(error),
-      lastError: serializeError(error),
-      supportedCommands: clientInfo.services?.[pluginKey]
-        ?.supportedCommands || ["refreshRuntime"],
-    });
+    const failedRuntime = updateServiceStatus(
+      pluginKey,
+      {
+        label: handler.label,
+        connected: false,
+        available: false,
+        status: "error",
+        state: "error",
+        busy: false,
+        message: serializeError(error),
+        lastError: serializeError(error),
+        supportedCommands: clientInfo.services?.[pluginKey]
+          ?.supportedCommands || ["refreshRuntime"],
+      },
+      { emitClientInfo: false },
+    );
     await emitServiceRuntime(pluginKey, failedRuntime);
     return failedRuntime;
   }
@@ -1905,20 +2234,23 @@ function startPhotoshopRuntimeSyncLoop() {
 function scheduleHeartbeatTimeout() {
   clearHeartbeatTimeout();
   heartbeatTimeout = setTimeout(() => {
-    updateState({
-      status: "error",
-      lastError: "Heartbeat timeout",
-    });
     emitter.emit("log", {
       level: "warn",
-      message: "[ws] heartbeat timeout, reconnecting",
+      message: "[ws] heartbeat timeout",
     });
-    emitter.emit("toast", {
-      color: "warning",
-      icon: "mdi-heart-broken",
-      message: "实时通道心跳异常，正在重连...",
+
+    if (!socket || !socket.connected) {
+      updateState({
+        status: "error",
+        lastError: "Heartbeat timeout",
+      });
+      reconnect();
+      return;
+    }
+
+    updateState({
+      lastError: "Heartbeat timeout",
     });
-    reconnect();
   }, HEARTBEAT_TIMEOUT);
 }
 
@@ -1947,6 +2279,10 @@ function cleanupSocket() {
     socket.disconnect();
     socket = null;
   }
+  lastClientInfoFingerprint = "";
+  lastClientInfoEmittedAt = 0;
+  transientWsToastCache.clear();
+  lastServiceRuntimeEmitCache.clear();
   stopHeartbeat();
 }
 
@@ -1984,11 +2320,13 @@ function bindSocketEvents(currentSocket: Socket) {
       level: "warn",
       message: `[ws] disconnected: ${reason}`,
     });
-    emitter.emit("toast", {
-      color: "warning",
-      icon: "mdi-plug",
-      message: `通道断开：${reason || "未知原因"}`,
-    });
+    if (!intentionalDisconnect) {
+      emitTransientWsToast(`disconnect:${reason || "unknown"}`, {
+        color: "warning",
+        icon: "mdi-plug",
+        message: `通道断开：${reason || "未知原因"}`,
+      });
+    }
     stopHeartbeat();
     updateState({
       status: intentionalDisconnect ? "disconnected" : "error",
@@ -2010,18 +2348,19 @@ function bindSocketEvents(currentSocket: Socket) {
   });
 
   currentSocket.on("connect_error", (error) => {
+    const message = serializeError(error);
     emitter.emit("log", {
       level: "error",
-      message: `[ws] connect_error: ${serializeError(error)}`,
+      message: `[ws] connect_error: ${message}`,
     });
-    emitter.emit("toast", {
+    emitTransientWsToast(`connect_error:${message}`, {
       color: "error",
       icon: "mdi-alert-circle-outline",
       message: "服务连接错误",
     });
     updateState({
       status: "error",
-      lastError: serializeError(error),
+      lastError: message,
     });
   });
 
@@ -2049,7 +2388,7 @@ function bindSocketEvents(currentSocket: Socket) {
 
   currentSocket.io.on("reconnect_failed", () => {
     emitter.emit("log", { level: "error", message: "[ws] reconnect failed" });
-    emitter.emit("toast", {
+    emitTransientWsToast("reconnect_failed", {
       color: "error",
       icon: "mdi-alert-circle-outline",
       message: "实时通道重连失败",
@@ -4023,15 +4362,18 @@ function registerBuiltInLocalServices() {
         );
         let runtime = await syncServiceRuntime("uploader");
         if (response.success) {
-          runtime = updateServiceStatus("uploader", {
-            details: {
-              ...(runtime?.details || {}),
-              pages: response.data ?? [],
-              pageCount: Array.isArray(response.data)
-                ? response.data.length
-                : (runtime?.details?.pageCount ?? 0),
+          runtime = updateServiceStatus(
+            "uploader",
+            {
+              details: {
+                ...(runtime?.details || {}),
+                pageCount: Array.isArray(response.data)
+                  ? response.data.length
+                  : (runtime?.details?.pageCount ?? 0),
+              },
             },
-          });
+            { emitClientInfo: false },
+          );
           await emitServiceRuntime("uploader", runtime);
         }
         return {
@@ -4546,14 +4888,18 @@ function registerBuiltInLocalServices() {
 
 function emitClientInfo() {
   if (!socket || !socket.connected) return;
-  socket.emit("client-info", {
-    ...clientInfo,
-    notes: {
-      ...(clientInfo.notes || {}),
-      pluginRegistry: buildPluginRegistrySnapshot(),
-      pluginProtocolVersion: 1,
-    },
-  });
+  const payload = buildClientInfoPayloadForWs();
+  const fingerprint = buildWsFingerprint(payload);
+  const now = Date.now();
+  if (
+    fingerprint === lastClientInfoFingerprint &&
+    now - lastClientInfoEmittedAt < WS_CLIENT_INFO_REFRESH_MS
+  ) {
+    return;
+  }
+  socket.emit("client-info", payload);
+  lastClientInfoFingerprint = fingerprint;
+  lastClientInfoEmittedAt = now;
 }
 
 async function connect(endpoint?: string) {
@@ -4634,14 +4980,20 @@ function setEndpoint(endpoint: string) {
   reconnect();
 }
 
-function updateClientInfo(payload: Partial<ClientInfoPayload>) {
+function updateClientInfo(
+  payload: Partial<ClientInfoPayload>,
+  options?: { emit?: boolean },
+) {
   Object.assign(clientInfo, payload);
-  emitClientInfo();
+  if (options?.emit !== false) {
+    emitClientInfo();
+  }
 }
 
 function updateServiceStatus(
   serviceKey: string,
   payload: Partial<ClientServiceStatus>,
+  options?: { emitClientInfo?: boolean },
 ) {
   const pluginKey = normalizePluginKey(serviceKey);
   const previous = clientInfo.services?.[pluginKey];
@@ -4683,17 +5035,22 @@ function updateServiceStatus(
     details: payload.details ?? previous?.details ?? {},
   };
 
-  updateClientInfo({
-    services: {
-      ...(clientInfo.services || {}),
-      [pluginKey]: next,
-      ...(rawKey && rawKey !== pluginKey
-        ? {
-            [rawKey]: next,
-          }
-        : {}),
+  updateClientInfo(
+    {
+      services: {
+        ...(clientInfo.services || {}),
+        [pluginKey]: next,
+        ...(rawKey && rawKey !== pluginKey
+          ? {
+              [rawKey]: next,
+            }
+          : {}),
+      },
     },
-  });
+    {
+      emit: options?.emitClientInfo !== false,
+    },
+  );
 
   return next;
 }

@@ -368,7 +368,7 @@ async function checkUploaderServiceStatus() {
         lastError: null,
         supportedCommands: ["refreshRuntime", "health"],
         details: buildUploaderRuntimeDetails(),
-      });
+      }, { emitClientInfo: false });
       return;
     }
 
@@ -391,7 +391,7 @@ async function checkUploaderServiceStatus() {
         lastError: null,
         supportedCommands: ["refreshRuntime", "health"],
         details: browserDetails,
-      });
+      }, { emitClientInfo: false });
       return;
     }
 
@@ -410,7 +410,7 @@ async function checkUploaderServiceStatus() {
         : (browserStatus.message ?? "浏览器状态检测失败"),
       supportedCommands: ["refreshRuntime", "health"],
       details: browserDetails,
-    });
+    }, { emitClientInfo: false });
   } catch (error: any) {
     if (error?.code === "ECONNREFUSED" || error?.message?.includes("fetch")) {
       uploaderServiceStatus.value = "stopped";
@@ -426,7 +426,7 @@ async function checkUploaderServiceStatus() {
         lastError: null,
         supportedCommands: ["refreshRuntime", "health"],
         details: buildUploaderRuntimeDetails(),
-      });
+      }, { emitClientInfo: false });
       return;
     }
 
@@ -443,7 +443,7 @@ async function checkUploaderServiceStatus() {
       lastError: error?.message || "自动化服务异常",
       supportedCommands: ["refreshRuntime", "health"],
       details: buildUploaderRuntimeDetails(),
-    });
+    }, { emitClientInfo: false });
   }
 }
 
@@ -464,7 +464,7 @@ async function checkLocalServiceStatus() {
       lastCheckedAt,
       lastError: null,
       supportedCommands: ["refreshRuntime", "health"],
-    });
+    }, { emitClientInfo: false });
     return;
   }
 
@@ -482,7 +482,7 @@ async function checkLocalServiceStatus() {
       lastCheckedAt,
       lastError: null,
       supportedCommands: ["refreshRuntime", "health"],
-    });
+    }, { emitClientInfo: false });
   } catch (error: any) {
     localServiceStatus.value = "error";
     websocketClient.updateServiceStatus("localService", {
@@ -496,7 +496,7 @@ async function checkLocalServiceStatus() {
       lastCheckedAt,
       lastError: error?.message || "1519 本地服务异常",
       supportedCommands: ["refreshRuntime", "health"],
-    });
+    }, { emitClientInfo: false });
   }
 }
 
