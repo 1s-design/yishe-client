@@ -129,6 +129,34 @@ interface Window {
       msg?: string
       key?: string
     }>
+    downloadImageAndUploadMaterial(payload: {
+      url: string
+      name?: string
+      description?: string
+      keywords?: string
+      target?: 'sticker' | 'crawler-material'
+    }): Promise<{
+      ok: boolean
+      message?: string
+      data?: {
+        cosUrl: string
+        material: any
+      }
+    }>
+    downloadImageAndUploadToCrawler(payload: {
+      url: string
+      name?: string
+      description?: string
+      keywords?: string
+      target?: 'sticker' | 'crawler-material'
+    }): Promise<{
+      ok: boolean
+      message?: string
+      data?: {
+        cosUrl: string
+        material: any
+      }
+    }>
     processImageWithLimits(payload: {
       sourcePath: string
       outputPath?: string

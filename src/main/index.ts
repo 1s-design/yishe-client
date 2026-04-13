@@ -1501,43 +1501,57 @@ ipcMain.handle(
   },
 );
 
-// 爬图库上传 - 在 renderer 端执行
+async function handleRendererMaterialUpload(
+  params: {
+    url: string;
+    name?: string;
+    description?: string;
+    keywords?: string;
+    target?: "sticker" | "crawler-material";
+  },
+) {
+  if (!mainWindow) {
+    return { ok: false, message: "主窗口未初始化" };
+  }
+
+  try {
+    const result = await mainWindow.webContents.executeJavaScript(`
+      (async () => {
+        const uploadService =
+          window.__materialUploadService || window.__crawlerMaterialUploadService;
+        if (uploadService) {
+          return await uploadService(${JSON.stringify(params)});
+        }
+        return { ok: false, message: '上传服务未初始化' };
+      })()
+    `);
+
+    return result;
+  } catch (error: any) {
+    console.error("素材上传失败:", error);
+    return {
+      ok: false,
+      message: error?.message || "上传失败",
+    };
+  }
+}
+
+// 通用素材上传 - 在 renderer 端执行
+ipcMain.handle(
+  "material:download-and-upload",
+  async (
+    _event,
+    params: Parameters<typeof handleRendererMaterialUpload>[0],
+  ) => handleRendererMaterialUpload(params),
+);
+
+// 兼容旧命名
 ipcMain.handle(
   "crawler-material:download-and-upload",
   async (
     _event,
-    params: {
-      url: string;
-      name?: string;
-      description?: string;
-      keywords?: string;
-    },
-  ) => {
-    if (!mainWindow) {
-      return { ok: false, message: "主窗口未初始化" };
-    }
-
-    try {
-      // 在 renderer 端执行下载和上传
-      const result = await mainWindow.webContents.executeJavaScript(`
-      (async () => {
-        if (window.__crawlerMaterialUploadService) {
-          return await window.__crawlerMaterialUploadService(${JSON.stringify(params)});
-        } else {
-          return { ok: false, message: '上传服务未初始化' };
-        }
-      })()
-    `);
-
-      return result;
-    } catch (error: any) {
-      console.error("爬图库上传失败:", error);
-      return {
-        ok: false,
-        message: error?.message || "上传失败",
-      };
-    }
-  },
+    params: Parameters<typeof handleRendererMaterialUpload>[0],
+  ) => handleRendererMaterialUpload(params),
 );
 
 ipcMain.handle(

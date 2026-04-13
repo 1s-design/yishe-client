@@ -1950,24 +1950,12 @@ function cleanupSocket() {
   stopHeartbeat();
 }
 
-function buildQuery(token?: string | null) {
-  const payload: Record<string, string> = {
+function buildQuery() {
+  return {
     clientSource: CLIENT_SOURCE,
     clientId: identity.clientId,
     machineCode: identity.machineCode,
   };
-
-  if (token) {
-    payload.token = token;
-  }
-
-  try {
-    payload.clientInfo = JSON.stringify(clientInfo);
-  } catch {
-    // ignore serialization errors
-  }
-
-  return payload;
 }
 
 function bindSocketEvents(currentSocket: Socket) {
@@ -4611,7 +4599,9 @@ async function connect(endpoint?: string) {
     reconnectionDelay: 2000,
     reconnectionDelayMax: 12_000,
     timeout: 8000,
-    query: buildQuery(token),
+    // WebSocket 握手 query 只保留最小路由字段，避免浏览器环境下 URL 过长导致连接失败。
+    // token 通过 auth 传递，完整的 clientInfo 会在 connect 后通过 `client-info` 事件补发。
+    query: buildQuery(),
     auth: token
       ? {
           token,

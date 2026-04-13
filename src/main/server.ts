@@ -6,7 +6,7 @@
  * @FilePath: /yishe-electron/src/main/server.ts
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { specs } from './swagger';  // 新增cors导入
@@ -324,7 +324,8 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     console.log(`   POST /api/logoutToken               - 退出授权`);
     console.log('📦 商品管理:');
     console.log('🖼️  爬图库:');
-    console.log(`   POST /api/crawler-material-upload              - 上传图片到爬图库`);
+    console.log(`   POST /api/material-upload                      - 上传图片到素材库/爬图素材`);
+    console.log(`   POST /api/crawler-material-upload              - 兼容旧上传接口`);
     console.log('📋 任务队列:');
     console.log(`   GET  /api/queue/tasks                          - 根据任务类型查询任务列表`);
     console.log(`   POST /api/queue/task/status                    - 更新任务状态`);
@@ -1029,13 +1030,117 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     }
   });
 
+  type MaterialUploadTarget = 'sticker' | 'crawler-material';
+
+  const normalizeMaterialUploadTarget = (
+    value: unknown,
+    fallback: MaterialUploadTarget = 'sticker',
+  ): MaterialUploadTarget => {
+    return value === 'crawler-material' ? 'crawler-material' : fallback;
+  };
+
+  const handleMaterialUpload = async (
+    req: Request,
+    res: Response,
+    fallbackTarget: MaterialUploadTarget = 'sticker',
+  ) => {
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const target = normalizeMaterialUploadTarget(req.body?.target, fallbackTarget);
+
+    console.log(`[material-upload:${requestId}] ========== 开始处理请求 ==========`);
+    console.log(
+      `[material-upload:${requestId}] 请求体:`,
+      JSON.stringify({ ...req.body, target }, null, 2),
+    );
+
+    try {
+      const { url, name, description, keywords } = req.body || {};
+
+      if (!url || typeof url !== 'string') {
+        console.error(`[material-upload:${requestId}] 参数验证失败: url 参数必填`);
+        res.status(400).json({
+          code: 1,
+          status: false,
+          message: 'url 参数必填',
+        });
+        return;
+      }
+
+      console.log(
+        `[material-upload:${requestId}] ========== 通过 IPC 调用 renderer 端 ==========`,
+      );
+
+      try {
+        const mainWindow = BrowserWindow.getAllWindows()[0];
+        if (!mainWindow) {
+          throw new Error('主窗口未找到');
+        }
+
+        const payload = { url, name, description, keywords, target };
+        const result = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const uploadService =
+              window.__materialUploadService || window.__crawlerMaterialUploadService;
+            if (uploadService) {
+              return await uploadService(${JSON.stringify(payload)});
+            }
+            return { ok: false, message: '上传服务未初始化' };
+          })()
+        `);
+
+        if (result.ok) {
+          console.log(`[material-upload:${requestId}] ========== ✅ 全部流程完成 ==========`);
+          console.log(`[material-upload:${requestId}] 上传目标: ${target}`);
+          console.log(`[material-upload:${requestId}] COS URL: ${result.data?.cosUrl}`);
+          console.log(
+            `[material-upload:${requestId}] 素材数据:`,
+            JSON.stringify(result.data?.material, null, 2),
+          );
+
+          res.status(200).json({
+            code: 0,
+            status: true,
+            message: result.message || '上传成功',
+            data: result.data,
+          });
+          return;
+        }
+
+        console.error(`[material-upload:${requestId}] ❌ 上传失败: ${result.message}`);
+        res.status(500).json({
+          code: 1,
+          status: false,
+          message: result.message || '上传失败',
+        });
+      } catch (ipcError: any) {
+        console.error(`[material-upload:${requestId}] ❌ IPC调用失败:`, ipcError);
+        res.status(500).json({
+          code: 1,
+          status: false,
+          message: `IPC调用失败: ${ipcError?.message || '未知错误'}`,
+        });
+      }
+    } catch (error: any) {
+      console.error(`[material-upload:${requestId}] ❌ 未捕获的异常:`, {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+      });
+      res.status(500).json({
+        code: 1,
+        status: false,
+        message: error?.message || '上传失败',
+      });
+    }
+  };
+
   /**
    * @swagger
-   * /api/crawler-material-upload:
+   * /api/material-upload:
    *   post:
-   *     summary: 上传图片到爬图库
-   *     description: 接收图片URL，在renderer端（浏览器环境）下载图片，上传到COS后保存到爬图库
-   *     tags: [爬图库]
+   *     summary: 上传图片到指定素材库
+   *     description: 接收图片URL，在 renderer 端下载图片，上传到 COS 后按 target 落到图片素材或爬图素材
+   *     tags: [素材上传]
    *     requestBody:
    *       required: true
    *       content:
@@ -1047,16 +1152,15 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
    *             properties:
    *               url:
    *                 type: string
-   *                 description: 图片远程URL地址
    *               name:
    *                 type: string
-   *                 description: 素材名称
    *               description:
    *                 type: string
-   *                 description: 素材描述
    *               keywords:
    *                 type: string
-   *                 description: 关键词
+   *               target:
+   *                 type: string
+   *                 enum: [sticker, crawler-material]
    *     responses:
    *       200:
    *         description: 上传成功
@@ -1065,85 +1169,13 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
    *       500:
    *         description: 服务器错误
    */
+  app.post('/api/material-upload', async (req, res) => {
+    await handleMaterialUpload(req, res, 'sticker');
+  });
+
+  // 兼容旧接口：历史上这个接口名虽然带 crawler，但实际默认落图库
   app.post('/api/crawler-material-upload', async (req, res) => {
-    const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    console.log(`[crawler-material-upload:${requestId}] ========== 开始处理请求 ==========`)
-    console.log(`[crawler-material-upload:${requestId}] 请求体:`, JSON.stringify(req.body, null, 2))
-    
-    try {
-      const { url, name, description, keywords, useAiGenerate, aiGenerateRawInfo } = req.body;
-
-      // 参数验证
-      if (!url || typeof url !== 'string') {
-        console.error(`[crawler-material-upload:${requestId}] 参数验证失败: url 参数必填`)
-        res.status(400).json({
-          code: 1,
-          status: false,
-          message: 'url 参数必填'
-        });
-        return;
-      }
-
-      // 通过 IPC 调用 renderer 端执行下载和上传
-      console.log(`[crawler-material-upload:${requestId}] ========== 通过 IPC 调用 renderer 端 ==========`)
-      
-      try {
-        // 获取主窗口
-        const mainWindow = BrowserWindow.getAllWindows()[0];
-        if (!mainWindow) {
-          throw new Error('主窗口未找到');
-        }
-
-        // 在 renderer 端执行下载和上传
-        const result = await mainWindow.webContents.executeJavaScript(`
-          (async () => {
-            if (window.__crawlerMaterialUploadService) {
-              return await window.__crawlerMaterialUploadService(${JSON.stringify({ url, name, description, keywords, useAiGenerate, aiGenerateRawInfo })});
-            } else {
-              return { ok: false, message: '上传服务未初始化' };
-            }
-          })()
-        `)
-
-        if (result.ok) {
-          console.log(`[crawler-material-upload:${requestId}] ========== ✅ 全部流程完成 ==========`)
-          console.log(`[crawler-material-upload:${requestId}] COS URL: ${result.data?.cosUrl}`)
-          console.log(`[crawler-material-upload:${requestId}] 素材数据:`, JSON.stringify(result.data?.material, null, 2))
-          
-          res.status(200).json({
-            code: 0,
-            status: true,
-            message: result.message || '上传成功',
-            data: result.data
-          });
-        } else {
-          console.error(`[crawler-material-upload:${requestId}] ❌ 上传失败: ${result.message}`)
-          res.status(500).json({
-            code: 1,
-            status: false,
-            message: result.message || '上传失败'
-          });
-        }
-      } catch (ipcError: any) {
-        console.error(`[crawler-material-upload:${requestId}] ❌ IPC调用失败:`, ipcError)
-        res.status(500).json({
-          code: 1,
-          status: false,
-          message: `IPC调用失败: ${ipcError?.message || '未知错误'}`
-        });
-      }
-    } catch (error: any) {
-      console.error(`[crawler-material-upload:${requestId}] ❌ 未捕获的异常:`, {
-        name: error.name,
-        message: error.message,
-        stack: error.stack
-      });
-      res.status(500).json({
-        code: 1,
-        status: false,
-        message: error?.message || '上传失败'
-      });
-    }
+    await handleMaterialUpload(req, res, 'sticker');
   });
 
   // 返回停止服务器的函数

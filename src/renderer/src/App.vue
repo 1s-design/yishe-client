@@ -4,7 +4,7 @@ import { websocketClient } from "./services/websocketClient";
 import { getUserInfo, logout, type UserInfo } from "./api/auth";
 import { getTokenFromClient } from "./api/user";
 import { LOCAL_API_BASE, getServiceMode } from "./config/api";
-import { downloadImageAndUploadToCrawler } from "./services/crawlerMaterialUpload";
+import { downloadImageAndUploadMaterial } from "./services/materialUpload";
 import { useToast } from "./composables/useToast";
 import { useThemeMode } from "./composables/useThemeMode";
 import LoadingOverlay from "./components/LoadingOverlay.vue";
@@ -902,8 +902,8 @@ onMounted(() => {
 
   void checkAuthAndGetUserInfo();
 
-  (window as any).__crawlerMaterialUploadService =
-    downloadImageAndUploadToCrawler;
+  (window as any).__materialUploadService = downloadImageAndUploadMaterial;
+  (window as any).__crawlerMaterialUploadService = downloadImageAndUploadMaterial;
 
   void checkPsServiceStatus();
   psServiceStatusInterval = setInterval(checkPsServiceStatus, 8000);

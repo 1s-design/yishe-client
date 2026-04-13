@@ -62,9 +62,24 @@ const api = {
   startLocalService: () => ipcRenderer.invoke('start-local-service'),
   stopLocalService: () => ipcRenderer.invoke('stop-local-service'),
   checkLocalServiceStatus: () => ipcRenderer.invoke('check-local-service-status'),
-  // 爬图库上传（在 renderer 端执行）
-  downloadImageAndUploadToCrawler: (params: { url: string; name?: string; description?: string; keywords?: string }) =>
-    ipcRenderer.invoke('crawler-material:download-and-upload', params),
+  // 通用图片上传（在 renderer 端执行）
+  downloadImageAndUploadMaterial: (params: {
+    url: string
+    name?: string
+    description?: string
+    keywords?: string
+    target?: 'sticker' | 'crawler-material'
+  }) =>
+    ipcRenderer.invoke('material:download-and-upload', params),
+  // 兼容旧命名
+  downloadImageAndUploadToCrawler: (params: {
+    url: string
+    name?: string
+    description?: string
+    keywords?: string
+    target?: 'sticker' | 'crawler-material'
+  }) =>
+    ipcRenderer.invoke('material:download-and-upload', params),
   // 图片转PNG转换（支持SVG、WebP等）
   convertToPng: (payload: { inputPath: string; pngPath: string; width?: number; height?: number }) =>
     ipcRenderer.invoke('convert-to-png', payload)
