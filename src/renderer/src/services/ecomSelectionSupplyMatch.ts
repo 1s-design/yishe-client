@@ -1,22 +1,22 @@
-type EcomCollectRunner = (data: Record<string, unknown>) => Promise<{
-  success: boolean;
-  status?: string;
-  data?: {
-    records?: Array<Record<string, any>>;
-    snapshots?: Array<Record<string, any>>;
-    summary?: Record<string, any> | null;
-    debugMeta?: Record<string, any> | null;
-  };
-  message?: string;
-}>;
+import type {
+  EcomCollectJsonMap,
+  EcomCollectRecord,
+  EcomCollectRunResponse,
+  EcomCollectSnapshot,
+  SupplyMatchCandidateRecord,
+} from "../types/ecomCollect";
+
+type EcomCollectRunner = (
+  data: Record<string, unknown>,
+) => Promise<EcomCollectRunResponse>;
 
 interface ExecuteSupplyMatchOptions {
   runId: string;
   taskId: string;
   matchType?: string;
-  sourceProducts: Array<Record<string, any>>;
-  sourceSummary?: Record<string, any> | null;
-  optionsData?: Record<string, any> | null;
+  sourceProducts: EcomCollectRecord[];
+  sourceSummary?: EcomCollectJsonMap | null;
+  optionsData?: EcomCollectJsonMap | null;
   timeoutMs?: number;
   workspaceDir?: string;
   runCollect: EcomCollectRunner;
@@ -39,13 +39,13 @@ function normalizeText(value: unknown) {
   return String(value).replace(/\s+/g, " ").trim();
 }
 
-function buildCollectTaskType(platform: unknown, collectScene: string) {
+function buildTaskTypeValue(platform: unknown, taskName: string) {
   const normalizedPlatform = normalizeText(platform);
-  const normalizedScene = normalizeText(collectScene);
-  if (!normalizedPlatform || !normalizedScene) {
+  const normalizedTaskName = normalizeText(taskName);
+  if (!normalizedPlatform || !normalizedTaskName) {
     return "";
   }
-  return `${normalizedPlatform}.${normalizedScene}`;
+  return `${normalizedPlatform}.${normalizedTaskName}`;
 }
 
 function clampNumber(
@@ -82,7 +82,7 @@ function normalizeBoolean(value: unknown, fallback = false) {
 }
 
 function normalizeOptions(
-  input: Record<string, any> | null | undefined,
+  input: EcomCollectJsonMap | null | undefined,
 ): SupplyMatchOptions {
   const supplierPlatforms = Array.from(
     new Set(
@@ -111,7 +111,7 @@ function normalizeOptions(
   };
 }
 
-function normalizeSourceProduct(input: Record<string, any>) {
+function normalizeSourceProduct(input: EcomCollectRecord) {
   const attributes =
     input?.attributes && typeof input.attributes === "object"
       ? Object.entries(input.attributes).reduce(
@@ -392,7 +392,7 @@ function buildSearchQueries(
   return Array.from(new Set(candidates)).slice(0, queryCount);
 }
 
-function buildCandidateKey(platform: string, record: Record<string, any>) {
+function buildCandidateKey(platform: string, record: EcomCollectJsonMap) {
   return (
     normalizeText(record?.supplierRecordKey || record?.recordKey) ||
     normalizeText(record?.supplierUrl || record?.sourceUrl || record?.url) ||
@@ -401,8 +401,8 @@ function buildCandidateKey(platform: string, record: Record<string, any>) {
 }
 
 function mergeSnapshots(
-  target: Array<Record<string, any>>,
-  incoming: Array<Record<string, any>>,
+  target: EcomCollectSnapshot[],
+  incoming: EcomCollectSnapshot[],
 ) {
   const seen = new Set(
     target.map(
@@ -421,7 +421,7 @@ function mergeSnapshots(
   });
 }
 
-function buildSupplierText(candidate: Record<string, any>) {
+function buildSupplierText(candidate: EcomCollectJsonMap) {
   return [
     candidate.title,
     candidate.shopName,
@@ -435,7 +435,7 @@ function buildSupplierText(candidate: Record<string, any>) {
       : "",
     Array.isArray(candidate.detailData?.specPairs)
       ? candidate.detailData.specPairs
-          .map((item: Record<string, any>) =>
+          .map((item: EcomCollectJsonMap) =>
             `${normalizeText(item?.label)} ${normalizeText(item?.value)}`.trim(),
           )
           .join(" ")
@@ -445,7 +445,7 @@ function buildSupplierText(candidate: Record<string, any>) {
 
 function computeMatchScore(
   source: ReturnType<typeof normalizeSourceProduct>,
-  candidate: Record<string, any>,
+  candidate: EcomCollectJsonMap,
 ) {
   const sourceTokens = extractKeywordTokens(
     [
@@ -532,9 +532,9 @@ function buildListingCandidate(params: {
   supplierPlatform: string;
   query: string;
   queryIndex: number;
-  listingRecord: Record<string, any>;
-  searchSnapshots: Array<Record<string, any>>;
-}) {
+  listingRecord: EcomCollectRecord;
+  searchSnapshots: EcomCollectSnapshot[];
+}): SupplyMatchCandidateRecord {
   const {
     source,
     supplierPlatform,
@@ -571,14 +571,14 @@ function buildListingCandidate(params: {
       sourceQuery: query,
       queryIndex,
     },
-    detailData: null as Record<string, any> | null,
+    detailData: null as EcomCollectRecord | null,
     comparisonData: {
       sourceQuery: query,
       queryIndex,
       queryHistory: [query],
       searchStatus: "success",
     },
-    rawPayload: {
+    collectContext: {
       listingRecord,
       detailRecord: null,
     },
@@ -601,9 +601,9 @@ function buildListingCandidate(params: {
 }
 
 function mergeCandidate(
-  existing: Record<string, any>,
-  incoming: Record<string, any>,
-) {
+  existing: SupplyMatchCandidateRecord,
+  incoming: SupplyMatchCandidateRecord,
+): SupplyMatchCandidateRecord {
   return {
     ...existing,
     supplierRecordKey: existing.supplierRecordKey || incoming.supplierRecordKey,
@@ -613,9 +613,9 @@ function mergeCandidate(
     shopName: existing.shopName || incoming.shopName,
     imageUrl: existing.imageUrl || incoming.imageUrl,
     listingData: existing.listingData || incoming.listingData,
-    rawPayload: {
-      ...(existing.rawPayload || {}),
-      ...(incoming.rawPayload || {}),
+    collectContext: {
+      ...(existing.collectContext || {}),
+      ...(incoming.collectContext || {}),
     },
     snapshotData: {
       listing: [
@@ -650,7 +650,9 @@ function mergeCandidate(
   };
 }
 
-function sortCandidates(list: Array<Record<string, any>>) {
+function sortCandidates(
+  list: SupplyMatchCandidateRecord[],
+): SupplyMatchCandidateRecord[] {
   return [...list].sort((left, right) => {
     const scoreDiff =
       (Number(right.matchScore) || 0) - (Number(left.matchScore) || 0);
@@ -669,6 +671,17 @@ function sortCandidates(list: Array<Record<string, any>>) {
       (Number(right.queryIndex) || Number.MAX_SAFE_INTEGER)
     );
   });
+}
+
+function buildSupplyMatchResultItem(
+  candidate: SupplyMatchCandidateRecord,
+): SupplyMatchCandidateRecord {
+  const { collectContext, rawPayload, ...rest } = candidate;
+
+  return {
+    ...rest,
+    rawPayload: collectContext || rawPayload || null,
+  };
 }
 
 function buildSubRunId(
@@ -721,9 +734,9 @@ export async function executeEcomSelectionSupplyMatchTask(
     Number(options.timeoutMs) || 30 * 60_000,
   );
   const deadline = Date.now() + timeoutMs;
-  const allSnapshots: Array<Record<string, any>> = [];
-  const matchedItems: Array<Record<string, any>> = [];
-  const sourceResults: Array<Record<string, any>> = [];
+  const allSnapshots: EcomCollectSnapshot[] = [];
+  const matchedItems: SupplyMatchCandidateRecord[] = [];
+  const sourceResults: EcomCollectJsonMap[] = [];
   let searchAttemptCount = 0;
   let detailAttemptCount = 0;
 
@@ -734,15 +747,15 @@ export async function executeEcomSelectionSupplyMatchTask(
     const sourceResult = {
       sourceRecordId: source.sourceRecordId || null,
       sourceTitle: source.sourceTitle || null,
-      supplierResults: [] as Array<Record<string, any>>,
+      supplierResults: [] as EcomCollectJsonMap[],
       matchedCount: 0,
     };
 
     for (const supplierPlatform of normalizedOptions.supplierPlatforms) {
-      const candidateMap = new Map<string, Record<string, any>>();
+      const candidateMap = new Map<string, SupplyMatchCandidateRecord>();
       const platformResult = {
         supplierPlatform,
-        queries: [] as Array<Record<string, any>>,
+        queries: [] as EcomCollectJsonMap[],
         searchResultCount: 0,
         detailAttemptCount: 0,
         matchedCount: 0,
@@ -767,7 +780,7 @@ export async function executeEcomSelectionSupplyMatchTask(
           ),
           taskId,
           platform: supplierPlatform,
-          taskType: buildCollectTaskType(supplierPlatform, "search"),
+          taskType: buildTaskTypeValue(supplierPlatform, "search"),
           workspaceDir: options.workspaceDir || "",
           timeoutMs: getRemainingTimeout(deadline),
           configData: {
@@ -844,7 +857,7 @@ export async function executeEcomSelectionSupplyMatchTask(
           ),
           taskId,
           platform: supplierPlatform,
-          taskType: buildCollectTaskType(supplierPlatform, "product_detail"),
+          taskType: buildTaskTypeValue(supplierPlatform, "product_detail"),
           workspaceDir: options.workspaceDir || "",
           timeoutMs: getRemainingTimeout(deadline),
           configData: {
@@ -868,12 +881,14 @@ export async function executeEcomSelectionSupplyMatchTask(
               detailResponse.status ||
               (detailResponse.success ? "success" : "failed"),
           };
-          candidate.rawPayload = {
-            ...(candidate.rawPayload || {}),
+          candidate.collectContext = {
+            ...(candidate.collectContext || {}),
             detailRecord,
           };
           candidate.snapshotData = {
-            ...(candidate.snapshotData || {}),
+            listing: Array.isArray(candidate.snapshotData?.listing)
+              ? candidate.snapshotData.listing
+              : [],
             detail: detailSnapshots,
           };
           candidate.title =
@@ -938,7 +953,6 @@ export async function executeEcomSelectionSupplyMatchTask(
       runId,
       taskId,
       matchType,
-      matchedItems: sortCandidates(matchedItems),
       snapshots: allSnapshots,
       summary: {
         sourceSummary: options.sourceSummary || null,
@@ -957,6 +971,7 @@ export async function executeEcomSelectionSupplyMatchTask(
         supplierPlatforms: normalizedOptions.supplierPlatforms,
         sourceResults,
       },
+      matchedItems: sortCandidates(matchedItems).map(buildSupplyMatchResultItem),
     },
   };
 }

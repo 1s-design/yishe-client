@@ -4,6 +4,10 @@
  */
 
 import { UPLOADER_API_BASE } from "../config/api";
+import type {
+  EcomCollectDocsSchema,
+  EcomCollectRunResult,
+} from "../types/ecomCollect";
 
 export interface UploaderStatus {
   connected: boolean;
@@ -19,7 +23,6 @@ export interface UploaderBrowserStatus {
   connection?: {
     port?: number | null;
     mode?: string;
-    profileDir?: string;
     profileId?: string | null;
     activeProfileId?: string | null;
     browserName?: string;
@@ -192,7 +195,6 @@ function hasMeaningfulBrowserConnectionInfo(connection: unknown) {
 
   return [
     "mode",
-    "profileDir",
     "cdpEndpoint",
     "browserName",
     "executablePath",
@@ -546,6 +548,7 @@ export interface UploaderEcomCollectPlatformItem {
   statusLabel?: string;
   runnable?: boolean;
   reason?: string | null;
+  access?: UploaderEcomCollectAccessSchema;
   regions?: string[];
   supportedScenes?: string[];
   supportedTaskTypes?: string[];
@@ -586,6 +589,18 @@ export interface UploaderEcomCollectFieldSchema {
   options?: UploaderEcomCollectFieldOption[];
 }
 
+export interface UploaderEcomCollectAccessSchema {
+  login?: string;
+  loginLabel?: string;
+  requiresLogin?: boolean;
+  canRunWithoutLogin?: boolean;
+  captcha?: string;
+  captchaLabel?: string;
+  antiBot?: string;
+  antiBotLabel?: string;
+  notes?: string[];
+}
+
 export interface UploaderEcomCollectSceneSchema {
   value: string;
   label: string;
@@ -596,16 +611,9 @@ export interface UploaderEcomCollectSceneSchema {
   verification?: string;
   verificationLabel?: string;
   reason?: string | null;
+  access?: UploaderEcomCollectAccessSchema;
   fields?: UploaderEcomCollectFieldSchema[];
-  docs?: {
-    overview?: string;
-    notes?: string[];
-    examples?: Array<{
-      title?: string;
-      description?: string;
-      payload?: Record<string, any>;
-    }>;
-  };
+  docs?: EcomCollectDocsSchema;
 }
 
 export interface UploaderEcomCollectTaskTypeSchema {
@@ -622,16 +630,9 @@ export interface UploaderEcomCollectTaskTypeSchema {
   verification?: string;
   verificationLabel?: string;
   reason?: string | null;
+  access?: UploaderEcomCollectAccessSchema;
   fields?: UploaderEcomCollectFieldSchema[];
-  docs?: {
-    overview?: string;
-    notes?: string[];
-    examples?: Array<{
-      title?: string;
-      description?: string;
-      payload?: Record<string, any>;
-    }>;
-  };
+  docs?: EcomCollectDocsSchema;
 }
 
 export interface UploaderEcomCollectCapabilitySchema {
@@ -640,17 +641,7 @@ export interface UploaderEcomCollectCapabilitySchema {
   platforms?: UploaderEcomCollectPlatformItem[];
 }
 
-export interface UploaderEcomCollectResult {
-  runId?: string | null;
-  taskId?: string | null;
-  platform?: string;
-  taskType?: string;
-  collectScene?: string;
-  records?: Array<Record<string, any>>;
-  snapshots?: Array<Record<string, any>>;
-  summary?: Record<string, any>;
-  debugMeta?: Record<string, any>;
-}
+export interface UploaderEcomCollectResult extends EcomCollectRunResult {}
 
 export interface UploaderBrowserSmallFeatureFieldOption {
   label?: string;

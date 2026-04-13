@@ -594,6 +594,35 @@ const uploaderEcomCollectCapabilityCache = {
 
 const UPLOADER_ECOM_CAPABILITY_CACHE_TTL = 60_000;
 
+function extractUploaderEcomCollectSupportedTaskTypes(
+  capability: UploaderEcomCollectCapabilitySchema | null | undefined,
+) {
+  const taskTypes = (Array.isArray(capability?.platforms) ? capability.platforms : [])
+    .flatMap((platform) => [
+      ...(Array.isArray(platform?.supportedTaskTypes)
+        ? platform.supportedTaskTypes
+        : []),
+      ...(Array.isArray(platform?.taskTypes)
+        ? platform.taskTypes.map((item) => item?.value || item?.taskType)
+        : []),
+    ])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(taskTypes));
+}
+
+function buildBrowserAutomationSupportedTaskTypes(
+  capability: UploaderEcomCollectCapabilitySchema | null | undefined,
+) {
+  return Array.from(
+    new Set([
+      ...buildPublishTaskCapabilitySummary().map((item) => item.taskType),
+      ...extractUploaderEcomCollectSupportedTaskTypes(capability),
+    ]),
+  );
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -638,6 +667,51 @@ function loadBrowserAutomationAutoDispatchEnabled() {
   } catch {
     return true;
   }
+}
+
+function updateBrowserAutomationCommandExecution(
+  payload: {
+    running: boolean;
+    taskId?: string | null;
+    taskType?: string | null;
+    queue?: string | null;
+    profileId?: string | null;
+    currentStep?: string | null;
+    progress?: number | null;
+    lastError?: string | null;
+    runtime?: Record<string, any> | null;
+    updatedAt?: string | null;
+  },
+) {
+  const normalizedProfileId = String(payload.profileId || "").trim() || null;
+  const normalizedTaskType = String(payload.taskType || "").trim() || null;
+  const slotKey = resolveBrowserAutomationExecutionSlotKey(
+    normalizedProfileId,
+    normalizedTaskType,
+  );
+  const previousSlot = browserAutomationExecutionSlots[slotKey];
+  const updatedAt = payload.updatedAt || new Date().toISOString();
+
+  upsertBrowserAutomationExecutionSlot(slotKey, {
+    slotKey,
+    running: payload.running,
+    taskId: payload.taskId ?? previousSlot?.taskId ?? null,
+    taskType: normalizedTaskType ?? previousSlot?.taskType ?? null,
+    queue: payload.queue ?? previousSlot?.queue ?? null,
+    profileId: normalizedProfileId,
+    currentStep: payload.currentStep ?? null,
+    progress:
+      typeof payload.progress === "number"
+        ? payload.progress
+        : payload.progress ?? null,
+    lastError: payload.lastError ?? null,
+    runtime: payload.runtime ?? null,
+    startedAt: payload.running
+      ? previousSlot?.startedAt || updatedAt
+      : previousSlot?.startedAt || updatedAt,
+    finishedAt: payload.running ? null : updatedAt,
+    updatedAt,
+  });
 }
 
 function persistBrowserAutomationAutoDispatchEnabled(enabled: boolean) {
@@ -775,6 +849,16 @@ function buildBrowserAutomationRuntimePatch(
   const executionSnapshot = buildBrowserAutomationExecutionSnapshot();
   const previousDetails: Record<string, any> = previous?.details || {};
   const payloadDetails: Record<string, any> = payload.details || {};
+  const ecomCollectCapability =
+    payloadDetails.ecomCollect &&
+    typeof payloadDetails.ecomCollect === "object"
+      ? (payloadDetails.ecomCollect as UploaderEcomCollectCapabilitySchema)
+      : previousDetails.ecomCollect &&
+          typeof previousDetails.ecomCollect === "object"
+        ? (previousDetails.ecomCollect as UploaderEcomCollectCapabilitySchema)
+        : uploaderEcomCollectCapabilityCache.data;
+  const supportedTaskTypes =
+    buildBrowserAutomationSupportedTaskTypes(ecomCollectCapability);
   const baseProfiles = Array.isArray(payloadDetails.profiles)
     ? payloadDetails.profiles
     : Array.isArray(previousDetails.profiles)
@@ -857,9 +941,7 @@ function buildBrowserAutomationRuntimePatch(
     state,
     currentTaskId,
     autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
-    supportedTaskTypes: buildPublishTaskCapabilitySummary().map(
-      (item) => item.taskType,
-    ),
+    supportedTaskTypes,
     supportedCommands: Array.from(
       new Set([
         ...(Array.isArray(payload.supportedCommands)
@@ -878,6 +960,7 @@ function buildBrowserAutomationRuntimePatch(
       ...previousDetails,
       ...payloadDetails,
       autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
+      supportedTaskTypes,
       executableTaskTypes: buildPublishTaskCapabilitySummary().map(
         (item) => item.taskType,
       ),
@@ -1142,8 +1225,10 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
   const taskId = String(command.payload?.taskId || "").trim();
   const platform = String(command.payload?.platform || "").trim();
   const taskType = String(command.payload?.taskType || "").trim();
+  const profileId = String(command.payload?.profileId || "").trim() || null;
   const timeoutMs = Number(command.payload?.timeoutMs) || 20 * 60 * 1000;
   const taskLabel = taskType || platform;
+  const runtimeTaskType = taskType || platform || "ecom-collect";
 
   if (!runId) {
     throw new Error("缺少 runId");
@@ -1156,11 +1241,12 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
   }
 
   const now = new Date().toISOString();
-  Object.assign(browserAutomationExecutionState, {
+  updateBrowserAutomationCommandExecution({
     running: true,
     taskId: runId,
-    taskType: "ecom-collect",
+    taskType: runtimeTaskType,
     queue: taskLabel,
+    profileId,
     currentStep: `执行电商采集：${taskLabel || platform}`,
     progress: null,
     lastError: null,
@@ -1169,9 +1255,8 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
       taskId,
       platform,
       taskType,
+      profileId,
     },
-    startedAt: now,
-    finishedAt: null,
     updatedAt: now,
   });
 
@@ -1218,11 +1303,12 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
     : [];
 
   const finishedAt = new Date().toISOString();
-  Object.assign(browserAutomationExecutionState, {
+  updateBrowserAutomationCommandExecution({
     running: false,
     taskId: runId,
-    taskType: "ecom-collect",
+    taskType: runtimeTaskType,
     queue: taskLabel,
+    profileId,
     currentStep: response.success ? "电商采集完成" : "电商采集失败",
     progress: response.success ? 100 : null,
     lastError: response.success ? null : response.message || "电商采集失败",
@@ -1231,10 +1317,10 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
       taskId,
       platform,
       taskType,
+      profileId,
       status: response.status || (response.success ? "success" : "failed"),
       summary: response.data?.summary || null,
     },
-    finishedAt,
     updatedAt: finishedAt,
   });
 
@@ -1267,6 +1353,7 @@ async function executeEcomSelectionSupplyMatchCommand(
 ) {
   const runId = String(command.payload?.runId || "").trim();
   const taskId = String(command.payload?.taskId || "").trim();
+  const profileId = String(command.payload?.profileId || "").trim() || null;
   const matchType = String(command.payload?.matchType || "supply_match").trim();
   const timeoutMs = Number(command.payload?.timeoutMs) || 30 * 60 * 1000;
   const sourceProducts = Array.isArray(command.payload?.sourceProducts)
@@ -1292,11 +1379,12 @@ async function executeEcomSelectionSupplyMatchCommand(
     ? supplierPlatforms.join(",")
     : "supply-match";
   const now = new Date().toISOString();
-  Object.assign(browserAutomationExecutionState, {
+  updateBrowserAutomationCommandExecution({
     running: true,
     taskId: runId,
     taskType: "ecom-selection-supply-match",
     queue: queueLabel,
+    profileId,
     currentStep: `执行找同款：${queueLabel}`,
     progress: null,
     lastError: null,
@@ -1304,11 +1392,10 @@ async function executeEcomSelectionSupplyMatchCommand(
       runId,
       taskId,
       matchType,
+      profileId,
       supplierPlatforms,
       sourceCount: sourceProducts.length,
     },
-    startedAt: now,
-    finishedAt: null,
     updatedAt: now,
   });
 
@@ -1358,11 +1445,12 @@ async function executeEcomSelectionSupplyMatchCommand(
       : [];
 
     const finishedAt = new Date().toISOString();
-    Object.assign(browserAutomationExecutionState, {
+    updateBrowserAutomationCommandExecution({
       running: false,
       taskId: runId,
       taskType: "ecom-selection-supply-match",
       queue: queueLabel,
+      profileId,
       currentStep: response.success ? "找同款完成" : "找同款失败",
       progress: response.success ? 100 : null,
       lastError: response.success ? null : response.message || "找同款失败",
@@ -1370,11 +1458,11 @@ async function executeEcomSelectionSupplyMatchCommand(
         runId,
         taskId,
         matchType,
+        profileId,
         supplierPlatforms,
         status: response.status || (response.success ? "success" : "failed"),
         summary: response.data?.summary || null,
       },
-      finishedAt,
       updatedAt: finishedAt,
     });
 
@@ -1403,11 +1491,12 @@ async function executeEcomSelectionSupplyMatchCommand(
     const finishedAt = new Date().toISOString();
     const errorMessage = serializeError(error);
 
-    Object.assign(browserAutomationExecutionState, {
+    updateBrowserAutomationCommandExecution({
       running: false,
       taskId: runId,
       taskType: "ecom-selection-supply-match",
       queue: queueLabel,
+      profileId,
       currentStep: "找同款失败",
       progress: null,
       lastError: errorMessage,
@@ -1415,10 +1504,10 @@ async function executeEcomSelectionSupplyMatchCommand(
         runId,
         taskId,
         matchType,
+        profileId,
         supplierPlatforms,
         status: "failed",
       },
-      finishedAt,
       updatedAt: finishedAt,
     });
 
@@ -3439,9 +3528,21 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         item?.isActive === true ||
         item?.id === profilesResponse?.data?.activeProfileId,
     ) || null;
+  const resolveActiveProfile = (profileId?: string | null) => {
+    const normalizedProfileId = String(profileId || "").trim();
+    return (
+      activeProfile ||
+      (normalizedProfileId
+        ? profileItems.find((item) => item?.id === normalizedProfileId) || null
+        : null)
+    );
+  };
   const executionSnapshot = buildBrowserAutomationExecutionSnapshot();
   const status = await checkUploaderStatus();
   if (!status.connected) {
+    const resolvedActiveProfile = resolveActiveProfile(
+      profilesResponse?.data?.activeProfileId || null,
+    );
     return buildBrowserAutomationRuntimePatch({
       label: "浏览器自动化",
       connected: false,
@@ -3488,7 +3589,17 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
             .map((item) => String(item.profileId || "").trim())
             .filter(Boolean),
           activeProfileId: profilesResponse?.data?.activeProfileId || null,
-          activeProfile,
+          activeProfile: resolvedActiveProfile,
+          loginSummary:
+            resolvedActiveProfile?.loginSummary &&
+            typeof resolvedActiveProfile.loginSummary === "object"
+              ? resolvedActiveProfile.loginSummary
+              : null,
+          activeProfileLoginSummary:
+            resolvedActiveProfile?.loginSummary &&
+            typeof resolvedActiveProfile.loginSummary === "object"
+              ? resolvedActiveProfile.loginSummary
+              : null,
           profilesRootDir: profilesResponse?.data?.profilesRootDir || null,
           workspaceDir: profilesResponse?.data?.workspaceDir || null,
           ecomCollect: uploaderEcomCollectCapabilityCache.data
@@ -3509,6 +3620,11 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
   const profileInstances = buildBrowserAutomationProfileInstances(
     profileItems,
     (browserData as Record<string, any> | undefined) || null,
+  );
+  const resolvedActiveProfile = resolveActiveProfile(
+    browserData?.connection?.activeProfileId ||
+      profilesResponse?.data?.activeProfileId ||
+      null,
   );
   return buildBrowserAutomationRuntimePatch({
     label: "浏览器自动化",
@@ -3570,13 +3686,17 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         browserData?.connection?.activeProfileId ||
         profilesResponse?.data?.activeProfileId ||
         null,
-      activeProfile:
-        activeProfile ||
-        (browserData?.connection?.activeProfileId
-          ? profileItems.find(
-              (item) => item?.id === browserData.connection?.activeProfileId,
-            ) || null
-          : null),
+      activeProfile: resolvedActiveProfile,
+      loginSummary:
+        resolvedActiveProfile?.loginSummary &&
+        typeof resolvedActiveProfile.loginSummary === "object"
+          ? resolvedActiveProfile.loginSummary
+          : null,
+      activeProfileLoginSummary:
+        resolvedActiveProfile?.loginSummary &&
+        typeof resolvedActiveProfile.loginSummary === "object"
+          ? resolvedActiveProfile.loginSummary
+          : null,
       profilesRootDir: profilesResponse?.data?.profilesRootDir || null,
       workspaceDir: profilesResponse?.data?.workspaceDir || null,
       autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,

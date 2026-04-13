@@ -82,6 +82,31 @@ export function logoutToken(): Promise<boolean> {
     });
 }
 
+export interface UserPlatformSessionsQuery {
+  platform?: string;
+  profileId?: string;
+}
+
+export interface UserPlatformSessionsUpdatePayload {
+  platform: string;
+  profileId?: string;
+  data: Record<string, any>;
+}
+
+export function getPlatformSessions(data?: UserPlatformSessionsQuery) {
+  return request.post<Record<string, any>>({
+    url: "/user/getPlatformSessions",
+    data: data || {},
+  });
+}
+
+export function updatePlatformSessions(data: UserPlatformSessionsUpdatePayload) {
+  return request.post<Record<string, any>>({
+    url: "/user/updatePlatformSessions",
+    data,
+  });
+}
+
 // 社交媒体登录状态检测
 export function checkSocialMediaLogin() {
   return request.get({
