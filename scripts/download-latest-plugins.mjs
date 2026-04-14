@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
-const pluginDir = path.resolve(
+const pluginRootDir = path.resolve(
   process.env.YISHE_PLUGIN_DOWNLOAD_DIR ||
     path.join(rootDir, "resources", "plugin"),
 );
@@ -40,8 +40,26 @@ const LATEST_PLUGIN_DOWNLOADS = {
 
 function getDownloadsForPlatform(platform) {
   return Array.isArray(LATEST_PLUGIN_DOWNLOADS[platform])
-    ? LATEST_PLUGIN_DOWNLOADS[platform]
+    ? LATEST_PLUGIN_DOWNLOADS[platform].map((item) => ({ ...item, platform }))
     : [];
+}
+
+function getAllDownloads() {
+  return Object.entries(LATEST_PLUGIN_DOWNLOADS).flatMap(([platform, items]) =>
+    items.map((item) => ({ ...item, platform })),
+  );
+}
+
+function getPlatformPluginDir(platform) {
+  return path.join(pluginRootDir, platform);
+}
+
+function getPlatformPluginPath(platform, fileName) {
+  return path.join(getPlatformPluginDir(platform), fileName);
+}
+
+function getLegacyPluginPath(fileName) {
+  return path.join(pluginRootDir, fileName);
 }
 
 async function ensureDir(dirPath) {
@@ -70,7 +88,7 @@ async function downloadFile(url, destinationPath) {
 
 async function main() {
   const downloads = cleanOnly
-    ? Object.values(LATEST_PLUGIN_DOWNLOADS).flat()
+    ? getAllDownloads()
     : getDownloadsForPlatform(runtimePlatform);
   if (!downloads.length) {
     console.log(
@@ -79,20 +97,23 @@ async function main() {
     return;
   }
 
-  await ensureDir(pluginDir);
-
   for (const item of downloads) {
-    const destinationPath = path.join(pluginDir, item.fileName);
+    const destinationPath = getPlatformPluginPath(item.platform, item.fileName);
+    const legacyPath = getLegacyPluginPath(item.fileName);
     if (cleanOnly) {
       await fs.rm(destinationPath, { force: true });
+      await fs.rm(legacyPath, { force: true });
       console.log(`[prepare:plugins] removed ${item.fileName}`);
       continue;
     }
+
+    await ensureDir(path.dirname(destinationPath));
 
     console.log(
       `[prepare:plugins] downloading ${item.id} -> ${destinationPath}`,
     );
     await downloadFile(item.url, destinationPath);
+    await fs.rm(legacyPath, { force: true });
 
     if (typeof item.chmod === "number") {
       await fs.chmod(destinationPath, item.chmod);

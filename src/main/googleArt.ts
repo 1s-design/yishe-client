@@ -18,6 +18,16 @@ interface ZoomLevel {
 
 const GOOGLE_ART_SITE_URL = 'https://www.google.com/'
 
+function getPlatformBinaryName(platform: NodeJS.Platform): string | null {
+  const binaryNames: Record<string, string> = {
+    win32: 'dezoomify-rs-win.exe',
+    darwin: 'dezoomify-rs-mac',
+    linux: 'dezoomify-rs-linux'
+  }
+
+  return binaryNames[platform] || null
+}
+
 export async function getGoogleArtStatus() {
   const binary = resolveBinaryPath()
   const platformName =
@@ -54,21 +64,16 @@ export async function getGoogleArtStatus() {
 }
 
 function resolveBinaryPath(): string | null {
-  // 根据平台选择对应的二进制文件
-  const binaryNames: Record<string, string> = {
-    win32: 'dezoomify-rs-win.exe',
-    darwin: 'dezoomify-rs-mac',
-    linux: 'dezoomify-rs-linux'
-  }
-
-  const binaryName = binaryNames[process.platform]
+  const binaryName = getPlatformBinaryName(process.platform)
   if (!binaryName) {
     return null
   }
 
-  // 兼容多种放置位置，优先 resources/google-art，其次 resources/plugin
+  // 优先按内部 google-art 平台目录查找，同时兼容历史平铺目录和旧 plugin 目录。
   const candidateRelatives = [
+    ['resources', 'google-art', process.platform, binaryName],
     ['resources', 'google-art', binaryName],
+    ['resources', 'plugin', process.platform, binaryName],
     ['resources', 'plugin', binaryName],
     ['resources', binaryName]
   ]
@@ -106,8 +111,8 @@ export async function getGoogleArtZooms(
   const binary = resolveBinaryPath()
   if (!binary) {
     const platformName = process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform
-    const binaryName = process.platform === 'win32' ? 'dezoomify-rs-win.exe' : process.platform === 'darwin' ? 'dezoomify-rs-mac' : 'dezoomify-rs'
-    return { ok: false, msg: `缺少 ${binaryName}，请放置在 resources/google-art/ 或 resources/plugin/ (当前平台: ${platformName})` }
+    const binaryName = getPlatformBinaryName(process.platform) || 'dezoomify-rs'
+    return { ok: false, msg: `缺少 ${binaryName}，请放置在 resources/google-art/${process.platform}/ (当前平台: ${platformName})` }
   }
 
   return new Promise((resolvePromise) => {
@@ -275,8 +280,8 @@ export async function syncGoogleArtToMaterialLibrary(options: {
   const binary = resolveBinaryPath()
   if (!binary) {
     const platformName = process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform
-    const binaryName = process.platform === 'win32' ? 'dezoomify-rs-win.exe' : process.platform === 'darwin' ? 'dezoomify-rs-mac' : 'dezoomify-rs'
-    return { ok: false, msg: `缺少 ${binaryName}，请放置在 resources/google-art/ 或 resources/plugin/ (当前平台: ${platformName})` }
+    const binaryName = getPlatformBinaryName(process.platform) || 'dezoomify-rs'
+    return { ok: false, msg: `缺少 ${binaryName}，请放置在 resources/google-art/${process.platform}/ (当前平台: ${platformName})` }
   }
 
   const nameMatch = url.match(/\/asset\/([^/]+)/)

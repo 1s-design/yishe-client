@@ -313,7 +313,7 @@ async function getCosConfig(): Promise<CosConfig | null> {
   return fetchRemoteCosConfig()
 }
 
-async function getCurrentUserIdentity(): Promise<{ userId: string; account: string }> {
+export async function getCurrentUserIdentity(): Promise<{ userId: string; account: string }> {
   try {
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (!mainWindow || mainWindow.isDestroyed()) {

@@ -36,10 +36,10 @@ import {
   updateUploaderProfile,
   type UploaderEcomCollectCapabilitySchema,
 } from "../api/uploader";
-import { AUTO_PROCESS_TIMING } from "../config/autoProcessTiming";
 import {
   buildPublishTaskCapabilitySummary,
   executePublishQueueTask,
+  stopPublishQueueTaskExecution,
   type PublishTaskRuntimeSnapshot,
 } from "./publishTaskDispatch";
 import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
@@ -478,7 +478,7 @@ const psAutomationControlState = reactive({
   autoDispatchEnabled: null as boolean | null,
 });
 
-// 供全局展示的自动批处理状态（由前端控制）
+// 供全局展示的套图制作运行状态
 export const autoPsdBatchState = reactive({
   active: false,
   running: false,
@@ -609,6 +609,20 @@ function isBrowserAutomationExecutionSlotRunning(
   return !!browserAutomationExecutionSlots[slotKey]?.running;
 }
 
+function findBrowserAutomationExecutionSlotKeyByTaskId(taskId?: string | null) {
+  const normalizedTaskId = String(taskId || "").trim();
+  if (!normalizedTaskId) {
+    return "";
+  }
+
+  return (
+    Object.keys(browserAutomationExecutionSlots).find(
+      (slotKey) =>
+        String(browserAutomationExecutionSlots[slotKey]?.taskId || "").trim() === normalizedTaskId,
+    ) || ""
+  );
+}
+
 const uploaderEcomCollectCapabilityCache = {
   fetchedAt: 0,
   data: null as UploaderEcomCollectCapabilitySchema | null,
@@ -643,12 +657,6 @@ function buildBrowserAutomationSupportedTaskTypes(
       ...extractUploaderEcomCollectSupportedTaskTypes(capability),
     ]),
   );
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 async function getCachedUploaderEcomCollectCapabilities(
@@ -1840,97 +1848,6 @@ async function executeEcomSelectionSupplyMatchCommand(
   }
 }
 
-async function fetchPendingBatch() {
-  return stickerPsdSetApi.claimBatch({
-    limit: 10,
-    includeDetails: false,
-  });
-}
-
-async function runAutoPsdBatchLoop() {
-  if (autoPsdBatchState.running) {
-    return;
-  }
-
-  autoPsdBatchState.running = true;
-  emitPsAutomationStatus({
-    running: true,
-    lastError: null,
-  });
-
-  while (autoPsdBatchState.active) {
-    try {
-      if (isProductionInProgress) {
-        await sleep(AUTO_PROCESS_TIMING.WAIT_WHEN_BUSY_MS);
-        continue;
-      }
-
-      const res = await fetchPendingBatch();
-      const pendingList = res.list || [];
-      emitPsAutomationStatus({
-        queueCount: pendingList.length,
-        running: false,
-        progress: null,
-      });
-
-      if (!pendingList.length) {
-        await sleep(AUTO_PROCESS_TIMING.IDLE_POLL_INTERVAL_MS);
-        continue;
-      }
-
-      for (const item of pendingList) {
-        if (!autoPsdBatchState.active) {
-          break;
-        }
-
-        emitPsAutomationStatus({
-          queueCount: Math.max(pendingList.length - 1, 0),
-          currentPsSetId: item.id,
-          currentPsSetName: item.name || null,
-          running: true,
-          progress: 0,
-          lastError: null,
-        });
-
-        try {
-          await startPsdSetProduction(item.id);
-        } catch (error: any) {
-          emitPsAutomationStatus({
-            running: false,
-            lastError: error?.message || "自动制作失败",
-          });
-        }
-
-        if (!autoPsdBatchState.active) {
-          break;
-        }
-
-        await sleep(AUTO_PROCESS_TIMING.TASK_INTERVAL_MS);
-      }
-    } catch (error: any) {
-      emitPsAutomationStatus({
-        running: false,
-        lastError: error?.message || "自动制作循环异常",
-      });
-      await sleep(AUTO_PROCESS_TIMING.ERROR_RETRY_MS);
-    }
-  }
-
-  autoPsdBatchState.running = false;
-  autoPsdBatchState.stopping = false;
-  emitPsAutomationStatus({
-    running: false,
-    queueCount: 0,
-    progress: null,
-    currentPsSetId: isProductionInProgress
-      ? autoPsdBatchState.currentPsSetId
-      : null,
-    currentPsSetName: isProductionInProgress
-      ? autoPsdBatchState.currentPsSetName
-      : null,
-  });
-}
-
 async function fetchNetworkProfile(force = false) {
   if (typeof fetch === "undefined") {
     return;
@@ -2455,96 +2372,6 @@ function bindSocketEvents(currentSocket: Socket) {
       timestamp: new Date().toISOString(),
     });
 
-    // 处理特定的命令
-    if (data?.command === "start-psd-set-production") {
-      const psdSetId = data?.params?.psdSetId;
-      if (psdSetId) {
-        // 检查是否正在制作中
-        if (isProductionInProgress) {
-          emitter.emit("log", {
-            level: "warn",
-            message: `[ws] 收到制作请求，但正在制作中，拒绝新请求: ${psdSetId}`,
-          });
-
-          // 如果服务端已经把该套图状态改成「处理中」，这里尝试回退为「待处理」
-          try {
-            await stickerPsdSetApi.update(psdSetId, {
-              status: "pending",
-              statusMessage: "客户端正在制作其他套图，请稍后重试",
-            });
-          } catch (e) {
-            emitter.emit("log", {
-              level: "warn",
-              message: `[ws] 回退套图状态为待处理失败: ${serializeError(e)}`,
-            });
-          }
-
-          // 同步告知管理后台：保持为待处理
-          try {
-            if (socket && socket.connected) {
-              socket.emit("production-status", {
-                psdSetId,
-                status: "pending",
-                message: "正在处理中，请稍后重试",
-                progress: 0,
-                total: 0,
-              });
-            }
-          } catch (e) {
-            emitter.emit("log", {
-              level: "warn",
-              message: `[ws] 发送 production-status（保持待处理）失败: ${serializeError(e)}`,
-            });
-          }
-
-          // 通过 WebSocket 发送响应给前端，告知正在制作中
-          if (socket && socket.connected) {
-            const responseData = {
-              success: false,
-              message: "正在制作中，请稍后重试",
-              psdSetId: psdSetId,
-            };
-            emitter.emit("log", {
-              level: "info",
-              message: `[ws] 发送制作响应（正在制作中）: ${JSON.stringify(responseData)}`,
-            });
-            socket.emit("start-psd-set-production-response", responseData);
-          } else {
-            emitter.emit("log", {
-              level: "warn",
-              message: "[ws] WebSocket 未连接，无法发送制作响应",
-            });
-          }
-          // 同时通过 toast 事件显示提示（如果前端监听了）
-          emitter.emit("toast", {
-            color: "warning",
-            icon: "mdi-clock-outline",
-            message: "正在制作中，请稍后重试",
-          });
-          return;
-        }
-        // 开始处理套图制作
-        handlePsdSetProduction(psdSetId).catch((error) => {
-          emitter.emit("log", {
-            level: "error",
-            message: `[ws] 处理套图制作失败: ${error.message || String(error)}`,
-          });
-          emitter.emit("toast", {
-            color: "error",
-            icon: "mdi-alert-circle",
-            message: `套图制作失败: ${error.message || "未知错误"}`,
-          });
-        });
-      } else {
-        emitter.emit("toast", {
-          color: "warning",
-          icon: "mdi-alert",
-          message: "收到制作请求，但缺少套图ID",
-        });
-      }
-      return;
-    }
-
     // 默认显示 toast 通知
     const messageText =
       typeof data === "string"
@@ -2711,18 +2538,6 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         icon: "mdi-alert-circle-outline",
         message: "PSD 模板缺少可用路径，无法制作套图",
       });
-      // 也尝试更新服务端状态，方便管理后台查看（如果有权限）
-      try {
-        await stickerPsdSetApi.update(psdSetId, {
-          status: "failed",
-          statusMessage: errorMessage,
-        });
-      } catch (e) {
-        emitter.emit("log", {
-          level: "warn",
-          message: `[psd-set] 更新失败状态失败: ${serializeError(e)}`,
-        });
-      }
       throw new Error(errorMessage);
     }
 
@@ -2749,19 +2564,6 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       emitter.emit("log", {
         level: "warn",
         message: `[ws] 发送 production-status（查询信息）失败: ${serializeError(e)}`,
-      });
-    }
-
-    // 更新状态为处理中
-    try {
-      await stickerPsdSetApi.update(psdSetId, {
-        status: "processing",
-        statusMessage: "正在处理中...",
-      });
-    } catch (updateError) {
-      emitter.emit("log", {
-        level: "warn",
-        message: `[psd-set] 更新处理中状态失败: ${updateError}，继续处理`,
       });
     }
 
@@ -3046,17 +2848,6 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
           icon: "mdi-alert-circle-outline",
           message: msg,
         });
-        try {
-          await stickerPsdSetApi.update(psdSetId, {
-            status: "failed",
-            statusMessage: msg,
-          });
-        } catch (e) {
-          emitter.emit("log", {
-            level: "warn",
-            message: `[psd-set] 更新失败状态失败: ${serializeError(e)}`,
-          });
-        }
         throw new Error(msg);
       }
       if (psdDownloadResult.skipped) {
@@ -3136,17 +2927,6 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
               icon: "mdi-alert-circle-outline",
               message: msg,
             });
-            try {
-              await stickerPsdSetApi.update(psdSetId, {
-                status: "failed",
-                statusMessage: msg,
-              });
-            } catch (e) {
-              emitter.emit("log", {
-                level: "warn",
-                message: `[psd-set] 更新失败状态失败: ${serializeError(e)}`,
-              });
-            }
             throw new Error(msg);
           }
         }
@@ -3180,17 +2960,6 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
             icon: "mdi-alert-circle-outline",
             message: msg,
           });
-          try {
-            await stickerPsdSetApi.update(psdSetId, {
-              status: "failed",
-              statusMessage: msg,
-            });
-          } catch (e) {
-            emitter.emit("log", {
-              level: "warn",
-              message: `[psd-set] 更新失败状态失败: ${serializeError(e)}`,
-            });
-          }
           throw new Error(msg);
         }
       }
@@ -3574,8 +3343,6 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
 
     await stickerPsdSetApi.update(psdSetId, {
       images: updatedImages,
-      status: "completed",
-      statusMessage: "制作完成",
       processingTime: processingTime,
     });
 
@@ -3634,19 +3401,6 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       message: `[psd-set] 套图制作失败: ${error.message || String(error)}`,
     });
 
-    // 尝试更新套图状态为失败
-    try {
-      await stickerPsdSetApi.update(psdSetId, {
-        status: "failed",
-        statusMessage: error.message || "制作失败",
-      });
-    } catch (updateError) {
-      emitter.emit("log", {
-        level: "error",
-        message: `[psd-set] 更新失败状态也失败: ${updateError}`,
-      });
-    }
-
     // 通知服务器与管理后台：已失败
     try {
       if (socket && socket.connected) {
@@ -3684,12 +3438,9 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitPsAutomationStatus({
       running: false,
       progress: null,
-      currentPsSetId: autoPsdBatchState.active
-        ? autoPsdBatchState.currentPsSetId
-        : null,
-      currentPsSetName: autoPsdBatchState.active
-        ? autoPsdBatchState.currentPsSetName
-        : null,
+      queueCount: 0,
+      currentPsSetId: null,
+      currentPsSetName: null,
     });
     void syncServiceRuntime("photoshop");
   }
@@ -3896,6 +3647,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         "deleteProfile",
         "switchProfile",
         "executePublishTask",
+        "stopPublishTask",
         "getEcomCollectCapabilities",
         "ecomSelectionSupplyMatchRun",
         "setAutoDispatch",
@@ -3985,9 +3737,10 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         "switchProfile",
         "getPlatforms",
         "getEcomCollectCapabilities",
-        "getLoginStatus",
+      "getLoginStatus",
       "publish",
       "executePublishTask",
+      "stopPublishTask",
       "ecomCollectRun",
       "ecomSelectionSupplyMatchRun",
       "setAutoDispatch",
@@ -4155,18 +3908,6 @@ function registerBuiltInLocalServices() {
           throw new Error("缺少 psdSetId");
         }
         if (isProductionInProgress) {
-          try {
-            await stickerPsdSetApi.update(psdSetId, {
-              status: "pending",
-              statusMessage: "客户端正在制作其他套图，请稍后重试",
-            });
-          } catch (error) {
-            emitter.emit("log", {
-              level: "warn",
-              message: `[service-command] 回退套图状态失败: ${serializeError(error)}`,
-            });
-          }
-
           if (socket?.connected) {
             socket.emit("production-status", {
               psdSetId,
@@ -4174,11 +3915,6 @@ function registerBuiltInLocalServices() {
               message: "正在处理中，请稍后重试",
               progress: 0,
               total: 0,
-            });
-            socket.emit("start-psd-set-production-response", {
-              success: false,
-              message: "正在制作中，请稍后重试",
-              psdSetId,
             });
           }
 
@@ -4723,6 +4459,8 @@ function registerBuiltInLocalServices() {
         const queue = String(command.payload?.queue || taskType).trim();
         const profileId =
           String(command.payload?.profileId || "").trim() || undefined;
+        const dispatchToken =
+          String(command.payload?.dispatchToken || "").trim() || undefined;
 
         if (!taskId) {
           throw new Error("缺少 taskId");
@@ -4736,6 +4474,7 @@ function registerBuiltInLocalServices() {
             taskId,
             taskType,
             queue,
+            dispatchToken,
             profileId: profileId || null,
             status: "pending",
             message: busyMessage,
@@ -4749,6 +4488,7 @@ function registerBuiltInLocalServices() {
               taskId,
               taskType,
               queue,
+              dispatchToken: dispatchToken || null,
             },
           };
         }
@@ -4756,6 +4496,7 @@ function registerBuiltInLocalServices() {
         await executePublishQueueTask(taskId, taskType, queue, {
           onRuntime: emitPublishTaskRuntime,
           profileId,
+          dispatchToken,
         });
         return {
           success: true,
@@ -4764,6 +4505,72 @@ function registerBuiltInLocalServices() {
             taskId,
             taskType,
             queue,
+            dispatchToken: dispatchToken || null,
+          },
+        };
+      }
+
+      if (action === "stopPublishTask") {
+        const taskId = String(command.payload?.taskId || "").trim();
+        const taskType = String(command.payload?.taskType || "").trim();
+        const queue = String(command.payload?.queue || taskType).trim();
+        const profileId =
+          String(command.payload?.profileId || "").trim() || undefined;
+        const dispatchToken =
+          String(command.payload?.dispatchToken || "").trim() || undefined;
+        const stopReason =
+          String(command.payload?.stopReason || "").trim() || "任务已手动停止";
+
+        if (!taskId) {
+          throw new Error("缺少 taskId");
+        }
+
+        const result = await stopPublishQueueTaskExecution({
+          taskId,
+          taskType,
+          queue,
+          profileId: profileId || null,
+          dispatchToken: dispatchToken || null,
+          reason: stopReason,
+        });
+
+        const slotKey =
+          findBrowserAutomationExecutionSlotKeyByTaskId(taskId) ||
+          resolveBrowserAutomationExecutionSlotKey(profileId || null, taskType);
+        if (slotKey) {
+          upsertBrowserAutomationExecutionSlot(slotKey, {
+            slotKey,
+            running: false,
+            taskId,
+            taskType,
+            queue,
+            profileId: result.profileId || profileId || null,
+            currentStep: "已手动停止",
+            progress: null,
+            lastError: stopReason,
+            runtime: null,
+            finishedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+          await syncUploaderRuntimeFromLocalState({
+            busy: browserAutomationExecutionState.running,
+            state: browserAutomationExecutionState.running ? "busy" : undefined,
+            currentTaskId: browserAutomationExecutionState.running
+              ? browserAutomationExecutionState.taskId
+              : null,
+            lastError: browserAutomationExecutionState.lastError,
+          });
+        }
+
+        return {
+          success: true,
+          message: stopReason,
+          data: {
+            taskId,
+            taskType,
+            queue,
+            profileId: result.profileId || profileId || null,
+            dispatchToken: dispatchToken || null,
           },
         };
       }
@@ -5093,57 +4900,4 @@ export function isPsdSetProductionInProgress() {
 
 export function getCurrentPsdSetProductionTaskId() {
   return currentProductionTaskId;
-}
-
-// 设置自动批处理状态，便于头部显示同步
-export function setAutoPsdBatchActive(active: boolean) {
-  autoPsdBatchState.active = active;
-  autoPsdBatchState.stopping = false;
-  emitPsAutomationStatus({
-    running: active ? autoPsdBatchState.running : false,
-    lastError: active ? autoPsdBatchState.lastError : null,
-  });
-}
-
-export async function startAutoPsdBatchProcessing(fromRemote = false) {
-  if (autoPsdBatchState.active && autoPsdBatchState.running) {
-    return;
-  }
-
-  autoPsdBatchState.active = true;
-  psAutomationControlState.enabled = true;
-  autoPsdBatchState.stopping = false;
-  emitPsAutomationStatus({
-    lastError: null,
-  });
-
-  emitter.emit("toast", {
-    color: "info",
-    icon: "mdi-play-circle-outline",
-    message: fromRemote
-      ? "已通过远程指令开启自动制作"
-      : "已开启自动制作待处理套图",
-  });
-
-  void runAutoPsdBatchLoop();
-}
-
-export function stopAutoPsdBatchProcessing(fromRemote = false) {
-  if (!autoPsdBatchState.active && !autoPsdBatchState.running) {
-    return;
-  }
-
-  autoPsdBatchState.active = false;
-  psAutomationControlState.enabled = false;
-  autoPsdBatchState.stopping = true;
-  emitPsAutomationStatus({
-    running: false,
-    queueCount: 0,
-  });
-
-  emitter.emit("toast", {
-    color: "warning",
-    icon: "mdi-stop-circle-outline",
-    message: fromRemote ? "已通过远程指令关闭自动制作" : "已停止自动制作",
-  });
 }

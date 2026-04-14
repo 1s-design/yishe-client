@@ -28,10 +28,21 @@ function hasBundledResource(relativePath: string): boolean {
   return existsSync(resolveBundledResourcePath(relativePath));
 }
 
+function resolvePlatformPluginPath(fileName: string): string {
+  const candidates = [
+    `resources/plugin/${process.platform}/${fileName}`,
+    `resources/plugin/${fileName}`,
+  ];
+
+  return candidates.find((item) => hasBundledResource(item)) || candidates[0];
+}
+
 const browserAutomationExecutable =
   process.platform === "darwin"
-    ? "resources/plugin/yishe-auto-browser-mac"
-    : "resources/plugin/yishe-auto-browser-windows.exe";
+    ? resolvePlatformPluginPath("yishe-auto-browser-mac")
+    : resolvePlatformPluginPath("yishe-auto-browser-windows.exe");
+
+const psAutomationExecutable = resolvePlatformPluginPath("yishe-ps-windows.exe");
 
 const pluginProcessConfigsInternal: ProcessConfig[] = [];
 
@@ -61,12 +72,12 @@ if (
 
 if (
   process.platform === "win32" &&
-  hasBundledResource("resources/plugin/yishe-ps-windows.exe")
+  hasBundledResource(psAutomationExecutable)
 ) {
   pluginProcessConfigsInternal.push({
     id: "ps-automation",
     name: "PS 自动化端",
-    executable: "resources/plugin/yishe-ps-windows.exe",
+    executable: psAutomationExecutable,
     platforms: ["win32"],
     autoStart: false,
     autoRestart: false,

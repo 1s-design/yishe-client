@@ -79,16 +79,6 @@ export interface PageStickerPsdSetResponse {
   pageSize: number
 }
 
-export interface ClaimStickerPsdSetBatchDto {
-  limit?: number
-  includeDetails?: boolean
-}
-
-export interface ClaimStickerPsdSetBatchResponse {
-  list: StickerPsdSet[]
-  total: number
-}
-
 export const stickerPsdSetApi = {
   /**
    * 分页查询套图列表
@@ -96,17 +86,6 @@ export const stickerPsdSetApi = {
   async getPage(params: PageStickerPsdSetDto): Promise<PageStickerPsdSetResponse> {
     const res = await request.post<{ data: PageStickerPsdSetResponse }>({
       url: '/sticker-psd-set/page',
-      data: params
-    })
-    return res.data
-  },
-
-  /**
-   * 领取一批待处理套图（由服务端加锁，防止多个客户端重复领取同一任务）
-   */
-  async claimBatch(params: ClaimStickerPsdSetBatchDto): Promise<ClaimStickerPsdSetBatchResponse> {
-    const res = await request.post<{ data: ClaimStickerPsdSetBatchResponse }>({
-      url: '/sticker-psd-set/claim-batch',
       data: params
     })
     return res.data

@@ -11,6 +11,8 @@ files:
   - "!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
   - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
   - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
+  - "!resources/google-art/**/*"
+  - "!resources/plugin/**/*"
 asarUnpack:
   - resources/**
 generateUpdatesFilesForAllChannels: false
@@ -20,6 +22,11 @@ win:
   icon: build/icon.ico
   executableName: yishe-client
   artifactName: yishe-client.${ext}
+  extraResources:
+    - from: resources/google-art/win32
+      to: resources/google-art/win32
+      filter:
+        - dezoomify-rs-win.exe
 nsis:
   differentialPackage: false
 mac:
@@ -28,8 +35,13 @@ mac:
     - dmg
   icon: build/icon.icns
   binaries:
-    - resources/plugin/dezoomify-rs-mac
+    - resources/google-art/darwin/dezoomify-rs-mac
   artifactName: yishe-client.${ext}
+  extraResources:
+    - from: resources/google-art/darwin
+      to: resources/google-art/darwin
+      filter:
+        - dezoomify-rs-mac
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.

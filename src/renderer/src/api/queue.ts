@@ -99,13 +99,30 @@ export const getQueueStats = (queue?: string) => {
 }
 
 // 更新任务数据
-export const updateTaskData = (queue: string, messageId: string, data: any) => {
-  return request.post({ url: `/queue/message/data`, data: { queue, messageId, data } })
+export const updateTaskData = (
+  queue: string,
+  messageId: string,
+  data: any,
+  dispatchToken?: string,
+) => {
+  return request.post({
+    url: `/queue/message/data`,
+    data: { queue, messageId, data, dispatchToken },
+  })
 }
 
 // 更新任务状态（使用 type 字段而不是 queue）
-export const updateTaskStatus = (type: string, messageId: string, status: 'pending' | 'waiting' | 'processing' | 'completed' | 'failed', error?: string) => {
-  return request.post({ url: '/queue/message/status', data: { type, messageId, status, error } })
+export const updateTaskStatus = (
+  type: string,
+  messageId: string,
+  status: 'pending' | 'waiting' | 'processing' | 'completed' | 'failed',
+  error?: string,
+  dispatchToken?: string,
+) => {
+  return request.post({
+    url: '/queue/message/status',
+    data: { type, messageId, status, error, dispatchToken },
+  })
 }
 
 // 清空队列

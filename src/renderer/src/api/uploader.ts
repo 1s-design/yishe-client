@@ -1566,6 +1566,46 @@ export async function createUploaderExecutionTask(
   }
 }
 
+export async function cancelUploaderTasksBySource(
+  sourceIds: UploaderTaskSourceId[],
+  reason?: string,
+): Promise<{
+  success: boolean;
+  data?: Array<{
+    source: UploaderTaskSource;
+    exists: boolean;
+    cancelled: boolean;
+    task?: UploaderTaskSummary | null;
+  }>;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/tasks/cancel-by-source`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceIds,
+        ...(reason ? { reason } : {}),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.success) {
+      return {
+        success: false,
+        message: json?.message ?? `取消任务失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      data: Array.isArray(json?.data) ? json.data : [],
+      message: json?.message,
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "取消任务失败" };
+  }
+}
+
 export async function getUploaderProfiles(): Promise<{
   success: boolean;
   data?: {

@@ -108,6 +108,11 @@ export interface PlatformExecutor {
 }
 
 export interface PlatformTaskExecutionContext {
+  dispatchToken?: string | null
+  throwIfStopped?: (payload?: {
+    sourceId?: UploaderTaskSourceId | null
+    profileId?: string | null
+  }) => void | Promise<void>
   onTaskStatusUpdate?: (payload: {
     status: 'processing' | 'completed' | 'failed'
     error?: string
@@ -263,6 +268,7 @@ function resolveBrowserProfileId(row: any): string | undefined {
 
 function mapUploaderTaskStatus(status?: string): 'processing' | 'completed' | 'failed' {
   if (status === 'success') return 'completed'
+  if (status === 'cancelled') return 'failed'
   if (status === 'failed') return 'failed'
   return 'processing'
 }
@@ -644,6 +650,9 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
       throw new Error(`平台未注册：${this.platform}`)
     }
 
+    await context?.throwIfStopped?.({
+      profileId: resolveBrowserProfileId(row) || null,
+    })
     await this.updateTaskStatus(row, 'processing', undefined, context)
 
     try {
@@ -651,6 +660,9 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
 
       await this.updateTaskStatus(row, 'completed', undefined, context)
     } catch (error: any) {
+      if (error?.name === 'PublishTaskStoppedError') {
+        throw error
+      }
       await this.updateTaskStatus(row, 'failed', error?.message || String(error), context)
       throw error
     }
@@ -672,6 +684,9 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     error?: string,
     context?: PlatformTaskExecutionContext,
   ) {
+    await context?.throwIfStopped?.({
+      profileId: resolveBrowserProfileId(row) || null,
+    })
     const apiBase = getRemoteApiBase()
     const headers = await buildAuthorizedJsonHeaders()
     const response = await fetch(`${apiBase}/queue/message/status`, {
@@ -682,6 +697,7 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
         messageId: row.id,
         status,
         error,
+        dispatchToken: context?.dispatchToken || undefined,
       }),
     })
 
@@ -705,8 +721,16 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     console.log(`[${this.platform}] 任务状态已更新: ${status}`)
   }
 
-  protected async updateTaskRuntime(row: any, runtime: Record<string, any>) {
+  protected async updateTaskRuntime(
+    row: any,
+    runtime: Record<string, any>,
+    context?: PlatformTaskExecutionContext,
+  ) {
     try {
+      await context?.throwIfStopped?.({
+        sourceId: buildUploaderTaskSourceId(row, this.platform),
+        profileId: resolveBrowserProfileId(row) || null,
+      })
       const currentData = row?.data && typeof row.data === 'object' ? row.data : {}
       const nextData = {
         ...currentData,
@@ -729,6 +753,7 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
           queue: row.type,
           messageId: row.id,
           data: nextData,
+          dispatchToken: context?.dispatchToken || undefined,
         }),
       })
 
@@ -738,6 +763,9 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
 
       row.data = nextData
     } catch (e) {
+      if ((e as any)?.name === 'PublishTaskStoppedError') {
+        throw e
+      }
       console.warn('更新任务运行态失败:', e)
     }
   }
@@ -764,7 +792,11 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     const sourceId = buildUploaderTaskSourceId(row, this.platform)
     const profileId = resolveBrowserProfileId(row)
 
-    await this.updateTaskRuntime(row, buildRuntimeSnapshot(sourceId))
+    await context?.throwIfStopped?.({
+      sourceId,
+      profileId: profileId || null,
+    })
+    await this.updateTaskRuntime(row, buildRuntimeSnapshot(sourceId), context)
 
     const createResult = await createUploaderExecutionTask({
       kind: 'publish',
@@ -784,6 +816,10 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
       throw new Error(createResult.message || '创建发布端任务失败')
     }
 
+    await context?.throwIfStopped?.({
+      sourceId,
+      profileId: profileId || null,
+    })
     await this.pollUploaderTaskUntilFinished(row, sourceId, context)
   }
 
@@ -793,8 +829,13 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     context?: PlatformTaskExecutionContext,
   ): Promise<void> {
     const startedAt = Date.now()
+    const profileId = resolveBrowserProfileId(row)
 
     while (Date.now() - startedAt < UPLOADER_POLL_TIMEOUT_MS) {
+      await context?.throwIfStopped?.({
+        sourceId,
+        profileId: profileId || null,
+      })
       const queryResult = await queryUploaderTasksBySource([sourceId])
       if (!queryResult.success) {
         throw new Error(queryResult.message || '查询发布端任务状态失败')
@@ -812,7 +853,11 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
         continue
       }
 
-      await this.updateTaskRuntime(row, buildRuntimeSnapshot(sourceId, runtimeTask, runtimeLogs))
+      await this.updateTaskRuntime(
+        row,
+        buildRuntimeSnapshot(sourceId, runtimeTask, runtimeLogs),
+        context,
+      )
 
       const mappedStatus = mapUploaderTaskStatus(runtimeTask.status)
       await context?.onRuntimeUpdate?.({

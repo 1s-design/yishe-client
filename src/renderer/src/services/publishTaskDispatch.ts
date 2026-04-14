@@ -4,6 +4,11 @@ import {
   updateTaskStatus,
 } from "../api/queue";
 import {
+  cancelUploaderTasksBySource,
+  closeUploaderBrowser,
+  type UploaderTaskSourceId,
+} from "../api/uploader";
+import {
   getExecutableTaskDisplayList,
   getTaskExecutor,
   isExecutableTaskType,
@@ -22,6 +27,7 @@ export interface PublishTaskRuntimeSnapshot {
   taskType: string;
   queue: string;
   status: PublishTaskRuntimeStatus;
+  dispatchToken?: string | null;
   profileId?: string | null;
   message?: string;
   currentStep?: string | null;
@@ -33,6 +39,7 @@ export interface PublishTaskRuntimeSnapshot {
 type ExecutePublishTaskOptions = {
   onRuntime?: (snapshot: PublishTaskRuntimeSnapshot) => void | Promise<void>;
   profileId?: string;
+  dispatchToken?: string | null;
 };
 
 class PublishTaskRetryableError extends Error {
@@ -81,16 +88,179 @@ export function buildPublishTaskCapabilitySummary() {
   }));
 }
 
+function upsertExecutionControl(
+  taskId: string,
+  patch: Partial<PublishTaskExecutionControl>,
+) {
+  const normalizedTaskId = String(taskId || "").trim();
+  if (!normalizedTaskId) {
+    throw new Error("缺少 taskId");
+  }
+
+  const current =
+    publishTaskExecutionControls.get(normalizedTaskId) || {
+      taskId: normalizedTaskId,
+      taskType: String(patch.taskType || "").trim(),
+      queue: String(patch.queue || "").trim(),
+      profileId: String(patch.profileId || "").trim() || null,
+      dispatchToken: String(patch.dispatchToken || "").trim() || null,
+      stopRequested: false,
+      stopReason: null,
+    };
+  const next: PublishTaskExecutionControl = {
+    ...current,
+    ...patch,
+    taskId: normalizedTaskId,
+    taskType:
+      String(patch.taskType ?? current.taskType ?? "").trim() || current.taskType,
+    queue: String(patch.queue ?? current.queue ?? "").trim() || current.queue,
+    profileId:
+      patch.profileId !== undefined
+        ? String(patch.profileId || "").trim() || null
+        : current.profileId,
+    dispatchToken:
+      patch.dispatchToken !== undefined
+        ? String(patch.dispatchToken || "").trim() || null
+        : current.dispatchToken,
+  };
+  publishTaskExecutionControls.set(normalizedTaskId, next);
+  return next;
+}
+
+function findExecutionControl(
+  input: {
+    taskId?: string | null;
+    dispatchToken?: string | null;
+    profileId?: string | null;
+  } = {},
+) {
+  const normalizedTaskId = String(input.taskId || "").trim();
+  if (normalizedTaskId && publishTaskExecutionControls.has(normalizedTaskId)) {
+    return publishTaskExecutionControls.get(normalizedTaskId) || null;
+  }
+
+  const normalizedDispatchToken = String(input.dispatchToken || "").trim();
+  if (normalizedDispatchToken) {
+    for (const control of publishTaskExecutionControls.values()) {
+      if (control.dispatchToken === normalizedDispatchToken) {
+        return control;
+      }
+    }
+  }
+
+  const normalizedProfileId = String(input.profileId || "").trim();
+  if (normalizedProfileId) {
+    for (const control of publishTaskExecutionControls.values()) {
+      if (control.profileId === normalizedProfileId) {
+        return control;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function performStopCleanup(control: PublishTaskExecutionControl) {
+  const reason = control.stopReason || "任务已停止";
+
+  try {
+    await cancelUploaderTasksBySource([control.taskId as UploaderTaskSourceId], reason);
+  } catch (error) {
+    console.warn("[publish-task] cancel uploader task failed:", error);
+  }
+
+  if (control.profileId) {
+    try {
+      await closeUploaderBrowser(control.profileId);
+    } catch (error) {
+      console.warn("[publish-task] close browser profile failed:", error);
+    }
+  }
+}
+
+async function ensureExecutionActive(control: PublishTaskExecutionControl) {
+  if (!control.stopRequested) {
+    return;
+  }
+
+  await performStopCleanup(control);
+  throw new PublishTaskStoppedError(control.stopReason || "任务已停止");
+}
+
+export async function stopPublishQueueTaskExecution(input: {
+  taskId?: string | null;
+  taskType?: string | null;
+  queue?: string | null;
+  profileId?: string | null;
+  dispatchToken?: string | null;
+  reason?: string | null;
+}) {
+  const control =
+    findExecutionControl({
+      taskId: input.taskId,
+      dispatchToken: input.dispatchToken,
+      profileId: input.profileId,
+    }) ||
+    upsertExecutionControl(String(input.taskId || "").trim(), {
+      taskType: String(input.taskType || "").trim(),
+      queue: String(input.queue || input.taskType || "").trim(),
+      profileId: String(input.profileId || "").trim() || null,
+      dispatchToken: String(input.dispatchToken || "").trim() || null,
+    });
+
+  control.stopRequested = true;
+  control.stopReason = String(input.reason || "").trim() || "任务已停止";
+  if (input.profileId) {
+    control.profileId = String(input.profileId || "").trim() || null;
+  }
+
+  await performStopCleanup(control);
+
+  return {
+    taskId: control.taskId,
+    taskType: control.taskType,
+    queue: control.queue,
+    profileId: control.profileId,
+    dispatchToken: control.dispatchToken,
+    reason: control.stopReason,
+  };
+}
+
 async function emitRuntime(
   options: ExecutePublishTaskOptions | undefined,
   snapshot: PublishTaskRuntimeSnapshot,
 ) {
   try {
-    await options?.onRuntime?.(snapshot);
+    await options?.onRuntime?.({
+      ...snapshot,
+      dispatchToken:
+        snapshot.dispatchToken !== undefined
+          ? snapshot.dispatchToken
+          : (String(options?.dispatchToken || "").trim() || null),
+    });
   } catch (error) {
     console.warn("[publish-task] runtime callback failed:", error);
   }
 }
+
+class PublishTaskStoppedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PublishTaskStoppedError";
+  }
+}
+
+type PublishTaskExecutionControl = {
+  taskId: string;
+  taskType: string;
+  queue: string;
+  profileId: string | null;
+  dispatchToken: string | null;
+  stopRequested: boolean;
+  stopReason: string | null;
+};
+
+const publishTaskExecutionControls = new Map<string, PublishTaskExecutionControl>();
 
 export async function executePublishQueueTask(
   taskId: string,
@@ -102,6 +272,7 @@ export async function executePublishQueueTask(
   const normalizedTaskType = String(taskType || "").trim();
   const normalizedQueue = String(queue || normalizedTaskType || "").trim();
   const forcedProfileId = String(options?.profileId || "").trim() || null;
+  const dispatchToken = String(options?.dispatchToken || "").trim() || null;
 
   if (!normalizedTaskId) {
     throw new Error("缺少 taskId");
@@ -113,11 +284,21 @@ export async function executePublishQueueTask(
     throw new Error("缺少 queue");
   }
 
+  const executionControl = upsertExecutionControl(normalizedTaskId, {
+    taskType: normalizedTaskType,
+    queue: normalizedQueue,
+    profileId: forcedProfileId,
+    dispatchToken,
+    stopRequested: false,
+    stopReason: null,
+  });
+
   await emitRuntime(options, {
     taskId: normalizedTaskId,
     taskType: normalizedTaskType,
     queue: normalizedQueue,
     status: "assigned",
+    dispatchToken,
     profileId: forcedProfileId,
     message: `任务已分配，准备执行 ${getTaskLabel(normalizedTaskType)}`,
     currentStep: "加载任务详情",
@@ -125,6 +306,7 @@ export async function executePublishQueueTask(
   });
   let detail: QueueMessage | null = null;
   try {
+    await ensureExecutionActive(executionControl);
     const response = await getTaskDetail(normalizedQueue, normalizedTaskId);
     detail = resolveResponseData<QueueMessage | null>(response);
     if (!detail) {
@@ -150,6 +332,12 @@ export async function executePublishQueueTask(
       };
     }
 
+    executionControl.profileId =
+      forcedProfileId ||
+      String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
+      null;
+    await ensureExecutionActive(executionControl);
+
     if (detail.status === "waiting") {
       throw new PublishTaskRetryableError("任务仍在准备中，请稍后再试");
     }
@@ -168,11 +356,19 @@ export async function executePublishQueueTask(
     }
 
     const executionContext: PlatformTaskExecutionContext = {
+      dispatchToken,
+      throwIfStopped: async (payload) => {
+        if (payload?.profileId) {
+          executionControl.profileId = String(payload.profileId || "").trim() || null;
+        }
+        await ensureExecutionActive(executionControl);
+      },
       onTaskStatusUpdate: async ({ status, error }) => {
         await emitRuntime(options, {
           taskId: detail!.id,
           taskType: detail!.type,
           queue: resolveQueueName(detail, normalizedQueue),
+          dispatchToken,
           profileId:
             forcedProfileId ||
             String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
@@ -204,6 +400,7 @@ export async function executePublishQueueTask(
           taskId: detail!.id,
           taskType: detail!.type,
           queue: resolveQueueName(detail, normalizedQueue),
+          dispatchToken,
           profileId:
             forcedProfileId ||
             String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
@@ -244,6 +441,7 @@ export async function executePublishQueueTask(
       taskType: detail.type,
       queue: resolveQueueName(detail, normalizedQueue),
       status: "running",
+      dispatchToken,
       profileId:
         forcedProfileId ||
         String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
@@ -260,6 +458,7 @@ export async function executePublishQueueTask(
       taskType: detail.type,
       queue: resolveQueueName(detail, normalizedQueue),
       status: "completed",
+      dispatchToken,
       profileId:
         forcedProfileId ||
         String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
@@ -271,6 +470,10 @@ export async function executePublishQueueTask(
 
     return detail;
   } catch (error: any) {
+    if (error instanceof PublishTaskStoppedError) {
+      throw error;
+    }
+
     const errorMessage = error?.message || String(error);
     const fallbackStatus: PublishTaskRuntimeStatus =
       error instanceof PublishTaskRetryableError ? "pending" : "failed";
@@ -282,6 +485,7 @@ export async function executePublishQueueTask(
           detail.id,
           fallbackStatus,
           errorMessage,
+          dispatchToken || undefined,
         );
       }
     } catch {
@@ -293,6 +497,7 @@ export async function executePublishQueueTask(
       taskType: detail?.type || normalizedTaskType,
       queue: resolveQueueName(detail, normalizedQueue),
       status: fallbackStatus,
+      dispatchToken,
       profileId:
         forcedProfileId ||
         String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
@@ -302,5 +507,7 @@ export async function executePublishQueueTask(
       error: errorMessage,
     });
     throw error;
+  } finally {
+    publishTaskExecutionControls.delete(normalizedTaskId);
   }
 }

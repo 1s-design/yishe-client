@@ -19,7 +19,7 @@ type OwnershipRequestConfig = {
   data?: unknown
 }
 
-const legacyOwnershipExcludedKeywords = ['/auth/login', '/page', '/list', '/delete', '/claim-batch']
+const legacyOwnershipExcludedKeywords = ['/auth/login', '/page', '/list', '/delete']
 const authLikeOwnershipExcludedPatterns = [
   /^\/auth(\/|$)/i,
   /^\/api\/auth(\/|$)/i,

@@ -1,14 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { stickerPsdSetApi, type StickerPsdSet } from '../api/stickerPsdSet'
 import { getUserInfo } from '../api/auth'
 import { ElMessage } from 'element-plus'
 import { useToast } from '../composables/useToast'
-import {
-  autoPsdBatchState,
-  startAutoPsdBatchProcessing,
-  stopAutoPsdBatchProcessing
-} from '../services/websocketClient'
 
 const { showToast } = useToast()
 
@@ -20,8 +15,6 @@ const pageSize = ref(20)
 const keyword = ref('')
 const statusFilter = ref<string>('')
 const currentUserId = ref<string | null>(null)
-const autoActive = computed(() => autoPsdBatchState.active)
-const autoStopping = computed(() => autoPsdBatchState.stopping)
 
 // 待制作检测相关
 const pendingCheckInterval = ref<NodeJS.Timeout | null>(null)
@@ -175,33 +168,6 @@ const stopPendingCheck = () => {
   }
 }
 
-const startAutoProcessing = async () => {
-  if (autoPsdBatchState.running) {
-    showToast({
-      color: 'info',
-      icon: 'mdi-progress-clock',
-      message: '自动制作正在进行中'
-    })
-    return
-  }
-  await startAutoPsdBatchProcessing()
-}
-
-const stopAutoProcessing = () => {
-  if (!autoPsdBatchState.active && !autoPsdBatchState.running) {
-    return
-  }
-  stopAutoPsdBatchProcessing()
-}
-
-const toggleAutoProcessing = () => {
-  if (autoActive.value) {
-    stopAutoProcessing()
-  } else {
-    void startAutoProcessing()
-  }
-}
-
 // 修改状态
 const handleUpdateStatus = async (row: StickerPsdSet, status: string) => {
   try {
@@ -289,23 +255,6 @@ onUnmounted(() => {
           <el-button type="primary" @click="handleSearch">
             <i class="mdi mdi-magnify" style="margin-right: 4px" />
             搜索
-          </el-button>
-          <el-button
-            :type="autoActive ? 'danger' : 'success'"
-            :disabled="autoStopping"
-            @click="toggleAutoProcessing"
-          >
-            <i
-              class="mdi"
-              :class="autoActive ? 'mdi-stop-circle-outline' : 'mdi-play-circle-outline'"
-              style="margin-right: 4px"
-            />
-            <template v-if="autoActive">
-              {{ autoStopping ? '停止中...' : '停止自动制作' }}
-            </template>
-            <template v-else>
-              自动制作待处理
-            </template>
           </el-button>
         </div>
 

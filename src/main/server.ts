@@ -16,7 +16,7 @@ import { createServer } from 'http';
 import fs from 'fs';
 import path from 'path';
 import ElectronStore from 'electron-store';
-import { uploadFileToCos, generateCosKey } from './cos';
+import { uploadFileToCos, generateCosKey, getCurrentUserIdentity } from './cos';
 import { crawlerCollectorService } from './crawlerCollector';
 
 // 为了兼容部分证书配置不规范的站点，在 Node/Electron 端放宽 HTTPS 校验，
@@ -148,6 +148,36 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
       isAuthorized: !!token,
       mode: 'client-bridge'
     });
+  });
+
+  app.get('/api/auth/session', async (_req, res) => {
+    try {
+      const authorized = !!token;
+      const identity = authorized
+        ? await getCurrentUserIdentity().catch(() => ({ userId: '', account: '' }))
+        : { userId: '', account: '' };
+
+      const user =
+        authorized && (identity.userId || identity.account)
+          ? {
+              id: identity.userId || null,
+              userId: identity.userId || null,
+              account: identity.account || null,
+            }
+          : null;
+
+      res.status(200).json({
+        success: true,
+        authorized,
+        user,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        authorized: false,
+        message: error?.message || '获取本地会话失败',
+      });
+    }
   });
 
 
