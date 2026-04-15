@@ -1844,12 +1844,17 @@ export async function queryUploaderTasksBySource(
 
 export async function queryUploaderTaskLogsBySource(
   sourceIds: UploaderTaskSourceId[],
+  options?: {
+    afterIds?: Record<string, string | null | undefined>;
+  },
 ): Promise<{
   success: boolean;
   data?: Array<{
     source: UploaderTaskSource;
     exists: boolean;
     logs: UploaderTaskLogItem[];
+    total?: number;
+    lastLogId?: string | null;
   }>;
   message?: string;
 }> {
@@ -1859,7 +1864,10 @@ export async function queryUploaderTaskLogsBySource(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceIds }),
+        body: JSON.stringify({
+          sourceIds,
+          afterIds: options?.afterIds || undefined,
+        }),
         signal: AbortSignal.timeout(15000),
       },
     );

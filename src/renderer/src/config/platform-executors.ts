@@ -273,28 +273,52 @@ function mapUploaderTaskStatus(status?: string): 'processing' | 'completed' | 'f
   return 'processing'
 }
 
-function buildRuntimeSnapshot(
-  _sourceId: UploaderTaskSourceId,
-  runtimeTask?: UploaderTaskSummary | null,
-  runtimeLogs?: Array<Record<string, any>> | null,
-) {
-  const logItems = Array.isArray(runtimeLogs)
-    ? runtimeLogs
-    : Array.isArray(runtimeTask?.logInfo?.items)
-      ? runtimeTask.logInfo.items
-      : []
-
-  const normalizedLogs = logItems.map((item) => compactObject({
-    time: item?.time || item?.timestamp || undefined,
+function normalizeRuntimeLogItem(item: any) {
+  const timestamp = item?.timestamp || item?.time || undefined
+  return compactObject({
+    id: item?.id || undefined,
+    taskId: item?.taskId || undefined,
+    timestamp,
     level: item?.level || 'info',
     message: item?.message || '',
     data: item?.data,
-  }))
+  })
+}
+
+function buildRuntimeSnapshot(
+  sourceId: UploaderTaskSourceId,
+  runtimeTask?: UploaderTaskSummary | null,
+  options?: {
+    totalLogCount?: number | null
+    lastLog?: Record<string, any> | null
+    updatedAt?: string | null
+  },
+) {
+  const taskLastLog = runtimeTask?.logInfo?.last || undefined
+  const resolvedLastLog = options?.lastLog || taskLastLog
+  const totalLogCount = typeof options?.totalLogCount === 'number'
+    ? options.totalLogCount
+    : typeof runtimeTask?.logInfo?.count === 'number'
+      ? runtimeTask.logInfo.count
+      : 0
 
   return compactObject({
     source: 'uploader',
+    sourceId,
     platform: runtimeTask?.platform || undefined,
-    logs: normalizedLogs,
+    status: runtimeTask?.status || undefined,
+    step: runtimeTask?.step || undefined,
+    logCount: totalLogCount,
+    lastLogId: resolvedLastLog?.id || undefined,
+    lastLogTime:
+      resolvedLastLog?.timestamp || (resolvedLastLog as any)?.time || undefined,
+    lastLogLevel: resolvedLastLog?.level || undefined,
+    lastLogMessage: resolvedLastLog?.message || undefined,
+    updatedAt:
+      options?.updatedAt
+      || runtimeTask?.updatedAt
+      || resolvedLastLog?.timestamp
+      || new Date().toISOString(),
   })
 }
 
@@ -770,6 +794,62 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     }
   }
 
+  protected async appendTaskRuntimeLogs(
+    row: any,
+    payload: {
+      sourceId: UploaderTaskSourceId
+      platform?: string
+      logs: Array<Record<string, any>>
+    },
+    context?: PlatformTaskExecutionContext,
+    options?: {
+      allowEmpty?: boolean
+    },
+  ) {
+    if (!Array.isArray(payload.logs)) {
+      return
+    }
+    if (payload.logs.length === 0 && options?.allowEmpty !== true) {
+      return
+    }
+
+    try {
+      await context?.throwIfStopped?.({
+        sourceId: payload.sourceId,
+        profileId: resolveBrowserProfileId(row) || null,
+      })
+
+      const apiBase = getRemoteApiBase()
+      const headers = await buildAuthorizedJsonHeaders()
+      const response = await fetch(`${apiBase}/queue/message/runtime-log`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          queue: row.type,
+          messageId: row.id,
+          source: 'uploader',
+          sourceId: payload.sourceId,
+          platform: payload.platform || this.platform,
+          logs: payload.logs,
+          dispatchToken: context?.dispatchToken || undefined,
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(result?.message || `HTTP ${response.status}`)
+      }
+      if (result?.success === false) {
+        throw new Error(result?.message || '运行日志追加失败')
+      }
+    } catch (e) {
+      if ((e as any)?.name === 'PublishTaskStoppedError') {
+        throw e
+      }
+      console.warn('追加任务运行日志失败:', e)
+    }
+  }
+
   protected async dispatchByBackend(
     row: any,
     capability: PlatformCapability,
@@ -797,6 +877,16 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
       profileId: profileId || null,
     })
     await this.updateTaskRuntime(row, buildRuntimeSnapshot(sourceId), context)
+    await this.appendTaskRuntimeLogs(
+      row,
+      {
+        sourceId,
+        platform: this.platform,
+        logs: [],
+      },
+      context,
+      { allowEmpty: true },
+    )
 
     const createResult = await createUploaderExecutionTask({
       kind: 'publish',
@@ -830,6 +920,7 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
   ): Promise<void> {
     const startedAt = Date.now()
     const profileId = resolveBrowserProfileId(row)
+    let lastLogId: string | undefined
 
     while (Date.now() - startedAt < UPLOADER_POLL_TIMEOUT_MS) {
       await context?.throwIfStopped?.({
@@ -841,9 +932,13 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
         throw new Error(queryResult.message || '查询发布端任务状态失败')
       }
 
-      const logsResult = await queryUploaderTaskLogsBySource([sourceId])
+      const logsResult = await queryUploaderTaskLogsBySource([sourceId], {
+        afterIds: lastLogId ? { [sourceId]: lastLogId } : undefined,
+      })
       const logMatch = logsResult.success && Array.isArray(logsResult.data) ? logsResult.data[0] : undefined
-      const runtimeLogs = Array.isArray(logMatch?.logs) ? logMatch.logs : []
+      const runtimeLogs = Array.isArray(logMatch?.logs)
+        ? logMatch.logs.map((item) => normalizeRuntimeLogItem(item))
+        : []
 
       const match = Array.isArray(queryResult.data) ? queryResult.data[0] : undefined
       const runtimeTask = match?.task || null
@@ -853,16 +948,47 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
         continue
       }
 
+      if (runtimeLogs.length > 0) {
+        await this.appendTaskRuntimeLogs(
+          row,
+          {
+            sourceId,
+            platform: runtimeTask?.platform || this.platform,
+            logs: runtimeLogs,
+          },
+          context,
+        )
+      }
+
+      const resolvedLastLog = logMatch?.lastLogId
+        || runtimeLogs[runtimeLogs.length - 1]?.id
+        || runtimeTask?.logInfo?.last?.id
+        || lastLogId
+      if (resolvedLastLog) {
+        lastLogId = resolvedLastLog
+      }
+
+      const totalLogCount = typeof logMatch?.total === 'number'
+        ? logMatch.total
+        : typeof runtimeTask?.logInfo?.count === 'number'
+          ? runtimeTask.logInfo.count
+          : 0
+      const runtimeSnapshot = buildRuntimeSnapshot(sourceId, runtimeTask, {
+        totalLogCount,
+        lastLog: runtimeTask?.logInfo?.last || runtimeLogs[runtimeLogs.length - 1] || null,
+        updatedAt: runtimeTask?.updatedAt || runtimeLogs[runtimeLogs.length - 1]?.timestamp || undefined,
+      })
+
       await this.updateTaskRuntime(
         row,
-        buildRuntimeSnapshot(sourceId, runtimeTask, runtimeLogs),
+        runtimeSnapshot,
         context,
       )
 
       const mappedStatus = mapUploaderTaskStatus(runtimeTask.status)
       await context?.onRuntimeUpdate?.({
         sourceId,
-        runtime: buildRuntimeSnapshot(sourceId, runtimeTask, runtimeLogs),
+        runtime: runtimeSnapshot,
         runtimeTask,
         runtimeLogs,
         mappedStatus,

@@ -8,6 +8,7 @@ export interface QueueMessage {
   queue: string
   type: string
   data: any
+  taskRuntimeLog?: Record<string, any> | null
   description?: string
   priority?: number
   delay?: number
@@ -108,6 +109,28 @@ export const updateTaskData = (
   return request.post({
     url: `/queue/message/data`,
     data: { queue, messageId, data, dispatchToken },
+  })
+}
+
+export const appendTaskRuntimeLog = (
+  queue: string,
+  messageId: string,
+  payload: {
+    source?: string
+    sourceId?: string
+    platform?: string
+    logs: any[]
+  },
+  dispatchToken?: string,
+) => {
+  return request.post({
+    url: `/queue/message/runtime-log`,
+    data: {
+      queue,
+      messageId,
+      ...payload,
+      dispatchToken,
+    },
   })
 }
 
