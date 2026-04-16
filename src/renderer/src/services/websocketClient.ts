@@ -45,6 +45,8 @@ import {
 import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
 import { getWsEndpoint, setServiceMode } from "../config/api";
 
+type UploaderProfilesResponse = Awaited<ReturnType<typeof getUploaderProfiles>>;
+
 type WsStatus =
   | "idle"
   | "connecting"
@@ -627,8 +629,25 @@ const uploaderEcomCollectCapabilityCache = {
   fetchedAt: 0,
   data: null as UploaderEcomCollectCapabilitySchema | null,
 };
+const uploaderProfilesCache = {
+  fetchedAt: 0,
+  data: null as UploaderProfilesResponse | null,
+  promise: null as Promise<UploaderProfilesResponse> | null,
+  revision: 0,
+};
 
 const UPLOADER_ECOM_CAPABILITY_CACHE_TTL = 60_000;
+const UPLOADER_PROFILES_CACHE_TTL = 2_000;
+const EMPTY_UPLOADER_PROFILES_RESPONSE: UploaderProfilesResponse = {
+  success: false,
+  message: "获取环境列表失败",
+  data: {
+    activeProfileId: null,
+    workspaceDir: undefined,
+    profilesRootDir: undefined,
+    items: [],
+  },
+};
 
 function extractUploaderEcomCollectSupportedTaskTypes(
   capability: UploaderEcomCollectCapabilitySchema | null | undefined,
@@ -680,6 +699,50 @@ async function getCachedUploaderEcomCollectCapabilities(
   uploaderEcomCollectCapabilityCache.fetchedAt = now;
   uploaderEcomCollectCapabilityCache.data = response.data || null;
   return uploaderEcomCollectCapabilityCache.data;
+}
+
+function invalidateUploaderProfilesCache() {
+  uploaderProfilesCache.fetchedAt = 0;
+  uploaderProfilesCache.data = null;
+  uploaderProfilesCache.promise = null;
+  uploaderProfilesCache.revision += 1;
+}
+
+async function getCachedUploaderProfiles(
+  force = false,
+): Promise<UploaderProfilesResponse> {
+  const now = Date.now();
+  if (
+    !force &&
+    uploaderProfilesCache.data &&
+    now - uploaderProfilesCache.fetchedAt < UPLOADER_PROFILES_CACHE_TTL
+  ) {
+    return uploaderProfilesCache.data;
+  }
+
+  if (uploaderProfilesCache.promise) {
+    return uploaderProfilesCache.promise;
+  }
+
+  const requestRevision = uploaderProfilesCache.revision;
+  let requestPromise: Promise<UploaderProfilesResponse>;
+  requestPromise = getUploaderProfiles()
+    .then((response) => {
+      if (response.success && uploaderProfilesCache.revision === requestRevision) {
+        uploaderProfilesCache.fetchedAt = Date.now();
+        uploaderProfilesCache.data = response;
+      }
+      return response;
+    })
+    .catch(() => EMPTY_UPLOADER_PROFILES_RESPONSE)
+    .finally(() => {
+      if (uploaderProfilesCache.promise === requestPromise) {
+        uploaderProfilesCache.promise = null;
+      }
+    });
+
+  uploaderProfilesCache.promise = requestPromise;
+  return requestPromise;
 }
 
 function loadBrowserAutomationAutoDispatchEnabled() {
@@ -1992,6 +2055,20 @@ async function syncServiceRuntime(serviceKey: string) {
     await emitServiceRuntime(pluginKey, failedRuntime);
     return failedRuntime;
   }
+}
+
+let uploaderRuntimeSyncPromise: Promise<Partial<ClientServiceStatus> | null> | null =
+  null;
+
+function queueUploaderRuntimeSync() {
+  if (uploaderRuntimeSyncPromise) {
+    return uploaderRuntimeSyncPromise;
+  }
+
+  uploaderRuntimeSyncPromise = syncServiceRuntime("uploader").finally(() => {
+    uploaderRuntimeSyncPromise = null;
+  });
+  return uploaderRuntimeSyncPromise;
 }
 
 async function handleServiceCommand(command: ServiceCommandEnvelope) {
@@ -3588,15 +3665,9 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
 async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
   const checkedAt = new Date().toISOString();
   const capabilitySummary = buildPublishTaskCapabilitySummary();
-  const profilesResponse = await getUploaderProfiles().catch(() => ({
-    success: false,
-    data: {
-      activeProfileId: null,
-      workspaceDir: undefined,
-      profilesRootDir: undefined,
-      items: [],
-    },
-  }));
+  const profilesResponse = await getCachedUploaderProfiles().catch(
+    () => EMPTY_UPLOADER_PROFILES_RESPONSE,
+  );
   const profileItems = Array.isArray(profilesResponse?.data?.items)
     ? profilesResponse.data.items
     : [];
@@ -4150,7 +4221,7 @@ function registerBuiltInLocalServices() {
           throw new Error("缺少 platform");
         }
         const response = await openUploaderPlatform(platform, profileId);
-        const runtime = await syncServiceRuntime("uploader");
+        await syncServiceRuntime("uploader");
         return {
           success: response.success,
           message:
@@ -4159,7 +4230,6 @@ function registerBuiltInLocalServices() {
           data: {
             platform,
             profileId: profileId || null,
-            runtime,
           },
         };
       }
@@ -4171,7 +4241,7 @@ function registerBuiltInLocalServices() {
         }
         const profileId = String(command.payload?.profileId || "").trim() || undefined;
         const response = await openUploaderLink(url, profileId);
-        const runtime = await syncServiceRuntime("uploader");
+        await syncServiceRuntime("uploader");
         return {
           success: response.success,
           message:
@@ -4180,7 +4250,6 @@ function registerBuiltInLocalServices() {
           data: {
             url,
             profileId: profileId || null,
-            runtime,
           },
         };
       }
@@ -4297,7 +4366,7 @@ function registerBuiltInLocalServices() {
           featureKey,
           (command.payload || {}) as Record<string, unknown>,
         );
-        const runtime = await syncServiceRuntime("uploader");
+        await syncServiceRuntime("uploader");
         return {
           success: response.success,
           message:
@@ -4306,14 +4375,15 @@ function registerBuiltInLocalServices() {
           data: {
             featureKey,
             result: response.data || null,
-            runtime,
           },
         };
       }
 
       if (action === "listProfiles") {
-        const response = await getUploaderProfiles();
-        await syncServiceRuntime("uploader");
+        const response = await getCachedUploaderProfiles();
+        if (response.success) {
+          void queueUploaderRuntimeSync();
+        }
         return {
           success: response.success,
           message:
@@ -4347,6 +4417,9 @@ function registerBuiltInLocalServices() {
         const response = await createUploaderProfile(
           (command.payload || {}) as Record<string, unknown>,
         );
+        if (response.success) {
+          invalidateUploaderProfilesCache();
+        }
         const runtime = await syncServiceRuntime("uploader");
         return {
           success: response.success,
@@ -4369,6 +4442,9 @@ function registerBuiltInLocalServices() {
           profileId,
           (command.payload || {}) as Record<string, unknown>,
         );
+        if (response.success) {
+          invalidateUploaderProfilesCache();
+        }
         const runtime = await syncServiceRuntime("uploader");
         return {
           success: response.success,
@@ -4388,6 +4464,9 @@ function registerBuiltInLocalServices() {
           throw new Error("缺少 profileId");
         }
         const response = await deleteUploaderProfile(profileId);
+        if (response.success) {
+          invalidateUploaderProfilesCache();
+        }
         const runtime = await syncServiceRuntime("uploader");
         return {
           success: response.success,
@@ -4407,6 +4486,9 @@ function registerBuiltInLocalServices() {
           throw new Error("缺少 profileId");
         }
         const response = await switchUploaderProfile(profileId);
+        if (response.success) {
+          invalidateUploaderProfilesCache();
+        }
         const runtime = await syncServiceRuntime("uploader");
         return {
           success: response.success,
