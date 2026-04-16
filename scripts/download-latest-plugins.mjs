@@ -18,24 +18,12 @@ const cleanOnly = process.argv.includes("--clean");
 const LATEST_PLUGIN_DOWNLOADS = {
   win32: [
     {
-      id: "browser-automation",
-      fileName: "yishe-auto-browser-windows.exe",
-      url: "https://github.com/1s-design/yishe-auto-browser/releases/latest/download/yishe-auto-browser-windows.exe",
-    },
-    {
       id: "ps-automation",
       fileName: "yishe-ps-windows.exe",
       url: "https://github.com/1s-design/yishe-ps/releases/latest/download/yishe-ps-windows.exe",
     },
   ],
-  darwin: [
-    {
-      id: "browser-automation",
-      fileName: "yishe-auto-browser-mac",
-      url: "https://github.com/1s-design/yishe-auto-browser/releases/latest/download/yishe-auto-browser-mac",
-      chmod: 0o755,
-    },
-  ],
+  darwin: [],
 };
 
 function getDownloadsForPlatform(platform) {

@@ -37,38 +37,9 @@ function resolvePlatformPluginPath(fileName: string): string {
   return candidates.find((item) => hasBundledResource(item)) || candidates[0];
 }
 
-const browserAutomationExecutable =
-  process.platform === "darwin"
-    ? resolvePlatformPluginPath("yishe-auto-browser-mac")
-    : resolvePlatformPluginPath("yishe-auto-browser-windows.exe");
-
 const psAutomationExecutable = resolvePlatformPluginPath("yishe-ps-windows.exe");
 
 const pluginProcessConfigsInternal: ProcessConfig[] = [];
-
-if (
-  (process.platform === "win32" || process.platform === "darwin") &&
-  hasBundledResource(browserAutomationExecutable)
-) {
-  pluginProcessConfigsInternal.push({
-    id: "browser-automation",
-    name: "浏览器自动化端",
-    executable: browserAutomationExecutable,
-    platforms: ["win32", "darwin"],
-    autoStart: true,
-    autoRestart: true,
-    restartDelay: 5000,
-    env: {
-      YISHE_OPEN_BROWSER_ON_START: "0",
-    },
-    healthCheck: {
-      type: "http",
-      url: "http://127.0.0.1:7010/api/crawler/health",
-      interval: 10000,
-      timeout: 4000,
-    },
-  });
-}
 
 if (
   process.platform === "win32" &&

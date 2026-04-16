@@ -1,6 +1,6 @@
 /**
  * 爬虫自动采集服务
- * 调用 yishe-uploader 的爬虫接口，下载图片并上传到素材库
+ * 调用内置 auto-browser 爬虫能力，下载图片并上传到素材库
  */
 
 import axios from 'axios'
@@ -9,6 +9,7 @@ import path from 'path'
 import fs from 'fs'
 import https from 'https'
 import { generateCosKey, uploadFileToCos } from './cos'
+import { invokeAutoBrowserRoute } from './auto-browser'
 
 type CrawlerSite = 'sora' | 'pinterest'
 
@@ -105,8 +106,6 @@ class CrawlerCollectorService {
     },
   }
 
-  // 爬虫服务地址
-  private readonly CRAWLER_API_BASE = process.env.CRAWLER_API_BASE || 'http://localhost:7010'
   // 后端服务地址
   private readonly BACKEND_API_BASE = process.env.BACKEND_API_BASE || 'http://localhost:1519'
 
@@ -267,18 +266,19 @@ class CrawlerCollectorService {
     try {
       // 1. 调用爬虫接口
       console.log(`📡 [CrawlerCollector] 调用爬虫接口: ${config.site}`)
-      const crawlerResponse = await axios.post(
-        `${this.CRAWLER_API_BASE}/api/crawler/run`,
-        {
+      const crawlerResponse = await invokeAutoBrowserRoute({
+        method: 'POST',
+        path: '/api/crawler/run',
+        body: {
           site: config.site,
           params: {
             maxImages: config.maxImages,
           },
         },
-        { timeout: 120000 } // 2分钟超时
-      )
+      })
 
-      if (!crawlerResponse.data?.success || !crawlerResponse.data?.data?.images) {
+      const crawlerPayload = crawlerResponse?.body
+      if (!crawlerResponse?.ok || !crawlerPayload?.success || !crawlerPayload?.data?.images) {
         this.pushLog(site, {
           stage: 'crawling',
           success: false,
@@ -287,7 +287,7 @@ class CrawlerCollectorService {
         throw new Error('爬虫接口返回数据异常')
       }
 
-      const images: CrawlerImage[] = crawlerResponse.data.data.images
+      const images: CrawlerImage[] = crawlerPayload.data.images
       this.progress[site].total = images.length
       this.pushLog(site, {
         stage: 'crawling',

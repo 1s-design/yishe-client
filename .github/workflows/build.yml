@@ -7,7 +7,6 @@ on:
     paths:
       - package.json
       - electron-builder.yml
-      - electron-builder.plugins.yml
       - src/main/externalProcessConfig.ts
       - scripts/download-latest-plugins.mjs
       - .github/workflows/build.yml
@@ -68,12 +67,10 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            base_build_args: --mac dmg --config electron-builder.yml
-            plugin_build_args: --mac dmg --config electron-builder.plugins.yml
+            build_args: --mac dmg --config electron-builder.yml
             csc_identity_auto_discovery: "true"
           - os: windows-latest
-            base_build_args: --win portable --config electron-builder.yml
-            plugin_build_args: --win portable --config electron-builder.plugins.yml
+            build_args: --win portable --config electron-builder.yml
             csc_identity_auto_discovery: ""
 
     steps:
@@ -89,32 +86,20 @@ jobs:
       - name: Install dependencies
         run: npm ci || (echo "Retry 1..." && sleep 10 && npm ci) || (echo "Retry 2..." && sleep 10 && npm ci)
 
-      - name: Clean managed plugins before base build
+      - name: Clean managed plugins before build
         run: npm run clean:plugins
 
-      - name: Build/Release Electron app (base)
-        uses: samuelmeuli/action-electron-builder@v1
-        with:
-          github_token: ${{ secrets.github_token }}
-          release: true
-          draft: false
-          prerelease: false
-          args: ${{ matrix.base_build_args }}
-        env:
-          GH_TOKEN: ${{ secrets.github_token }}
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
-
-      - name: Download latest plugins for bundled build
+      - name: Download managed plugins for unified build
         run: npm run prepare:plugins
 
-      - name: Build/Release Electron app (with plugins)
+      - name: Build/Release Electron app
         uses: samuelmeuli/action-electron-builder@v1
         with:
           github_token: ${{ secrets.github_token }}
           release: true
           draft: false
           prerelease: false
-          args: ${{ matrix.plugin_build_args }}
+          args: ${{ matrix.build_args }}
         env:
           GH_TOKEN: ${{ secrets.github_token }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
@@ -132,8 +117,6 @@ jobs:
             const keep = new Set([
               'yishe-client.exe',
               'yishe-client.dmg',
-              'yishe-client-with-plugins.exe',
-              'yishe-client-with-plugins.dmg',
             ]);
             const tag = `v${{ needs.check-version.outputs.version }}`;
 
@@ -188,8 +171,7 @@ jobs:
                       `状态: ${status === 'success' ? '✅ 成功' : '❌ 失败'}\n\n` +
                       `Windows 固定地址: https://github.com/${{ github.repository }}/releases/latest/download/yishe-client.exe\n` +
                       `macOS 固定地址: https://github.com/${{ github.repository }}/releases/latest/download/yishe-client.dmg\n` +
-                      `Windows 一体包: https://github.com/${{ github.repository }}/releases/latest/download/yishe-client-with-plugins.exe\n` +
-                      `macOS 一体包: https://github.com/${{ github.repository }}/releases/latest/download/yishe-client-with-plugins.dmg\n` +
+                      `统一说明: 当前仅提供一套客户端安装包，浏览器自动化已内置到客户端中。\n` +
                       `支持平台: 抖音、小红书、微博、快手、咸鱼、速卖通、亚马逊、希音\n` +
                       `注意: 仓库为私有，但 releases 可设置为公开访问`
               },

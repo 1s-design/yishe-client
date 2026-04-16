@@ -27,6 +27,8 @@ win:
       to: resources/google-art/win32
       filter:
         - dezoomify-rs-win.exe
+    - from: resources/plugin/win32
+      to: resources/plugin/win32
 nsis:
   differentialPackage: false
 mac:

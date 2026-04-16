@@ -40,6 +40,12 @@ const api = {
   listExternalProcesses: () => ipcRenderer.invoke('list-external-processes'),
   startExternalProcess: (id: string) => ipcRenderer.invoke('start-external-process', id),
   stopExternalProcess: (id: string, force?: boolean) => ipcRenderer.invoke('stop-external-process', id, force),
+  invokeAutoBrowser: (request: {
+    method?: string
+    path: string
+    query?: Record<string, any>
+    body?: any
+  }) => ipcRenderer.invoke('auto-browser:invoke', request),
   // Google Arts 高清图片
   getGoogleArtStatus: () => ipcRenderer.invoke('google-art:status'),
   getGoogleArtZooms: (url: string) => ipcRenderer.invoke('google-art:get-zooms', url),

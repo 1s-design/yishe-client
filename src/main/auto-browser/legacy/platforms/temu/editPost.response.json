@@ -1,0 +1,71 @@
+{
+  "ok": true,
+  "status": 200,
+  "statusText": "",
+  "durationMs": 1982,
+  "url": "https://agentseller.temu.com/visage-agent-seller/product/add",
+  "authMode": "cookie-only",
+  "payloadSummary": {
+    "productName": "2D Flat Printing Wall Tapestry 1pc Rainbow Grid Playful Stars Kawaii Cartoon Fun Festive, Digital Nature Aesthetic Landscape, High-Definition Surreal Art, Fabric Backdrop for Bedroom, Summer Sports Carnival Atmosphere with Easy Install Kit",
+    "categoryIds": [
+      2542,
+      3715,
+      3716,
+      3891,
+      3895,
+      3896
+    ],
+    "propertyCount": 3,
+    "skcCount": 1,
+    "skuCount": 1,
+    "carouselImageCount": 7,
+    "hasComplianceStatement": true
+  },
+  "response": {
+    "success": true,
+    "errorCode": 1000000,
+    "errorMsg": null,
+    "result": {
+      "productId": 4515231014,
+      "productSkcList": [
+        {
+          "productSkcId": 13199526781
+        }
+      ],
+      "productSkuList": [
+        {
+          "productSkuId": 56374626097,
+          "productSkcId": 13199526781,
+          "extCode": "test02",
+          "specVOList": [
+            {
+              "parentSpecId": 1001,
+              "parentSpecName": "颜色",
+              "specId": 95406591,
+              "specName": "24*12inch(60*30cm)"
+            }
+          ]
+        }
+      ],
+      "syncStockFailReason": "",
+      "checkProductCategoryDepositResp": {
+        "checkResult": true,
+        "needThreshold": null,
+        "chooseConfigId": null,
+        "templateType": 0,
+        "operateType": null,
+        "hitCertName": null,
+        "hitCatId": null,
+        "configStartTime": null,
+        "thresholdBefore": null,
+        "thresholdAfter": null,
+        "hitType": null,
+        "gmvThreshold": null,
+        "extractRatio": null
+      },
+      "isGuideFileWaitProcess": null,
+      "isVehicleWaitProcess": null
+    }
+  },
+  "rawText": "{\"success\":true,\"errorCode\":1000000,\"errorMsg\":null,\"result\":{\"productId\":4515231014,\"productSkcList\":[{\"productSkcId\":13199526781}],\"productSkuList\":[{\"productSkuId\":56374626097,\"productSkcId\":13199526781,\"extCode\":\"test02\",\"specVOList\":[{\"parentSpecId\":1001,\"parentSpecName\":\"颜色\",\"specId\":95406591,\"specName\":\"24*12inch(60*30cm)\"}]}],\"syncStockFailReason\":\"\",\"checkProductCategoryDepositResp\":{\"checkResult\":true,\"needThreshold\":null,\"chooseConfigId\":null,\"templateType\":0,\"operateType\":null,\"hitCertName\":null,\"hitCatId\":null,\"configStartTime\":null,\"thresholdBefore\":null,\"thresholdAfter\":null,\"hitType\":null,\"gmvThreshold\":null,\"extractRatio\":null},\"isGuideFileWaitProcess\":null,\"isVehicleWaitProcess\":null}}"
+}

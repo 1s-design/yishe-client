@@ -57,6 +57,17 @@ declare global {
       }>>
       startExternalProcess(id: string): Promise<boolean>
       stopExternalProcess(id: string, force?: boolean): Promise<boolean>
+      invokeAutoBrowser(request: {
+        method?: string
+        path: string
+        query?: Record<string, any>
+        body?: any
+      }): Promise<{
+        status: number
+        ok: boolean
+        body: any
+        headers?: Record<string, string>
+      }>
       // Google Arts 高清图片
       getGoogleArtStatus(): Promise<{
         ok: boolean

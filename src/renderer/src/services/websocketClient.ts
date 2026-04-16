@@ -3701,7 +3701,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       busy: false,
       message: "自动化服务未启动",
       version: status.apiInfo?.version,
-      endpoint: "http://localhost:7010",
+      endpoint: "ipc://auto-browser",
       lastCheckedAt: checkedAt,
       lastError: status.message ?? null,
       supportedCommands: [
@@ -3787,7 +3787,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       ? "自动化服务与浏览器实例已连接"
       : browser.message || "自动化服务已启动，但浏览器实例未就绪",
     version: status.apiInfo?.version,
-    endpoint: "http://localhost:7010",
+    endpoint: "ipc://auto-browser",
     lastCheckedAt: checkedAt,
     lastError: browser.success ? null : (browser.message ?? null),
     supportedCommands: [

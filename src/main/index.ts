@@ -44,6 +44,10 @@ import {
   ProcessStatus,
 } from "./externalProcessManager";
 import { pluginProcessConfigs } from "./externalProcessConfig";
+import {
+  invokeAutoBrowserRoute,
+  shutdownAutoBrowserService,
+} from "./auto-browser";
 
 // 扩展app对象的类型
 declare global {
@@ -669,6 +673,10 @@ app.whenReady().then(() => {
     },
   );
 
+  ipcMain.handle("auto-browser:invoke", async (_event, request) => {
+    return invokeAutoBrowserRoute(request);
+  });
+
   // 本地服务管理 IPC
   ipcMain.handle("start-local-service", async () => {
     try {
@@ -807,6 +815,10 @@ app.on("window-all-closed", () => {
 // 应用退出时清理资源
 app.on("before-quit", async () => {
   console.log("🔄 应用即将退出，清理资源...");
+
+  await shutdownAutoBrowserService().catch((error) => {
+    console.error("❌ 停止 auto-browser 服务失败:", error);
+  });
 
   // 停止外部进程（优先执行，给进程时间优雅关闭）
   await externalProcessManager.stopAll().catch((error) => {

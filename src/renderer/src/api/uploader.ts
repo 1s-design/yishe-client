@@ -9,6 +9,204 @@ import type {
   EcomCollectRunResult,
 } from "../types/ecomCollect";
 
+type UploaderFetchResponse = {
+  ok: boolean;
+  status: number;
+  json: () => Promise<any>;
+  text: () => Promise<string>;
+  headers: {
+    get: (name: string) => string | null;
+  };
+};
+
+function buildAbortError(signal?: AbortSignal | null) {
+  const reason = signal?.reason;
+  const message =
+    reason instanceof Error
+      ? reason.message
+      : typeof reason === "string" && reason.trim()
+        ? reason.trim()
+        : "The operation was aborted";
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+async function withAbort<T>(promise: Promise<T>, signal?: AbortSignal | null) {
+  if (!signal) {
+    return promise;
+  }
+
+  if (signal.aborted) {
+    throw buildAbortError(signal);
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(buildAbortError(signal));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function resolveHeaderValue(headers: HeadersInit | undefined, key: string) {
+  if (!headers) {
+    return "";
+  }
+
+  if (headers instanceof Headers) {
+    return headers.get(key) || "";
+  }
+
+  if (Array.isArray(headers)) {
+    const found = headers.find(
+      ([name]) => String(name || "").toLowerCase() === key.toLowerCase(),
+    );
+    return found ? String(found[1] || "") : "";
+  }
+
+  const value = (headers as Record<string, any>)[key];
+  if (value !== undefined) {
+    return String(value || "");
+  }
+
+  const fallbackKey = Object.keys(headers as Record<string, any>).find(
+    (name) => String(name || "").toLowerCase() === key.toLowerCase(),
+  );
+  return fallbackKey ? String((headers as Record<string, any>)[fallbackKey] || "") : "";
+}
+
+function normalizeUploaderRequestBody(init?: RequestInit) {
+  const body = init?.body;
+  if (body == null) {
+    return undefined;
+  }
+
+  if (typeof body === "string") {
+    const contentType = resolveHeaderValue(init?.headers, "Content-Type");
+    if (contentType.toLowerCase().includes("application/json")) {
+      try {
+        return JSON.parse(body);
+      } catch {
+        return body;
+      }
+    }
+    return body;
+  }
+
+  if (body instanceof URLSearchParams) {
+    return Object.fromEntries(body.entries());
+  }
+
+  return body;
+}
+
+function buildUploaderFetchResponse(
+  payload: {
+    ok?: boolean;
+    status?: number;
+    body?: any;
+    headers?: Record<string, string>;
+  } | null | undefined,
+): UploaderFetchResponse {
+  const body = payload?.body ?? {};
+  const normalizedHeaders: Record<string, string> = {};
+  Object.entries(payload?.headers || {}).forEach(([key, value]) => {
+    normalizedHeaders[String(key || "").toLowerCase()] = String(value || "");
+  });
+
+  return {
+    ok: payload?.ok === true,
+    status: Number(payload?.status) || 500,
+    json: async () => body,
+    text: async () =>
+      typeof body === "string" ? body : JSON.stringify(body ?? {}),
+    headers: {
+      get: (name: string) =>
+        normalizedHeaders[String(name || "").toLowerCase()] || null,
+    },
+  };
+}
+
+function createUploaderFetch() {
+  const nativeFetch =
+    typeof globalThis.fetch === "function"
+      ? globalThis.fetch.bind(globalThis)
+      : null;
+
+  return async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<UploaderFetchResponse> => {
+    const requestUrl =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+    const nativeApi =
+      typeof window !== "undefined" &&
+      window.api &&
+      typeof window.api.invokeAutoBrowser === "function"
+        ? window.api
+        : null;
+
+    if (!nativeApi) {
+      if (!nativeFetch) {
+        throw new Error("当前环境不支持浏览器自动化请求");
+      }
+      return (await nativeFetch(input as RequestInfo, init)) as any;
+    }
+
+    const baseUrl = new URL(`${UPLOADER_API_BASE.replace(/\/+$/, "")}/`);
+    const targetUrl = new URL(requestUrl, baseUrl);
+    const basePath = baseUrl.pathname.replace(/\/$/, "");
+    const targetPath = targetUrl.pathname;
+
+    const isUploaderRoute =
+      targetUrl.origin === baseUrl.origin && targetPath.startsWith(basePath);
+
+    if (!isUploaderRoute) {
+      if (!nativeFetch) {
+        throw new Error(`不支持的请求地址: ${requestUrl}`);
+      }
+      return (await nativeFetch(input as RequestInfo, init)) as any;
+    }
+
+    const relativePath = targetPath.slice(basePath.length) || "/";
+    const query = Object.fromEntries(targetUrl.searchParams.entries());
+    const invokePromise = nativeApi.invokeAutoBrowser({
+      method:
+        init?.method ||
+        (typeof input !== "string" && !(input instanceof URL)
+          ? input.method
+          : undefined) ||
+        "GET",
+      path: relativePath.startsWith("/") ? relativePath : `/${relativePath}`,
+      query,
+      body: normalizeUploaderRequestBody(init),
+    });
+
+    const response = await withAbort(invokePromise, init?.signal || null);
+    return buildUploaderFetchResponse(response);
+  };
+}
+
+const fetch = createUploaderFetch();
+
 export interface UploaderStatus {
   connected: boolean;
   message?: string;
