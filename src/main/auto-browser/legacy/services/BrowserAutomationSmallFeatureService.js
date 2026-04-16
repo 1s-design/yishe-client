@@ -189,10 +189,11 @@ const SMALL_FEATURE_REGISTRY = {
         platform: 'temu',
         category: 'session',
         visibility: 'internal',
-        description: '把已存储的 Temu 会话 Cookie 写回当前浏览器环境，并尝试打开卖家首页确认登录态。',
+        description: '默认把已存储的 Temu 会话 Cookie 静默写回当前浏览器环境；按需再做登录态确认。',
         tips: [
             '默认会使用当前活动环境；传 profileId 时会优先作用到指定环境。',
             '这个功能主要用于把数据库里已存储的 Temu Cookie 回灌到当前浏览器环境。',
+            '默认不会主动抢焦点打开 Temu 页面；只有显式开启恢复后校验时才会访问卖家首页。',
             '如果写入后仍未识别为登录，通常说明会话已经过期，需要重新采集。'
         ],
         fields: [
@@ -216,6 +217,20 @@ const SMALL_FEATURE_REGISTRY = {
                 type: 'boolean',
                 required: false,
                 defaultValue: true
+            },
+            {
+                key: 'validateAfterRestore',
+                label: '恢复后校验',
+                type: 'boolean',
+                required: false,
+                defaultValue: false
+            },
+            {
+                key: 'activatePage',
+                label: '激活页面',
+                type: 'boolean',
+                required: false,
+                defaultValue: false
             }
         ],
         handler: runTemuSessionRestoreSmallFeature

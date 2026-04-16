@@ -1,7 +1,10 @@
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
+const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const pluginRootDir = path.resolve(
@@ -11,25 +14,97 @@ const pluginRootDir = path.resolve(
 const runtimePlatform = String(
   process.env.YISHE_PLUGIN_DOWNLOAD_PLATFORM || process.platform,
 ).trim();
+const runtimeArch = String(
+  process.env.YISHE_PLUGIN_DOWNLOAD_ARCH || process.arch,
+).trim();
 const cleanOnly = process.argv.includes("--clean");
 
-// Mirrors the stable latest-download links shown in:
-// yishe-admin/src/views/Home/Tools/Index.vue
+// Mirrors the stable latest-download links shown in managed plugin releases.
 const LATEST_PLUGIN_DOWNLOADS = {
   win32: [
     {
       id: "ps-automation",
+      type: "file",
       fileName: "yishe-ps-windows.exe",
       url: "https://github.com/1s-design/yishe-ps/releases/latest/download/yishe-ps-windows.exe",
     },
+    {
+      id: "video-template",
+      type: "archive",
+      arch: "x64",
+      archiveFileName: "yishe-remotion-windows-x64-plugin.zip",
+      extractDir: "yishe-remotion",
+      url:
+        process.env.YISHE_REMOTION_PLUGIN_URL_WIN32 ||
+        "https://github.com/chan-max/yishe-remotion/releases/latest/download/yishe-remotion-windows-x64-plugin.zip",
+      optional: true,
+      executables: ["yishe-remotion/yishe-remotion.exe"],
+      cleanupPaths: ["yishe-remotion.exe", "yishe-video-tool.exe"],
+    },
+    {
+      id: "image-processing",
+      type: "archive",
+      arch: "x64",
+      archiveFileName: "yishe-images-windows-x64-plugin.zip",
+      extractDir: "yishe-images",
+      url:
+        process.env.YISHE_IMAGES_PLUGIN_URL_WIN32 ||
+        "https://github.com/chan-max/yishe-images/releases/latest/download/yishe-images-windows-x64-plugin.zip",
+      optional: true,
+      executables: ["yishe-images/runtime/node.exe"],
+      cleanupPaths: ["yishe-images.exe"],
+    },
   ],
-  darwin: [],
+  darwin: [
+    {
+      id: "video-template",
+      type: "archive",
+      arch: "x64",
+      archiveFileName: "yishe-remotion-macos-x64-plugin.zip",
+      extractDir: "yishe-remotion",
+      url:
+        process.env.YISHE_REMOTION_PLUGIN_URL_DARWIN_X64 ||
+        "https://github.com/chan-max/yishe-remotion/releases/latest/download/yishe-remotion-macos-x64-plugin.zip",
+      optional: true,
+      executables: ["yishe-remotion/yishe-remotion"],
+      cleanupPaths: ["yishe-remotion", "yishe-video-tool"],
+    },
+    {
+      id: "image-processing",
+      type: "archive",
+      arch: "x64",
+      archiveFileName: "yishe-images-macos-x64-plugin.zip",
+      extractDir: "yishe-images",
+      url:
+        process.env.YISHE_IMAGES_PLUGIN_URL_DARWIN_X64 ||
+        "https://github.com/chan-max/yishe-images/releases/latest/download/yishe-images-macos-x64-plugin.zip",
+      optional: true,
+      executables: ["yishe-images/runtime/node"],
+      cleanupPaths: ["yishe-images"],
+    },
+    {
+      id: "video-template",
+      type: "archive",
+      arch: "arm64",
+      archiveFileName: "yishe-remotion-macos-arm64-plugin.zip",
+      extractDir: "yishe-remotion",
+      url:
+        process.env.YISHE_REMOTION_PLUGIN_URL_DARWIN_ARM64 ||
+        "https://github.com/chan-max/yishe-remotion/releases/latest/download/yishe-remotion-macos-arm64-plugin.zip",
+      optional: true,
+      executables: ["yishe-remotion/yishe-remotion"],
+      cleanupPaths: ["yishe-remotion", "yishe-video-tool"],
+    },
+  ],
 };
 
-function getDownloadsForPlatform(platform) {
-  return Array.isArray(LATEST_PLUGIN_DOWNLOADS[platform])
-    ? LATEST_PLUGIN_DOWNLOADS[platform].map((item) => ({ ...item, platform }))
-    : [];
+function getDownloadsForPlatform(platform, arch) {
+  return (Array.isArray(LATEST_PLUGIN_DOWNLOADS[platform])
+    ? LATEST_PLUGIN_DOWNLOADS[platform]
+    : []
+  )
+    .filter((item) => !item.arch || item.arch === arch)
+    .map((item) => ({ ...item, platform }));
 }
 
 function getAllDownloads() {
@@ -42,12 +117,12 @@ function getPlatformPluginDir(platform) {
   return path.join(pluginRootDir, platform);
 }
 
-function getPlatformPluginPath(platform, fileName) {
-  return path.join(getPlatformPluginDir(platform), fileName);
+function getPlatformPluginPath(platform, relativePath) {
+  return path.join(getPlatformPluginDir(platform), relativePath);
 }
 
-function getLegacyPluginPath(fileName) {
-  return path.join(pluginRootDir, fileName);
+function getLegacyPluginPath(relativePath) {
+  return path.join(pluginRootDir, relativePath);
 }
 
 async function ensureDir(dirPath) {
@@ -74,40 +149,155 @@ async function downloadFile(url, destinationPath) {
   await fs.rename(tempPath, destinationPath);
 }
 
+async function removeIfExists(targetPath) {
+  await fs.rm(targetPath, { recursive: true, force: true });
+}
+
+async function ensurePathExists(targetPath, label) {
+  try {
+    await fs.access(targetPath);
+  } catch {
+    throw new Error(`${label} not found: ${targetPath}`);
+  }
+}
+
+async function extractArchive(archivePath, destinationDir) {
+  await ensureDir(destinationDir);
+
+  if (process.platform === "win32") {
+    await execFileAsync("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`,
+    ]);
+    return;
+  }
+
+  await execFileAsync("ditto", ["-x", "-k", archivePath, destinationDir]);
+}
+
+async function cleanDownload(item) {
+  if (item.type === "archive") {
+    if (item.extractDir) {
+      await removeIfExists(getPlatformPluginPath(item.platform, item.extractDir));
+      await removeIfExists(getLegacyPluginPath(item.extractDir));
+    }
+    if (item.archiveFileName) {
+      await removeIfExists(
+        getPlatformPluginPath(item.platform, item.archiveFileName),
+      );
+    }
+  }
+
+  if (item.type === "file" && item.fileName) {
+    await removeIfExists(getPlatformPluginPath(item.platform, item.fileName));
+    await removeIfExists(getLegacyPluginPath(item.fileName));
+  }
+
+  for (const cleanupPath of item.cleanupPaths || []) {
+    if (!item.extractDir || cleanupPath !== item.extractDir) {
+      await removeIfExists(getPlatformPluginPath(item.platform, cleanupPath));
+    }
+    await removeIfExists(getLegacyPluginPath(cleanupPath));
+  }
+}
+
+async function installFileDownload(item) {
+  const destinationPath = getPlatformPluginPath(item.platform, item.fileName);
+  const legacyPath = getLegacyPluginPath(item.fileName);
+
+  await ensureDir(path.dirname(destinationPath));
+
+  console.log(`[prepare:plugins] downloading ${item.id} -> ${destinationPath}`);
+  await downloadFile(item.url, destinationPath);
+  await removeIfExists(legacyPath);
+
+  if (typeof item.chmod === "number") {
+    await fs.chmod(destinationPath, item.chmod);
+  }
+}
+
+async function installArchiveDownload(item) {
+  const archivePath = getPlatformPluginPath(item.platform, item.archiveFileName);
+  const platformDir = getPlatformPluginDir(item.platform);
+
+  await ensureDir(platformDir);
+  if (item.extractDir) {
+    await removeIfExists(getPlatformPluginPath(item.platform, item.extractDir));
+    await removeIfExists(getLegacyPluginPath(item.extractDir));
+  }
+
+  console.log(`[prepare:plugins] downloading ${item.id} -> ${archivePath}`);
+  await downloadFile(item.url, archivePath);
+  await extractArchive(archivePath, platformDir);
+  await removeIfExists(archivePath);
+
+  if (item.extractDir) {
+    await ensurePathExists(
+      getPlatformPluginPath(item.platform, item.extractDir),
+      `${item.id} extracted directory`,
+    );
+  }
+
+  for (const executableRelativePath of item.executables || []) {
+    const executablePath = getPlatformPluginPath(
+      item.platform,
+      executableRelativePath,
+    );
+    await ensurePathExists(executablePath, `${item.id} executable`);
+
+    if (process.platform !== "win32") {
+      await fs.chmod(executablePath, 0o755);
+    }
+  }
+
+  for (const cleanupPath of item.cleanupPaths || []) {
+    await removeIfExists(getPlatformPluginPath(item.platform, cleanupPath));
+    await removeIfExists(getLegacyPluginPath(cleanupPath));
+  }
+}
+
+async function installDownload(item) {
+  if (item.type === "archive") {
+    await installArchiveDownload(item);
+    return;
+  }
+
+  await installFileDownload(item);
+}
+
 async function main() {
   const downloads = cleanOnly
     ? getAllDownloads()
-    : getDownloadsForPlatform(runtimePlatform);
+    : getDownloadsForPlatform(runtimePlatform, runtimeArch);
+
   if (!downloads.length) {
     console.log(
-      `[prepare:plugins] skip platform ${runtimePlatform}, no plugin downloads configured`,
+      `[prepare:plugins] skip platform ${runtimePlatform}/${runtimeArch}, no plugin downloads configured`,
     );
     return;
   }
 
   for (const item of downloads) {
-    const destinationPath = getPlatformPluginPath(item.platform, item.fileName);
-    const legacyPath = getLegacyPluginPath(item.fileName);
     if (cleanOnly) {
-      await fs.rm(destinationPath, { force: true });
-      await fs.rm(legacyPath, { force: true });
-      console.log(`[prepare:plugins] removed ${item.fileName}`);
+      await cleanDownload(item);
+      console.log(`[prepare:plugins] removed ${item.id}`);
       continue;
     }
 
-    await ensureDir(path.dirname(destinationPath));
-
-    console.log(
-      `[prepare:plugins] downloading ${item.id} -> ${destinationPath}`,
-    );
-    await downloadFile(item.url, destinationPath);
-    await fs.rm(legacyPath, { force: true });
-
-    if (typeof item.chmod === "number") {
-      await fs.chmod(destinationPath, item.chmod);
+    try {
+      await installDownload(item);
+      console.log(`[prepare:plugins] ready ${item.id}`);
+    } catch (error) {
+      if (item.optional) {
+        console.warn(
+          `[prepare:plugins] skipped optional ${item.id}: ${error?.message || error}`,
+        );
+        continue;
+      }
+      throw error;
     }
-
-    console.log(`[prepare:plugins] ready ${item.fileName}`);
   }
 }
 

@@ -265,6 +265,101 @@ function resolvePhotoshopRuntimeMeta() {
 
 const photoshopRuntimeMeta = computed(() => resolvePhotoshopRuntimeMeta());
 
+function resolveVideoTemplateRuntimeMeta() {
+  const runtime =
+    clientProfile.services?.["video-template"] ||
+    clientProfile.services?.remotion ||
+    clientProfile.services?.["remotion-video"] ||
+    null;
+  const details = runtime?.details || {};
+  const available = !!runtime?.available;
+  const hasChecked = !!runtime?.lastCheckedAt;
+  const activeJobsCount = Number(details?.activeJobsCount ?? details?.queueCount ?? 0);
+  const queuedJobsCount = Number(details?.queuedJobsCount ?? 0);
+  const isBusy = !!(runtime?.busy || runtime?.state === "busy" || activeJobsCount > 0);
+  const serviceError =
+    runtime?.status === "error" || runtime?.state === "error";
+  const summaryText = available
+    ? "服务可用"
+    : hasChecked
+      ? "服务不可用"
+      : "检测中";
+  const tone: ServiceStatusTone = available
+    ? "success"
+    : serviceError
+      ? "danger"
+      : hasChecked
+      ? "warning"
+        : "muted";
+  const description = !hasChecked
+    ? ""
+    : !available
+      ? "服务不可用"
+      : isBusy
+        ? queuedJobsCount > 0
+          ? `当前有 ${activeJobsCount} 个任务，排队中 ${queuedJobsCount} 个`
+          : "当前有视频任务制作中"
+        : "本地渲染服务在线";
+
+  return {
+    available,
+    hasChecked,
+    summaryText,
+    description,
+    tone,
+  };
+}
+
+const videoTemplateRuntimeMeta = computed(() =>
+  resolveVideoTemplateRuntimeMeta(),
+);
+
+function resolveImageProcessingRuntimeMeta() {
+  const runtime =
+    clientProfile.services?.["image-processing"] ||
+    clientProfile.services?.images ||
+    clientProfile.services?.["yishe-images"] ||
+    null;
+  const details = runtime?.details || {};
+  const available = !!runtime?.available;
+  const hasChecked = !!runtime?.lastCheckedAt;
+  const activeJobsCount = Number(details?.activeJobsCount ?? 0);
+  const isBusy = !!(runtime?.busy || runtime?.state === "busy" || activeJobsCount > 0);
+  const serviceError =
+    runtime?.status === "error" || runtime?.state === "error";
+  const summaryText = available
+    ? "服务可用"
+    : hasChecked
+      ? "服务不可用"
+      : "检测中";
+  const tone: ServiceStatusTone = available
+    ? "success"
+    : serviceError
+      ? "danger"
+      : hasChecked
+        ? "warning"
+        : "muted";
+  const description = !hasChecked
+    ? ""
+    : !available
+      ? "服务不可用"
+      : isBusy
+        ? `当前有 ${activeJobsCount} 个图片任务处理中`
+        : "本地图片服务在线";
+
+  return {
+    available,
+    hasChecked,
+    summaryText,
+    description,
+    tone,
+  };
+}
+
+const imageProcessingRuntimeMeta = computed(() =>
+  resolveImageProcessingRuntimeMeta(),
+);
+
 function websocketTone(status: string): ServiceStatusTone {
   if (status === "connected") {
     return "success";
@@ -744,6 +839,18 @@ const sidebarRuntimeItems = computed(() => [
     value: photoshopRuntimeMeta.value.summaryText,
     tone: photoshopRuntimeMeta.value.tone,
   },
+  {
+    key: "video-template",
+    label: "Video Template",
+    value: videoTemplateRuntimeMeta.value.summaryText,
+    tone: videoTemplateRuntimeMeta.value.tone,
+  },
+  {
+    key: "image-processing",
+    label: "Yishe Images",
+    value: imageProcessingRuntimeMeta.value.summaryText,
+    tone: imageProcessingRuntimeMeta.value.tone,
+  },
 ]);
 
 const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
@@ -797,6 +904,22 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
         : "服务未启动",
     icon: "mdi-image-filter-drama",
     tone: photoshopRuntimeMeta.value.tone,
+  },
+  {
+    key: "video-template",
+    title: "Video Template",
+    value: videoTemplateRuntimeMeta.value.summaryText,
+    description: videoTemplateRuntimeMeta.value.description,
+    icon: "mdi-filmstrip-box-multiple",
+    tone: videoTemplateRuntimeMeta.value.tone,
+  },
+  {
+    key: "image-processing",
+    title: "Yishe Images",
+    value: imageProcessingRuntimeMeta.value.summaryText,
+    description: imageProcessingRuntimeMeta.value.description,
+    icon: "mdi-image-multiple-outline",
+    tone: imageProcessingRuntimeMeta.value.tone,
   },
 ]);
 

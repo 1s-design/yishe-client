@@ -53,6 +53,7 @@ import {
     getManagedProfileBrowserPage,
     getManagedProfileBrowserStatus,
     getOrCreateManagedProfileBrowser,
+    getOrCreateManagedProfileBrowserContext,
     isManagedProfileBrowserAvailable,
     listManagedProfileBrowserPages,
     updateManagedProfileBrowserActivity
@@ -896,6 +897,42 @@ export async function getOrCreateBrowser(options = {}) {
     }
 }
 
+export async function getOrCreateBrowserContext(options = {}) {
+    let normalizedOptions = {};
+    if (options && Object.keys(options).length > 0) {
+        normalizedOptions = normalizeBrowserConnectionOptions(options);
+    } else if (currentBrowserOptions && Object.keys(currentBrowserOptions).length > 0) {
+        normalizedOptions = { ...currentBrowserOptions };
+    } else {
+        normalizedOptions = normalizeBrowserConnectionOptions({});
+    }
+
+    if (shouldUseManagedProfilePool(normalizedOptions)) {
+        return await getOrCreateManagedProfileBrowserContext(normalizedOptions);
+    }
+
+    await getOrCreateBrowser(normalizedOptions);
+    if (contextInstance) {
+        return contextInstance;
+    }
+
+    if (browserInstance && typeof browserInstance.contexts === 'function') {
+        const ctxs = browserInstance.contexts();
+        const headless = normalizedOptions.headless !== undefined
+            ? normalizedOptions.headless
+            : getHeadlessMode();
+        const contextOptions = { devtools: !headless };
+        if (headless) {
+            contextOptions.viewport = { width: 1920, height: 1080 };
+        }
+        contextInstance = ctxs[0] || await browserInstance.newContext(contextOptions);
+        await installBrowserContextPatches(contextInstance);
+        return contextInstance;
+    }
+
+    throw new Error('浏览器上下文不可用');
+}
+
 /**
  * 定时检测浏览器实例是否存活；若已断开则清除引用，可选自动重连（通过接口调用）
  * @param { { reconnect?: boolean } } options - reconnect 为 true 时在断开后尝试重新 getOrCreateBrowser（CDP 模式下会重连端口）
@@ -1586,6 +1623,10 @@ export async function cleanup() {
 export class BrowserService {
     static async getOrCreateBrowser(options = {}) {
         return getOrCreateBrowser(options);
+    }
+
+    static async getOrCreateBrowserContext(options = {}) {
+        return getOrCreateBrowserContext(options);
     }
 
     static async close(options = {}) {

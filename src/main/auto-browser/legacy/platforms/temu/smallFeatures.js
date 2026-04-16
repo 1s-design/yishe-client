@@ -1,4 +1,4 @@
-import { getOrCreateBrowser } from '../../services/BrowserService.js';
+import { getOrCreateBrowser, getOrCreateBrowserContext } from '../../services/BrowserService.js';
 import { PageOperator } from '../../services/PageOperator.js';
 import { logger } from '../../utils/logger.js';
 import { PLATFORM_NAME, TEMU_SELLER_HOME_URL } from './constants.js';
@@ -128,6 +128,8 @@ function buildTemuSessionRestoreSettings(input = {}) {
     return {
         keepPageOpen: normalizeKeepPageOpen(input?.keepPageOpen),
         includeDebugInfo: normalizeIncludeDebugInfo(input?.includeDebugInfo),
+        validateAfterRestore: normalizeBoolean(input?.validateAfterRestore),
+        activatePage: normalizeBoolean(input?.activatePage) || normalizeBoolean(input?.foreground),
         mallId: String(input?.mallId || '').trim(),
         mallName: String(input?.mallName || '').trim(),
         session: {
@@ -1315,6 +1317,7 @@ export async function runTemuSessionRestoreSmallFeature(input = {}, runtimeOptio
     const executionTrace = [];
     const managePage = !runtimeOptions?.page;
     let page = runtimeOptions?.page || null;
+    let browserContext = null;
 
     try {
         const cookiePlan = buildTemuSessionRestoreCookiePlan(settings);
@@ -1336,6 +1339,8 @@ export async function runTemuSessionRestoreSmallFeature(input = {}, runtimeOptio
             profileId: profileId || 'default',
             keepPageOpen: settings.keepPageOpen,
             includeDebugInfo: settings.includeDebugInfo,
+            validateAfterRestore: settings.validateAfterRestore,
+            activatePage: settings.activatePage,
             totalCookieCount: cookiePlan.totalCookieCount,
             reusePage: !managePage
         });
@@ -1343,30 +1348,66 @@ export async function runTemuSessionRestoreSmallFeature(input = {}, runtimeOptio
             profileId: profileId || null,
             keepPageOpen: settings.keepPageOpen,
             includeDebugInfo: settings.includeDebugInfo,
+            validateAfterRestore: settings.validateAfterRestore,
+            activatePage: settings.activatePage,
             totalCookieCount: cookiePlan.totalCookieCount,
             reusePage: !managePage
         });
 
-        if (managePage) {
-            const browser = await getOrCreateBrowser({ profileId });
-            page = await browser.newPage({ foreground: true });
-            await pageOperator.setupAntiDetection(page);
-            pushTrace(executionTrace, 'open_page', 'success', {
-                reusedCurrentPage: false,
-                currentUrl: page.url()
-            });
-        } else {
-            pushTrace(executionTrace, 'open_page', 'success', {
-                reusedCurrentPage: true,
-                currentUrl: page.url()
-            });
-        }
-
-        await page.context().addCookies(cookiePlan.cookies);
+        browserContext = managePage
+            ? await getOrCreateBrowserContext({ profileId })
+            : page.context();
+        await browserContext.addCookies(cookiePlan.cookies);
         pushTrace(executionTrace, 'inject_cookies', 'success', {
             totalCookieCount: cookiePlan.totalCookieCount,
             restoredRegions: cookiePlan.regionStats
         });
+
+        if (!settings.validateAfterRestore) {
+            pushTrace(executionTrace, 'skip_login_validation_after_restore', 'success', {
+                reason: 'validate_after_restore_disabled'
+            });
+
+            return {
+                success: true,
+                message: `${PLATFORM_NAME}已将存储会话写入当前环境`,
+                data: {
+                    featureKey,
+                    profileId: profileId || null,
+                    currentUrl: page?.url?.() || '',
+                    loginState: null,
+                    validationAttempted: false,
+                    restoredAt: new Date().toISOString(),
+                    restoredRegions: cookiePlan.regionStats,
+                    restoredCookieCount: cookiePlan.totalCookieCount,
+                    mallId: settings.mallId || null,
+                    mallName: settings.mallName || null,
+                    pageKeptOpen: false,
+                    executionTrace
+                }
+            };
+        }
+
+        if (managePage) {
+            const browser = await getOrCreateBrowser({ profileId });
+            page = await browser.newPage(
+                settings.activatePage
+                    ? { foreground: true }
+                    : { background: true, activate: false }
+            );
+            await pageOperator.setupAntiDetection(page);
+            pushTrace(executionTrace, 'open_page', 'success', {
+                reusedCurrentPage: false,
+                currentUrl: page.url(),
+                activated: settings.activatePage
+            });
+        } else {
+            pushTrace(executionTrace, 'open_page', 'success', {
+                reusedCurrentPage: true,
+                currentUrl: page.url(),
+                activated: false
+            });
+        }
 
         await page.goto(TEMU_SELLER_HOME_URL, {
             waitUntil: 'domcontentloaded',
@@ -1385,6 +1426,7 @@ export async function runTemuSessionRestoreSmallFeature(input = {}, runtimeOptio
             profileId: profileId || null,
             currentUrl: page.url(),
             loginState,
+            validationAttempted: true,
             restoredAt: new Date().toISOString(),
             restoredRegions: cookiePlan.regionStats,
             restoredCookieCount: cookiePlan.totalCookieCount,
@@ -1431,18 +1473,19 @@ export async function runTemuSessionRestoreSmallFeature(input = {}, runtimeOptio
                 featureKey,
                 profileId: profileId || null,
                 currentUrl: page?.url?.() || '',
+                validationAttempted: settings.validateAfterRestore,
                 executionTrace,
                 pageKeptOpen: settings.keepPageOpen
             }
         };
     } finally {
-        if (managePage && page && !settings.keepPageOpen) {
+        if (managePage && page && (!settings.keepPageOpen || !settings.validateAfterRestore)) {
             try {
                 await page.close();
             } catch (closeError) {
                 logger.warn(`${PLATFORM_NAME}工具关闭页面失败: ${closeError?.message || closeError}`);
             }
-        } else if (managePage && page && settings.keepPageOpen) {
+        } else if (managePage && page && settings.keepPageOpen && settings.validateAfterRestore) {
             logger.info(`${PLATFORM_NAME}工具保留页面，方便继续调试`);
         }
     }

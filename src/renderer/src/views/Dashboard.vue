@@ -57,7 +57,9 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
             <span class="dashboard-card__title">{{ item.title }}</span>
           </div>
           <div class="dashboard-card__value">{{ item.value }}</div>
-          <div class="dashboard-card__desc">{{ item.description }}</div>
+          <div v-if="item.description" class="dashboard-card__desc">
+            {{ item.description }}
+          </div>
         </article>
       </div>
     </section>

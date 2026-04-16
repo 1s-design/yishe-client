@@ -19,6 +19,7 @@ export interface HealthCheckConfig {
   file?: string // 文件存在检查路径
   interval?: number // 检查间隔（毫秒），默认 5000
   timeout?: number // 超时时间（毫秒），默认 3000
+  failureThreshold?: number // 连续失败多少次后标记异常，默认 2
 }
 
 /**
@@ -79,6 +80,8 @@ interface ProcessInfo {
   status: ProcessStatus
   startTime: number | null
   restartCount: number
+  healthCheckFailureCount: number
+  lastHealthCheckAt: number | null
   healthCheckTimer?: NodeJS.Timeout
 }
 
@@ -204,6 +207,11 @@ export class ExternalProcessManager {
       return true
     }
 
+    if (existingInfo?.process && existingInfo.status === ProcessStatus.ERROR) {
+      console.log(`⚠️  进程 ${config.name} 当前处于异常状态，先停止旧进程后再重启`)
+      await this.stopProcess(id, true).catch(() => false)
+    }
+
     // 解析可执行文件路径
     const executablePath = this.resolveExecutablePath(config)
     if (!existsSync(executablePath)) {
@@ -213,7 +221,9 @@ export class ExternalProcessManager {
         process: null,
         status: ProcessStatus.ERROR,
         startTime: null,
-        restartCount: 0
+        restartCount: 0,
+        healthCheckFailureCount: 0,
+        lastHealthCheckAt: null
       }
       this.processes.set(id, info)
       return false
@@ -252,7 +262,9 @@ export class ExternalProcessManager {
         process: childProcess,
         status: ProcessStatus.STARTING,
         startTime: Date.now(),
-        restartCount: existingInfo?.restartCount || 0
+        restartCount: existingInfo?.restartCount || 0,
+        healthCheckFailureCount: 0,
+        lastHealthCheckAt: null
       }
       this.processes.set(id, info)
 
@@ -287,6 +299,7 @@ export class ExternalProcessManager {
         childProcess.once('spawn', () => {
           clearTimeout(timeout)
           info.status = ProcessStatus.RUNNING
+          info.healthCheckFailureCount = 0
           console.log(`✅ 进程 ${config.name} 启动成功 (PID: ${childProcess.pid})`)
           resolve()
         })
@@ -305,7 +318,9 @@ export class ExternalProcessManager {
         process: null,
         status: ProcessStatus.ERROR,
         startTime: null,
-        restartCount: existingInfo?.restartCount || 0
+        restartCount: existingInfo?.restartCount || 0,
+        healthCheckFailureCount: 0,
+        lastHealthCheckAt: null
       }
       this.processes.set(id, info)
       return false
@@ -341,6 +356,8 @@ export class ExternalProcessManager {
         clearInterval(info.healthCheckTimer)
         info.healthCheckTimer = undefined
       }
+      info.healthCheckFailureCount = 0
+      info.lastHealthCheckAt = null
 
       // 优雅关闭
       if (!force) {
@@ -491,6 +508,8 @@ export class ExternalProcessManager {
       clearInterval(info.healthCheckTimer)
       info.healthCheckTimer = undefined
     }
+    info.healthCheckFailureCount = 0
+    info.lastHealthCheckAt = null
 
     // 如果正在关闭，不处理重启
     if (this.isShuttingDown || info.status === ProcessStatus.STOPPING) {
@@ -529,14 +548,20 @@ export class ExternalProcessManager {
     const { healthCheck } = info.config
     const interval = healthCheck.interval || 5000
     const timeout = healthCheck.timeout || 3000
+    const failureThreshold = Math.max(1, healthCheck.failureThreshold || 2)
 
     const checkHealth = async () => {
-      if (this.isShuttingDown || info.status !== ProcessStatus.RUNNING) {
+      if (
+        this.isShuttingDown ||
+        (info.status !== ProcessStatus.RUNNING &&
+          info.status !== ProcessStatus.ERROR)
+      ) {
         return
       }
 
       try {
         let isHealthy = false
+        info.lastHealthCheckAt = Date.now()
 
         switch (healthCheck.type) {
           case 'http':
@@ -556,9 +581,33 @@ export class ExternalProcessManager {
             break
         }
 
-        if (!isHealthy && info.status === ProcessStatus.RUNNING) {
-          console.warn(`⚠️  进程 ${info.config.name} 健康检查失败`)
-          // 可选：重启进程或更新状态
+        if (isHealthy) {
+          if (
+            info.status === ProcessStatus.ERROR &&
+            info.process &&
+            !info.process.killed
+          ) {
+            console.log(`✅ 进程 ${info.config.name} 健康检查恢复`)
+            info.status = ProcessStatus.RUNNING
+          }
+          info.healthCheckFailureCount = 0
+          return
+        }
+
+        info.healthCheckFailureCount += 1
+
+        if (info.healthCheckFailureCount < failureThreshold) {
+          console.warn(
+            `⚠️  进程 ${info.config.name} 健康检查失败 (${info.healthCheckFailureCount}/${failureThreshold})`
+          )
+          return
+        }
+
+        if (info.status !== ProcessStatus.ERROR) {
+          console.warn(
+            `⚠️  进程 ${info.config.name} 健康检查连续失败 ${info.healthCheckFailureCount} 次，已标记为异常`
+          )
+          info.status = ProcessStatus.ERROR
         }
       } catch (error) {
         console.error(`❌ 健康检查失败 (${info.config.name}):`, error)
@@ -683,4 +732,3 @@ export class ExternalProcessManager {
     return await this.startProcess(id)
   }
 }
-

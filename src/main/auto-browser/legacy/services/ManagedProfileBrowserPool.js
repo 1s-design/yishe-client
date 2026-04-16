@@ -1082,6 +1082,16 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
   return wrapBrowserHandle(profile.id);
 }
 
+export async function getOrCreateManagedProfileBrowserContext(options = {}) {
+  const profile = resolveProfile(options.profileId);
+  await getOrCreateManagedProfileBrowser({ ...options, profileId: profile.id });
+  const session = getSession(profile.id);
+  if (!session?.contextInstance) {
+    throw new Error("浏览器上下文不可用");
+  }
+  return session.contextInstance;
+}
+
 export async function isManagedProfileBrowserAvailable(profileId) {
   const targetProfileId = resolveProfile(profileId).id;
   const session = getSession(targetProfileId);

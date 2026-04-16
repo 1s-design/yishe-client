@@ -60,6 +60,19 @@ const HEARTBEAT_INTERVAL = 15_000;
 const HEARTBEAT_TIMEOUT = 60_000;
 const UPLOADER_RUNTIME_SYNC_INTERVAL = 5_000;
 const PHOTOSHOP_RUNTIME_SYNC_INTERVAL = 8_000;
+const IMAGE_PROCESSING_RUNTIME_SYNC_INTERVAL = 8_000;
+const VIDEO_TEMPLATE_RUNTIME_SYNC_INTERVAL = 5_000;
+const IMAGE_PROCESSING_REQUEST_TIMEOUT_MS = 20_000;
+const IMAGE_PROCESSING_HEALTH_TIMEOUT_MS = 2_500;
+const IMAGE_PROCESSING_TASK_TIMEOUT_MS = 5 * 60_000;
+const IMAGE_PROCESSING_META_CACHE_TTL_MS = 60_000;
+const IMAGE_PROCESSING_LOCAL_BASE = "http://127.0.0.1:1513";
+const REMOTION_REQUEST_TIMEOUT_MS = 10_000;
+const REMOTION_HEALTH_TIMEOUT_MS = 2_500;
+const REMOTION_TEMPLATE_REQUEST_TIMEOUT_MS = 5_000;
+const REMOTION_TEMPLATE_CACHE_TTL_MS = 60_000;
+const REMOTION_RECORD_PROGRESS_PERSIST_STEP = 10;
+const REMOTION_RECORD_PROGRESS_PERSIST_INTERVAL_MS = 15_000;
 const REMOTION_LOCAL_BASE = "http://127.0.0.1:1572";
 const PROD_WS_ENDPOINT = "https://1s.design:1520/ws";
 const DEV_WS_ENDPOINT = "http://localhost:1520/ws";
@@ -77,12 +90,15 @@ const PLUGIN_KEY_ALIASES: Record<string, string> = {
   photoshop: "ps-automation",
   uploader: "browser-automation",
   browser: "browser-automation",
+  images: "image-processing",
+  "yishe-images": "image-processing",
   remotion: "video-template",
   "remotion-video": "video-template",
 };
 const LEGACY_SERVICE_KEYS: Record<string, string> = {
   "ps-automation": "photoshop",
   "browser-automation": "uploader",
+  "image-processing": "images",
   "local-service": "localService",
   "video-template": "video-template",
 };
@@ -239,7 +255,26 @@ interface ClientInfoPayload {
   clientId: string;
   source: string;
   appVersion?: string;
-  platform?: string;
+  extension?: {
+    name?: string;
+    version?: string;
+    manifestVersion?: number | string;
+  };
+  browser?: {
+    name?: string;
+    version?: string;
+  };
+  os?: {
+    name?: string;
+    version?: string;
+  };
+  platform?:
+    | string
+    | {
+        os?: string;
+        arch?: string;
+        nacl_arch?: string;
+      };
   locale?: string;
   timezone?: string;
   device?: {
@@ -252,6 +287,13 @@ interface ClientInfoPayload {
     createdAt?: string;
   };
   location?: NetworkProfile;
+  user?: {
+    id?: string | number;
+    account?: string;
+    name?: string;
+    nickname?: string;
+    email?: string;
+  };
   services?: Record<string, ClientServiceStatus>;
   psAutomation?: {
     enabled?: boolean;
@@ -455,6 +497,10 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
 let uploaderRuntimeSyncInterval: ReturnType<typeof setInterval> | null = null;
 let photoshopRuntimeSyncInterval: ReturnType<typeof setInterval> | null = null;
+let imageProcessingRuntimeSyncInterval: ReturnType<typeof setInterval> | null =
+  null;
+let videoTemplateRuntimeSyncInterval: ReturnType<typeof setInterval> | null =
+  null;
 let lastPingTimestamp: number | null = null;
 let intentionalDisconnect = false;
 let networkFetchPromise: Promise<void> | null = null;
@@ -464,6 +510,38 @@ const transientWsToastCache = new Map<string, number>();
 const lastServiceRuntimeEmitCache = new Map<
   string,
   { fingerprint: string; emittedAt: number }
+>();
+const remotionTemplateCache = {
+  items: [] as Array<Record<string, any>>,
+  lastFetchedAt: 0,
+};
+const imageProcessingMetaCache = {
+  catalog: null as Record<string, any> | null,
+  operations: [] as Array<Record<string, any>>,
+  variations: [] as Array<Record<string, any>>,
+  processorStatus: null as Record<string, any> | null,
+  lastFetchedAt: 0,
+};
+const activeImageProcessingTasks = new Map<
+  string,
+  {
+    recordId: string;
+    taskType: "process" | "variations";
+    title: string | null;
+    imageUrl: string | null;
+    startedAt: string;
+    updatedAt: string;
+  }
+>();
+const remotionRecordRuntimeCache = new Map<
+  string,
+  {
+    lastEventFingerprint: string;
+    lastPersistedFingerprint: string;
+    lastPersistedAt: number;
+    lastPersistedProgress: number | null;
+    lastPersistedStatus: string | null;
+  }
 >();
 // 跟踪是否正在制作中
 let isProductionInProgress = false;
@@ -2209,67 +2287,416 @@ async function ensureRemotionProcessStarted() {
   await nativeApi.startExternalProcess("video-template");
 }
 
-async function fetchRemotionJson(path: string, init?: RequestInit) {
-  const response = await fetch(`${REMOTION_LOCAL_BASE}${path}`, init);
-  const json = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(
-      String(json?.message || json?.msg || `Remotion 请求失败: ${response.status}`),
-    );
+async function fetchRemotionJson(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number },
+) {
+  const { timeoutMs = REMOTION_REQUEST_TIMEOUT_MS, ...requestInit } =
+    init || {};
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let cleanupAbortListener: (() => void) | null = null;
+
+  if (requestInit.signal) {
+    if (requestInit.signal.aborted) {
+      controller.abort();
+    } else {
+      const abortFromUpstream = () => controller.abort();
+      requestInit.signal.addEventListener("abort", abortFromUpstream, {
+        once: true,
+      });
+      cleanupAbortListener = () => {
+        requestInit.signal?.removeEventListener("abort", abortFromUpstream);
+      };
+    }
   }
-  return json;
+
+  try {
+    const response = await fetch(`${REMOTION_LOCAL_BASE}${path}`, {
+      ...requestInit,
+      signal: controller.signal,
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        String(
+          json?.message || json?.msg || `Remotion 请求失败: ${response.status}`,
+        ),
+      );
+    }
+    return json;
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Video Template 心跳超时 (${timeoutMs}ms)`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    cleanupAbortListener?.();
+  }
+}
+
+async function getCachedRemotionTemplates(force = false) {
+  const now = Date.now();
+  if (
+    !force &&
+    remotionTemplateCache.items.length > 0 &&
+    now - remotionTemplateCache.lastFetchedAt < REMOTION_TEMPLATE_CACHE_TTL_MS
+  ) {
+    return remotionTemplateCache.items;
+  }
+
+  const templatesRes = await fetchRemotionJson("/api/templates", {
+    timeoutMs: REMOTION_TEMPLATE_REQUEST_TIMEOUT_MS,
+  });
+  const templates = Array.isArray(templatesRes?.data)
+    ? templatesRes.data
+    : Array.isArray(templatesRes)
+      ? templatesRes
+      : [];
+
+  remotionTemplateCache.items = templates;
+  remotionTemplateCache.lastFetchedAt = now;
+
+  return remotionTemplateCache.items;
+}
+
+function normalizeRemotionQueueJobStatus(status: unknown) {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) {
+    return "queued";
+  }
+  if (normalized === "in-progress" || normalized === "processing") {
+    return "in-progress";
+  }
+  if (normalized === "completed" || normalized === "success") {
+    return "completed";
+  }
+  if (normalized === "failed" || normalized === "error") {
+    return "failed";
+  }
+  if (normalized === "queued" || normalized === "pending") {
+    return "queued";
+  }
+  return normalized;
+}
+
+function normalizeRemotionQueueJob(job: any) {
+  const numericProgress = Number(job?.progress);
+
+  return {
+    id: String(job?.id || job?.jobId || "").trim(),
+    status: normalizeRemotionQueueJobStatus(job?.status),
+    progress: Number.isFinite(numericProgress)
+      ? Math.max(0, Math.min(1, numericProgress))
+      : null,
+    createdAt:
+      typeof job?.createdAt === "number" ? Number(job.createdAt) : null,
+    startedAt:
+      typeof job?.startedAt === "number" ? Number(job.startedAt) : null,
+    completedAt:
+      typeof job?.completedAt === "number" ? Number(job.completedAt) : null,
+    updatedAt:
+      typeof job?.updatedAt === "number" ? Number(job.updatedAt) : null,
+    elapsedMs:
+      typeof job?.elapsedMs === "number" ? Number(job.elapsedMs) : null,
+    videoUrl: String(job?.videoUrl || "").trim() || null,
+    data:
+      job?.data && typeof job.data === "object" && !Array.isArray(job.data)
+        ? job.data
+        : {},
+  };
+}
+
+function toRemotionIsoTimestamp(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return new Date(value).toISOString();
+  }
+
+  const normalized = String(value || "").trim();
+  return normalized || null;
+}
+
+async function getRemotionQueueSnapshot(targetJobId?: string | null) {
+  const response = await fetchRemotionJson("/api/renders", {
+    timeoutMs: REMOTION_HEALTH_TIMEOUT_MS,
+  });
+  const jobList = Array.isArray(response?.data)
+    ? response.data
+    : Array.isArray(response)
+      ? response
+      : [];
+  const jobs = jobList
+    .map((job: any) => normalizeRemotionQueueJob(job))
+    .filter((job: ReturnType<typeof normalizeRemotionQueueJob>) => !!job.id);
+
+  const activeJobs = jobs
+    .filter((job) => job.status === "queued" || job.status === "in-progress")
+    .sort((left, right) => {
+      const leftPriority = left.status === "in-progress" ? 0 : 1;
+      const rightPriority = right.status === "in-progress" ? 0 : 1;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+
+      const leftTimestamp =
+        left.status === "in-progress"
+          ? left.startedAt ?? left.createdAt ?? 0
+          : left.createdAt ?? 0;
+      const rightTimestamp =
+        right.status === "in-progress"
+          ? right.startedAt ?? right.createdAt ?? 0
+          : right.createdAt ?? 0;
+
+      return leftTimestamp - rightTimestamp;
+    });
+
+  const normalizedTargetJobId = String(targetJobId || "").trim();
+  const targetIndex = normalizedTargetJobId
+    ? activeJobs.findIndex((job) => job.id === normalizedTargetJobId)
+    : -1;
+
+  return {
+    jobs,
+    activeJobs,
+    activeJobsCount: activeJobs.length,
+    queuedJobsCount: activeJobs.filter((job) => job.status === "queued").length,
+    processingJobsCount: activeJobs.filter(
+      (job) => job.status === "in-progress",
+    ).length,
+    currentJob: activeJobs.find((job) => job.status === "in-progress") || null,
+    currentJobId:
+      activeJobs.find((job) => job.status === "in-progress")?.id || null,
+    targetJob: targetIndex >= 0 ? activeJobs[targetIndex] : null,
+    queuePosition: targetIndex >= 0 ? targetIndex + 1 : null,
+    queueAheadCount: targetIndex >= 0 ? targetIndex : null,
+  };
+}
+
+function buildRemotionQueuePayload(
+  snapshot:
+    | Awaited<ReturnType<typeof getRemotionQueueSnapshot>>
+    | null
+    | undefined,
+  fallbackJob?: any,
+) {
+  const targetJob =
+    snapshot?.targetJob || (fallbackJob ? normalizeRemotionQueueJob(fallbackJob) : null);
+
+  return {
+    queueStatus: targetJob?.status || null,
+    queuePosition:
+      typeof snapshot?.queuePosition === "number" ? snapshot.queuePosition : null,
+    queueAheadCount:
+      typeof snapshot?.queueAheadCount === "number"
+        ? snapshot.queueAheadCount
+        : null,
+    queueActiveCount:
+      typeof snapshot?.activeJobsCount === "number"
+        ? snapshot.activeJobsCount
+        : null,
+    queueQueuedCount:
+      typeof snapshot?.queuedJobsCount === "number"
+        ? snapshot.queuedJobsCount
+        : null,
+    queueProcessingCount:
+      typeof snapshot?.processingJobsCount === "number"
+        ? snapshot.processingJobsCount
+        : null,
+    localJobStatus: targetJob?.status || null,
+    createdAt: toRemotionIsoTimestamp(targetJob?.createdAt),
+    startedAt: toRemotionIsoTimestamp(targetJob?.startedAt),
+    completedAt: toRemotionIsoTimestamp(targetJob?.completedAt),
+    updatedAt: toRemotionIsoTimestamp(targetJob?.updatedAt),
+    elapsedMs:
+      typeof targetJob?.elapsedMs === "number" ? targetJob.elapsedMs : null,
+  };
+}
+
+function buildRemotionQueuedMessage(
+  snapshot:
+    | Awaited<ReturnType<typeof getRemotionQueueSnapshot>>
+    | null
+    | undefined,
+) {
+  const aheadCount = Number(snapshot?.queueAheadCount);
+  if (Number.isFinite(aheadCount)) {
+    if (aheadCount <= 0) {
+      return "排队中，即将开始";
+    }
+    return `排队中，前方 ${aheadCount} 个任务`;
+  }
+
+  return "排队中";
+}
+
+function getRemotionPayloadMetaValue(
+  payload: Record<string, any>,
+  key: string,
+) {
+  if (Object.prototype.hasOwnProperty.call(payload, key)) {
+    return payload[key];
+  }
+
+  const responseData =
+    payload.responseData &&
+    typeof payload.responseData === "object" &&
+    !Array.isArray(payload.responseData)
+      ? payload.responseData
+      : null;
+
+  return responseData && Object.prototype.hasOwnProperty.call(responseData, key)
+    ? responseData[key]
+    : null;
 }
 
 async function getRemotionRuntime() {
+  const checkedAt = new Date().toISOString();
+  const startedAt = Date.now();
   const nativeApi = getNativeApi();
-  const processList = await nativeApi?.listExternalProcesses?.();
+  const processList = await nativeApi
+    ?.listExternalProcesses?.()
+    .catch(() => []);
   const processInfo = Array.isArray(processList)
     ? processList.find((item: any) => item?.id === "video-template")
     : null;
+  const previousRuntime = clientInfo.services?.["video-template"];
+  const previousDetails =
+    previousRuntime?.details && typeof previousRuntime.details === "object"
+      ? (previousRuntime.details as Record<string, any>)
+      : {};
 
   try {
-    const health = await fetchRemotionJson("/api/health");
-    const templatesRes = await fetchRemotionJson("/api/templates").catch(() => ({
-      data: [],
-    }));
-    const templates = Array.isArray(templatesRes?.data)
-      ? templatesRes.data
-      : Array.isArray(templatesRes)
-        ? templatesRes
-        : [];
+    const health = await fetchRemotionJson("/api/health", {
+      timeoutMs: REMOTION_HEALTH_TIMEOUT_MS,
+    });
+    const healthPayload = (health?.data || health || null) as Record<
+      string,
+      any
+    > | null;
+
+    if (
+      health?.success === false ||
+      (healthPayload &&
+        typeof healthPayload === "object" &&
+        "status" in healthPayload &&
+        healthPayload.status !== "ok")
+    ) {
+      throw new Error("Video Template 健康检查返回异常");
+    }
+
+    const templateCount = Number(
+      healthPayload?.templateCount ??
+        previousDetails.templateCount ??
+        remotionTemplateCache.items.length,
+    );
+    const previousTemplates = Array.isArray(previousDetails.templates)
+      ? previousDetails.templates
+      : remotionTemplateCache.items;
+    const shouldRefreshTemplates =
+      !previousTemplates.length ||
+      (Number.isFinite(templateCount) &&
+        templateCount >= 0 &&
+        templateCount !== previousTemplates.length);
+    const templates = await getCachedRemotionTemplates(
+      shouldRefreshTemplates,
+    ).catch(() => previousTemplates);
+    const queueSnapshot = await getRemotionQueueSnapshot().catch(() => null);
+    const heartbeatLatencyMs = Date.now() - startedAt;
+    const activeJobsCount =
+      typeof queueSnapshot?.activeJobsCount === "number"
+        ? queueSnapshot.activeJobsCount
+        : 0;
+    const queuedJobsCount =
+      typeof queueSnapshot?.queuedJobsCount === "number"
+        ? queueSnapshot.queuedJobsCount
+        : 0;
+    const processingJobsCount =
+      typeof queueSnapshot?.processingJobsCount === "number"
+        ? queueSnapshot.processingJobsCount
+        : 0;
+    const currentExecution =
+      queueSnapshot?.currentJob || queueSnapshot?.activeJobs?.[0] || null;
+    const isBusy = activeJobsCount > 0;
 
     return {
       label: "Video Template 视频引擎",
       connected: true,
       available: true,
       status: "connected" as const,
-      state: "connected" as const,
-      busy: false,
-      message: "Video Template 插件运行正常",
+      state: isBusy ? ("busy" as const) : ("idle" as const),
+      busy: isBusy,
+      message: "服务可用",
       endpoint: REMOTION_LOCAL_BASE,
+      lastCheckedAt: checkedAt,
       lastError: null,
-      supportedCommands: ["refreshRuntime", "enqueueRender"],
+      currentTaskId: currentExecution?.id || null,
+      supportedCommands: ["refreshRuntime", "health", "enqueueRender"],
       details: {
         templates,
-        health: health?.data || health || null,
+        health: healthPayload,
         processStatus: processInfo?.status || null,
+        serviceHealthy: true,
+        heartbeatLatencyMs,
+        lastHeartbeatAt: checkedAt,
+        templateCount: Number.isFinite(templateCount)
+          ? templateCount
+          : templates.length,
+        queueCount: activeJobsCount,
+        activeJobsCount,
+        queuedJobsCount,
+        processingJobsCount,
+        currentExecution: currentExecution
+          ? {
+              running: currentExecution.status === "in-progress",
+              jobId: currentExecution.id,
+              templateId: currentExecution.data?.templateId || null,
+              progress:
+                typeof currentExecution.progress === "number"
+                  ? Math.round(currentExecution.progress * 100)
+                  : null,
+              createdAt: toRemotionIsoTimestamp(currentExecution.createdAt),
+              startedAt: toRemotionIsoTimestamp(currentExecution.startedAt),
+              elapsedMs:
+                typeof currentExecution.elapsedMs === "number"
+                  ? currentExecution.elapsedMs
+                  : null,
+            }
+          : {
+              running: false,
+            },
       },
     };
   } catch (error) {
+    const errorMessage = serializeError(error);
+    const looksOffline =
+      !processInfo ||
+      processInfo.status === "stopped" ||
+      processInfo.status === "stopping";
+
     return {
       label: "Video Template 视频引擎",
       connected: false,
       available: false,
-      status: processInfo ? ("error" as const) : ("disconnected" as const),
-      state: "offline" as const,
+      status: looksOffline ? ("disconnected" as const) : ("error" as const),
+      state: looksOffline ? ("offline" as const) : ("error" as const),
       busy: false,
-      message: serializeError(error),
+      message: "服务不可用",
       endpoint: REMOTION_LOCAL_BASE,
-      lastError: serializeError(error),
-      supportedCommands: ["refreshRuntime", "enqueueRender"],
+      lastCheckedAt: checkedAt,
+      lastError: errorMessage,
+      supportedCommands: ["refreshRuntime", "health", "enqueueRender"],
       details: {
-        templates: [],
+        templates: Array.isArray(previousDetails.templates)
+          ? previousDetails.templates
+          : remotionTemplateCache.items,
         processStatus: processInfo?.status || null,
+        serviceHealthy: false,
+        lastHeartbeatAt: checkedAt,
+        heartbeatError: errorMessage,
       },
     };
   }
@@ -2302,6 +2729,182 @@ async function reportRemotionRecordStatus(
   return response.json().catch(() => null);
 }
 
+function normalizeRemotionRecordProgress(progress: unknown) {
+  const numericValue = Number(progress);
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, Math.round(numericValue)));
+}
+
+function buildRemotionRecordRealtimePayload(
+  recordId: string,
+  payload: Record<string, any>,
+) {
+  return {
+    recordId,
+    status: payload.status || "processing",
+    progress: normalizeRemotionRecordProgress(payload.progress),
+    message: payload.message || "",
+    errorMessage: payload.errorMessage || null,
+    remotionJobId: payload.remotionJobId || null,
+    remotionVideoUrl: payload.remotionVideoUrl || null,
+    resultUrl: payload.resultUrl || null,
+    url: payload.url || null,
+    queueStatus: getRemotionPayloadMetaValue(payload, "queueStatus"),
+    queuePosition: getRemotionPayloadMetaValue(payload, "queuePosition"),
+    queueAheadCount: getRemotionPayloadMetaValue(payload, "queueAheadCount"),
+    queueActiveCount: getRemotionPayloadMetaValue(payload, "queueActiveCount"),
+    queueQueuedCount: getRemotionPayloadMetaValue(payload, "queueQueuedCount"),
+    queueProcessingCount: getRemotionPayloadMetaValue(
+      payload,
+      "queueProcessingCount",
+    ),
+    localJobStatus: getRemotionPayloadMetaValue(payload, "localJobStatus"),
+    createdAt: getRemotionPayloadMetaValue(payload, "createdAt"),
+    startedAt: getRemotionPayloadMetaValue(payload, "startedAt"),
+    completedAt: getRemotionPayloadMetaValue(payload, "completedAt"),
+    elapsedMs: getRemotionPayloadMetaValue(payload, "elapsedMs"),
+    reportedAt: new Date().toISOString(),
+  };
+}
+
+function shouldPersistRemotionRecordStatus(
+  recordId: string,
+  payload: Record<string, any>,
+) {
+  const normalizedStatus = String(payload.status || "")
+    .trim()
+    .toLowerCase();
+  if (!normalizedStatus) {
+    return false;
+  }
+
+  if (normalizedStatus === "success" || normalizedStatus === "failed") {
+    return true;
+  }
+
+  const cacheEntry = remotionRecordRuntimeCache.get(recordId);
+  if (!cacheEntry) {
+    return true;
+  }
+
+  const currentFingerprint = buildWsFingerprint({
+    status: normalizedStatus,
+    progress: normalizeRemotionRecordProgress(payload.progress),
+    message: payload.message || null,
+    remotionJobId: payload.remotionJobId || null,
+    remotionVideoUrl: payload.remotionVideoUrl || null,
+    resultUrl: payload.resultUrl || null,
+    url: payload.url || null,
+    queueStatus: getRemotionPayloadMetaValue(payload, "queueStatus"),
+    queuePosition: getRemotionPayloadMetaValue(payload, "queuePosition"),
+    queueAheadCount: getRemotionPayloadMetaValue(payload, "queueAheadCount"),
+    queueActiveCount: getRemotionPayloadMetaValue(payload, "queueActiveCount"),
+    queueQueuedCount: getRemotionPayloadMetaValue(payload, "queueQueuedCount"),
+    queueProcessingCount: getRemotionPayloadMetaValue(
+      payload,
+      "queueProcessingCount",
+    ),
+  });
+
+  if (currentFingerprint === cacheEntry.lastPersistedFingerprint) {
+    return false;
+  }
+
+  if (normalizedStatus !== cacheEntry.lastPersistedStatus) {
+    return true;
+  }
+
+  const currentProgress = normalizeRemotionRecordProgress(payload.progress);
+  if (
+    currentProgress !== null &&
+    cacheEntry.lastPersistedProgress !== null &&
+    currentProgress - cacheEntry.lastPersistedProgress >=
+      REMOTION_RECORD_PROGRESS_PERSIST_STEP
+  ) {
+    return true;
+  }
+
+  return (
+    Date.now() - cacheEntry.lastPersistedAt >=
+    REMOTION_RECORD_PROGRESS_PERSIST_INTERVAL_MS
+  );
+}
+
+async function syncRemotionRecordStatus(
+  recordId: string,
+  payload: Record<string, any>,
+  options?: {
+    persist?: "always" | "auto" | "never";
+  },
+) {
+  const persistMode = options?.persist || "auto";
+  const normalizedProgress = normalizeRemotionRecordProgress(payload.progress);
+  const realtimePayload = buildRemotionRecordRealtimePayload(recordId, payload);
+  const eventFingerprint = buildWsFingerprint(realtimePayload);
+  const cacheEntry = remotionRecordRuntimeCache.get(recordId) || {
+    lastEventFingerprint: "",
+    lastPersistedFingerprint: "",
+    lastPersistedAt: 0,
+    lastPersistedProgress: null,
+    lastPersistedStatus: null,
+  };
+
+  if (
+    socket?.connected &&
+    eventFingerprint !== cacheEntry.lastEventFingerprint
+  ) {
+    socket.emit("remotion-video-record-status", realtimePayload);
+    cacheEntry.lastEventFingerprint = eventFingerprint;
+  }
+
+  const shouldPersist =
+    persistMode === "always"
+      ? true
+      : persistMode === "never"
+        ? false
+        : shouldPersistRemotionRecordStatus(recordId, payload);
+
+  if (shouldPersist) {
+    await reportRemotionRecordStatus(recordId, payload);
+    cacheEntry.lastPersistedFingerprint = buildWsFingerprint({
+      status: payload.status || null,
+      progress: normalizedProgress,
+      message: payload.message || null,
+      errorMessage: payload.errorMessage || null,
+      remotionJobId: payload.remotionJobId || null,
+      remotionVideoUrl: payload.remotionVideoUrl || null,
+      resultUrl: payload.resultUrl || null,
+      url: payload.url || null,
+      queueStatus: getRemotionPayloadMetaValue(payload, "queueStatus"),
+      queuePosition: getRemotionPayloadMetaValue(payload, "queuePosition"),
+      queueAheadCount: getRemotionPayloadMetaValue(payload, "queueAheadCount"),
+      queueActiveCount: getRemotionPayloadMetaValue(payload, "queueActiveCount"),
+      queueQueuedCount: getRemotionPayloadMetaValue(payload, "queueQueuedCount"),
+      queueProcessingCount: getRemotionPayloadMetaValue(
+        payload,
+        "queueProcessingCount",
+      ),
+    });
+    cacheEntry.lastPersistedAt = Date.now();
+    cacheEntry.lastPersistedProgress = normalizedProgress;
+    cacheEntry.lastPersistedStatus = String(payload.status || "")
+      .trim()
+      .toLowerCase();
+  }
+
+  const normalizedStatus = String(payload.status || "")
+    .trim()
+    .toLowerCase();
+  if (normalizedStatus === "success" || normalizedStatus === "failed") {
+    remotionRecordRuntimeCache.delete(recordId);
+    return;
+  }
+
+  remotionRecordRuntimeCache.set(recordId, cacheEntry);
+}
+
 async function executeRemotionRender(command: ServiceCommandEnvelope) {
   const recordId = String(command.payload?.recordId || "").trim();
   const templateId = String(command.payload?.templateId || "").trim();
@@ -2313,14 +2916,18 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
   }
 
   await ensureRemotionProcessStarted();
-  await reportRemotionRecordStatus(recordId, {
-    status: "processing",
-    message: "客户端已接单，开始提交本地渲染",
-    responseData: {
-      commandId: command.commandId,
-      acceptedAt: new Date().toISOString(),
+  await syncRemotionRecordStatus(
+    recordId,
+    {
+      status: "assigned",
+      message: "客户端已接单，等待加入本地队列",
+      responseData: {
+        commandId: command.commandId,
+        acceptedAt: new Date().toISOString(),
+      },
     },
-  });
+    { persist: "always" },
+  );
 
   const createRes = await fetchRemotionJson("/api/renders", {
     method: "POST",
@@ -2338,36 +2945,63 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
     throw new Error("本地 Video Template 未返回 jobId");
   }
 
-  await reportRemotionRecordStatus(recordId, {
-    status: "processing",
-    remotionJobId: jobId,
-    message: "本地渲染任务已创建",
-    responseData: {
-      commandId: command.commandId,
-      jobCreatedAt: new Date().toISOString(),
+  const initialQueueSnapshot = await getRemotionQueueSnapshot(jobId).catch(
+    () => null,
+  );
+  const initialQueuePayload = buildRemotionQueuePayload(
+    initialQueueSnapshot,
+    createRes?.data || createRes,
+  );
+
+  await syncRemotionRecordStatus(
+    recordId,
+    {
+      status: "queued",
+      remotionJobId: jobId,
+      message: buildRemotionQueuedMessage(initialQueueSnapshot),
+      ...initialQueuePayload,
+      responseData: {
+        commandId: command.commandId,
+        jobCreatedAt: new Date().toISOString(),
+        ...initialQueuePayload,
+      },
     },
-  });
+    { persist: "always" },
+  );
+  void syncServiceRuntime("video-template");
 
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    const jobRes = await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`);
+    const jobRes = await fetchRemotionJson(
+      `/api/renders/${encodeURIComponent(jobId)}`,
+    );
     const payload = jobRes?.data || jobRes || {};
-    const status = String(payload?.status || "").trim().toLowerCase();
+    const status = normalizeRemotionQueueJobStatus(payload?.status);
     const progress = Number.isFinite(Number(payload?.progress))
       ? Math.round(Number(payload.progress) * 100)
       : null;
 
     if (status === "completed") {
-      await reportRemotionRecordStatus(recordId, {
-        status: "success",
-        progress: 100,
-        message: "视频渲染完成",
-        remotionJobId: jobId,
-        remotionVideoUrl: payload?.videoUrl || null,
-        resultUrl: payload?.videoUrl || null,
-        url: payload?.videoUrl || null,
-        responseData: payload,
-      });
+      const completedQueuePayload = buildRemotionQueuePayload(null, payload);
+      await syncRemotionRecordStatus(
+        recordId,
+        {
+          status: "success",
+          progress: 100,
+          message: "视频渲染完成",
+          remotionJobId: jobId,
+          remotionVideoUrl: payload?.videoUrl || null,
+          resultUrl: payload?.videoUrl || null,
+          url: payload?.videoUrl || null,
+          ...completedQueuePayload,
+          responseData: {
+            ...payload,
+            ...completedQueuePayload,
+          },
+        },
+        { persist: "always" },
+      );
+      void syncServiceRuntime("video-template");
       return {
         success: true,
         message: "Video Template 视频渲染完成",
@@ -2383,24 +3017,744 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
       const errorMessage = String(
         payload?.error?.message || payload?.message || "本地视频渲染失败",
       );
-      await reportRemotionRecordStatus(recordId, {
-        status: "failed",
-        progress,
-        message: errorMessage,
-        errorMessage,
-        remotionJobId: jobId,
-        responseData: payload,
-      });
+      const failedQueuePayload = buildRemotionQueuePayload(null, payload);
+      await syncRemotionRecordStatus(
+        recordId,
+        {
+          status: "failed",
+          progress,
+          message: errorMessage,
+          errorMessage,
+          remotionJobId: jobId,
+          ...failedQueuePayload,
+          responseData: {
+            ...payload,
+            ...failedQueuePayload,
+          },
+        },
+        { persist: "always" },
+      );
+      void syncServiceRuntime("video-template");
       throw new Error(errorMessage);
     }
 
-    await reportRemotionRecordStatus(recordId, {
-      status: "processing",
-      progress,
-      message: payload?.message || "本地渲染中",
-      remotionJobId: jobId,
-      responseData: payload,
+    if (status === "queued") {
+      const queueSnapshot = await getRemotionQueueSnapshot(jobId).catch(
+        () => null,
+      );
+      const queuedPayload = buildRemotionQueuePayload(queueSnapshot, payload);
+      await syncRemotionRecordStatus(
+        recordId,
+        {
+          status: "queued",
+          progress: null,
+          message: buildRemotionQueuedMessage(queueSnapshot),
+          remotionJobId: jobId,
+          ...queuedPayload,
+          responseData: {
+            ...payload,
+            ...queuedPayload,
+          },
+        },
+        { persist: "auto" },
+      );
+      continue;
+    }
+
+    const processingQueuePayload = buildRemotionQueuePayload(null, payload);
+    await syncRemotionRecordStatus(
+      recordId,
+      {
+        status: "processing",
+        progress,
+        message: payload?.message || "本地渲染中",
+        remotionJobId: jobId,
+        ...processingQueuePayload,
+        responseData: {
+          ...payload,
+          ...processingQueuePayload,
+        },
+      },
+      { persist: "auto" },
+    );
+  }
+}
+
+async function fetchImageProcessingJson(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number },
+) {
+  const { timeoutMs = IMAGE_PROCESSING_REQUEST_TIMEOUT_MS, ...requestInit } =
+    init || {};
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let cleanupAbortListener: (() => void) | null = null;
+
+  if (requestInit.signal) {
+    if (requestInit.signal.aborted) {
+      controller.abort();
+    } else {
+      const abortFromUpstream = () => controller.abort();
+      requestInit.signal.addEventListener("abort", abortFromUpstream, {
+        once: true,
+      });
+      cleanupAbortListener = () => {
+        requestInit.signal?.removeEventListener("abort", abortFromUpstream);
+      };
+    }
+  }
+
+  try {
+    const response = await fetch(`${IMAGE_PROCESSING_LOCAL_BASE}${path}`, {
+      ...requestInit,
+      signal: controller.signal,
     });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        String(
+          json?.message ||
+            json?.error ||
+            json?.msg ||
+            `图片服务请求失败: ${response.status}`,
+        ),
+      );
+    }
+    return json;
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error(`图片处理服务心跳超时 (${timeoutMs}ms)`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    cleanupAbortListener?.();
+  }
+}
+
+async function ensureImageProcessingProcessReady() {
+  const assertHealthy = async () => {
+    const health = await fetchImageProcessingJson("/api/health", {
+      timeoutMs: IMAGE_PROCESSING_HEALTH_TIMEOUT_MS,
+    });
+    const payload = (health?.data || health || {}) as Record<string, any>;
+    if (
+      health?.success === false ||
+      payload?.status !== "healthy" ||
+      payload?.imageProcessor?.installed === false
+    ) {
+      throw new Error(
+        String(
+          payload?.imageProcessor?.message ||
+            payload?.message ||
+            "图片处理服务未就绪",
+        ),
+      );
+    }
+  };
+
+  try {
+    await assertHealthy();
+    return;
+  } catch {}
+
+  const nativeApi = getNativeApi();
+  await nativeApi?.startExternalProcess?.("image-processing").catch(() => undefined);
+
+  let lastError = "图片处理服务未启动";
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 15_000) {
+    try {
+      await assertHealthy();
+      return;
+    } catch (error) {
+      lastError = serializeError(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  throw new Error(lastError);
+}
+
+async function getCachedImageProcessingMeta(force = false) {
+  const now = Date.now();
+  if (
+    !force &&
+    imageProcessingMetaCache.catalog &&
+    imageProcessingMetaCache.operations.length > 0 &&
+    imageProcessingMetaCache.variations.length > 0 &&
+    now - imageProcessingMetaCache.lastFetchedAt <
+      IMAGE_PROCESSING_META_CACHE_TTL_MS
+  ) {
+    return {
+      catalog: imageProcessingMetaCache.catalog,
+      operations: imageProcessingMetaCache.operations,
+      variations: imageProcessingMetaCache.variations,
+      processorStatus: imageProcessingMetaCache.processorStatus,
+    };
+  }
+
+  const [catalogRes, operationsRes, variationsRes, processorStatusRes] =
+    await Promise.all([
+      fetchImageProcessingJson("/api/catalog"),
+      fetchImageProcessingJson("/api/operations"),
+      fetchImageProcessingJson("/api/variations-config"),
+      fetchImageProcessingJson("/api/image-processor-status"),
+    ]);
+
+  imageProcessingMetaCache.catalog =
+    catalogRes?.catalog && typeof catalogRes.catalog === "object"
+      ? catalogRes.catalog
+      : catalogRes?.data?.catalog && typeof catalogRes.data.catalog === "object"
+        ? catalogRes.data.catalog
+        : null;
+  imageProcessingMetaCache.operations = Array.isArray(
+    operationsRes?.operations,
+  )
+    ? operationsRes.operations
+    : Array.isArray(operationsRes?.data?.operations)
+      ? operationsRes.data.operations
+      : [];
+  imageProcessingMetaCache.variations = Array.isArray(
+    variationsRes?.variations,
+  )
+    ? variationsRes.variations
+    : Array.isArray(variationsRes?.data?.variations)
+      ? variationsRes.data.variations
+      : [];
+  imageProcessingMetaCache.processorStatus =
+    processorStatusRes && typeof processorStatusRes === "object"
+      ? processorStatusRes
+      : null;
+  imageProcessingMetaCache.lastFetchedAt = now;
+
+  return {
+    catalog: imageProcessingMetaCache.catalog,
+    operations: imageProcessingMetaCache.operations,
+    variations: imageProcessingMetaCache.variations,
+    processorStatus: imageProcessingMetaCache.processorStatus,
+  };
+}
+
+function buildImageProcessingActiveTaskList() {
+  return Array.from(activeImageProcessingTasks.values()).sort((left, right) =>
+    String(left.startedAt || "").localeCompare(String(right.startedAt || "")),
+  );
+}
+
+async function getImageProcessingRuntime() {
+  const checkedAt = new Date().toISOString();
+  const startedAt = Date.now();
+  const activeTasks = buildImageProcessingActiveTaskList();
+  const nativeApi = getNativeApi();
+  const processList = await nativeApi
+    ?.listExternalProcesses?.()
+    .catch(() => []);
+  const processInfo = Array.isArray(processList)
+    ? processList.find((item: any) => item?.id === "image-processing")
+    : null;
+  const previousRuntime = clientInfo.services?.["image-processing"];
+  const previousDetails =
+    previousRuntime?.details && typeof previousRuntime.details === "object"
+      ? (previousRuntime.details as Record<string, any>)
+      : {};
+
+  try {
+    const health = await fetchImageProcessingJson("/api/health", {
+      timeoutMs: IMAGE_PROCESSING_HEALTH_TIMEOUT_MS,
+    });
+    const healthPayload = (health?.data || health || {}) as Record<string, any>;
+    if (
+      health?.success === false ||
+      healthPayload?.status !== "healthy" ||
+      healthPayload?.imageProcessor?.installed === false
+    ) {
+      throw new Error(
+        String(
+          healthPayload?.imageProcessor?.message ||
+            healthPayload?.message ||
+            "图片处理服务未就绪",
+        ),
+      );
+    }
+
+    const meta = await getCachedImageProcessingMeta(
+      !previousDetails.catalog ||
+        !Array.isArray(previousDetails.operations) ||
+        !Array.isArray(previousDetails.variations),
+    ).catch(() => ({
+      catalog:
+        previousDetails.catalog && typeof previousDetails.catalog === "object"
+          ? previousDetails.catalog
+          : imageProcessingMetaCache.catalog,
+      operations: Array.isArray(previousDetails.operations)
+        ? previousDetails.operations
+        : imageProcessingMetaCache.operations,
+      variations: Array.isArray(previousDetails.variations)
+        ? previousDetails.variations
+        : imageProcessingMetaCache.variations,
+      processorStatus:
+        previousDetails.processorStatus && typeof previousDetails.processorStatus === "object"
+          ? previousDetails.processorStatus
+          : imageProcessingMetaCache.processorStatus,
+    }));
+
+    const activeTaskCount = activeTasks.length;
+    const currentTask = activeTasks[0] || null;
+
+    return {
+      label: "Yishe Images 图片处理引擎",
+      connected: true,
+      available: true,
+      status: "connected" as const,
+      state: activeTaskCount > 0 ? ("busy" as const) : ("idle" as const),
+      busy: activeTaskCount > 0,
+      message: "服务可用",
+      endpoint: IMAGE_PROCESSING_LOCAL_BASE,
+      lastCheckedAt: checkedAt,
+      lastError: null,
+      currentTaskId: currentTask?.recordId || null,
+      supportedCommands: ["refreshRuntime", "health", "createTask"],
+      supportedTaskTypes: ["process", "variations"],
+      details: {
+        health: healthPayload,
+        catalog: meta.catalog,
+        operations: meta.operations,
+        variations: meta.variations,
+        processorStatus: meta.processorStatus || healthPayload?.imageProcessor || null,
+        processStatus: processInfo?.status || null,
+        serviceHealthy: true,
+        heartbeatLatencyMs: Date.now() - startedAt,
+        lastHeartbeatAt: checkedAt,
+        activeJobsCount: activeTaskCount,
+        currentExecutions: activeTasks.map((task) => ({
+          recordId: task.recordId,
+          taskType: task.taskType,
+          title: task.title,
+          imageUrl: task.imageUrl,
+          startedAt: task.startedAt,
+          updatedAt: task.updatedAt,
+        })),
+      },
+    };
+  } catch (error) {
+    const errorMessage = serializeError(error);
+    const looksOffline =
+      !processInfo ||
+      processInfo.status === "stopped" ||
+      processInfo.status === "stopping";
+
+    return {
+      label: "Yishe Images 图片处理引擎",
+      connected: false,
+      available: false,
+      status: looksOffline ? ("disconnected" as const) : ("error" as const),
+      state: looksOffline ? ("offline" as const) : ("error" as const),
+      busy: false,
+      message: "服务不可用",
+      endpoint: IMAGE_PROCESSING_LOCAL_BASE,
+      lastCheckedAt: checkedAt,
+      lastError: errorMessage,
+      supportedCommands: ["refreshRuntime", "health", "createTask"],
+      supportedTaskTypes: ["process", "variations"],
+      details: {
+        catalog:
+          previousDetails.catalog && typeof previousDetails.catalog === "object"
+            ? previousDetails.catalog
+            : imageProcessingMetaCache.catalog,
+        operations: Array.isArray(previousDetails.operations)
+          ? previousDetails.operations
+          : imageProcessingMetaCache.operations,
+        variations: Array.isArray(previousDetails.variations)
+          ? previousDetails.variations
+          : imageProcessingMetaCache.variations,
+        processorStatus:
+          previousDetails.processorStatus && typeof previousDetails.processorStatus === "object"
+            ? previousDetails.processorStatus
+            : imageProcessingMetaCache.processorStatus,
+        processStatus: processInfo?.status || null,
+        serviceHealthy: false,
+        lastHeartbeatAt: checkedAt,
+        heartbeatError: errorMessage,
+        activeJobsCount: activeTasks.length,
+        currentExecutions: activeTasks.map((task) => ({
+          recordId: task.recordId,
+          taskType: task.taskType,
+          title: task.title,
+          imageUrl: task.imageUrl,
+          startedAt: task.startedAt,
+          updatedAt: task.updatedAt,
+        })),
+      },
+    };
+  }
+}
+
+async function reportImageProcessingRecordStatus(
+  recordId: string,
+  payload: Record<string, any>,
+) {
+  const token = await getTokenFromClient();
+  const response = await fetch(
+    `${getRemoteApiBase()}/image-processing-record/${encodeURIComponent(recordId)}/status`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    const json = await response.json().catch(() => ({}));
+    throw new Error(
+      String(json?.message || json?.msg || `状态回传失败: ${response.status}`),
+    );
+  }
+
+  return response.json().catch(() => null);
+}
+
+async function cleanupImageProcessingOutputFile(outputFile?: string | null) {
+  const normalizedOutputFile = String(outputFile || "").trim();
+  if (!normalizedOutputFile) {
+    return;
+  }
+
+  try {
+    await fetchImageProcessingJson("/api/files/delete", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        directory: "output",
+        filename: normalizedOutputFile,
+      }),
+      timeoutMs: IMAGE_PROCESSING_HEALTH_TIMEOUT_MS,
+    });
+  } catch (error) {
+    emitter.emit("log", {
+      level: "warn",
+      message: `[image-processing] cleanup failed: ${serializeError(error)}`,
+    });
+  }
+}
+
+async function uploadImageProcessingResultFileToCos(
+  command: ServiceCommandEnvelope,
+  options: {
+    recordId: string;
+    localPath?: string | null;
+    outputFile?: string | null;
+    name?: string | null;
+    description?: string | null;
+    serviceUrl?: string | null;
+    engine?: Record<string, any> | null;
+    extra?: Record<string, any> | null;
+  },
+) {
+  const apiBridge = window.api as any;
+  if (!apiBridge?.generateCosKey || !apiBridge?.uploadFileToCos) {
+    throw new Error("当前环境未注入 COS 上传能力");
+  }
+
+  const localPath = String(options.localPath || "").trim();
+  if (!localPath) {
+    throw new Error("缺少本地结果文件路径");
+  }
+
+  const fileName =
+    String(options.outputFile || "").trim() ||
+    localPath.split(/[/\\\\]/).filter(Boolean).pop() ||
+    `image-processing-${Date.now()}.png`;
+  const keyResult = await apiBridge.generateCosKey({
+    category: "image-processing-record",
+    filename: fileName,
+    account: String(command.tenant?.account || "").trim() || undefined,
+    userId: String(command.tenant?.userId || "").trim() || undefined,
+    entityId: options.recordId,
+  });
+  if (!keyResult?.ok || !keyResult?.key) {
+    throw new Error(keyResult?.msg || "生成 COS Key 失败");
+  }
+
+  const uploadResult = await apiBridge.uploadFileToCos({
+    filePath: localPath,
+    key: keyResult.key,
+  });
+  if (!uploadResult?.ok || !uploadResult?.url) {
+    throw new Error(uploadResult?.msg || "COS 上传失败");
+  }
+
+  return {
+    success: true,
+    name: String(options.name || "").trim() || "图片处理结果",
+    description: String(options.description || "").trim() || "",
+    outputFile: fileName,
+    serviceUrl: String(options.serviceUrl || "").trim() || null,
+    url: uploadResult.url,
+    key: uploadResult.key || keyResult.key || null,
+    owned: true,
+    engine: options.engine || null,
+    extra: options.extra || null,
+  };
+}
+
+function resolveImageProcessingResultStatus(resultFiles: Array<Record<string, any>>) {
+  const successCount = resultFiles.filter((item) => item?.success).length;
+  const total = resultFiles.length;
+  if (!total || successCount <= 0) {
+    return "failed" as const;
+  }
+  if (successCount < total) {
+    return "partial" as const;
+  }
+  return "success" as const;
+}
+
+function buildImageProcessingFailedMessage(
+  resultFiles: Array<Record<string, any>>,
+  fallback = "图片处理失败",
+) {
+  return String(
+    resultFiles.find((item) => !item?.success)?.error ||
+      resultFiles.find((item) => !item?.success)?.uploadError ||
+      fallback,
+  );
+}
+
+async function archiveImageProcessingExecutionPayload(
+  command: ServiceCommandEnvelope,
+  recordId: string,
+  taskType: "process" | "variations",
+  payload: Record<string, any>,
+) {
+  if (taskType === "variations") {
+    const results = Array.isArray(payload?.results) ? payload.results : [];
+    const archivedResults: Array<Record<string, any>> = [];
+
+    for (const item of results) {
+      try {
+        if (!item?.success) {
+          archivedResults.push({
+            success: false,
+            name: item?.name || "未命名预设",
+            description: item?.description || "",
+            error: item?.error || "裂变执行失败",
+            outputFile: item?.outputFile || "",
+            serviceUrl: item?.url || null,
+            engine: item?.engine || null,
+          });
+          continue;
+        }
+
+        const archived = await uploadImageProcessingResultFileToCos(command, {
+          recordId,
+          localPath: item?.localPath || null,
+          outputFile: item?.outputFile || null,
+          name: item?.name || "裂变结果",
+          description: item?.description || "",
+          serviceUrl: item?.url || null,
+          engine: item?.engine || null,
+        });
+        archivedResults.push(archived);
+      } catch (error) {
+        archivedResults.push({
+          success: false,
+          name: item?.name || "未命名预设",
+          description: item?.description || "",
+          error: serializeError(error),
+          outputFile: item?.outputFile || "",
+          serviceUrl: item?.url || null,
+          engine: item?.engine || null,
+        });
+      } finally {
+        await cleanupImageProcessingOutputFile(item?.outputFile || null);
+      }
+    }
+
+    return {
+      resultFiles: archivedResults,
+      processorId: String(payload?.engine?.id || "").trim() || null,
+      processorLabel: String(payload?.engine?.label || "").trim() || null,
+      responseData: {
+        execution: {
+          successCount: payload?.successCount ?? null,
+          failCount: payload?.failCount ?? null,
+        },
+      },
+    };
+  }
+
+  const archived = await uploadImageProcessingResultFileToCos(command, {
+    recordId,
+    localPath: payload?.localPath || null,
+    outputFile: payload?.outputFile || null,
+    name: "处理结果",
+    description: "链式处理输出",
+    serviceUrl: payload?.url || null,
+    engine: payload?.engine || null,
+    extra: {
+      commands: Array.isArray(payload?.commands) ? payload.commands : [],
+      durationMs:
+        typeof payload?.durationMs === "number" ? payload.durationMs : null,
+    },
+  });
+
+  await cleanupImageProcessingOutputFile(payload?.outputFile || null);
+
+  return {
+    resultFiles: [archived],
+    processorId: String(payload?.engine?.id || "").trim() || null,
+    processorLabel: String(payload?.engine?.label || "").trim() || null,
+    responseData: {
+      execution: {
+        durationMs:
+          typeof payload?.durationMs === "number" ? payload.durationMs : null,
+        commands: Array.isArray(payload?.commands) ? payload.commands : [],
+      },
+    },
+  };
+}
+
+async function executeImageProcessingTask(command: ServiceCommandEnvelope) {
+  const recordId = String(command.payload?.recordId || "").trim();
+  const taskType =
+    String(command.payload?.taskType || "").trim() === "variations"
+      ? "variations"
+      : "process";
+  const imageUrl = String(command.payload?.imageUrl || "").trim();
+  const operations = Array.isArray(command.payload?.operations)
+    ? command.payload.operations
+    : [];
+  const processorId = String(command.payload?.processorId || "").trim() || null;
+
+  if (!recordId) {
+    throw new Error("缺少 recordId");
+  }
+  if (!imageUrl) {
+    throw new Error("缺少 imageUrl");
+  }
+  if (taskType === "process" && operations.length <= 0) {
+    throw new Error("缺少 operations");
+  }
+
+  await ensureImageProcessingProcessReady();
+
+  const now = new Date().toISOString();
+  activeImageProcessingTasks.set(recordId, {
+    recordId,
+    taskType,
+    title: String(command.payload?.title || "").trim() || null,
+    imageUrl,
+    startedAt: now,
+    updatedAt: now,
+  });
+  void syncServiceRuntime("image-processing");
+
+  try {
+    await reportImageProcessingRecordStatus(recordId, {
+      status: "processing",
+      message:
+        taskType === "variations"
+          ? "客户端正在执行图片裂变"
+          : "客户端正在执行图片处理",
+      responseData: {
+        startedAt: now,
+        clientRuntime: {
+          clientId: identity.clientId,
+          machineCode: identity.machineCode,
+          reportedAt: now,
+        },
+      },
+    });
+
+    const executionPayload = await fetchImageProcessingJson(
+      taskType === "variations" ? "/api/variations" : "/api/process",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          imageUrl,
+          ...(taskType === "process" ? { operations } : {}),
+          ...(processorId ? { engine: processorId } : {}),
+        }),
+        timeoutMs: IMAGE_PROCESSING_TASK_TIMEOUT_MS,
+      },
+    );
+
+    if (executionPayload?.success === false) {
+      throw new Error(
+        String(
+          executionPayload?.error ||
+            executionPayload?.message ||
+            "图片处理执行失败",
+        ),
+      );
+    }
+
+    const archivedPayload = await archiveImageProcessingExecutionPayload(
+      command,
+      recordId,
+      taskType,
+      executionPayload,
+    );
+    const finalStatus = resolveImageProcessingResultStatus(
+      archivedPayload.resultFiles,
+    );
+    const finalMessage =
+      finalStatus === "success"
+        ? taskType === "variations"
+          ? "图片裂变完成"
+          : "图片处理完成"
+        : finalStatus === "partial"
+          ? "部分结果上传失败"
+          : buildImageProcessingFailedMessage(archivedPayload.resultFiles);
+
+    await reportImageProcessingRecordStatus(recordId, {
+      status: finalStatus,
+      message: finalMessage,
+      errorMessage:
+        finalStatus === "failed" ? finalMessage : finalStatus === "partial" ? finalMessage : null,
+      processorId: archivedPayload.processorId,
+      processorLabel: archivedPayload.processorLabel,
+      resultFiles: archivedPayload.resultFiles,
+      responseData: {
+        ...(archivedPayload.responseData || {}),
+        completedAt: new Date().toISOString(),
+        source: executionPayload?.source || null,
+        originalFilename: executionPayload?.originalFilename || null,
+      },
+    });
+
+    return {
+      success: finalStatus !== "failed",
+      message: finalMessage,
+      data: {
+        recordId,
+        status: finalStatus,
+        resultFiles: archivedPayload.resultFiles,
+      },
+    };
+  } catch (error) {
+    const errorMessage = serializeError(error);
+    await reportImageProcessingRecordStatus(recordId, {
+      status: "failed",
+      message: errorMessage,
+      errorMessage,
+      responseData: {
+        completedAt: new Date().toISOString(),
+      },
+    }).catch(() => undefined);
+    throw error;
+  } finally {
+    activeImageProcessingTasks.delete(recordId);
+    void syncServiceRuntime("image-processing");
   }
 }
 
@@ -2534,11 +3888,27 @@ function clearPhotoshopRuntimeSyncInterval() {
   }
 }
 
+function clearImageProcessingRuntimeSyncInterval() {
+  if (imageProcessingRuntimeSyncInterval) {
+    clearInterval(imageProcessingRuntimeSyncInterval);
+    imageProcessingRuntimeSyncInterval = null;
+  }
+}
+
+function clearVideoTemplateRuntimeSyncInterval() {
+  if (videoTemplateRuntimeSyncInterval) {
+    clearInterval(videoTemplateRuntimeSyncInterval);
+    videoTemplateRuntimeSyncInterval = null;
+  }
+}
+
 function stopHeartbeat() {
   clearHeartbeatInterval();
   clearHeartbeatTimeout();
   clearUploaderRuntimeSyncInterval();
   clearPhotoshopRuntimeSyncInterval();
+  clearImageProcessingRuntimeSyncInterval();
+  clearVideoTemplateRuntimeSyncInterval();
   lastPingTimestamp = null;
 }
 
@@ -2556,6 +3926,22 @@ function startPhotoshopRuntimeSyncLoop() {
     if (!socket || !socket.connected) return;
     void syncServiceRuntime("photoshop");
   }, PHOTOSHOP_RUNTIME_SYNC_INTERVAL);
+}
+
+function startImageProcessingRuntimeSyncLoop() {
+  clearImageProcessingRuntimeSyncInterval();
+  imageProcessingRuntimeSyncInterval = setInterval(() => {
+    if (!socket || !socket.connected) return;
+    void syncServiceRuntime("image-processing");
+  }, IMAGE_PROCESSING_RUNTIME_SYNC_INTERVAL);
+}
+
+function startVideoTemplateRuntimeSyncLoop() {
+  clearVideoTemplateRuntimeSyncInterval();
+  videoTemplateRuntimeSyncInterval = setInterval(() => {
+    if (!socket || !socket.connected) return;
+    void syncServiceRuntime("video-template");
+  }, VIDEO_TEMPLATE_RUNTIME_SYNC_INTERVAL);
 }
 
 function scheduleHeartbeatTimeout() {
@@ -2648,6 +4034,8 @@ function bindSocketEvents(currentSocket: Socket) {
     );
     startUploaderRuntimeSyncLoop();
     startPhotoshopRuntimeSyncLoop();
+    startImageProcessingRuntimeSyncLoop();
+    startVideoTemplateRuntimeSyncLoop();
     startHeartbeatLoop();
   });
 
@@ -5074,6 +6462,33 @@ function registerBuiltInLocalServices() {
       }
 
       throw new Error(`未实现的 Video Template 命令: ${command.action}`);
+    },
+  });
+
+  registerLocalService({
+    key: "image-processing",
+    pluginKey: "image-processing",
+    label: "Yishe Images 图片处理引擎",
+    getRuntime: getImageProcessingRuntime,
+    execute: async (command) => {
+      if (command.action === "refreshRuntime") {
+        const runtime = await syncServiceRuntime("image-processing");
+        return {
+          success: !!runtime?.available,
+          message: runtime?.message || "Yishe Images 运行状态已刷新",
+          data: {
+            runtime,
+          },
+        };
+      }
+
+      if (command.action === "createTask") {
+        const result = await executeImageProcessingTask(command);
+        await syncServiceRuntime("image-processing");
+        return result;
+      }
+
+      throw new Error(`未实现的 Yishe Images 命令: ${command.action}`);
     },
   });
 
