@@ -72,6 +72,17 @@ interface Window {
     }>>
     startExternalProcess(id: string): Promise<boolean>
     stopExternalProcess(id: string, force?: boolean): Promise<boolean>
+    invokeAutoBrowser(request: {
+      method?: string
+      path: string
+      query?: Record<string, any>
+      body?: any
+    }): Promise<{
+      ok?: boolean
+      status?: number
+      body?: any
+      headers?: Record<string, string>
+    }>
     startLocalService(): Promise<{ success: boolean; message: string }>
     stopLocalService(): Promise<{ success: boolean; message: string }>
     checkLocalServiceStatus(): Promise<{

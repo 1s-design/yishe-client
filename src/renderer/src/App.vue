@@ -318,6 +318,25 @@ function disconnectWebsocketIfNeeded() {
   websocketClient.disconnect();
 }
 
+function handleWindowForegroundRecovery() {
+  if (!isLoggedIn.value) {
+    return;
+  }
+
+  if (document.visibilityState !== "visible") {
+    return;
+  }
+
+  if (!ACTIVE_WS_STATUSES.includes(wsState.status)) {
+    websocketClient.reconnect();
+  }
+
+  void checkServerStatus();
+  void checkPsServiceStatus();
+  void checkUploaderServiceStatus();
+  void checkLocalServiceStatus();
+}
+
 async function checkServerStatus() {
   if (!throttle(lastServerCheck, THROTTLE_DELAY)) {
     return;
@@ -917,6 +936,9 @@ onMounted(() => {
 
   window.addEventListener("auth:logout", handleAuthLogout);
   window.addEventListener("service-mode-changed", handleServiceModeChanged);
+  window.addEventListener("focus", handleWindowForegroundRecovery);
+  window.addEventListener("pageshow", handleWindowForegroundRecovery);
+  document.addEventListener("visibilitychange", handleWindowForegroundRecovery);
 
   if (typeof nativeApi?.onExtensionConnectionStatus === "function") {
     nativeApi.onExtensionConnectionStatus(
@@ -979,6 +1001,9 @@ onBeforeUnmount(() => {
   websocketClient.events.off("log", logHandler);
   window.removeEventListener("auth:logout", handleAuthLogout);
   window.removeEventListener("service-mode-changed", handleServiceModeChanged);
+  window.removeEventListener("focus", handleWindowForegroundRecovery);
+  window.removeEventListener("pageshow", handleWindowForegroundRecovery);
+  document.removeEventListener("visibilitychange", handleWindowForegroundRecovery);
   disconnectWebsocketIfNeeded();
 });
 </script>

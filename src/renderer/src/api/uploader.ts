@@ -85,7 +85,9 @@ function resolveHeaderValue(headers: HeadersInit | undefined, key: string) {
   const fallbackKey = Object.keys(headers as Record<string, any>).find(
     (name) => String(name || "").toLowerCase() === key.toLowerCase(),
   );
-  return fallbackKey ? String((headers as Record<string, any>)[fallbackKey] || "") : "";
+  return fallbackKey
+    ? String((headers as Record<string, any>)[fallbackKey] || "")
+    : "";
 }
 
 function normalizeUploaderRequestBody(init?: RequestInit) {
@@ -114,12 +116,15 @@ function normalizeUploaderRequestBody(init?: RequestInit) {
 }
 
 function buildUploaderFetchResponse(
-  payload: {
-    ok?: boolean;
-    status?: number;
-    body?: any;
-    headers?: Record<string, string>;
-  } | null | undefined,
+  payload:
+    | {
+        ok?: boolean;
+        status?: number;
+        body?: any;
+        headers?: Record<string, string>;
+      }
+    | null
+    | undefined,
 ): UploaderFetchResponse {
   const body = payload?.body ?? {};
   const normalizedHeaders: Record<string, string> = {};
@@ -200,7 +205,15 @@ function createUploaderFetch() {
       body: normalizeUploaderRequestBody(init),
     });
 
-    const response = await withAbort(invokePromise, init?.signal || null);
+    const response:
+      | {
+          ok?: boolean;
+          status?: number;
+          body?: any;
+          headers?: Record<string, string>;
+        }
+      | null
+      | undefined = await withAbort(invokePromise, init?.signal || null);
     return buildUploaderFetchResponse(response);
   };
 }
@@ -708,6 +721,30 @@ export interface UploaderTaskSummary {
   };
 }
 
+export interface UploaderTaskListItem {
+  id: string;
+  kind: string;
+  action: string;
+  platform?: string;
+  platforms?: string[];
+  status: string;
+  step: string;
+  sourceId?: string | null;
+  sourceTraceId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  logCount?: number;
+  lastLog?: {
+    id?: string;
+    level?: string;
+    message?: string;
+    timestamp?: string;
+  } | null;
+  errorMessage?: string | null;
+}
+
 export interface UploaderTaskLogItem {
   id?: string;
   taskId?: string;
@@ -720,7 +757,7 @@ export interface UploaderTaskLogItem {
 export interface UploaderTaskListResponse {
   success: boolean;
   data?: {
-    items?: UploaderTaskSummary[];
+    items?: UploaderTaskListItem[];
     total?: number;
   };
   message?: string;
@@ -983,9 +1020,7 @@ export async function connectUploaderBrowser(
 /**
  * 请求浏览器自动化服务关闭浏览器实例
  */
-export async function closeUploaderBrowser(
-  profileId?: string,
-): Promise<{
+export async function closeUploaderBrowser(profileId?: string): Promise<{
   success: boolean;
   message?: string;
 }> {
@@ -1024,9 +1059,7 @@ export async function closeUploaderBrowser(
   }
 }
 
-export async function focusUploaderBrowser(
-  profileId?: string,
-): Promise<{
+export async function focusUploaderBrowser(profileId?: string): Promise<{
   success: boolean;
   message?: string;
   data?: unknown;
@@ -1159,9 +1192,7 @@ export async function openLink(
   }
 }
 
-export async function getUploaderBrowserPages(
-  profileId?: string,
-): Promise<{
+export async function getUploaderBrowserPages(profileId?: string): Promise<{
   success: boolean;
   data?: UploaderBrowserPage[];
   message?: string;
@@ -1629,15 +1660,18 @@ export async function runUploaderBrowserSmallFeature(
       typeof data?.timeoutMs === "number" && Number.isFinite(data.timeoutMs)
         ? Math.max(60_000, Number(data.timeoutMs) + 60_000)
         : 10 * 60 * 1000;
-    const res = await fetch(`${UPLOADER_API_BASE}/api/browser/small-features/run`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        featureKey: normalizedFeatureKey,
-        ...(data || {}),
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    const res = await fetch(
+      `${UPLOADER_API_BASE}/api/browser/small-features/run`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          featureKey: normalizedFeatureKey,
+          ...(data || {}),
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+    );
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json?.success === false) {
       return {

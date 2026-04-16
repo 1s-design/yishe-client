@@ -43,7 +43,7 @@ import {
   type PublishTaskRuntimeSnapshot,
 } from "./publishTaskDispatch";
 import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
-import { getWsEndpoint, setServiceMode } from "../config/api";
+import { getRemoteApiBase, getWsEndpoint, setServiceMode } from "../config/api";
 
 type UploaderProfilesResponse = Awaited<ReturnType<typeof getUploaderProfiles>>;
 
@@ -57,9 +57,10 @@ type WsStatus =
 
 const CLIENT_SOURCE = "客户端";
 const HEARTBEAT_INTERVAL = 15_000;
-const HEARTBEAT_TIMEOUT = 30_000;
+const HEARTBEAT_TIMEOUT = 60_000;
 const UPLOADER_RUNTIME_SYNC_INTERVAL = 5_000;
 const PHOTOSHOP_RUNTIME_SYNC_INTERVAL = 8_000;
+const REMOTION_LOCAL_BASE = "http://127.0.0.1:1572";
 const PROD_WS_ENDPOINT = "https://1s.design:1520/ws";
 const DEV_WS_ENDPOINT = "http://localhost:1520/ws";
 const FALLBACK_ENDPOINT = import.meta.env.PROD
@@ -76,11 +77,14 @@ const PLUGIN_KEY_ALIASES: Record<string, string> = {
   photoshop: "ps-automation",
   uploader: "browser-automation",
   browser: "browser-automation",
+  remotion: "video-template",
+  "remotion-video": "video-template",
 };
 const LEGACY_SERVICE_KEYS: Record<string, string> = {
   "ps-automation": "photoshop",
   "browser-automation": "uploader",
   "local-service": "localService",
+  "video-template": "video-template",
 };
 
 function getNativeApi() {
@@ -285,17 +289,6 @@ function resolveCommandAction(command: ServiceCommandEnvelope) {
 
 function getLegacyServiceKey(pluginKey: string) {
   return LEGACY_SERVICE_KEYS[pluginKey] || pluginKey;
-}
-
-function buildPluginRegistrySnapshot() {
-  return Array.from(localServiceHandlers.values()).map((handler) => ({
-    key: handler.key,
-    pluginKey: handler.pluginKey || handler.key,
-    label: handler.label,
-    channel: handler.channel || "client-bridge",
-    supportedCommands:
-      clientInfo.services?.[handler.key]?.supportedCommands || [],
-  }));
 }
 
 const identity = reactive<DeviceIdentity>(loadIdentity());
@@ -567,7 +560,9 @@ function syncBrowserAutomationAggregateExecutionState() {
     profileId: primary?.profileId || null,
     currentStep: primary?.currentStep || null,
     progress:
-      typeof primary?.progress === "number" ? primary.progress : primary?.progress ?? null,
+      typeof primary?.progress === "number"
+        ? primary.progress
+        : (primary?.progress ?? null),
     lastError: primary?.lastError || null,
     runtime: primary?.runtime || null,
     startedAt: primary?.startedAt || null,
@@ -607,7 +602,10 @@ function isBrowserAutomationExecutionSlotRunning(
   profileId?: string | null,
   fallbackTaskType?: string | null,
 ) {
-  const slotKey = resolveBrowserAutomationExecutionSlotKey(profileId, fallbackTaskType);
+  const slotKey = resolveBrowserAutomationExecutionSlotKey(
+    profileId,
+    fallbackTaskType,
+  );
   return !!browserAutomationExecutionSlots[slotKey]?.running;
 }
 
@@ -620,7 +618,9 @@ function findBrowserAutomationExecutionSlotKeyByTaskId(taskId?: string | null) {
   return (
     Object.keys(browserAutomationExecutionSlots).find(
       (slotKey) =>
-        String(browserAutomationExecutionSlots[slotKey]?.taskId || "").trim() === normalizedTaskId,
+        String(
+          browserAutomationExecutionSlots[slotKey]?.taskId || "",
+        ).trim() === normalizedTaskId,
     ) || ""
   );
 }
@@ -652,7 +652,9 @@ const EMPTY_UPLOADER_PROFILES_RESPONSE: UploaderProfilesResponse = {
 function extractUploaderEcomCollectSupportedTaskTypes(
   capability: UploaderEcomCollectCapabilitySchema | null | undefined,
 ) {
-  const taskTypes = (Array.isArray(capability?.platforms) ? capability.platforms : [])
+  const taskTypes = (
+    Array.isArray(capability?.platforms) ? capability.platforms : []
+  )
     .flatMap((platform) => [
       ...(Array.isArray(platform?.supportedTaskTypes)
         ? platform.supportedTaskTypes
@@ -728,7 +730,10 @@ async function getCachedUploaderProfiles(
   let requestPromise: Promise<UploaderProfilesResponse>;
   requestPromise = getUploaderProfiles()
     .then((response) => {
-      if (response.success && uploaderProfilesCache.revision === requestRevision) {
+      if (
+        response.success &&
+        uploaderProfilesCache.revision === requestRevision
+      ) {
         uploaderProfilesCache.fetchedAt = Date.now();
         uploaderProfilesCache.data = response;
       }
@@ -762,20 +767,18 @@ function loadBrowserAutomationAutoDispatchEnabled() {
   }
 }
 
-function updateBrowserAutomationCommandExecution(
-  payload: {
-    running: boolean;
-    taskId?: string | null;
-    taskType?: string | null;
-    queue?: string | null;
-    profileId?: string | null;
-    currentStep?: string | null;
-    progress?: number | null;
-    lastError?: string | null;
-    runtime?: Record<string, any> | null;
-    updatedAt?: string | null;
-  },
-) {
+function updateBrowserAutomationCommandExecution(payload: {
+  running: boolean;
+  taskId?: string | null;
+  taskType?: string | null;
+  queue?: string | null;
+  profileId?: string | null;
+  currentStep?: string | null;
+  progress?: number | null;
+  lastError?: string | null;
+  runtime?: Record<string, any> | null;
+  updatedAt?: string | null;
+}) {
   const normalizedProfileId = String(payload.profileId || "").trim() || null;
   const normalizedTaskType = String(payload.taskType || "").trim() || null;
   const slotKey = resolveBrowserAutomationExecutionSlotKey(
@@ -796,7 +799,7 @@ function updateBrowserAutomationCommandExecution(
     progress:
       typeof payload.progress === "number"
         ? payload.progress
-        : payload.progress ?? null,
+        : (payload.progress ?? null),
     lastError: payload.lastError ?? null,
     runtime: payload.runtime ?? null,
     startedAt: payload.running
@@ -897,9 +900,7 @@ function normalizeWsStringArray(value: unknown) {
     return [] as string[];
   }
 
-  return value
-    .map((item) => String(item || "").trim())
-    .filter(Boolean);
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
 function sanitizeBrowserAutomationExecutionForWs(value: unknown) {
@@ -962,20 +963,20 @@ function sanitizeBrowserAutomationConnectionForWs(value: unknown) {
     profileId: String(source.profileId || "").trim() || null,
     activeProfileId: String(source.activeProfileId || "").trim() || null,
     port: typeof source.port === "number" ? source.port : null,
-    debugPort:
-      typeof source.debugPort === "number" ? source.debugPort : null,
+    debugPort: typeof source.debugPort === "number" ? source.debugPort : null,
     remoteDebuggingPort:
       typeof source.remoteDebuggingPort === "number"
         ? source.remoteDebuggingPort
         : null,
     remoteDebugPort:
-      typeof source.remoteDebugPort === "number" ? source.remoteDebugPort : null,
+      typeof source.remoteDebugPort === "number"
+        ? source.remoteDebugPort
+        : null,
     isConnected: source.isConnected === true,
     connected: source.connected === true || source.isConnected === true,
     hasInstance: source.hasInstance === true,
     connecting: source.connecting === true,
-    pageCount:
-      typeof source.pageCount === "number" ? source.pageCount : null,
+    pageCount: typeof source.pageCount === "number" ? source.pageCount : null,
     lastActivity: String(source.lastActivity || "").trim() || null,
   };
 }
@@ -996,8 +997,7 @@ function sanitizeBrowserAutomationInstanceForWs(instance: unknown) {
     currentTaskId: String(source.currentTaskId || "").trim() || null,
     taskType: String(source.taskType || "").trim() || null,
     currentStep: String(source.currentStep || "").trim() || null,
-    pageCount:
-      typeof source.pageCount === "number" ? source.pageCount : null,
+    pageCount: typeof source.pageCount === "number" ? source.pageCount : null,
     lastActivity: String(source.lastActivity || "").trim() || null,
     lastError: String(source.lastError || "").trim() || null,
     browserVersion: String(source.browserVersion || "").trim() || null,
@@ -1006,6 +1006,102 @@ function sanitizeBrowserAutomationInstanceForWs(instance: unknown) {
     userDataDir: String(source.userDataDir || "").trim() || null,
     isActiveProfile: source.isActiveProfile === true,
   };
+}
+
+function sanitizeClientObjectSubsetForWs(value: unknown, keys: string[]) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const source = value as Record<string, any>;
+  const result = keys.reduce<Record<string, any>>((acc, key) => {
+    if (source[key] !== undefined) {
+      acc[key] = source[key];
+    }
+    return acc;
+  }, {});
+
+  return Object.keys(result).length ? result : null;
+}
+
+function sanitizeClientExtensionForWs(value: unknown) {
+  return sanitizeClientObjectSubsetForWs(value, [
+    "name",
+    "version",
+    "manifestVersion",
+  ]);
+}
+
+function sanitizeClientBrowserForWs(value: unknown) {
+  return sanitizeClientObjectSubsetForWs(value, ["name", "version"]);
+}
+
+function sanitizeClientOsForWs(value: unknown) {
+  return sanitizeClientObjectSubsetForWs(value, ["name", "version"]);
+}
+
+function sanitizeClientPlatformForWs(value: unknown) {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized ? { os: normalized } : null;
+  }
+
+  return sanitizeClientObjectSubsetForWs(value, ["os", "arch", "nacl_arch"]);
+}
+
+function sanitizeClientDeviceForWs(value: unknown) {
+  return sanitizeClientObjectSubsetForWs(value, [
+    "memory",
+    "hardwareConcurrency",
+    "model",
+    "touchPoints",
+  ]);
+}
+
+function sanitizeClientMachineForWs(value: unknown) {
+  return sanitizeClientObjectSubsetForWs(value, [
+    "code",
+    "platform",
+    "createdAt",
+  ]);
+}
+
+function sanitizeClientLocationForWs(value: unknown) {
+  return sanitizeClientObjectSubsetForWs(value, [
+    "ip",
+    "city",
+    "region",
+    "country",
+    "timeZone",
+  ]);
+}
+
+function sanitizeClientUserForWs(value: unknown) {
+  return sanitizeClientObjectSubsetForWs(value, [
+    "id",
+    "account",
+    "name",
+    "nickname",
+    "email",
+    "phone",
+    "companyId",
+    "company",
+  ]);
+}
+
+function sanitizeClientPsAutomationForWs(value: unknown) {
+  return sanitizeClientObjectSubsetForWs(value, [
+    "enabled",
+    "autoDispatchEnabled",
+    "running",
+    "queueCount",
+    "currentPsSetId",
+    "currentPsSetName",
+    "progress",
+    "lastError",
+    "lastHeartbeatAt",
+    "updatedAt",
+  ]);
 }
 
 function sanitizeClientServiceRuntimeForWs(
@@ -1027,22 +1123,15 @@ function sanitizeClientServiceRuntimeForWs(
   const supportedTaskTypes = normalizeWsStringArray(
     details.supportedTaskTypes ?? runtime.supportedTaskTypes,
   );
-  const executableTaskTypes = normalizeWsStringArray(
-    details.executableTaskTypes,
-  );
-  const runningProfileIds = normalizeWsStringArray(details.runningProfileIds);
-  const availableProfileIds = normalizeWsStringArray(
-    details.availableProfileIds,
-  );
   const profiles = Array.isArray(details.profiles)
-    ? details.profiles.map((item: unknown) =>
-        sanitizeBrowserAutomationProfileForWs(item),
-      ).filter((item) => !!item.id)
+    ? details.profiles
+        .map((item: unknown) => sanitizeBrowserAutomationProfileForWs(item))
+        .filter((item) => !!item.id)
     : [];
   const instances = Array.isArray(details.instances)
-    ? details.instances.map((item: unknown) =>
-        sanitizeBrowserAutomationInstanceForWs(item),
-      ).filter((item) => !!item.profileId)
+    ? details.instances
+        .map((item: unknown) => sanitizeBrowserAutomationInstanceForWs(item))
+        .filter((item) => !!item.profileId)
     : [];
   const activeProfile =
     details.activeProfile &&
@@ -1067,26 +1156,9 @@ function sanitizeClientServiceRuntimeForWs(
       instances,
       activeProfileId: String(details.activeProfileId || "").trim() || null,
       activeProfile,
-      profilesRootDir: String(details.profilesRootDir || "").trim() || null,
-      workspaceDir: String(details.workspaceDir || "").trim() || null,
       currentExecution: sanitizeBrowserAutomationExecutionForWs(
         details.currentExecution,
       ),
-      ...(supportedTaskTypes.length ? { supportedTaskTypes } : {}),
-      ...(executableTaskTypes.length ? { executableTaskTypes } : {}),
-      ...(Array.isArray(details.executableTaskLabels)
-        ? { executableTaskLabels: details.executableTaskLabels }
-        : {}),
-      ...(Array.isArray(details.capabilities)
-        ? { capabilities: details.capabilities }
-        : {}),
-      ...(details.ecomCollect &&
-      typeof details.ecomCollect === "object" &&
-      !Array.isArray(details.ecomCollect)
-        ? { ecomCollect: details.ecomCollect }
-        : {}),
-      ...(runningProfileIds.length ? { runningProfileIds } : {}),
-      ...(availableProfileIds.length ? { availableProfileIds } : {}),
     },
   };
 }
@@ -1107,14 +1179,60 @@ function buildClientInfoPayloadForWs() {
     {} as Record<string, ClientServiceStatus>,
   );
 
-  return {
-    ...clientInfo,
+  const payload: Record<string, any> = {
+    clientId: clientInfo.clientId,
+    source: clientInfo.source,
+    appVersion: clientInfo.appVersion,
     services,
-    notes: {
-      ...(clientInfo.notes || {}),
-      pluginRegistry: buildPluginRegistrySnapshot(),
-      pluginProtocolVersion: 1,
-    },
+  };
+
+  const machine = sanitizeClientMachineForWs(clientInfo.machine);
+  if (machine) {
+    payload.machine = machine;
+  }
+
+  const location = sanitizeClientLocationForWs(clientInfo.location);
+  if (location) {
+    payload.location = location;
+  }
+
+  const extension = sanitizeClientExtensionForWs(clientInfo.extension);
+  if (extension) {
+    payload.extension = extension;
+  }
+
+  const browser = sanitizeClientBrowserForWs(clientInfo.browser);
+  if (browser) {
+    payload.browser = browser;
+  }
+
+  const os = sanitizeClientOsForWs(clientInfo.os);
+  if (os) {
+    payload.os = os;
+  }
+
+  const platform = sanitizeClientPlatformForWs(clientInfo.platform);
+  if (platform) {
+    payload.platform = platform;
+  }
+
+  const device = sanitizeClientDeviceForWs(clientInfo.device);
+  if (device) {
+    payload.device = device;
+  }
+
+  const user = sanitizeClientUserForWs(clientInfo.user);
+  if (user) {
+    payload.user = user;
+  }
+
+  const psAutomation = sanitizeClientPsAutomationForWs(clientInfo.psAutomation);
+  if (psAutomation) {
+    payload.psAutomation = psAutomation;
+  }
+
+  return {
+    ...payload,
   };
 }
 
@@ -1131,7 +1249,9 @@ function stableStringifyForWs(value: unknown): string {
     const source = value as Record<string, any>;
     const keys = Object.keys(source).sort();
     return `{${keys
-      .map((key) => `${JSON.stringify(key)}:${stableStringifyForWs(source[key])}`)
+      .map(
+        (key) => `${JSON.stringify(key)}:${stableStringifyForWs(source[key])}`,
+      )
       .join(",")}}`;
   }
 
@@ -1145,13 +1265,16 @@ function stripVolatileWsFieldsForFingerprint(value: unknown): unknown {
 
   if (value && typeof value === "object") {
     const source = value as Record<string, any>;
-    return Object.keys(source).reduce<Record<string, unknown>>((result, key) => {
-      if (WS_FINGERPRINT_VOLATILE_KEYS.has(key)) {
+    return Object.keys(source).reduce<Record<string, unknown>>(
+      (result, key) => {
+        if (WS_FINGERPRINT_VOLATILE_KEYS.has(key)) {
+          return result;
+        }
+        result[key] = stripVolatileWsFieldsForFingerprint(source[key]);
         return result;
-      }
-      result[key] = stripVolatileWsFieldsForFingerprint(source[key]);
-      return result;
-    }, {});
+      },
+      {},
+    );
   }
 
   return value;
@@ -1202,9 +1325,11 @@ function mergeBrowserAutomationInstancesWithExecutions(
       isConnected: instance?.isConnected === true || connected,
       busy: !!runningExecution,
       available: runningExecution ? false : available,
-      currentTaskId: runningExecution?.taskId || instance?.currentTaskId || null,
+      currentTaskId:
+        runningExecution?.taskId || instance?.currentTaskId || null,
       taskType: runningExecution?.taskType || instance?.taskType || null,
-      currentStep: runningExecution?.currentStep || instance?.currentStep || null,
+      currentStep:
+        runningExecution?.currentStep || instance?.currentStep || null,
       lastError:
         runningExecution?.lastError !== undefined
           ? runningExecution.lastError
@@ -1224,15 +1349,15 @@ function buildBrowserAutomationRuntimePatch(
   const previousDetails: Record<string, any> = previous?.details || {};
   const payloadDetails: Record<string, any> = payload.details || {};
   const ecomCollectCapability =
-    payloadDetails.ecomCollect &&
-    typeof payloadDetails.ecomCollect === "object"
+    payloadDetails.ecomCollect && typeof payloadDetails.ecomCollect === "object"
       ? (payloadDetails.ecomCollect as UploaderEcomCollectCapabilitySchema)
       : previousDetails.ecomCollect &&
           typeof previousDetails.ecomCollect === "object"
         ? (previousDetails.ecomCollect as UploaderEcomCollectCapabilitySchema)
         : uploaderEcomCollectCapabilityCache.data;
-  const supportedTaskTypes =
-    buildBrowserAutomationSupportedTaskTypes(ecomCollectCapability);
+  const supportedTaskTypes = buildBrowserAutomationSupportedTaskTypes(
+    ecomCollectCapability,
+  );
   const baseProfiles = Array.isArray(payloadDetails.profiles)
     ? payloadDetails.profiles
     : Array.isArray(previousDetails.profiles)
@@ -1370,7 +1495,9 @@ function buildBrowserAutomationProfileInstances(
   profileItems: Array<Record<string, any>>,
   browserData?: Record<string, any> | null,
 ) {
-  const resolveBrowserPort = (source: Record<string, any> | null | undefined) => {
+  const resolveBrowserPort = (
+    source: Record<string, any> | null | undefined,
+  ) => {
     const candidates = [
       source?.port,
       source?.debugPort,
@@ -1434,16 +1561,16 @@ function buildBrowserAutomationProfileInstances(
       pages: Array.isArray(browserInstance?.pages) ? browserInstance.pages : [],
       browserVersion:
         String(
-          browserInstance?.browserVersion ||
-            profile?.browserVersion ||
-            "",
+          browserInstance?.browserVersion || profile?.browserVersion || "",
         ).trim() || "",
       hasInstance: browserInstance?.hasInstance === true,
       connecting: browserInstance?.connecting === true,
-      lastError: runningExecution?.lastError || browserInstance?.lastError || null,
+      lastError:
+        runningExecution?.lastError || browserInstance?.lastError || null,
       userDataDir:
-        String(browserInstance?.userDataDir || profile?.userDataDir || "").trim() ||
-        null,
+        String(
+          browserInstance?.userDataDir || profile?.userDataDir || "",
+        ).trim() || null,
       isActiveProfile: profile?.isActive === true,
     };
   });
@@ -1475,7 +1602,9 @@ async function emitPublishTaskRuntime(snapshot: PublishTaskRuntimeSnapshot) {
     progress: channelSnapshot.progress ?? null,
     lastError: channelSnapshot.error ?? null,
     runtime: null,
-    startedAt: running ? previousSlot?.startedAt || now : previousSlot?.startedAt || now,
+    startedAt: running
+      ? previousSlot?.startedAt || now
+      : previousSlot?.startedAt || now,
     finishedAt: running ? null : now,
     updatedAt: now,
   });
@@ -2071,6 +2200,210 @@ function queueUploaderRuntimeSync() {
   return uploaderRuntimeSyncPromise;
 }
 
+async function ensureRemotionProcessStarted() {
+  const nativeApi = getNativeApi();
+  if (!nativeApi?.startExternalProcess) {
+    throw new Error("当前环境未注入桌面端插件启动能力");
+  }
+
+  await nativeApi.startExternalProcess("video-template");
+}
+
+async function fetchRemotionJson(path: string, init?: RequestInit) {
+  const response = await fetch(`${REMOTION_LOCAL_BASE}${path}`, init);
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      String(json?.message || json?.msg || `Remotion 请求失败: ${response.status}`),
+    );
+  }
+  return json;
+}
+
+async function getRemotionRuntime() {
+  const nativeApi = getNativeApi();
+  const processList = await nativeApi?.listExternalProcesses?.();
+  const processInfo = Array.isArray(processList)
+    ? processList.find((item: any) => item?.id === "video-template")
+    : null;
+
+  try {
+    const health = await fetchRemotionJson("/api/health");
+    const templatesRes = await fetchRemotionJson("/api/templates").catch(() => ({
+      data: [],
+    }));
+    const templates = Array.isArray(templatesRes?.data)
+      ? templatesRes.data
+      : Array.isArray(templatesRes)
+        ? templatesRes
+        : [];
+
+    return {
+      label: "Video Template 视频引擎",
+      connected: true,
+      available: true,
+      status: "connected" as const,
+      state: "connected" as const,
+      busy: false,
+      message: "Video Template 插件运行正常",
+      endpoint: REMOTION_LOCAL_BASE,
+      lastError: null,
+      supportedCommands: ["refreshRuntime", "enqueueRender"],
+      details: {
+        templates,
+        health: health?.data || health || null,
+        processStatus: processInfo?.status || null,
+      },
+    };
+  } catch (error) {
+    return {
+      label: "Video Template 视频引擎",
+      connected: false,
+      available: false,
+      status: processInfo ? ("error" as const) : ("disconnected" as const),
+      state: "offline" as const,
+      busy: false,
+      message: serializeError(error),
+      endpoint: REMOTION_LOCAL_BASE,
+      lastError: serializeError(error),
+      supportedCommands: ["refreshRuntime", "enqueueRender"],
+      details: {
+        templates: [],
+        processStatus: processInfo?.status || null,
+      },
+    };
+  }
+}
+
+async function reportRemotionRecordStatus(
+  recordId: string,
+  payload: Record<string, any>,
+) {
+  const token = await getTokenFromClient();
+  const response = await fetch(
+    `${getRemoteApiBase()}/remotion-video-record/${encodeURIComponent(recordId)}/status`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    const json = await response.json().catch(() => ({}));
+    throw new Error(
+      String(json?.message || json?.msg || `状态回传失败: ${response.status}`),
+    );
+  }
+
+  return response.json().catch(() => null);
+}
+
+async function executeRemotionRender(command: ServiceCommandEnvelope) {
+  const recordId = String(command.payload?.recordId || "").trim();
+  const templateId = String(command.payload?.templateId || "").trim();
+  if (!recordId) {
+    throw new Error("缺少 recordId");
+  }
+  if (!templateId) {
+    throw new Error("缺少 templateId");
+  }
+
+  await ensureRemotionProcessStarted();
+  await reportRemotionRecordStatus(recordId, {
+    status: "processing",
+    message: "客户端已接单，开始提交本地渲染",
+    responseData: {
+      commandId: command.commandId,
+      acceptedAt: new Date().toISOString(),
+    },
+  });
+
+  const createRes = await fetchRemotionJson("/api/renders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      templateId,
+      inputProps: command.payload?.inputProps || {},
+    }),
+  });
+
+  const jobId = String(createRes?.data?.jobId || createRes?.jobId || "").trim();
+  if (!jobId) {
+    throw new Error("本地 Video Template 未返回 jobId");
+  }
+
+  await reportRemotionRecordStatus(recordId, {
+    status: "processing",
+    remotionJobId: jobId,
+    message: "本地渲染任务已创建",
+    responseData: {
+      commandId: command.commandId,
+      jobCreatedAt: new Date().toISOString(),
+    },
+  });
+
+  while (true) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const jobRes = await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`);
+    const payload = jobRes?.data || jobRes || {};
+    const status = String(payload?.status || "").trim().toLowerCase();
+    const progress = Number.isFinite(Number(payload?.progress))
+      ? Math.round(Number(payload.progress) * 100)
+      : null;
+
+    if (status === "completed") {
+      await reportRemotionRecordStatus(recordId, {
+        status: "success",
+        progress: 100,
+        message: "视频渲染完成",
+        remotionJobId: jobId,
+        remotionVideoUrl: payload?.videoUrl || null,
+        resultUrl: payload?.videoUrl || null,
+        url: payload?.videoUrl || null,
+        responseData: payload,
+      });
+      return {
+        success: true,
+        message: "Video Template 视频渲染完成",
+        data: {
+          recordId,
+          jobId,
+          videoUrl: payload?.videoUrl || null,
+        },
+      };
+    }
+
+    if (status === "failed") {
+      const errorMessage = String(
+        payload?.error?.message || payload?.message || "本地视频渲染失败",
+      );
+      await reportRemotionRecordStatus(recordId, {
+        status: "failed",
+        progress,
+        message: errorMessage,
+        errorMessage,
+        remotionJobId: jobId,
+        responseData: payload,
+      });
+      throw new Error(errorMessage);
+    }
+
+    await reportRemotionRecordStatus(recordId, {
+      status: "processing",
+      progress,
+      message: payload?.message || "本地渲染中",
+      remotionJobId: jobId,
+      responseData: payload,
+    });
+  }
+}
+
 async function handleServiceCommand(command: ServiceCommandEnvelope) {
   const pluginKey = resolveCommandPluginKey(command);
   const action = resolveCommandAction(command);
@@ -2228,10 +2561,19 @@ function startPhotoshopRuntimeSyncLoop() {
 function scheduleHeartbeatTimeout() {
   clearHeartbeatTimeout();
   heartbeatTimeout = setTimeout(() => {
+    const isHidden =
+      typeof document !== "undefined" && document.visibilityState !== "visible";
+
     emitter.emit("log", {
       level: "warn",
-      message: "[ws] heartbeat timeout",
+      message: isHidden
+        ? "[ws] heartbeat timeout while hidden"
+        : "[ws] heartbeat timeout",
     });
+
+    if (isHidden) {
+      return;
+    }
 
     if (!socket || !socket.connected) {
       updateState({
@@ -3728,33 +4070,33 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       details: {
         browserConnected: false,
         pageCount: 0,
-          serviceMessage: status.message ?? null,
-          autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
-          capabilities: capabilitySummary,
-          profiles: profileItems,
-          instances: buildBrowserAutomationProfileInstances(profileItems, null),
-          availableProfileIds: [],
-          runningProfileIds: executionSnapshot.items
-            .filter((item) => item.running && item.profileId)
-            .map((item) => String(item.profileId || "").trim())
-            .filter(Boolean),
-          activeProfileId: profilesResponse?.data?.activeProfileId || null,
-          activeProfile: resolvedActiveProfile,
-          loginSummary:
-            resolvedActiveProfile?.loginSummary &&
-            typeof resolvedActiveProfile.loginSummary === "object"
-              ? resolvedActiveProfile.loginSummary
-              : null,
-          activeProfileLoginSummary:
-            resolvedActiveProfile?.loginSummary &&
-            typeof resolvedActiveProfile.loginSummary === "object"
-              ? resolvedActiveProfile.loginSummary
-              : null,
-          profilesRootDir: profilesResponse?.data?.profilesRootDir || null,
-          workspaceDir: profilesResponse?.data?.workspaceDir || null,
-          ecomCollect: uploaderEcomCollectCapabilityCache.data
-            ? {
-                ...uploaderEcomCollectCapabilityCache.data,
+        serviceMessage: status.message ?? null,
+        autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
+        capabilities: capabilitySummary,
+        profiles: profileItems,
+        instances: buildBrowserAutomationProfileInstances(profileItems, null),
+        availableProfileIds: [],
+        runningProfileIds: executionSnapshot.items
+          .filter((item) => item.running && item.profileId)
+          .map((item) => String(item.profileId || "").trim())
+          .filter(Boolean),
+        activeProfileId: profilesResponse?.data?.activeProfileId || null,
+        activeProfile: resolvedActiveProfile,
+        loginSummary:
+          resolvedActiveProfile?.loginSummary &&
+          typeof resolvedActiveProfile.loginSummary === "object"
+            ? resolvedActiveProfile.loginSummary
+            : null,
+        activeProfileLoginSummary:
+          resolvedActiveProfile?.loginSummary &&
+          typeof resolvedActiveProfile.loginSummary === "object"
+            ? resolvedActiveProfile.loginSummary
+            : null,
+        profilesRootDir: profilesResponse?.data?.profilesRootDir || null,
+        workspaceDir: profilesResponse?.data?.workspaceDir || null,
+        ecomCollect: uploaderEcomCollectCapabilityCache.data
+          ? {
+              ...uploaderEcomCollectCapabilityCache.data,
               source: "cache",
             }
           : null,
@@ -3797,17 +4139,17 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       "close",
       "forceClose",
       "getPages",
-        "getTasks",
-        "getTaskDetail",
-        "getTaskLogs",
-        "listProfiles",
-        "getProfileDetail",
-        "createProfile",
-        "updateProfile",
-        "deleteProfile",
-        "switchProfile",
-        "getPlatforms",
-        "getEcomCollectCapabilities",
+      "getTasks",
+      "getTaskDetail",
+      "getTaskLogs",
+      "listProfiles",
+      "getProfileDetail",
+      "createProfile",
+      "updateProfile",
+      "deleteProfile",
+      "switchProfile",
+      "getPlatforms",
+      "getEcomCollectCapabilities",
       "getLoginStatus",
       "publish",
       "executePublishTask",
@@ -4216,7 +4558,8 @@ function registerBuiltInLocalServices() {
 
       if (action === "openPlatform") {
         const platform = String(command.payload?.platform || "").trim();
-        const profileId = String(command.payload?.profileId || "").trim() || undefined;
+        const profileId =
+          String(command.payload?.profileId || "").trim() || undefined;
         if (!platform) {
           throw new Error("缺少 platform");
         }
@@ -4239,7 +4582,8 @@ function registerBuiltInLocalServices() {
         if (!url) {
           throw new Error("缺少 url");
         }
-        const profileId = String(command.payload?.profileId || "").trim() || undefined;
+        const profileId =
+          String(command.payload?.profileId || "").trim() || undefined;
         const response = await openUploaderLink(url, profileId);
         await syncServiceRuntime("uploader");
         return {
@@ -4389,11 +4733,10 @@ function registerBuiltInLocalServices() {
           message:
             response.message ||
             (response.success ? "环境列表已加载" : "获取环境列表失败"),
-          data:
-            response.data || {
-              activeProfileId: null,
-              items: [],
-            },
+          data: response.data || {
+            activeProfileId: null,
+            items: [],
+          },
         };
       }
 
@@ -4708,6 +5051,33 @@ function registerBuiltInLocalServices() {
   });
 
   registerLocalService({
+    key: "video-template",
+    pluginKey: "video-template",
+    label: "Video Template 视频引擎",
+    getRuntime: getRemotionRuntime,
+    execute: async (command) => {
+      if (command.action === "refreshRuntime") {
+        const runtime = await syncServiceRuntime("video-template");
+        return {
+          success: !!runtime?.available,
+          message: runtime?.message || "Video Template 运行状态已刷新",
+          data: {
+            runtime,
+          },
+        };
+      }
+
+      if (command.action === "enqueueRender") {
+        const result = await executeRemotionRender(command);
+        await syncServiceRuntime("video-template");
+        return result;
+      }
+
+      throw new Error(`未实现的 Video Template 命令: ${command.action}`);
+    },
+  });
+
+  registerLocalService({
     key: "localService",
     pluginKey: "local-service",
     label: "本地服务",
@@ -4861,7 +5231,7 @@ function disconnect() {
 function reconnect() {
   intentionalDisconnect = false;
   cleanupSocket();
-  connect();
+  void connect();
 }
 
 function setEndpoint(endpoint: string) {

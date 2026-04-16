@@ -8,6 +8,7 @@ import {
   Menu,
   dialog,
   session,
+  powerSaveBlocker,
 } from "electron";
 import { join } from "path";
 import { resolve, dirname, extname, basename } from "path";
@@ -64,6 +65,7 @@ declare global {
 // 全局变量
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
+let trayPowerSaveBlockerId: number | null = null;
 
 // 插件/外部进程管理器
 const externalProcessManager = new ExternalProcessManager(pluginProcessConfigs);
@@ -155,6 +157,7 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       sandbox: false,
+      backgroundThrottling: false,
       webSecurity: false, // 允许加载外部资源（图片、视频等）
       allowRunningInsecureContent: true, // 允许混合内容（HTTPS页面加载HTTP资源）
       nodeIntegration: false,
@@ -162,8 +165,31 @@ function createWindow(): void {
     },
   });
 
+  const ensureTrayPowerSaveBlocker = () => {
+    if (
+      trayPowerSaveBlockerId !== null &&
+      powerSaveBlocker.isStarted(trayPowerSaveBlockerId)
+    ) {
+      return;
+    }
+
+    trayPowerSaveBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+  };
+
+  const releaseTrayPowerSaveBlocker = () => {
+    if (
+      trayPowerSaveBlockerId !== null &&
+      powerSaveBlocker.isStarted(trayPowerSaveBlockerId)
+    ) {
+      powerSaveBlocker.stop(trayPowerSaveBlockerId);
+    }
+
+    trayPowerSaveBlockerId = null;
+  };
+
   mainWindow.on("ready-to-show", () => {
     mainWindow?.show();
+    releaseTrayPowerSaveBlocker();
     if (isMac) {
       mainWindow?.setFullScreen(false);
       mainWindow?.setSimpleFullScreen(false);
@@ -181,10 +207,27 @@ function createWindow(): void {
     mainWindow!.on("minimize", () => {
       // 如果启用了托盘模式，最小化时隐藏窗口而不是最小化到任务栏
       if (shouldForceTrayMode()) {
+        ensureTrayPowerSaveBlocker();
         mainWindow?.hide();
       }
     });
   }
+
+  mainWindow.on("hide", () => {
+    ensureTrayPowerSaveBlocker();
+  });
+
+  mainWindow.on("show", () => {
+    releaseTrayPowerSaveBlocker();
+  });
+
+  mainWindow.on("restore", () => {
+    releaseTrayPowerSaveBlocker();
+  });
+
+  mainWindow.on("closed", () => {
+    releaseTrayPowerSaveBlocker();
+  });
 
   mainWindow.on("close", async (event) => {
     if ((app as any).isQuiting) {

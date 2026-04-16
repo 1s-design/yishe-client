@@ -221,6 +221,32 @@ function summarizeTemuTemplatePayload(payload = {}) {
     };
 }
 
+function buildTemuTemplatePayloadPreview(payload = {}) {
+    const skcList = Array.isArray(payload.productSkcReqs) ? payload.productSkcReqs : [];
+
+    return {
+        hasProductId: Object.prototype.hasOwnProperty.call(payload, 'productId'),
+        hasProductDraftId: Object.prototype.hasOwnProperty.call(payload, 'productDraftId'),
+        skcCount: skcList.length,
+        skuPreviewList: skcList.flatMap((skc, skcIndex) => {
+            const skuList = Array.isArray(skc?.productSkuReqs) ? skc.productSkuReqs : [];
+            return skuList.map((sku, skuIndex) => ({
+                skcIndex,
+                skuIndex,
+                extCode: normalizeText(sku?.extCode),
+                supplierPrice: Number(sku?.supplierPrice || 0) || 0,
+                currencyType: normalizeText(sku?.currencyType),
+                suggestedPrice: Number(sku?.productSkuSuggestedPriceReq?.suggestedPrice || 0) || 0,
+                suggestedPriceCurrencyType: normalizeText(
+                    sku?.productSkuSuggestedPriceReq?.suggestedPriceCurrencyType
+                ),
+                hasSuggestedPriceReq: isPlainObject(sku?.productSkuSuggestedPriceReq),
+                hasUsSuggestedPriceReq: isPlainObject(sku?.productSkuUsSuggestedPriceReq)
+            }));
+        })
+    };
+}
+
 function fillTemplateTitle(payload = {}, title = '') {
     const nextPayload = isPlainObject(payload) ? { ...payload } : {};
     const normalizedTitle = normalizeText(title);
@@ -292,7 +318,49 @@ function assignTemplateImages(payload = {}, uploadedImageUrls = []) {
     return nextPayload;
 }
 
-function syncSuggestedPricesFromSupplierFields(payload = {}) {
+function buildTemuSkuSuggestedPriceReq(sku = {}) {
+    const supplierPrice = Number(sku.supplierPrice);
+    const existingSuggestedPriceReq = isPlainObject(sku.productSkuSuggestedPriceReq)
+        ? { ...sku.productSkuSuggestedPriceReq }
+        : {};
+    const currencyType = normalizeText(
+        sku.currencyType || existingSuggestedPriceReq.suggestedPriceCurrencyType || 'CNY'
+    ) || 'CNY';
+
+    if (Number.isFinite(supplierPrice) && supplierPrice > 0) {
+        return {
+            ...existingSuggestedPriceReq,
+            suggestedPrice: supplierPrice,
+            suggestedPriceCurrencyType: currencyType
+        };
+    }
+
+    if (Object.keys(existingSuggestedPriceReq).length > 0) {
+        return {
+            ...existingSuggestedPriceReq,
+            suggestedPriceCurrencyType: currencyType
+        };
+    }
+
+    return null;
+}
+
+function normalizeTemuTemplateSkuForSubmission(sku = {}) {
+    const nextSku = isPlainObject(sku) ? { ...sku } : {};
+    const suggestedPriceReq = buildTemuSkuSuggestedPriceReq(nextSku);
+
+    if (suggestedPriceReq) {
+        nextSku.productSkuSuggestedPriceReq = suggestedPriceReq;
+    }
+
+    if (!isPlainObject(nextSku.productSkuUsSuggestedPriceReq)) {
+        nextSku.productSkuUsSuggestedPriceReq = {};
+    }
+
+    return nextSku;
+}
+
+function normalizeTemuTemplateSkuFields(payload = {}) {
     const nextPayload = isPlainObject(payload) ? { ...payload } : {};
     if (!Array.isArray(nextPayload.productSkcReqs)) {
         return nextPayload;
@@ -302,40 +370,9 @@ function syncSuggestedPricesFromSupplierFields(payload = {}) {
         const nextSkc = isPlainObject(skc) ? { ...skc } : {};
         const skuList = Array.isArray(nextSkc.productSkuReqs) ? nextSkc.productSkuReqs : [];
 
-        nextSkc.productSkuReqs = skuList.map((sku) => {
-            const nextSku = isPlainObject(sku) ? { ...sku } : {};
-            const suggestedPriceReq = isPlainObject(nextSku.productSkuSuggestedPriceReq)
-                ? { ...nextSku.productSkuSuggestedPriceReq }
-                : null;
-
-            if (!suggestedPriceReq) {
-                return nextSku;
-            }
-
-            if (Object.prototype.hasOwnProperty.call(suggestedPriceReq, 'suggestedPrice')) {
-                const supplierPrice = Number(nextSku.supplierPrice);
-                if (Number.isFinite(supplierPrice)) {
-                    suggestedPriceReq.suggestedPrice = supplierPrice;
-                }
-            }
-
-            if (
-                Object.prototype.hasOwnProperty.call(
-                    suggestedPriceReq,
-                    'suggestedPriceCurrencyType'
-                )
-            ) {
-                const currencyType = normalizeText(
-                    nextSku.currencyType || suggestedPriceReq.suggestedPriceCurrencyType
-                );
-                if (currencyType) {
-                    suggestedPriceReq.suggestedPriceCurrencyType = currencyType;
-                }
-            }
-
-            nextSku.productSkuSuggestedPriceReq = suggestedPriceReq;
-            return nextSku;
-        });
+        nextSkc.productSkuReqs = skuList.map((sku) =>
+            normalizeTemuTemplateSkuForSubmission(sku)
+        );
 
         return nextSkc;
     });
@@ -343,8 +380,9 @@ function syncSuggestedPricesFromSupplierFields(payload = {}) {
     return nextPayload;
 }
 
-function stripTemuTemplateSubmissionFields(payload = {}) {
+function stripTemuTemplateEditOnlyFields(payload = {}) {
     const nextPayload = isPlainObject(payload) ? { ...payload } : {};
+    delete nextPayload.productId;
     delete nextPayload.productDraftId;
     return nextPayload;
 }
@@ -353,8 +391,8 @@ function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
     const templatePayload = cloneSerializable(productTemplate) || {};
     const titleAppliedPayload = fillTemplateTitle(templatePayload, options.title);
     const imageAppliedPayload = assignTemplateImages(titleAppliedPayload, options.uploadedImageUrls || []);
-    const priceSyncedPayload = syncSuggestedPricesFromSupplierFields(imageAppliedPayload);
-    return stripTemuTemplateSubmissionFields(priceSyncedPayload);
+    const normalizedSkuPayload = normalizeTemuTemplateSkuFields(imageAppliedPayload);
+    return stripTemuTemplateEditOnlyFields(normalizedSkuPayload);
 }
 
 async function submitTemuTemplatePayload(payload = {}, sessionBundle = {}, options = {}) {
@@ -419,6 +457,7 @@ function buildTemplatePublishResult({
     publishImageUploadResult,
     submitResult,
     payloadSummary,
+    payloadPreview,
     shouldKeepPageOpen
 }) {
     return {
@@ -445,6 +484,7 @@ function buildTemplatePublishResult({
             publishImageUploadUploadedCount: publishImageUploadResult?.uploadedCount || 0,
             publishImageUploadFailedImages: publishImageUploadResult?.failedImages || [],
             productTemplatePayloadSummary: payloadSummary || null,
+            productTemplatePayloadPreview: payloadPreview || null,
             publishSubmitResult: submitResult
                 ? {
                     success: !!submitResult.success,
@@ -635,6 +675,7 @@ export async function publishTemuByProductTemplate(
         title: resolvedTitle,
         uploadedImageUrls
     });
+    const payloadPreview = buildTemuTemplatePayloadPreview(finalPayload);
     logger.info(`${PLATFORM_NAME}模板直发最终提交类目`, {
         cat1Id: finalPayload.cat1Id ?? null,
         cat2Id: finalPayload.cat2Id ?? null,
@@ -647,7 +688,7 @@ export async function publishTemuByProductTemplate(
         cat9Id: finalPayload.cat9Id ?? null,
         cat10Id: finalPayload.cat10Id ?? null
     });
-    logger.info(`${PLATFORM_NAME}模板直发最终提交模板`, finalPayload);
+    logger.info(`${PLATFORM_NAME}模板直发最终提交价格预览`, payloadPreview);
     const payloadSummary = summarizeTemuTemplatePayload(finalPayload);
     pushTrace(executionTrace, 'build_publish_payload', 'success', payloadSummary);
     logger.info(`${PLATFORM_NAME}模板直发已完成发布参数组装`, {
@@ -692,6 +733,7 @@ export async function publishTemuByProductTemplate(
             publishImageUploadResult,
             submitResult,
             payloadSummary,
+            payloadPreview,
             shouldKeepPageOpen
         });
     }
@@ -712,6 +754,7 @@ export async function publishTemuByProductTemplate(
         publishImageUploadResult,
         submitResult,
         payloadSummary,
+        payloadPreview,
         shouldKeepPageOpen
     });
 }

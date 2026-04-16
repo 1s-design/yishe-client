@@ -44,6 +44,8 @@ mac:
       to: resources/google-art/darwin
       filter:
         - dezoomify-rs-mac
+    - from: resources/plugin/darwin
+      to: resources/plugin/darwin
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
