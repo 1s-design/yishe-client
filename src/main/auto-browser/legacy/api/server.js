@@ -46,12 +46,16 @@ import {
     getEcomPlatformCatalog,
     runEcomCollectTask,
 } from '../ecom-collect/ecomCollectService.js';
+import {
+    getAutoBrowserScreenshotDir,
+    getAutoBrowserUploadDir,
+} from '../utils/workspacePaths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = process.env.FRONTEND_DIST
     ? path.resolve(process.env.FRONTEND_DIST)
     : path.resolve(__dirname, '../../web/dist');
-const UPLOAD_DIR = path.resolve(__dirname, '../../temp');
+const UPLOAD_DIR = getAutoBrowserUploadDir();
 const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
 
 function normalizeDebugValue(value, depth = 0) {
@@ -1797,7 +1801,9 @@ class ApiServer {
             const body = await this.parseBody(req).catch(() => ({})) || {};
             const requestedMode = String(body?.mode || '').trim().toLowerCase();
             const headless = body.headless === true ? true : (body.headless === false ? false : undefined);
-            const profileId = String(body?.profileId || '').trim() || undefined;
+            const explicitProfileId = String(body?.profileId || '').trim() || undefined;
+            const activeProfileId = String(listManagedBrowserProfiles()?.activeProfileId || '').trim() || undefined;
+            const profileId = explicitProfileId || activeProfileId;
             if (requestedMode && requestedMode !== 'cdp') {
                 logger.warn(`API connect 收到已废弃浏览器模式 "${requestedMode}"，已统一改为 cdp`);
             }
@@ -2366,9 +2372,10 @@ class ApiServer {
                 }
                 case 'screenshot': {
                     const filename = `browser-debug-${Date.now()}.png`;
-                    const savePath = path.resolve(UPLOAD_DIR, filename);
-                    if (!fs.existsSync(UPLOAD_DIR)) {
-                        await fs.promises.mkdir(UPLOAD_DIR, { recursive: true });
+                    const screenshotDir = getAutoBrowserScreenshotDir();
+                    const savePath = path.resolve(screenshotDir, filename);
+                    if (!fs.existsSync(screenshotDir)) {
+                        await fs.promises.mkdir(screenshotDir, { recursive: true });
                     }
                     await page.screenshot({ path: savePath, fullPage: true });
                     result = { path: savePath, filename };

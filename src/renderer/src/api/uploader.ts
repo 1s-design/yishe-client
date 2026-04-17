@@ -281,6 +281,7 @@ export interface UploaderBrowserProfileSummary {
   remark?: string;
   account?: string;
   platforms?: string[];
+  debugPort?: number | null;
   browserVersion?: string;
   loginSummary?: Record<string, any>;
   createdAt?: string | null;
@@ -984,10 +985,11 @@ export async function connectUploaderBrowser(
   data?: unknown;
 }> {
   try {
+    const resolvedOptions = await resolveManagedProfileConnectOptions(options);
     const res = await fetch(`${UPLOADER_API_BASE}/api/browser/connect`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: options ? JSON.stringify(options) : "{}",
+      body: JSON.stringify(resolvedOptions),
       signal: AbortSignal.timeout(60000),
     });
     const json = await res.json().catch(() => ({}));
@@ -1015,6 +1017,88 @@ export async function connectUploaderBrowser(
         : (err?.message ?? "连接浏览器失败");
     return { success: false, message };
   }
+}
+
+function normalizeManagedProfileLookupValue(value: unknown) {
+  return String(value || "").trim();
+}
+
+function normalizeManagedProfilePathLookupValue(value: unknown) {
+  const normalized = String(value || "").trim();
+  return normalized ? normalized.replace(/[\\/]+/g, "\\").toLowerCase() : "";
+}
+
+async function resolveManagedProfileConnectOptions(
+  options?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const nextOptions =
+    options && typeof options === "object" && !Array.isArray(options)
+      ? { ...options }
+      : {};
+  const explicitProfileId = normalizeManagedProfileLookupValue(nextOptions.profileId);
+  const requestedUserDataDir = normalizeManagedProfilePathLookupValue(
+    nextOptions.cdpUserDataDir || nextOptions.userDataDir,
+  );
+  const requestedPort = Number(nextOptions.debugPort || nextOptions.port || 0);
+  const shouldResolveManagedProfile =
+    !!explicitProfileId ||
+    !!requestedUserDataDir ||
+    (Number.isInteger(requestedPort) && requestedPort > 0);
+
+  if (!shouldResolveManagedProfile) {
+    return nextOptions;
+  }
+
+  const profilesResponse = await getUploaderProfiles().catch(() => null);
+  const profileItems = Array.isArray(profilesResponse?.data?.items)
+    ? profilesResponse?.data?.items
+    : [];
+  const matchedProfile =
+    profileItems.find((item) => {
+      const profileId = normalizeManagedProfileLookupValue(item?.id);
+      if (explicitProfileId && profileId === explicitProfileId) {
+        return true;
+      }
+
+      const profileUserDataDir = normalizeManagedProfilePathLookupValue(item?.userDataDir);
+      if (requestedUserDataDir && profileUserDataDir === requestedUserDataDir) {
+        return true;
+      }
+
+      const profileDebugPort = Number(item?.debugPort || 0);
+      return (
+        Number.isInteger(requestedPort) &&
+        requestedPort > 0 &&
+        Number.isInteger(profileDebugPort) &&
+        profileDebugPort > 0 &&
+        profileDebugPort === requestedPort
+      );
+    }) || null;
+
+  if (!matchedProfile) {
+    return nextOptions;
+  }
+
+  const managedProfileId = normalizeManagedProfileLookupValue(matchedProfile.id);
+  const managedUserDataDir = normalizeManagedProfileLookupValue(matchedProfile.userDataDir);
+  const managedDebugPort = Number(matchedProfile.debugPort || 0);
+
+  if (managedProfileId) {
+    nextOptions.profileId = managedProfileId;
+  }
+  delete nextOptions.cdpEndpoint;
+
+  if (Number.isInteger(managedDebugPort) && managedDebugPort > 0) {
+    nextOptions.port = managedDebugPort;
+    nextOptions.debugPort = managedDebugPort;
+  }
+
+  if (managedUserDataDir) {
+    nextOptions.userDataDir = managedUserDataDir;
+    nextOptions.cdpUserDataDir = managedUserDataDir;
+  }
+
+  return nextOptions;
 }
 
 /**

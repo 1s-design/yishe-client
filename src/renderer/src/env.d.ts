@@ -36,6 +36,58 @@ interface Window {
     selectWorkspaceDirectory(): Promise<string | null>
     getWorkspaceDirectory(): Promise<string>
     setWorkspaceDirectory(path: string): Promise<boolean>
+    getImageToolStatus(): Promise<any>
+    getImageToolDirectories(): Promise<any>
+    getImageToolCatalog(): Promise<any>
+    getImageToolOperations(): Promise<any>
+    getImageToolOperationSchemas(): Promise<any>
+    getImageToolOperationDetail(type: string): Promise<any>
+    getImageToolExamples(): Promise<any>
+    getImageToolExampleDetail(id: string): Promise<any>
+    getImageToolVariationsConfig(): Promise<any>
+    saveImageToolInput(payload: { sourcePath: string; fileName?: string }): Promise<any>
+    getImageToolInfo(payload: {
+      sourcePath?: string
+      imageUrl?: string
+      image?: string
+      filename?: string
+      engine?: string
+    }): Promise<any>
+    processImageTool(payload: {
+      sourcePath?: string
+      imageUrl?: string
+      image?: string
+      filename?: string
+      operations: Array<any>
+      outputPrefix?: string
+      engine?: string
+    }): Promise<any>
+    processImageToolWithPrompt(payload: {
+      prompt: string
+      sourcePath?: string
+      imageUrl?: string
+      image?: string
+      filename?: string
+      outputPrefix?: string
+      engine?: string
+    }): Promise<any>
+    generateImageToolVariations(payload: {
+      sourcePath?: string
+      imageUrl?: string
+      image?: string
+      filename?: string
+      engine?: string
+    }): Promise<any>
+    listImageToolFiles(payload: {
+      directory?: 'uploads' | 'output' | 'template' | 'temp'
+    }): Promise<any>
+    deleteImageToolFile(payload: {
+      directory?: 'uploads' | 'output' | 'template' | 'temp'
+      fileName: string
+    }): Promise<any>
+    clearImageToolFiles(payload: {
+      directory?: 'uploads' | 'output' | 'template' | 'temp'
+    }): Promise<any>
     openPath(path: string): Promise<void>
     // 文件下载
     downloadFile(url: string): Promise<{

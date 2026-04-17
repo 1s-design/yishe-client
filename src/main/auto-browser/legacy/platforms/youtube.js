@@ -6,6 +6,7 @@
 import { getOrCreateBrowser } from '../services/BrowserService.js';
 import { PageOperator } from '../services/PageOperator.js';
 import { logger } from '../utils/logger.js';
+import { buildAutoBrowserScreenshotPath } from '../utils/workspacePaths.js';
 
 /**
  * YouTube 发布器类
@@ -68,7 +69,10 @@ class YouTubePublisher {
 
             if (page) {
                 try {
-                    await page.screenshot({ path: `error_youtube_${Date.now()}.png`, fullPage: true });
+                    await page.screenshot({
+                        path: buildAutoBrowserScreenshotPath(`error_youtube_${Date.now()}.png`),
+                        fullPage: true
+                    });
                 } catch (e) {
                     logger.warn('截图失败:', e);
                 }

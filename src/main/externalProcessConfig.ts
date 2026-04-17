@@ -195,6 +195,8 @@ function buildImageProcessingRuntimeConfig(): ProcessConfig | null {
   };
 }
 
+void buildImageProcessingRuntimeConfig;
+
 const psAutomationExecutable = resolvePlatformPluginPath(
   "ps-automation/yishe-ps-windows.exe",
   "yishe-ps-windows.exe",
@@ -213,7 +215,7 @@ const remotionExecutable =
       );
 
 const pluginProcessConfigsInternal: ProcessConfig[] = [];
-const imageProcessingRuntimeConfig = buildImageProcessingRuntimeConfig();
+const imageProcessingRuntimeConfig = null;
 
 if (
   process.platform === "win32" &&

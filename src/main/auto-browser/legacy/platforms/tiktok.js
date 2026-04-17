@@ -1,6 +1,7 @@
 import { getOrCreateBrowser } from '../services/BrowserService.js';
 import { PageOperator } from '../services/PageOperator.js';
 import { logger } from '../utils/logger.js';
+import { buildAutoBrowserScreenshotPath } from '../utils/workspacePaths.js';
 
 /**
  * TikTok 发布器类
@@ -66,7 +67,7 @@ class TiktokPublisher {
             logger.error(`${this.platformName}发布失败:`, error);
             if (page) {
                 try {
-                    const screenshotPath = `error_tiktok_${Date.now()}.png`;
+                    const screenshotPath = buildAutoBrowserScreenshotPath(`error_tiktok_${Date.now()}.png`);
                     await page.screenshot({ path: screenshotPath, fullPage: true });
                     logger.info(`错误截图已保存至: ${screenshotPath}`);
                 } catch (e) {

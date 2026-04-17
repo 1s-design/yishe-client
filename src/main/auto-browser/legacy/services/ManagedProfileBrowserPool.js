@@ -16,277 +16,18 @@ import {
   patchContextNewPage,
   withDefaultActivatedPageOptions,
 } from "../utils/playwrightPageFactory.js";
+import {
+  formatBrowserRuntimeTimestamp,
+  installBrowserPageRuntime,
+  installBrowserPageRuntimeForPage,
+  isRuntimeOptionalPageUrl,
+  probeBrowserPageRuntime,
+} from "../utils/browserPageRuntime.js";
 import { spawn, exec } from "child_process";
 import http from "http";
 import https from "https";
 
 const sessions = new Map();
-const badgeBoundPages = new WeakSet();
-const badgeBoundContexts = new WeakSet();
-
-const FOCUS_TRACKER_SCRIPT = `
-(() => {
-  if (globalThis.__yisheFocusTrackerInstalled) {
-    return;
-  }
-
-  const ensureState = () => {
-    const prev = globalThis.__yisheFocusTracker || {};
-    const now = Date.now();
-    const next = {
-      hasFocus: typeof document?.hasFocus === "function" ? document.hasFocus() : false,
-      visibilityState: document?.visibilityState || "unknown",
-      lastFocusAt: Number(prev.lastFocusAt || 0),
-      lastBlurAt: Number(prev.lastBlurAt || 0),
-      lastVisibleAt: Number(prev.lastVisibleAt || 0),
-      updatedAt: now
-    };
-
-    if (next.hasFocus && !next.lastFocusAt) next.lastFocusAt = now;
-    if (next.visibilityState === "visible" && !next.lastVisibleAt) next.lastVisibleAt = now;
-
-    globalThis.__yisheFocusTracker = next;
-    return next;
-  };
-
-  const updateState = (reason) => {
-    const prev = ensureState();
-    const now = Date.now();
-    const next = {
-      ...prev,
-      hasFocus: typeof document?.hasFocus === "function" ? document.hasFocus() : false,
-      visibilityState: document?.visibilityState || "unknown",
-      updatedAt: now,
-      lastReason: reason || "update"
-    };
-
-    if (reason === "focus" || next.hasFocus) next.lastFocusAt = now;
-    if (reason === "blur") next.lastBlurAt = now;
-    if (reason === "visible" || next.visibilityState === "visible") next.lastVisibleAt = now;
-
-    globalThis.__yisheFocusTracker = next;
-  };
-
-  globalThis.__yisheFocusTrackerInstalled = true;
-  ensureState();
-
-  window.addEventListener("focus", () => updateState("focus"), true);
-  window.addEventListener("blur", () => updateState("blur"), true);
-  document.addEventListener("visibilitychange", () => {
-    updateState(document.visibilityState === "visible" ? "visible" : "hidden");
-  }, true);
-  window.addEventListener("pageshow", () => updateState("pageshow"), true);
-  window.addEventListener("load", () => updateState("load"), true);
-})();
-`;
-
-function injectProfileBadgeScript(payload) {
-  const normalizeText = (value, fallback = "") => {
-    const normalized = String(value || "").trim();
-    return normalized || fallback;
-  };
-
-  const profileId = normalizeText(payload?.profileId, "default");
-  const profileName = normalizeText(payload?.profileName, profileId);
-  const openedAtText = normalizeText(payload?.openedAtText, "--");
-  const badgeState = (globalThis.__yisheBrowserAutomationProfileBadgeState =
-    globalThis.__yisheBrowserAutomationProfileBadgeState || {});
-
-  badgeState.payload = {
-    profileId,
-    profileName,
-    openedAtText,
-  };
-  globalThis.__yisheBrowserAutomationProfile = badgeState.payload;
-
-  const BADGE_ID = "__yishe_browser_automation_profile_badge";
-  const BADGE_VERSION = "5";
-
-  const ensureBadge = () => {
-    if (!document?.documentElement) {
-      return;
-    }
-
-    const mountTarget = document.body || document.documentElement;
-    if (!mountTarget) {
-      return;
-    }
-
-    let badge = document.getElementById(BADGE_ID);
-    if (badge && badge.dataset.version !== BADGE_VERSION) {
-      badge.remove();
-      badge = null;
-    }
-
-    if (!badge) {
-      badge = document.createElement("div");
-      badge.id = BADGE_ID;
-      badge.dataset.version = BADGE_VERSION;
-      badge.setAttribute("data-yishe-browser-automation", "profile-badge");
-      badge.setAttribute("aria-hidden", "true");
-      badge.style.cssText = [
-        "position:fixed",
-        "right:10px",
-        "bottom:10px",
-        "z-index:2147483647",
-        "pointer-events:none",
-        "width:160px",
-        "padding:4px",
-        "border-radius:4px",
-        "background:linear-gradient(135deg, #f7ba2b 0%, #ea5358 100%)",
-        "box-shadow:0 8px 18px rgba(234, 83, 88, 0.18)",
-        "overflow:visible",
-        "font-family:'SF Pro Text','Segoe UI',Arial,sans-serif",
-        "user-select:none",
-        "box-sizing:border-box",
-      ].join(";");
-
-      const glow = document.createElement("div");
-      glow.setAttribute("data-role", "glow");
-      glow.style.cssText = [
-        "position:absolute",
-        "top:18px",
-        "left:8px",
-        "right:8px",
-        "bottom:-6px",
-        "border-radius:4px",
-        "background:linear-gradient(135deg, #f7ba2b 0%, #ea5358 100%)",
-        "filter:blur(12px)",
-        "opacity:0.28",
-        "z-index:0",
-        "pointer-events:none",
-      ].join(";");
-
-      const cardInfo = document.createElement("div");
-      cardInfo.setAttribute("data-role", "card-info");
-      cardInfo.style.cssText = [
-        "position:relative",
-        "z-index:1",
-        "display:flex",
-        "flex-direction:column",
-        "gap:4px",
-        "width:100%",
-        "min-height:74px",
-        "padding:8px 10px",
-        "border-radius:4px",
-        "background:#181818",
-        "box-sizing:border-box",
-        "color:#f8fafc",
-      ].join(";");
-
-      const eyebrow = document.createElement("div");
-      eyebrow.setAttribute("data-role", "eyebrow");
-      eyebrow.style.cssText = [
-        "font-size:8px",
-        "font-weight:600",
-        "letter-spacing:0.06em",
-        "color:rgba(255,255,255,0.56)",
-        "text-transform:uppercase",
-        "line-height:1.2",
-      ].join(";");
-      eyebrow.textContent = "环境编号";
-
-      const number = document.createElement("div");
-      number.setAttribute("data-role", "number");
-      number.style.cssText = [
-        "font-size:17px",
-        "font-weight:700",
-        "line-height:1.1",
-        "color:#ffffff",
-        "letter-spacing:0.02em",
-      ].join(";");
-
-      const name = document.createElement("div");
-      name.setAttribute("data-role", "name");
-      name.style.cssText = [
-        "font-size:9px",
-        "font-weight:500",
-        "line-height:1.25",
-        "color:rgba(255,255,255,0.82)",
-        "overflow:hidden",
-        "text-overflow:ellipsis",
-        "white-space:nowrap",
-      ].join(";");
-
-      const openedAt = document.createElement("div");
-      openedAt.setAttribute("data-role", "openedAt");
-      openedAt.style.cssText = [
-        "font-size:9px",
-        "font-weight:500",
-        "line-height:1.25",
-        "color:rgba(255,255,255,0.64)",
-        "overflow:hidden",
-        "text-overflow:ellipsis",
-        "white-space:nowrap",
-      ].join(";");
-
-      cardInfo.appendChild(eyebrow);
-      cardInfo.appendChild(number);
-      cardInfo.appendChild(name);
-      cardInfo.appendChild(openedAt);
-      badge.appendChild(glow);
-      badge.appendChild(cardInfo);
-      mountTarget.appendChild(badge);
-    } else if (badge.parentElement !== mountTarget) {
-      mountTarget.appendChild(badge);
-    }
-
-    const currentPayload = badgeState.payload || {};
-    badge.dataset.profileId = currentPayload.profileId || "";
-    badge.dataset.profileName = currentPayload.profileName || "";
-    badge.title = [currentPayload.profileId, currentPayload.profileName, currentPayload.openedAtText]
-      .filter(Boolean)
-      .join(" | ");
-
-    const numberNode = badge.querySelector('[data-role="number"]');
-    const nameNode = badge.querySelector('[data-role="name"]');
-    const openedAtNode = badge.querySelector('[data-role="openedAt"]');
-    if (numberNode) {
-      numberNode.textContent = currentPayload.profileId || "default";
-    }
-    if (nameNode) {
-      nameNode.textContent = `环境名称 ${currentPayload.profileName || currentPayload.profileId || "--"}`;
-    }
-    if (openedAtNode) {
-      openedAtNode.textContent = `打开时间 ${currentPayload.openedAtText || "--"}`;
-    }
-  };
-
-  ensureBadge();
-
-  if (!badgeState.bound) {
-    badgeState.bound = true;
-
-    const rerender = () => {
-      try {
-        ensureBadge();
-      } catch {
-        // ignore
-      }
-    };
-
-    window.addEventListener("load", rerender, true);
-    window.addEventListener("pageshow", rerender, true);
-    document.addEventListener("visibilitychange", rerender, true);
-
-    const observer = new MutationObserver(() => {
-      const badge = document.getElementById(BADGE_ID);
-      if (!badge || !badge.isConnected) {
-        rerender();
-      }
-    });
-
-    try {
-      observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-      });
-      badgeState.observer = observer;
-    } catch {
-      // ignore
-    }
-  }
-}
 
 function getHeadlessMode() {
   const headlessEnv = process.env.HEADLESS || process.env.BROWSER_HEADLESS;
@@ -310,6 +51,31 @@ function normalizeDebugPort(value) {
 
 function buildCdpEndpoint(port) {
   return `http://127.0.0.1:${port}`;
+}
+
+function escapePowerShellSingleQuotedValue(value) {
+  return String(value || "").replace(/'/g, "''");
+}
+
+function parseRemoteDebuggingPortFromCommandLine(commandLine = "") {
+  const match = String(commandLine || "").match(/--remote-debugging-port(?:=|\s+)(\d+)/i);
+  const port = Number(match?.[1] || 0);
+  return Number.isInteger(port) && port > 0 ? port : null;
+}
+
+function normalizeChromeProcessEntries(entries) {
+  const items = Array.isArray(entries) ? entries : entries ? [entries] : [];
+  return items
+    .map((item) => {
+      const pid = String(item?.ProcessId || item?.pid || "").trim();
+      const commandLine = String(item?.CommandLine || item?.command || "").trim();
+      return {
+        pid,
+        commandLine,
+        debugPort: parseRemoteDebuggingPortFromCommandLine(commandLine),
+      };
+    })
+    .filter((item) => !!item.pid);
 }
 
 function withTimeout(promise, ms, label) {
@@ -412,25 +178,9 @@ function wrapBrowserHandle(profileId) {
   };
 }
 
-function formatProfileBadgeOpenedAt(value) {
-  if (!value) {
-    return "";
-  }
-
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value || "").trim();
-  }
-
-  const pad = (input) => String(input).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(
-    date.getMinutes(),
-  )}:${pad(date.getSeconds())}`;
-}
-
-function buildProfileBadgePayload(profile) {
+function buildProfileRuntimePayload(profile) {
   const session = getSession(profile?.id);
-  const openedAtText = formatProfileBadgeOpenedAt(session?.createdAt || session?.updatedAt || "");
+  const openedAtText = formatBrowserRuntimeTimestamp(session?.createdAt || session?.updatedAt || "");
   return {
     profileId: String(profile?.id || "").trim() || "default",
     profileName: String(profile?.name || profile?.id || "").trim() || "default",
@@ -438,83 +188,21 @@ function buildProfileBadgePayload(profile) {
   };
 }
 
-async function installProfileBadgeForPage(page, profile) {
-  if (!page || (typeof page.isClosed === "function" && page.isClosed())) return;
+function resolveSessionDebugPort(session, profile) {
+  const profileDebugPort = normalizeDebugPort(profile?.debugPort);
+  const sessionDebugPort = normalizeDebugPort(session?.debugPort);
+  const sessionOwnsRuntime = !!(
+    session?.connectPromise ||
+    session?.browserInstance ||
+    session?.contextInstance ||
+    session?.browserStatus?.isConnected
+  );
 
-  try {
-    await page.evaluate(injectProfileBadgeScript, buildProfileBadgePayload(profile));
-  } catch {
-    // 页面导航中、特殊页面或内部页面时忽略
+  if (sessionOwnsRuntime && sessionDebugPort) {
+    return sessionDebugPort;
   }
-}
 
-function bindProfileBadgePage(page, resolveProfilePayload) {
-  if (!page || badgeBoundPages.has(page)) {
-    return;
-  }
-
-  badgeBoundPages.add(page);
-  const syncBadge = () => {
-    const profile = resolveProfilePayload();
-    if (!profile) return;
-    void installProfileBadgeForPage(page, profile);
-  };
-
-  page.on("domcontentloaded", syncBadge);
-  page.on("load", syncBadge);
-}
-
-async function installProfileBadge(context, profile) {
-  if (!context || !profile) return;
-
-  const resolveCurrentProfile = () => {
-    return getBrowserProfile(profile.id) || profile;
-  };
-
-  try {
-    for (const page of context.pages()) {
-      bindProfileBadgePage(page, resolveCurrentProfile);
-      await installProfileBadgeForPage(page, resolveCurrentProfile());
-    }
-
-    if (!badgeBoundContexts.has(context)) {
-      badgeBoundContexts.add(context);
-      context.on("page", (page) => {
-        bindProfileBadgePage(page, resolveCurrentProfile);
-        void installProfileBadgeForPage(page, resolveCurrentProfile());
-      });
-    }
-  } catch (error) {
-    logger.warn("安装环境角标失败:", error?.message || error);
-  }
-}
-
-async function installFocusTrackerForPage(page) {
-  if (!page || (typeof page.isClosed === "function" && page.isClosed())) return;
-
-  try {
-    await page.evaluate(FOCUS_TRACKER_SCRIPT);
-  } catch {
-    // 页面导航中或尚未可执行脚本时忽略
-  }
-}
-
-async function installFocusTracker(context) {
-  if (!context) return;
-
-  try {
-    await context.addInitScript(FOCUS_TRACKER_SCRIPT).catch(() => {});
-
-    for (const page of context.pages()) {
-      await installFocusTrackerForPage(page);
-    }
-
-    context.on("page", (page) => {
-      void installFocusTrackerForPage(page);
-    });
-  } catch (error) {
-    logger.warn("安装页面焦点跟踪器失败:", error?.message || error);
-  }
+  return profileDebugPort || sessionDebugPort;
 }
 
 function execCommand(command, timeoutMs = 8000) {
@@ -609,6 +297,85 @@ async function getListeningPids(port) {
   } catch {
     return [];
   }
+}
+
+async function getChromeProcessesByUserDataDir(userDataDir) {
+  const safeUserDataDir = String(userDataDir || "").trim();
+  if (!safeUserDataDir) {
+    return [];
+  }
+
+  if (process.platform === "win32") {
+    const needle = escapePowerShellSingleQuotedValue(safeUserDataDir.toLowerCase());
+    const command =
+      `powershell -NoProfile -Command "$needle='${needle}'; ` +
+      `$items=@(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains($needle) } | Select-Object ProcessId,CommandLine); ` +
+      `if ($items.Count -gt 0) { $items | ConvertTo-Json -Compress }"`;
+    try {
+      const output = await execCommand(command, 15000);
+      if (!output) {
+        return [];
+      }
+      return normalizeChromeProcessEntries(JSON.parse(output));
+    } catch {
+      return [];
+    }
+  }
+
+  const escapedNeedle = safeUserDataDir.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  try {
+    const output = await execCommand(
+      `ps -ax -o pid=,command= | grep -F "${escapedNeedle}" | grep -F "chrome" | grep -v grep`,
+      15000,
+    );
+    if (!output) {
+      return [];
+    }
+    const items = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const match = line.match(/^(\d+)\s+(.+)$/);
+        return match
+          ? {
+              pid: match[1],
+              command: match[2],
+            }
+          : null;
+      })
+      .filter(Boolean);
+    return normalizeChromeProcessEntries(items);
+  } catch {
+    return [];
+  }
+}
+
+async function killChromeProcessesByUserDataDir(userDataDir, { excludePids = [] } = {}) {
+  const excludedPidSet = new Set(
+    (Array.isArray(excludePids) ? excludePids : [])
+      .map((pid) => String(pid || "").trim())
+      .filter(Boolean),
+  );
+  const matched = await getChromeProcessesByUserDataDir(userDataDir);
+  const targetPids = matched
+    .map((item) => item.pid)
+    .filter((pid) => pid && !excludedPidSet.has(pid));
+
+  if (!targetPids.length) {
+    return {
+      matched,
+      killed: [],
+      errors: [],
+    };
+  }
+
+  const result = await killPids(targetPids);
+  return {
+    matched,
+    killed: result.killed,
+    errors: result.errors,
+  };
 }
 
 async function resolveListeningPid(port) {
@@ -724,6 +491,10 @@ async function getSessionPages(session) {
   }
 
   const probeTimeoutMs = 1500;
+  const runtimePayload = buildProfileRuntimePayload({
+    id: session.profileId,
+    name: session.profileName,
+  });
   const pages = session.contextInstance.pages().filter((page) => {
     try {
       return page && !(typeof page.isClosed === "function" && page.isClosed());
@@ -734,24 +505,38 @@ async function getSessionPages(session) {
 
   const results = await Promise.all(
     pages.map(async (page, index) => {
+      let runtimeInfo = null;
       let title = "";
       let url = "";
       let isActive = index === 0;
       try {
-        title = await withTimeout(page.title().catch(() => ""), probeTimeoutMs, "page.title").catch(() => "");
-        url = page.url();
-        isActive = await withTimeout(
-          page.evaluate(() => {
-            const state = globalThis.__yisheFocusTracker || {};
-            return document.visibilityState === "visible" || state.hasFocus === true;
-          }),
+        runtimeInfo = await withTimeout(
+          probeBrowserPageRuntime(page, runtimePayload),
           probeTimeoutMs,
-          "page.isActive",
+          "page.runtimeProbe",
         )
-          .catch(() => index === 0);
+          .catch(() => null);
       } catch {
         // ignore
       }
+
+      title = String(runtimeInfo?.title || "").trim();
+      url = String(runtimeInfo?.url || "").trim();
+
+      if (!title) {
+        title = await withTimeout(page.title().catch(() => ""), probeTimeoutMs, "page.title").catch(() => "");
+      }
+      if (!url) {
+        try {
+          url = page.url();
+        } catch {
+          // ignore
+        }
+      }
+
+      isActive = runtimeInfo
+        ? runtimeInfo.visibilityState === "visible" || runtimeInfo.hasFocus === true
+        : index === 0;
 
       return {
         id: `${session.profileId || "default"}-page-${index}`,
@@ -763,11 +548,83 @@ async function getSessionPages(session) {
         isActive,
         profileId: session.profileId,
         profileName: session.profileName,
+        hasFocus: !!runtimeInfo?.hasFocus,
+        visibilityState: String(runtimeInfo?.visibilityState || "unknown"),
+        runtimeReachable: !!runtimeInfo,
+        isPlaceholderPage: isRuntimeOptionalPageUrl(url),
+        lastHeartbeatAt: Number(runtimeInfo?.lastHeartbeatAt || 0),
+        lastProbeAt: Number(runtimeInfo?.lastProbeAt || 0),
+        updatedAt: Number(runtimeInfo?.updatedAt || 0),
       };
     }),
   );
 
   return results;
+}
+
+async function probeSessionConnectedLightweight(session) {
+  if (!session?.browserInstance || !session?.contextInstance) {
+    return false;
+  }
+
+  try {
+    if (typeof session.browserInstance.isConnected === "function" && !session.browserInstance.isConnected()) {
+      return false;
+    }
+
+    const pages = session.contextInstance.pages().filter((page) => {
+      try {
+        return page && !(typeof page.isClosed === "function" && page.isClosed());
+      } catch {
+        return false;
+      }
+    });
+
+    session.browserStatus.pageCount = pages.length;
+    if (!pages.length) {
+      session.browserStatus.isConnected = true;
+      return true;
+    }
+
+    const runtimePayload = buildProfileRuntimePayload({
+      id: session.profileId,
+      name: session.profileName,
+    });
+
+    let hasRequiredRuntimePage = false;
+    for (const page of pages.slice(0, 3)) {
+      const runtimeInfo = await withTimeout(
+        probeBrowserPageRuntime(page, runtimePayload),
+        900,
+        "page.runtimeLightweight",
+      ).catch(() => null);
+
+      if (runtimeInfo) {
+        session.browserStatus.isConnected = true;
+        session.browserStatus.lastActivity = Date.now();
+        return true;
+      }
+
+      let candidateUrl = "";
+      try {
+        candidateUrl = page.url();
+      } catch {
+        // ignore
+      }
+      if (!isRuntimeOptionalPageUrl(candidateUrl)) {
+        hasRequiredRuntimePage = true;
+      }
+    }
+
+    if (!hasRequiredRuntimePage) {
+      session.browserStatus.isConnected = true;
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 async function isSessionAvailable(session) {
@@ -781,6 +638,12 @@ async function isSessionAvailable(session) {
     }
 
     const pages = await getSessionPages(session);
+    const hasReachableRuntime = pages.some((page) => page.runtimeReachable);
+    const hasOnlyOptionalPages = pages.length > 0 && pages.every((page) => page.isPlaceholderPage);
+    if (pages.length > 0 && !hasReachableRuntime && !hasOnlyOptionalPages) {
+      throw new Error("页面运行时探活失败");
+    }
+
     session.browserStatus.isInitialized = true;
     session.browserStatus.isConnected = true;
     session.browserStatus.pageCount = pages.length;
@@ -969,8 +832,10 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
       background: true,
       headless,
     });
-    await installFocusTracker(session.contextInstance);
-    await installProfileBadge(session.contextInstance, profile);
+    await installBrowserPageRuntime(session.contextInstance, () => buildProfileRuntimePayload(getBrowserProfile(profile.id) || profile), {
+      logger,
+      logLabel: "安装浏览器页面运行时失败:",
+    });
     return wrapBrowserHandle(profile.id);
   }
 
@@ -989,6 +854,25 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
 
       const existingEndpoint = await checkCdpEndpointAvailable(cdpEndpoint);
       if (!existingEndpoint.ok) {
+        const staleProcessCleanup = await killChromeProcessesByUserDataDir(profile.userDataDir, {
+          excludePids: session.chromePid ? [session.chromePid] : [],
+        }).catch(() => null);
+        if (staleProcessCleanup?.killed?.length) {
+          const stalePorts = Array.from(
+            new Set(
+              (staleProcessCleanup.matched || [])
+                .map((item) => item.debugPort)
+                .filter((port) => Number.isInteger(port) && port > 0),
+            ),
+          );
+          logger.warn(
+            `检测到环境 ${profile.id} 存在旧浏览器进程占用环境目录，已清理 pids=${staleProcessCleanup.killed.join(",")}${
+              stalePorts.length ? `, legacyPorts=${stalePorts.join(",")}` : ""
+            }`,
+          );
+          await sleep(1200);
+        }
+
         launchedNewBrowser = true;
         const launched = launchChromeWithDebugPort({
           port: debugPort,
@@ -1010,7 +894,19 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
         }
 
         if (!ready) {
-          throw new Error(`Chrome 调试端口未就绪: ${cdpEndpoint}`);
+          const legacyProcesses = await getChromeProcessesByUserDataDir(profile.userDataDir).catch(() => []);
+          const legacyPorts = Array.from(
+            new Set(
+              legacyProcesses
+                .map((item) => item.debugPort)
+                .filter((port) => Number.isInteger(port) && port > 0),
+            ),
+          );
+          throw new Error(
+            `Chrome 调试端口未就绪: ${cdpEndpoint}${
+              legacyPorts.length ? `，检测到同环境目录进程端口: ${legacyPorts.join(",")}` : ""
+            }`,
+          );
         }
       }
 
@@ -1049,8 +945,10 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
         headless,
       });
       await setBrowserWindowMaximized(session.contextInstance, headless);
-      await installFocusTracker(session.contextInstance);
-      await installProfileBadge(session.contextInstance, profile);
+      await installBrowserPageRuntime(session.contextInstance, () => buildProfileRuntimePayload(getBrowserProfile(profile.id) || profile), {
+        logger,
+        logLabel: "安装浏览器页面运行时失败:",
+      });
       session.browserStatus.isInitialized = true;
       session.browserStatus.isConnected = true;
       session.browserStatus.lastActivity = Date.now();
@@ -1134,8 +1032,7 @@ export async function createProfileBrowserPage(profileId, pageOptions = {}) {
   }
   const finalPageOptions = withDefaultActivatedPageOptions(pageOptions);
   const page = await session.contextInstance.newPage(finalPageOptions);
-  await installFocusTrackerForPage(page);
-  await installProfileBadgeForPage(page, targetProfile);
+  await installBrowserPageRuntimeForPage(page, buildProfileRuntimePayload(targetProfile));
   session.browserStatus.lastActivity = Date.now();
   session.browserStatus.pageCount = session.contextInstance.pages().length;
   session.updatedAt = new Date().toISOString();
@@ -1155,7 +1052,7 @@ export function updateManagedProfileBrowserActivity(profileId) {
 function buildInstanceSummary(profile, session, pages = []) {
   const hasInstance = !!session?.browserInstance || !!session?.contextInstance || !!session?.connectPromise;
   const lastActivityValue = session?.browserStatus?.lastActivity || null;
-  const debugPort = normalizeDebugPort(session?.debugPort || profile?.debugPort);
+  const debugPort = resolveSessionDebugPort(session, profile);
   const cdpEndpoint = session?.cdpEndpoint || (debugPort ? buildCdpEndpoint(debugPort) : null);
   return {
     profileId: profile.id,
@@ -1196,21 +1093,6 @@ function buildInstanceSummary(profile, session, pages = []) {
 }
 
 function isSessionConnectedLightweight(session) {
-  if (!session?.browserInstance || !session?.contextInstance) {
-    return false;
-  }
-
-  try {
-    if (
-      typeof session.browserInstance.isConnected === "function" &&
-      !session.browserInstance.isConnected()
-    ) {
-      return false;
-    }
-  } catch {
-    return false;
-  }
-
   return !!session?.browserStatus?.isConnected || !!session?.connectPromise;
 }
 
@@ -1229,7 +1111,7 @@ export async function getManagedProfileBrowserStatus(options = {}) {
     const session = getSession(normalizedProfileId);
     const sessionAvailable = session
       ? lightweight
-        ? isSessionConnectedLightweight(session)
+        ? await probeSessionConnectedLightweight(session)
         : await isSessionAvailable(session)
       : false;
     if (session && !sessionAvailable) {

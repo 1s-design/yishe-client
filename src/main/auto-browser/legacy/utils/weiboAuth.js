@@ -12,13 +12,14 @@ import {
 import {
     join
 } from 'path';
+import { getAutoBrowserAuthDataDir } from './workspacePaths.js';
 
 /**
  * 微博认证管理类
  */
 export class WeiboAuth {
     constructor() {
-        this.authDataPath = join(process.cwd(), 'auth-data', 'weibo-auth.txt');
+        this.authDataPath = join(getAutoBrowserAuthDataDir(), 'weibo-auth.txt');
         this.cookies = [];
         this.headers = {};
     }

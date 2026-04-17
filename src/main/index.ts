@@ -49,6 +49,38 @@ import {
   invokeAutoBrowserRoute,
   shutdownAutoBrowserService,
 } from "./auto-browser";
+import {
+  clearImageToolFiles,
+  configureImageTool,
+  deleteImageToolFile,
+  generateImageVariations,
+  getImageInfo,
+  getImageToolCatalog,
+  getImageToolDirectories,
+  getImageToolExampleById,
+  getImageToolExamples,
+  getImageToolOperationDetail,
+  getImageToolOperationSchemas,
+  getImageToolOperations,
+  getImageToolStatus,
+  getImageToolVariationsConfig,
+  listImageToolFiles,
+  processImage,
+  processImageWithPrompt,
+  saveImageToolInput,
+} from "./image-tool";
+
+function resolveBundledImageMagickDirectory(): string | null {
+  const candidates = [
+    join(process.resourcesPath, "resources", "plugin", process.platform, "image-tool", "imagemagick"),
+    join(process.resourcesPath, "app.asar.unpacked", "resources", "plugin", process.platform, "image-tool", "imagemagick"),
+    join(app.getAppPath(), "resources", "plugin", process.platform, "image-tool", "imagemagick"),
+    join(app.getAppPath(), "..", "resources", "plugin", process.platform, "image-tool", "imagemagick"),
+    join(process.cwd(), "resources", "plugin", process.platform, "image-tool", "imagemagick"),
+  ];
+
+  return candidates.find((item) => fs.existsSync(item)) || null;
+}
 
 // 扩展app对象的类型
 declare global {
@@ -78,6 +110,16 @@ const store = new Store({
     workspaceDirectory: "",
   },
 });
+
+configureImageTool({
+  getWorkspaceDirectory: () =>
+    (store.get("workspaceDirectory", "") as string) || "",
+});
+
+const bundledImageMagickDirectory = resolveBundledImageMagickDirectory();
+if (bundledImageMagickDirectory && !process.env.YISHE_IMAGEMAGICK_DIR) {
+  process.env.YISHE_IMAGEMAGICK_DIR = bundledImageMagickDirectory;
+}
 
 /**
  * 获取默认工作目录路径
@@ -966,6 +1008,77 @@ ipcMain.handle("set-workspace-directory", async (_event, path: string) => {
     return true;
   }
   return false;
+});
+
+ipcMain.handle("image-tool:get-status", async () => {
+  return await getImageToolStatus();
+});
+
+ipcMain.handle("image-tool:get-directories", async () => {
+  return {
+    success: true,
+    directories: getImageToolDirectories(),
+  };
+});
+
+ipcMain.handle("image-tool:get-catalog", async () => {
+  return await getImageToolCatalog();
+});
+
+ipcMain.handle("image-tool:get-operations", async () => {
+  return await getImageToolOperations();
+});
+
+ipcMain.handle("image-tool:get-operation-schemas", async () => {
+  return await getImageToolOperationSchemas();
+});
+
+ipcMain.handle("image-tool:get-operation-detail", async (_event, type: string) => {
+  return await getImageToolOperationDetail(type);
+});
+
+ipcMain.handle("image-tool:get-examples", async () => {
+  return await getImageToolExamples();
+});
+
+ipcMain.handle("image-tool:get-example-detail", async (_event, id: string) => {
+  return await getImageToolExampleById(id);
+});
+
+ipcMain.handle("image-tool:get-variations-config", async () => {
+  return await getImageToolVariationsConfig();
+});
+
+ipcMain.handle("image-tool:save-input", async (_event, payload: any) => {
+  return await saveImageToolInput(payload || {});
+});
+
+ipcMain.handle("image-tool:get-info", async (_event, payload: any) => {
+  return await getImageInfo(payload || {});
+});
+
+ipcMain.handle("image-tool:process", async (_event, payload: any) => {
+  return await processImage(payload || {});
+});
+
+ipcMain.handle("image-tool:process-with-prompt", async (_event, payload: any) => {
+  return await processImageWithPrompt(payload || {});
+});
+
+ipcMain.handle("image-tool:variations", async (_event, payload: any) => {
+  return await generateImageVariations(payload || {});
+});
+
+ipcMain.handle("image-tool:list-files", async (_event, payload: any) => {
+  return await listImageToolFiles(payload || {});
+});
+
+ipcMain.handle("image-tool:delete-file", async (_event, payload: any) => {
+  return await deleteImageToolFile(payload || {});
+});
+
+ipcMain.handle("image-tool:clear-files", async (_event, payload: any) => {
+  return await clearImageToolFiles(payload || {});
 });
 
 ipcMain.handle("open-path", async (_event, path: string) => {

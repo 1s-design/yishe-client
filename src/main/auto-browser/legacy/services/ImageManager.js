@@ -5,6 +5,7 @@
 import { join as pathJoin, extname } from 'path';
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
 import { logger } from '../utils/logger.js';
+import { getAutoBrowserTempDir } from '../utils/workspacePaths.js';
 
 /**
  * 图片管理器类
@@ -29,8 +30,7 @@ export class ImageManager {
      * 获取临时目录路径
      */
     getTempDir() {
-        const tempDir = pathJoin(process.cwd(), 'temp');
-        return this.ensureDir(tempDir);
+        return this.ensureDir(getAutoBrowserTempDir());
     }
 
     /**

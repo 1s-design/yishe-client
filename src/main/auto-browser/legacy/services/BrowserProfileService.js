@@ -1,6 +1,6 @@
 import path from 'path';
-import os from 'os';
 import fs from 'fs-extra';
+import { getAutoBrowserWorkspaceDir } from '../utils/workspacePaths.js';
 
 const REGISTRY_FILENAME = 'profiles.json';
 const PROFILE_FILENAME = 'profile.json';
@@ -10,21 +10,7 @@ const DEBUG_PORT_BASE = Number(process.env.BROWSER_PROFILE_DEBUG_PORT_BASE) || 9
 const DEBUG_PORT_MAX = Number(process.env.BROWSER_PROFILE_DEBUG_PORT_MAX) || 9999;
 
 function getDefaultWorkspaceDir() {
-    const envDir = process.env.YISHE_BROWSER_PROFILE_WORKSPACE_DIR || process.env.BROWSER_PROFILE_WORKSPACE_DIR;
-    if (envDir) {
-        return path.resolve(envDir);
-    }
-
-    if (process.platform === 'win32') {
-        return path.resolve('C:\\temp\\yishe-auto-browser-workspace');
-    }
-
-    const homeDir = os.homedir();
-    const safeBase = homeDir && typeof homeDir === 'string'
-        ? homeDir
-        : process.cwd();
-
-    return path.resolve(safeBase, '.yishe-auto-browser', 'workspace');
+    return getAutoBrowserWorkspaceDir();
 }
 
 export function getBrowserProfilesWorkspaceDir() {
@@ -90,6 +76,16 @@ function normalizeDebugPort(value) {
     return port;
 }
 
+function isManagedProfileDebugPort(value) {
+    const port = normalizeDebugPort(value);
+    return !!(port && port >= DEBUG_PORT_BASE && port <= DEBUG_PORT_MAX);
+}
+
+function normalizeManagedProfileDebugPort(value) {
+    const port = normalizeDebugPort(value);
+    return isManagedProfileDebugPort(port) ? port : null;
+}
+
 function loadProfileRecordsByRegistry(registry) {
     const items = Array.isArray(registry?.items) ? registry.items : [];
     const records = new Map();
@@ -145,6 +141,71 @@ function allocateDebugPortFromUsedPorts(usedPorts) {
 function allocateDebugPort(registry, options = {}) {
     const usedPorts = collectUsedDebugPorts(registry, options);
     return allocateDebugPortFromUsedPorts(usedPorts);
+}
+
+function reconcileProfileDebugPorts(registry) {
+    const records = loadProfileRecordsByRegistry(registry);
+    const items = Array.isArray(registry?.items) ? registry.items : [];
+    const portCounts = new Map();
+    const currentPorts = new Map();
+
+    for (const item of items) {
+        const profileId = normalizeProfileId(item?.id);
+        if (!profileId) {
+            continue;
+        }
+
+        const record = records.get(profileId) || loadProfileRecord(profileId) || buildProfileRecord(profileId, item);
+        records.set(profileId, record);
+        const debugPort = normalizeManagedProfileDebugPort(record?.debugPort);
+        currentPorts.set(profileId, debugPort);
+        if (debugPort) {
+            portCounts.set(debugPort, Number(portCounts.get(debugPort) || 0) + 1);
+        }
+    }
+
+    const reservedPorts = new Set(
+        Array.from(portCounts.entries())
+            .filter(([, count]) => Number(count) === 1)
+            .map(([port]) => Number(port)),
+    );
+    const usedPorts = new Set(reservedPorts);
+
+    for (const item of items) {
+        const profileId = normalizeProfileId(item?.id);
+        if (!profileId) {
+            continue;
+        }
+
+        const record = records.get(profileId) || buildProfileRecord(profileId, item);
+        const currentPort = currentPorts.get(profileId) || null;
+        const isUniqueReserved = !!(currentPort && reservedPorts.has(currentPort));
+        const canKeepCurrent = isUniqueReserved || !!(currentPort && !usedPorts.has(currentPort));
+
+        if (canKeepCurrent) {
+            usedPorts.add(currentPort);
+            if (normalizeDebugPort(record?.debugPort) !== currentPort) {
+                const nextRecord = buildProfileRecord(profileId, {
+                    ...record,
+                    debugPort: currentPort,
+                });
+                saveProfileRecord(profileId, nextRecord);
+                records.set(profileId, nextRecord);
+            }
+            continue;
+        }
+
+        const nextDebugPort = allocateDebugPortFromUsedPorts(usedPorts);
+        usedPorts.add(nextDebugPort);
+        const nextRecord = buildProfileRecord(profileId, {
+            ...record,
+            debugPort: nextDebugPort,
+        });
+        saveProfileRecord(profileId, nextRecord);
+        records.set(profileId, nextRecord);
+    }
+
+    return records;
 }
 
 function buildProfileRecord(profileId, payload = {}) {
@@ -211,8 +272,8 @@ function saveProfileRecord(profileId, payload) {
 }
 
 function ensureProfileDebugPort(profileId, profile, registry, options = {}) {
-    const debugPort = normalizeDebugPort(profile?.debugPort);
-    if (debugPort) {
+    const debugPort = normalizeManagedProfileDebugPort(profile?.debugPort);
+    if (debugPort && (!(options.usedPorts instanceof Set) || !options.usedPorts.has(debugPort))) {
         if (options.usedPorts instanceof Set) {
             options.usedPorts.add(debugPort);
         }
@@ -291,8 +352,8 @@ export function ensureBrowserProfilesWorkspace() {
 
 export function listBrowserProfiles() {
     const registry = loadRegistry();
-    const records = loadProfileRecordsByRegistry(registry);
-    const usedPorts = collectUsedDebugPorts(registry, { records });
+    const records = reconcileProfileDebugPorts(registry);
+    const usedPorts = new Set();
     const profiles = registry.items
         .map((item) => {
             const profileId = normalizeProfileId(item?.id);
@@ -322,16 +383,18 @@ export function getBrowserProfile(profileId) {
         return null;
     }
     const registry = loadRegistry();
-    const record = loadProfileRecord(normalizedId);
+    const records = reconcileProfileDebugPorts(registry);
+    const record = records.get(normalizedId) || null;
     if (!record) {
         return null;
     }
-    return summarizeProfile(ensureProfileDebugPort(normalizedId, record, registry), registry);
+    return summarizeProfile(record, registry);
 }
 
 export function createBrowserProfile(payload = {}) {
     ensureBrowserProfilesWorkspace();
     const registry = loadRegistry();
+    const records = reconcileProfileDebugPorts(registry);
     const requestedId = normalizeProfileId(payload.id);
     const profileId = requestedId || getNextProfileId(registry.items);
 
@@ -340,9 +403,10 @@ export function createBrowserProfile(payload = {}) {
     }
 
     const now = new Date().toISOString();
-    const requestedDebugPort = normalizeDebugPort(payload.debugPort);
-    const debugPort = requestedDebugPort || allocateDebugPort(registry);
-    if (collectUsedDebugPorts(registry).has(debugPort)) {
+    const requestedDebugPort = normalizeManagedProfileDebugPort(payload.debugPort);
+    const usedPorts = collectUsedDebugPorts(registry, { records });
+    const debugPort = requestedDebugPort || allocateDebugPortFromUsedPorts(usedPorts);
+    if (usedPorts.has(debugPort)) {
         throw new Error(`浏览器调试端口已被其他环境占用: ${debugPort}`);
     }
     const record = buildProfileRecord(profileId, {
@@ -394,12 +458,14 @@ export function updateBrowserProfile(profileId, payload = {}) {
     }
 
     const registry = loadRegistry();
+    const records = reconcileProfileDebugPorts(registry);
     const hasDebugPortPatch = Object.prototype.hasOwnProperty.call(payload, 'debugPort');
     const requestedDebugPort = hasDebugPortPatch
-        ? normalizeDebugPort(payload.debugPort)
-        : normalizeDebugPort(existing.debugPort);
-    const debugPort = requestedDebugPort || allocateDebugPort(registry, { excludeProfileId: normalizedId });
-    if (collectUsedDebugPorts(registry, { excludeProfileId: normalizedId }).has(debugPort)) {
+        ? normalizeManagedProfileDebugPort(payload.debugPort)
+        : normalizeManagedProfileDebugPort(existing.debugPort);
+    const usedPorts = collectUsedDebugPorts(registry, { excludeProfileId: normalizedId, records });
+    const debugPort = requestedDebugPort || allocateDebugPortFromUsedPorts(usedPorts);
+    if (usedPorts.has(debugPort)) {
         throw new Error(`浏览器调试端口已被其他环境占用: ${debugPort}`);
     }
     const nextRecord = buildProfileRecord(normalizedId, {
@@ -450,6 +516,7 @@ export function switchBrowserProfile(profileId) {
     }
 
     const registry = loadRegistry();
+    const records = reconcileProfileDebugPorts(registry);
     const exists = registry.items.some((item) => item.id === normalizedId);
     if (!exists) {
         throw new Error(`环境不存在: ${normalizedId}`);
@@ -457,7 +524,9 @@ export function switchBrowserProfile(profileId) {
 
     registry.activeProfileId = normalizedId;
     saveRegistry(registry);
-    const record = loadProfileRecord(normalizedId) || buildProfileRecord(normalizedId, { name: normalizedId });
+    const record = records.get(normalizedId)
+        || loadProfileRecord(normalizedId)
+        || buildProfileRecord(normalizedId, { name: normalizedId });
     return summarizeProfile(record, registry);
 }
 

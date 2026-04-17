@@ -39,6 +39,7 @@ import {
   getEcomPlatformCatalog,
   runEcomCollectTask,
 } from "./legacy/ecom-collect/ecomCollectService.js";
+import { getAutoBrowserTempDir } from "./legacy/utils/workspacePaths.js";
 
 export interface AutoBrowserInvokeRequest {
   method?: string;
@@ -626,8 +627,7 @@ function ensureLegacyEnv() {
 }
 
 function getTempDir() {
-  const userDataDir = app.getPath("userData");
-  return path.resolve(userDataDir, "auto-browser", "temp");
+  return getAutoBrowserTempDir();
 }
 
 class AutoBrowserService {
@@ -1011,7 +1011,10 @@ class AutoBrowserService {
     const requestedMode = String(body?.mode || "").trim().toLowerCase();
     const headless =
       body?.headless === true ? true : body?.headless === false ? false : undefined;
-    const profileId = normalizeString(body?.profileId) || undefined;
+    const explicitProfileId = normalizeString(body?.profileId) || undefined;
+    const activeProfileId =
+      normalizeString(listManagedBrowserProfiles()?.activeProfileId) || undefined;
+    const profileId = explicitProfileId || activeProfileId;
 
     if (requestedMode && requestedMode !== "cdp") {
       console.warn(

@@ -325,27 +325,15 @@ function resolveImageProcessingRuntimeMeta() {
   const hasChecked = !!runtime?.lastCheckedAt;
   const activeJobsCount = Number(details?.activeJobsCount ?? 0);
   const isBusy = !!(runtime?.busy || runtime?.state === "busy" || activeJobsCount > 0);
-  const serviceError =
-    runtime?.status === "error" || runtime?.state === "error";
-  const summaryText = available
-    ? "服务可用"
-    : hasChecked
-      ? "服务不可用"
-      : "检测中";
-  const tone: ServiceStatusTone = available
-    ? "success"
-    : serviceError
-      ? "danger"
-      : hasChecked
-        ? "warning"
-        : "muted";
+  const summaryText = available ? "可用" : hasChecked ? "不可用" : "检测中";
+  const tone: ServiceStatusTone = available ? "success" : "muted";
   const description = !hasChecked
     ? ""
     : !available
-      ? "服务不可用"
+      ? String(runtime?.message || runtime?.lastError || "当前不可用")
       : isBusy
         ? `当前有 ${activeJobsCount} 个图片任务处理中`
-        : "本地图片服务在线";
+        : "客户端内置图片处理已就绪";
 
   return {
     available,
@@ -847,7 +835,7 @@ const sidebarRuntimeItems = computed(() => [
   },
   {
     key: "image-processing",
-    label: "Yishe Images",
+    label: "Image Tool",
     value: imageProcessingRuntimeMeta.value.summaryText,
     tone: imageProcessingRuntimeMeta.value.tone,
   },
@@ -915,7 +903,7 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
   },
   {
     key: "image-processing",
-    title: "Yishe Images",
+    title: "Image Tool",
     value: imageProcessingRuntimeMeta.value.summaryText,
     description: imageProcessingRuntimeMeta.value.description,
     icon: "mdi-image-multiple-outline",
@@ -1042,6 +1030,19 @@ onMounted(() => {
     websocketClient.updateClientInfo({ appVersion: fallbackVersion });
   }
 
+  if (typeof nativeApi?.getWorkspaceDirectory === "function") {
+    void nativeApi
+      .getWorkspaceDirectory()
+      .then((workspaceDirectory: string) => {
+        websocketClient.updateClientInfo({
+          workspaceDirectory: String(workspaceDirectory || "").trim(),
+        });
+      })
+      .catch((error) => {
+        console.warn("获取工作目录失败:", error);
+      });
+  }
+
   void checkAuthAndGetUserInfo();
 
   (window as any).__materialUploadService = downloadImageAndUploadMaterial;
@@ -1050,6 +1051,8 @@ onMounted(() => {
 
   void checkPsServiceStatus();
   psServiceStatusInterval = setInterval(checkPsServiceStatus, 8000);
+
+  void websocketClient.syncServiceRuntime("image-processing");
 
   void checkUploaderServiceStatus();
   uploaderServiceStatusInterval = setInterval(checkUploaderServiceStatus, 3000);

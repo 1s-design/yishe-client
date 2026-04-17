@@ -30,6 +30,30 @@ const api = {
   selectWorkspaceDirectory: () => ipcRenderer.invoke('select-workspace-directory'),
   getWorkspaceDirectory: () => ipcRenderer.invoke('get-workspace-directory'),
   setWorkspaceDirectory: (path: string) => ipcRenderer.invoke('set-workspace-directory', path),
+  getImageToolStatus: () => ipcRenderer.invoke('image-tool:get-status'),
+  getImageToolDirectories: () => ipcRenderer.invoke('image-tool:get-directories'),
+  getImageToolCatalog: () => ipcRenderer.invoke('image-tool:get-catalog'),
+  getImageToolOperations: () => ipcRenderer.invoke('image-tool:get-operations'),
+  getImageToolOperationSchemas: () => ipcRenderer.invoke('image-tool:get-operation-schemas'),
+  getImageToolOperationDetail: (type: string) => ipcRenderer.invoke('image-tool:get-operation-detail', type),
+  getImageToolExamples: () => ipcRenderer.invoke('image-tool:get-examples'),
+  getImageToolExampleDetail: (id: string) => ipcRenderer.invoke('image-tool:get-example-detail', id),
+  getImageToolVariationsConfig: () => ipcRenderer.invoke('image-tool:get-variations-config'),
+  saveImageToolInput: (payload: { sourcePath: string; fileName?: string }) => ipcRenderer.invoke('image-tool:save-input', payload),
+  getImageToolInfo: (payload: { sourcePath?: string; imageUrl?: string; image?: string; filename?: string; engine?: string }) =>
+    ipcRenderer.invoke('image-tool:get-info', payload),
+  processImageTool: (payload: { sourcePath?: string; imageUrl?: string; image?: string; filename?: string; operations: Array<any>; outputPrefix?: string; engine?: string }) =>
+    ipcRenderer.invoke('image-tool:process', payload),
+  processImageToolWithPrompt: (payload: { prompt: string; sourcePath?: string; imageUrl?: string; image?: string; filename?: string; outputPrefix?: string; engine?: string }) =>
+    ipcRenderer.invoke('image-tool:process-with-prompt', payload),
+  generateImageToolVariations: (payload: { sourcePath?: string; imageUrl?: string; image?: string; filename?: string; engine?: string }) =>
+    ipcRenderer.invoke('image-tool:variations', payload),
+  listImageToolFiles: (payload: { directory?: 'uploads' | 'output' | 'template' | 'temp' }) =>
+    ipcRenderer.invoke('image-tool:list-files', payload),
+  deleteImageToolFile: (payload: { directory?: 'uploads' | 'output' | 'template' | 'temp'; fileName: string }) =>
+    ipcRenderer.invoke('image-tool:delete-file', payload),
+  clearImageToolFiles: (payload: { directory?: 'uploads' | 'output' | 'template' | 'temp' }) =>
+    ipcRenderer.invoke('image-tool:clear-files', payload),
   openPath: (path: string) => ipcRenderer.invoke('open-path', path),
   // 文件下载相关方法
   downloadFile: (url: string) => ipcRenderer.invoke('download-file', url),

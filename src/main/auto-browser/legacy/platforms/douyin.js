@@ -6,6 +6,7 @@
 import { getOrCreateBrowser } from '../services/BrowserService.js';
 import { PageOperator } from '../services/PageOperator.js';
 import { logger } from '../utils/logger.js';
+import { buildAutoBrowserScreenshotPath } from '../utils/workspacePaths.js';
 
 /**
  * 抖音发布器类
@@ -144,7 +145,10 @@ class DouyinPublisher {
             // 截图保存错误现场
             if (page) {
                 try {
-                    await page.screenshot({ path: `error_douyin_${Date.now()}.png`, fullPage: true });
+                    await page.screenshot({
+                        path: buildAutoBrowserScreenshotPath(`error_douyin_${Date.now()}.png`),
+                        fullPage: true
+                    });
                 } catch (e) {
                     logger.warn('截图失败:', e);
                 }
@@ -708,7 +712,10 @@ class DouyinPublisher {
                 // 截图记录
                 if (retryCount % 10 === 0) {
                     try {
-                        await page.screenshot({ path: `publishing_${Date.now()}.png`, fullPage: true });
+                        await page.screenshot({
+                            path: buildAutoBrowserScreenshotPath(`publishing_${Date.now()}.png`),
+                            fullPage: true
+                        });
                     } catch (e) {
                         // 忽略截图错误
                     }

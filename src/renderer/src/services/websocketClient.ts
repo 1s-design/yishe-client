@@ -56,9 +56,9 @@ type WsStatus =
   | "error";
 
 const CLIENT_SOURCE = "客户端";
-const HEARTBEAT_INTERVAL = 15_000;
-const HEARTBEAT_TIMEOUT = 60_000;
-const UPLOADER_RUNTIME_SYNC_INTERVAL = 5_000;
+const HEARTBEAT_INTERVAL = 10_000;
+const HEARTBEAT_TIMEOUT = 35_000;
+const UPLOADER_RUNTIME_SYNC_INTERVAL = 4_000;
 const PHOTOSHOP_RUNTIME_SYNC_INTERVAL = 8_000;
 const IMAGE_PROCESSING_RUNTIME_SYNC_INTERVAL = 8_000;
 const VIDEO_TEMPLATE_RUNTIME_SYNC_INTERVAL = 5_000;
@@ -66,7 +66,7 @@ const IMAGE_PROCESSING_REQUEST_TIMEOUT_MS = 20_000;
 const IMAGE_PROCESSING_HEALTH_TIMEOUT_MS = 2_500;
 const IMAGE_PROCESSING_TASK_TIMEOUT_MS = 5 * 60_000;
 const IMAGE_PROCESSING_META_CACHE_TTL_MS = 60_000;
-const IMAGE_PROCESSING_LOCAL_BASE = "http://127.0.0.1:1513";
+const IMAGE_PROCESSING_LOCAL_BASE = "electron://image-tool";
 const REMOTION_REQUEST_TIMEOUT_MS = 10_000;
 const REMOTION_HEALTH_TIMEOUT_MS = 2_500;
 const REMOTION_TEMPLATE_REQUEST_TIMEOUT_MS = 5_000;
@@ -255,6 +255,7 @@ interface ClientInfoPayload {
   clientId: string;
   source: string;
   appVersion?: string;
+  workspaceDirectory?: string;
   extension?: {
     name?: string;
     version?: string;
@@ -1015,6 +1016,7 @@ function sanitizeBrowserAutomationProfileForWs(profile: unknown) {
     remark: String(source.remark || "").trim() || null,
     account: String(source.account || "").trim() || null,
     platforms: Array.isArray(source.platforms) ? source.platforms : [],
+    debugPort: typeof source.debugPort === "number" ? source.debugPort : null,
     browserVersion: String(source.browserVersion || "").trim() || null,
     loginSummary:
       source.loginSummary &&
@@ -1261,6 +1263,7 @@ function buildClientInfoPayloadForWs() {
     clientId: clientInfo.clientId,
     source: clientInfo.source,
     appVersion: clientInfo.appVersion,
+    workspaceDirectory: String(clientInfo.workspaceDirectory || "").trim() || undefined,
     services,
   };
 
@@ -1620,6 +1623,7 @@ function buildBrowserAutomationProfileInstances(
     const runningExecution = runningExecutionMap.get(profileId) || null;
     const port =
       resolveBrowserPort(browserInstance) ??
+      resolveBrowserPort(profile) ??
       (activeConnectionProfileId && activeConnectionProfileId === profileId
         ? resolveBrowserPort(activeConnection)
         : null);
@@ -2404,6 +2408,7 @@ function normalizeRemotionQueueJob(job: any) {
     elapsedMs:
       typeof job?.elapsedMs === "number" ? Number(job.elapsedMs) : null,
     videoUrl: String(job?.videoUrl || "").trim() || null,
+    localPath: String(job?.localPath || "").trim() || null,
     data:
       job?.data && typeof job.data === "object" && !Array.isArray(job.data)
         ? job.data
@@ -2983,34 +2988,71 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
 
     if (status === "completed") {
       const completedQueuePayload = buildRemotionQueuePayload(null, payload);
-      await syncRemotionRecordStatus(
-        recordId,
-        {
-          status: "success",
-          progress: 100,
-          message: "视频渲染完成",
-          remotionJobId: jobId,
-          remotionVideoUrl: payload?.videoUrl || null,
-          resultUrl: payload?.videoUrl || null,
-          url: payload?.videoUrl || null,
-          ...completedQueuePayload,
-          responseData: {
-            ...payload,
-            ...completedQueuePayload,
-          },
-        },
-        { persist: "always" },
-      );
-      void syncServiceRuntime("video-template");
-      return {
-        success: true,
-        message: "Video Template 视频渲染完成",
-        data: {
+      try {
+        const uploadedVideo = await uploadRemotionResultFileToCos(command, {
           recordId,
           jobId,
-          videoUrl: payload?.videoUrl || null,
-        },
-      };
+          localPath: payload?.localPath || null,
+          serviceUrl: payload?.videoUrl || null,
+        });
+        await syncRemotionRecordStatus(
+          recordId,
+          {
+            status: "success",
+            progress: 100,
+            message: "视频渲染完成并已上传 COS",
+            remotionJobId: jobId,
+            remotionVideoUrl: uploadedVideo.url,
+            resultUrl: uploadedVideo.url,
+            url: uploadedVideo.url,
+            ...completedQueuePayload,
+            responseData: {
+              ...payload,
+              ...completedQueuePayload,
+              cosUrl: uploadedVideo.url,
+              cosKey: uploadedVideo.key,
+              localPath: uploadedVideo.localPath,
+              serviceUrl: uploadedVideo.serviceUrl,
+            },
+          },
+          { persist: "always" },
+        );
+        void syncServiceRuntime("video-template");
+        return {
+          success: true,
+          message: "Video Template 视频渲染完成",
+          data: {
+            recordId,
+            jobId,
+            videoUrl: uploadedVideo.url,
+            localPath: uploadedVideo.localPath,
+            cosKey: uploadedVideo.key,
+          },
+        };
+      } catch (error) {
+        const errorMessage = `视频渲染完成，但上传 COS 失败: ${serializeError(error)}`;
+        await syncRemotionRecordStatus(
+          recordId,
+          {
+            status: "failed",
+            progress: 100,
+            message: errorMessage,
+            errorMessage,
+            remotionJobId: jobId,
+            ...completedQueuePayload,
+            responseData: {
+              ...payload,
+              ...completedQueuePayload,
+              localPath: payload?.localPath || null,
+              serviceUrl: payload?.videoUrl || null,
+              uploadError: serializeError(error),
+            },
+          },
+          { persist: "always" },
+        );
+        void syncServiceRuntime("video-template");
+        throw new Error(errorMessage);
+      }
     }
 
     if (status === "failed") {
@@ -3084,96 +3126,110 @@ async function fetchImageProcessingJson(
   path: string,
   init?: RequestInit & { timeoutMs?: number },
 ) {
-  const { timeoutMs = IMAGE_PROCESSING_REQUEST_TIMEOUT_MS, ...requestInit } =
-    init || {};
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  let cleanupAbortListener: (() => void) | null = null;
+  const { timeoutMs = IMAGE_PROCESSING_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
+  const nativeApi = getNativeApi() as any;
+  if (!nativeApi) {
+    throw new Error("当前环境未注入桌面端 image-tool 能力");
+  }
 
-  if (requestInit.signal) {
-    if (requestInit.signal.aborted) {
-      controller.abort();
-    } else {
-      const abortFromUpstream = () => controller.abort();
-      requestInit.signal.addEventListener("abort", abortFromUpstream, {
-        once: true,
-      });
-      cleanupAbortListener = () => {
-        requestInit.signal?.removeEventListener("abort", abortFromUpstream);
+  const bodyPayload =
+    typeof requestInit.body === "string" && requestInit.body.trim()
+      ? JSON.parse(requestInit.body)
+      : requestInit.body && typeof requestInit.body === "object"
+        ? requestInit.body
+        : {};
+
+  const action = async () => {
+    if (path === "/api/health") {
+      const status = await nativeApi.getImageToolStatus?.();
+      const processors = Array.isArray(status?.processors) ? status.processors : [];
+      const imageProcessor =
+        processors.find((item: any) => item?.id === status?.defaultProcessorId) ||
+        processors[0] || {
+          installed: false,
+          message: status?.lastError || "未检测到图像处理引擎",
+        };
+      return {
+        success: !!status?.success,
+        status: status?.success ? "healthy" : "unhealthy",
+        defaultImageProcessorId: status?.defaultProcessorId || "",
+        availableImageProcessors: processors,
+        imageProcessor,
+        data: {
+          ...(status && typeof status === "object" ? status : {}),
+          runtimeStatus: status?.status || "unknown",
+          status: status?.success ? "healthy" : "unhealthy",
+          defaultImageProcessorId: status?.defaultProcessorId || "",
+          availableImageProcessors: processors,
+          imageProcessor,
+        },
       };
     }
-  }
 
-  try {
-    const response = await fetch(`${IMAGE_PROCESSING_LOCAL_BASE}${path}`, {
-      ...requestInit,
-      signal: controller.signal,
-    });
-    const json = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        String(
-          json?.message ||
-            json?.error ||
-            json?.msg ||
-            `图片服务请求失败: ${response.status}`,
-        ),
-      );
+    if (path === "/api/catalog") {
+      return nativeApi.getImageToolCatalog?.();
     }
-    return json;
-  } catch (error: any) {
-    if (error?.name === "AbortError") {
-      throw new Error(`图片处理服务心跳超时 (${timeoutMs}ms)`);
+    if (path === "/api/operations") {
+      return nativeApi.getImageToolOperations?.();
     }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-    cleanupAbortListener?.();
-  }
+    if (path === "/api/variations-config") {
+      return nativeApi.getImageToolVariationsConfig?.();
+    }
+    if (path === "/api/image-processor-status") {
+      const status = await nativeApi.getImageToolStatus?.();
+      return {
+        success: true,
+        defaultProcessorId: status?.defaultProcessorId || "",
+        processors: status?.processors || [],
+      };
+    }
+    if (path === "/api/process") {
+      return nativeApi.processImageTool?.(bodyPayload || {});
+    }
+    if (path === "/api/variations") {
+      return nativeApi.generateImageToolVariations?.(bodyPayload || {});
+    }
+    if (path === "/api/files/delete") {
+      return nativeApi.deleteImageToolFile?.({
+        directory: bodyPayload?.directory || "output",
+        fileName: bodyPayload?.filename || bodyPayload?.fileName,
+      });
+    }
+
+    throw new Error(`未实现的 image-tool 路径: ${path}`);
+  };
+
+  return Promise.race([
+    action(),
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`图片处理服务心跳超时 (${timeoutMs}ms)`)),
+        timeoutMs,
+      ),
+    ),
+  ]).catch((error: any) => {
+    throw new Error(serializeError(error));
+  });
 }
 
 async function ensureImageProcessingProcessReady() {
-  const assertHealthy = async () => {
-    const health = await fetchImageProcessingJson("/api/health", {
-      timeoutMs: IMAGE_PROCESSING_HEALTH_TIMEOUT_MS,
-    });
-    const payload = (health?.data || health || {}) as Record<string, any>;
-    if (
-      health?.success === false ||
-      payload?.status !== "healthy" ||
-      payload?.imageProcessor?.installed === false
-    ) {
-      throw new Error(
-        String(
-          payload?.imageProcessor?.message ||
-            payload?.message ||
-            "图片处理服务未就绪",
-        ),
-      );
-    }
-  };
-
-  try {
-    await assertHealthy();
-    return;
-  } catch {}
-
-  const nativeApi = getNativeApi();
-  await nativeApi?.startExternalProcess?.("image-processing").catch(() => undefined);
-
-  let lastError = "图片处理服务未启动";
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 15_000) {
-    try {
-      await assertHealthy();
-      return;
-    } catch (error) {
-      lastError = serializeError(error);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+  const health = await fetchImageProcessingJson("/api/health", {
+    timeoutMs: IMAGE_PROCESSING_HEALTH_TIMEOUT_MS,
+  });
+  const payload = (health?.data || health || {}) as Record<string, any>;
+  if (
+    health?.success === false ||
+    payload?.status !== "healthy" ||
+    payload?.imageProcessor?.installed === false
+  ) {
+    throw new Error(
+      String(
+        payload?.imageProcessor?.message ||
+          payload?.message ||
+          "图片处理能力未就绪",
+      ),
+    );
   }
-
-  throw new Error(lastError);
 }
 
 async function getCachedImageProcessingMeta(force = false) {
@@ -3246,13 +3302,6 @@ async function getImageProcessingRuntime() {
   const checkedAt = new Date().toISOString();
   const startedAt = Date.now();
   const activeTasks = buildImageProcessingActiveTaskList();
-  const nativeApi = getNativeApi();
-  const processList = await nativeApi
-    ?.listExternalProcesses?.()
-    .catch(() => []);
-  const processInfo = Array.isArray(processList)
-    ? processList.find((item: any) => item?.id === "image-processing")
-    : null;
   const previousRuntime = clientInfo.services?.["image-processing"];
   const previousDetails =
     previousRuntime?.details && typeof previousRuntime.details === "object"
@@ -3264,25 +3313,23 @@ async function getImageProcessingRuntime() {
       timeoutMs: IMAGE_PROCESSING_HEALTH_TIMEOUT_MS,
     });
     const healthPayload = (health?.data || health || {}) as Record<string, any>;
-    if (
-      health?.success === false ||
-      healthPayload?.status !== "healthy" ||
-      healthPayload?.imageProcessor?.installed === false
-    ) {
+    const processorStatusFromHealth =
+      healthPayload?.imageProcessor && typeof healthPayload.imageProcessor === "object"
+        ? healthPayload.imageProcessor
+        : null;
+    const processorInstalled = processorStatusFromHealth?.installed !== false;
+
+    if (health?.success === false || healthPayload?.status !== "healthy") {
       throw new Error(
         String(
-          healthPayload?.imageProcessor?.message ||
+          processorStatusFromHealth?.message ||
             healthPayload?.message ||
             "图片处理服务未就绪",
         ),
       );
     }
 
-    const meta = await getCachedImageProcessingMeta(
-      !previousDetails.catalog ||
-        !Array.isArray(previousDetails.operations) ||
-        !Array.isArray(previousDetails.variations),
-    ).catch(() => ({
+    let meta = {
       catalog:
         previousDetails.catalog && typeof previousDetails.catalog === "object"
           ? previousDetails.catalog
@@ -3297,22 +3344,55 @@ async function getImageProcessingRuntime() {
         previousDetails.processorStatus && typeof previousDetails.processorStatus === "object"
           ? previousDetails.processorStatus
           : imageProcessingMetaCache.processorStatus,
-    }));
+    };
+
+    try {
+      meta = await getCachedImageProcessingMeta(
+        !previousDetails.catalog ||
+          !Array.isArray(previousDetails.operations) ||
+          !Array.isArray(previousDetails.variations),
+      );
+    } catch (metaError) {
+      emitter.emit("log", {
+        level: "warn",
+        message: `[image-processing] meta fallback: ${serializeError(metaError)}`,
+      });
+    }
 
     const activeTaskCount = activeTasks.length;
     const currentTask = activeTasks[0] || null;
 
+    const processorStatus =
+      processorStatusFromHealth ||
+      meta.processorStatus ||
+      healthPayload?.imageProcessor ||
+      null;
+    const runtimeAvailable = processorInstalled && processorStatus?.installed !== false;
+    const runtimeStatus: "connected" | "error" = processorInstalled
+      ? "connected"
+      : "error";
+    const runtimeState: "idle" | "busy" | "error" = !processorInstalled
+      ? "error"
+      : activeTaskCount > 0
+        ? "busy"
+        : "idle";
+    const runtimeMessage = !processorInstalled
+      ? String(processorStatus?.message || "图片处理插件已连接，但当前引擎不可执行")
+      : activeTaskCount > 0
+        ? `图片处理中，当前执行 ${activeTaskCount} 个任务`
+        : String(processorStatus?.message || "图片处理能力可用");
+
     return {
-      label: "Yishe Images 图片处理引擎",
+      label: "Image Tool 图片处理",
       connected: true,
-      available: true,
-      status: "connected" as const,
-      state: activeTaskCount > 0 ? ("busy" as const) : ("idle" as const),
+      available: runtimeAvailable,
+      status: runtimeStatus,
+      state: runtimeState,
       busy: activeTaskCount > 0,
-      message: "服务可用",
+      message: runtimeMessage,
       endpoint: IMAGE_PROCESSING_LOCAL_BASE,
       lastCheckedAt: checkedAt,
-      lastError: null,
+      lastError: runtimeAvailable ? null : runtimeMessage,
       currentTaskId: currentTask?.recordId || null,
       supportedCommands: ["refreshRuntime", "health", "createTask"],
       supportedTaskTypes: ["process", "variations"],
@@ -3321,9 +3401,10 @@ async function getImageProcessingRuntime() {
         catalog: meta.catalog,
         operations: meta.operations,
         variations: meta.variations,
-        processorStatus: meta.processorStatus || healthPayload?.imageProcessor || null,
-        processStatus: processInfo?.status || null,
-        serviceHealthy: true,
+        processorStatus,
+        executable: runtimeAvailable,
+        processStatus: activeTaskCount > 0 ? "running" : "ready",
+        serviceHealthy: runtimeAvailable,
         heartbeatLatencyMs: Date.now() - startedAt,
         lastHeartbeatAt: checkedAt,
         activeJobsCount: activeTaskCount,
@@ -3339,19 +3420,16 @@ async function getImageProcessingRuntime() {
     };
   } catch (error) {
     const errorMessage = serializeError(error);
-    const looksOffline =
-      !processInfo ||
-      processInfo.status === "stopped" ||
-      processInfo.status === "stopping";
+    const looksOffline = true;
 
     return {
-      label: "Yishe Images 图片处理引擎",
+      label: "Image Tool 图片处理",
       connected: false,
       available: false,
       status: looksOffline ? ("disconnected" as const) : ("error" as const),
       state: looksOffline ? ("offline" as const) : ("error" as const),
       busy: false,
-      message: "服务不可用",
+      message: "图片处理插件未就绪，当前不可执行",
       endpoint: IMAGE_PROCESSING_LOCAL_BASE,
       lastCheckedAt: checkedAt,
       lastError: errorMessage,
@@ -3372,7 +3450,8 @@ async function getImageProcessingRuntime() {
           previousDetails.processorStatus && typeof previousDetails.processorStatus === "object"
             ? previousDetails.processorStatus
             : imageProcessingMetaCache.processorStatus,
-        processStatus: processInfo?.status || null,
+        executable: false,
+        processStatus: "error",
         serviceHealthy: false,
         lastHeartbeatAt: checkedAt,
         heartbeatError: errorMessage,
@@ -3500,6 +3579,57 @@ async function uploadImageProcessingResultFileToCos(
     owned: true,
     engine: options.engine || null,
     extra: options.extra || null,
+  };
+}
+
+async function uploadRemotionResultFileToCos(
+  command: ServiceCommandEnvelope,
+  options: {
+    recordId: string;
+    jobId?: string | null;
+    localPath?: string | null;
+    serviceUrl?: string | null;
+  },
+) {
+  const apiBridge = window.api as any;
+  if (!apiBridge?.generateCosKey || !apiBridge?.uploadFileToCos) {
+    throw new Error("当前环境未注入 COS 上传能力");
+  }
+
+  const localPath = String(options.localPath || "").trim();
+  if (!localPath) {
+    throw new Error("缺少本地视频文件路径");
+  }
+
+  const fileName =
+    localPath.split(/[/\\\\]/).filter(Boolean).pop() ||
+    `${String(options.jobId || options.recordId || "video-template").trim() || "video-template"}.mp4`;
+
+  const keyResult = await apiBridge.generateCosKey({
+    category: "video-template-record",
+    filename: fileName,
+    account: String(command.tenant?.account || "").trim() || undefined,
+    userId: String(command.tenant?.userId || "").trim() || undefined,
+    entityId: options.recordId,
+  });
+  if (!keyResult?.ok || !keyResult?.key) {
+    throw new Error(keyResult?.msg || "生成 COS Key 失败");
+  }
+
+  const uploadResult = await apiBridge.uploadFileToCos({
+    filePath: localPath,
+    key: keyResult.key,
+  });
+  if (!uploadResult?.ok || !uploadResult?.url) {
+    throw new Error(uploadResult?.msg || "COS 上传失败");
+  }
+
+  return {
+    url: String(uploadResult.url || "").trim(),
+    key: String(uploadResult.key || keyResult.key || "").trim() || null,
+    fileName,
+    localPath,
+    serviceUrl: String(options.serviceUrl || "").trim() || null,
   };
 }
 
@@ -6468,14 +6598,14 @@ function registerBuiltInLocalServices() {
   registerLocalService({
     key: "image-processing",
     pluginKey: "image-processing",
-    label: "Yishe Images 图片处理引擎",
+    label: "Image Tool 图片处理",
     getRuntime: getImageProcessingRuntime,
     execute: async (command) => {
       if (command.action === "refreshRuntime") {
         const runtime = await syncServiceRuntime("image-processing");
         return {
           success: !!runtime?.available,
-          message: runtime?.message || "Yishe Images 运行状态已刷新",
+          message: runtime?.message || "Image Tool 运行状态已刷新",
           data: {
             runtime,
           },
@@ -6488,7 +6618,7 @@ function registerBuiltInLocalServices() {
         return result;
       }
 
-      throw new Error(`未实现的 Yishe Images 命令: ${command.action}`);
+      throw new Error(`未实现的 Image Tool 命令: ${command.action}`);
     },
   });
 

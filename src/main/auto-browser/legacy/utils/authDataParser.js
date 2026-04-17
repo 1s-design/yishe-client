@@ -12,13 +12,14 @@ import {
 import {
     logger
 } from './logger.js';
+import { getAutoBrowserAuthDataDir } from './workspacePaths.js';
 
 /**
  * 认证数据解析器类
  */
 export class AuthDataParser {
     constructor() {
-        this.authDataPath = join(process.cwd(), 'auth-data', 'xiaohongshu-auth.txt');
+        this.authDataPath = join(getAutoBrowserAuthDataDir(), 'xiaohongshu-auth.txt');
     }
 
     /**

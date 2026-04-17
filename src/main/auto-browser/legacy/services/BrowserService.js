@@ -28,6 +28,13 @@ import {
 import {
     getPlaywrightChromium
 } from '../utils/playwrightRuntime.js';
+import {
+    formatBrowserRuntimeTimestamp,
+    installBrowserPageRuntime,
+    installBrowserPageRuntimeForPage,
+    isRuntimeOptionalPageUrl,
+    probeBrowserPageRuntime
+} from '../utils/browserPageRuntime.js';
 import AdmZip from 'adm-zip';
 import fs from 'fs-extra';
 import http from 'http';
@@ -38,6 +45,7 @@ import {
     getBrowserProfile,
     getActiveBrowserProfile,
     ensureDefaultBrowserProfile,
+    findBrowserProfileByUserDataDir,
     switchBrowserProfile,
     createBrowserProfile,
     updateBrowserProfile,
@@ -72,62 +80,8 @@ let currentManagedProfileId = null;
 let connectPromise = null;
 let lastConnectError = null;
 let currentBrowserOptions = {};
+let currentBrowserOpenedAt = null;
 let hasLoggedLegacyModeFallback = false;
-const FOCUS_TRACKER_SCRIPT = `
-(() => {
-  if (globalThis.__yisheFocusTrackerInstalled) {
-    return;
-  }
-
-  const ensureState = () => {
-    const prev = globalThis.__yisheFocusTracker || {};
-    const now = Date.now();
-    const next = {
-      hasFocus: typeof document?.hasFocus === 'function' ? document.hasFocus() : false,
-      visibilityState: document?.visibilityState || 'unknown',
-      lastFocusAt: Number(prev.lastFocusAt || 0),
-      lastBlurAt: Number(prev.lastBlurAt || 0),
-      lastVisibleAt: Number(prev.lastVisibleAt || 0),
-      updatedAt: now
-    };
-
-    if (next.hasFocus && !next.lastFocusAt) next.lastFocusAt = now;
-    if (next.visibilityState === 'visible' && !next.lastVisibleAt) next.lastVisibleAt = now;
-
-    globalThis.__yisheFocusTracker = next;
-    return next;
-  };
-
-  const updateState = (reason) => {
-    const prev = ensureState();
-    const now = Date.now();
-    const next = {
-      ...prev,
-      hasFocus: typeof document?.hasFocus === 'function' ? document.hasFocus() : false,
-      visibilityState: document?.visibilityState || 'unknown',
-      updatedAt: now,
-      lastReason: reason || 'update'
-    };
-
-    if (reason === 'focus' || next.hasFocus) next.lastFocusAt = now;
-    if (reason === 'blur') next.lastBlurAt = now;
-    if (reason === 'visible' || next.visibilityState === 'visible') next.lastVisibleAt = now;
-
-    globalThis.__yisheFocusTracker = next;
-  };
-
-  globalThis.__yisheFocusTrackerInstalled = true;
-  ensureState();
-
-  window.addEventListener('focus', () => updateState('focus'), true);
-  window.addEventListener('blur', () => updateState('blur'), true);
-  document.addEventListener('visibilitychange', () => {
-    updateState(document.visibilityState === 'visible' ? 'visible' : 'hidden');
-  }, true);
-  window.addEventListener('pageshow', () => updateState('pageshow'), true);
-  window.addEventListener('load', () => updateState('load'), true);
-})();
-`;
 // 浏览器状态管理
 let browserStatus = {
     isInitialized: false,
@@ -498,6 +452,17 @@ function resolveActiveBrowserVersion() {
     return null;
 }
 
+function buildBrowserRuntimePayload() {
+    const profile = currentManagedProfileId ? getBrowserProfile(currentManagedProfileId) : null;
+    const fallbackId = String(profile?.id || currentManagedProfileId || path.basename(currentUserDataDir || '') || 'default').trim() || 'default';
+    const fallbackName = String(profile?.name || fallbackId).trim() || fallbackId;
+    return {
+        profileId: fallbackId,
+        profileName: fallbackName,
+        openedAtText: formatBrowserRuntimeTimestamp(currentBrowserOpenedAt || browserStatus.lastActivity || '')
+    };
+}
+
 async function getListeningPids(port) {
     const pids = new Set();
     if (process.platform === 'win32') {
@@ -578,7 +543,7 @@ async function newPageWithReconnect(options = {}, pageOptions = {}) {
         }
         const finalPageOptions = withDefaultActivatedPageOptions(pageOptions);
         const page = await contextInstance.newPage(finalPageOptions);
-        await installFocusTrackerForPage(page);
+        await installBrowserPageRuntimeForPage(page, buildBrowserRuntimePayload());
         return page;
     } catch (err) {
         if (!isBrowserClosedError(err)) throw err;
@@ -589,10 +554,11 @@ async function newPageWithReconnect(options = {}, pageOptions = {}) {
         browserStatus.isInitialized = false;
         browserStatus.isConnected = false;
         browserStatus.pageCount = 0;
+        currentBrowserOpenedAt = null;
         await getOrCreateBrowser(currentBrowserOptions);
         if (!contextInstance) throw new Error('重新连接后仍无法获取浏览器上下文');
         const page = await contextInstance.newPage(pageOptions);
-        await installFocusTrackerForPage(page);
+        await installBrowserPageRuntimeForPage(page, buildBrowserRuntimePayload());
         return page;
     }
 }
@@ -619,14 +585,23 @@ function tryListProfiles(userDataDir) {
  * 启动带远程调试端口的 Chrome（仅 --remote-debugging-port，使用指定 user-data-dir 保持登录态）
  * 支持无头模式通过 headless 参数或 HEADLESS 环境变量
  */
-export function launchWithDebugPort({ port = 9222, headless = null, userDataDir = null, executablePath = null } = {}) {
+export function launchWithDebugPort({ port = null, headless = null, userDataDir = null, executablePath = null, profileId = null } = {}) {
     const exe = String(executablePath || getDefaultExecutablePath()).trim();
     if (!exe || !existsSync(exe)) {
         throw new Error(`未找到 Chrome 可执行文件: ${exe}，请确认已安装 Google Chrome`);
     }
 
+    const normalizedUserDataDir = normalizePathLike(userDataDir);
+    const normalizedProfileId = String(profileId || '').trim();
+    const managedProfile = normalizedProfileId
+        ? getBrowserProfile(normalizedProfileId)
+        : (normalizedUserDataDir ? findBrowserProfileByUserDataDir(normalizedUserDataDir) : null);
     // 使用独立的 user-data-dir 避免与系统 Chrome 冲突，确保登录信息持久化
-    const finalUserDataDir = userDataDir || getCdpDefaultUserDataDir();
+    const finalUserDataDir = managedProfile?.userDataDir || normalizedUserDataDir || getCdpDefaultUserDataDir();
+    const explicitPort = Number(port);
+    const finalPort = Number.isInteger(explicitPort) && explicitPort > 0
+        ? explicitPort
+        : (Number(managedProfile?.debugPort || 0) || 9222);
 
     // 确定是否使用无头模式
     const useHeadless = headless !== undefined ? headless : getHeadlessMode();
@@ -642,7 +617,7 @@ export function launchWithDebugPort({ port = 9222, headless = null, userDataDir 
 
     const args = [
         '--remote-debugging-address=127.0.0.1',
-        `--remote-debugging-port=${port}`,
+        `--remote-debugging-port=${finalPort}`,
         `--user-data-dir=${finalUserDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
@@ -656,9 +631,9 @@ export function launchWithDebugPort({ port = 9222, headless = null, userDataDir 
     child.unref();
     const pid = child.pid;
     const modeStr = useHeadless ? '无头' : '有界面';
-    logger.info(`已启动 Chrome pid=${pid} port=${port}，模式: ${modeStr}，user-data-dir: ${finalUserDataDir}`);
+    logger.info(`已启动 Chrome pid=${pid} port=${finalPort}，模式: ${modeStr}，user-data-dir: ${finalUserDataDir}`);
     return {
-        port,
+        port: finalPort,
         browserName: 'chrome',
         pid,
         headless: useHeadless,
@@ -684,12 +659,20 @@ export async function isBrowserAvailable(options = {}) {
             return false;
         }
         const pages = await getVisiblePagesDetailed();
+        const hasReachableRuntime = pages.some((page) => page.runtimeReachable);
+        const hasOnlyOptionalPages = pages.length > 0 && pages.every((page) => page.isPlaceholderPage);
         // 在有界面模式下，若已经没有任何可见页，通常意味着用户已手动关闭最后一个浏览器窗口。
         // 这种情况下按“未连接”处理，避免控制端继续误判为可用。
         if (!isHeadlessConnection() && currentMode !== 'cdp' && pages.length === 0) {
             logger.info('浏览器可见页面为 0，按浏览器/上下文已关闭处理');
             browserStatus.isConnected = false;
             browserStatus.pageCount = 0;
+            return false;
+        }
+        if (pages.length > 0 && !hasReachableRuntime && !hasOnlyOptionalPages) {
+            logger.warn('浏览器页面运行时探活失败，按当前连接不可用处理');
+            browserStatus.isConnected = false;
+            browserStatus.pageCount = pages.length;
             return false;
         }
         browserStatus.isConnected = true;
@@ -725,6 +708,7 @@ export async function detectExistingBrowser() {
         // 尝试连接到现有的浏览器实例
         if ((contextInstance || browserInstance) && await isBrowserAvailable()) {
             logger.info('检测到现有浏览器实例，页面数量:', browserStatus.pageCount);
+            currentBrowserOpenedAt = currentBrowserOpenedAt || new Date().toISOString();
             await installBrowserContextPatches(contextInstance);
             return {
                 newPage: async (pageOptions = {}) => await newPageWithReconnect(currentBrowserOptions, pageOptions)
@@ -739,6 +723,7 @@ export async function detectExistingBrowser() {
             browserStatus.isInitialized = false;
             browserStatus.isConnected = false;
             currentManagedProfileId = null;
+            currentBrowserOpenedAt = null;
         }
 
         logger.debug('未发现可复用实例，将创建新的 Playwright 实例');
@@ -860,9 +845,9 @@ export async function getOrCreateBrowser(options = {}) {
                 contextOptions.viewport = { width: 1920, height: 1080 };
             }
             contextInstance = browserInstance.contexts()[0] || await browserInstance.newContext(contextOptions);
+            currentBrowserOpenedAt = new Date().toISOString();
             await installBrowserContextPatches(contextInstance);
             await setBrowserWindowMaximized(contextInstance, headless);
-
             browserStatus.isInitialized = true;
             browserStatus.isConnected = true;
             browserStatus.lastActivity = Date.now();
@@ -1009,6 +994,7 @@ export async function checkAndReconnectBrowser(options = {}) {
     browserStatus.isInitialized = false;
     browserStatus.isConnected = false;
     browserStatus.pageCount = 0;
+    currentBrowserOpenedAt = null;
 
     if (reconnect) {
         try {
@@ -1024,6 +1010,60 @@ export async function checkAndReconnectBrowser(options = {}) {
         }
     }
     return { available: false, message: '浏览器已断开，引用已清除。可调用连接接口或带 reconnect: true 的检测接口重连。' };
+}
+
+async function probeBrowserConnectionLightweight() {
+    if (!contextInstance && !browserInstance) {
+        return false;
+    }
+
+    try {
+        if (browserInstance && typeof browserInstance.isConnected === 'function' && !browserInstance.isConnected()) {
+            return false;
+        }
+
+        const pages = getPagesInternal().filter((page) => {
+            try {
+                return page && !(typeof page.isClosed === 'function' && page.isClosed());
+            } catch {
+                return false;
+            }
+        });
+
+        browserStatus.pageCount = pages.length;
+        if (!pages.length) {
+            return true;
+        }
+
+        let hasRequiredRuntimePage = false;
+        const runtimePayload = buildBrowserRuntimePayload();
+        for (const page of pages.slice(0, 3)) {
+            const runtimeInfo = await withTimeout(
+                probeBrowserPageRuntime(page, runtimePayload),
+                900,
+                'page.runtimeLightweight'
+            ).catch(() => null);
+
+            if (runtimeInfo) {
+                browserStatus.lastActivity = Date.now();
+                return true;
+            }
+
+            let candidateUrl = '';
+            try {
+                candidateUrl = page.url();
+            } catch {
+                // ignore
+            }
+            if (!isRuntimeOptionalPageUrl(candidateUrl)) {
+                hasRequiredRuntimePage = true;
+            }
+        }
+
+        return !hasRequiredRuntimePage;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -1047,15 +1087,7 @@ export async function getBrowserStatus(options = {}) {
         ? getBrowserProfile(currentManagedProfileId)
         : (profilesState.activeProfileId ? getBrowserProfile(profilesState.activeProfileId) : null);
     if (lightweight) {
-        try {
-            browserStatus.isConnected = !!(
-                contextInstance &&
-                browserInstance &&
-                (typeof browserInstance.isConnected !== 'function' || browserInstance.isConnected())
-            );
-        } catch {
-            browserStatus.isConnected = false;
-        }
+        browserStatus.isConnected = await probeBrowserConnectionLightweight();
 
         if (!browserStatus.isConnected && !connectPromise) {
             browserStatus.pageCount = 0;
@@ -1087,6 +1119,7 @@ export async function getBrowserStatus(options = {}) {
             userDataDir: currentUserDataDir || managedStatus?.connection?.userDataDir || null,
             profileId: currentManagedProfileId || managedStatus?.connection?.profileId || null,
             activeProfileId: profilesState.activeProfileId || managedStatus?.connection?.activeProfileId || null,
+            openedAt: currentBrowserOpenedAt || null,
             cdpEndpoint: currentCdpEndpoint || managedStatus?.connection?.cdpEndpoint || null,
             debugPort: managedStatus?.connection?.debugPort || null,
             detectedProfiles: currentUserDataDir ? tryListProfiles(currentUserDataDir) : [],
@@ -1104,29 +1137,6 @@ function getPagesInternal() {
     return contextInstance ? contextInstance.pages() : (browserInstance ? browserInstance.pages() : []);
 }
 
-async function installFocusTrackerForPage(page) {
-    if (!page || (typeof page.isClosed === 'function' && page.isClosed())) return;
-
-    try {
-        await page.evaluate(FOCUS_TRACKER_SCRIPT);
-    } catch {
-        // 页面导航中或尚未可执行脚本时忽略
-    }
-}
-
-async function installFocusTracker(context) {
-    if (!context) return;
-
-    try {
-        await context.addInitScript(FOCUS_TRACKER_SCRIPT);
-    } catch (error) {
-        logger.debug('注入 focus tracker init script 失败:', error?.message || error);
-    }
-
-    const pages = typeof context.pages === 'function' ? context.pages() : [];
-    await Promise.all(pages.map((page) => installFocusTrackerForPage(page)));
-}
-
 async function installBrowserContextPatches(context) {
     if (!context) return;
 
@@ -1134,7 +1144,10 @@ async function installBrowserContextPatches(context) {
         background: true,
         headless: isHeadlessConnection()
     });
-    await installFocusTracker(context);
+    await installBrowserPageRuntime(context, () => buildBrowserRuntimePayload(), {
+        logger,
+        logLabel: '安装浏览器页面运行时失败:'
+    });
 }
 
 function isUserVisiblePage(page, { title = '', url = '' } = {}) {
@@ -1158,15 +1171,33 @@ async function getVisiblePagesDetailed() {
     const visiblePages = [];
     const seenPlaceholderKeys = new Set();
     const probeTimeoutMs = 1500;
+    const runtimePayload = buildBrowserRuntimePayload();
 
     for (const page of pages) {
+        let runtimeState = null;
         let title = '';
         let url = '';
         try {
-            title = await withTimeout(page.title().catch(() => ''), probeTimeoutMs, 'page.title').catch(() => '');
-            url = page.url();
+            runtimeState = await withTimeout(
+                probeBrowserPageRuntime(page, runtimePayload),
+                probeTimeoutMs,
+                'page.runtimeProbe'
+            ).catch(() => null);
         } catch {
             // ignore
+        }
+
+        title = String(runtimeState?.title || '').trim();
+        url = String(runtimeState?.url || '').trim();
+        if (!title) {
+            title = await withTimeout(page.title().catch(() => ''), probeTimeoutMs, 'page.title').catch(() => '');
+        }
+        if (!url) {
+            try {
+                url = page.url();
+            } catch {
+                // ignore
+            }
         }
 
         if (!isUserVisiblePage(page, { title, url })) {
@@ -1175,12 +1206,7 @@ async function getVisiblePagesDetailed() {
 
         const normalizedUrl = String(url || '').trim().toLowerCase();
         const normalizedTitle = String(title || '').trim().toLowerCase();
-        const isInternalNewTabLike =
-            normalizedUrl === 'about:blank' ||
-            normalizedUrl === 'chrome://newtab/' ||
-            normalizedUrl === 'chrome://new-tab-page/' ||
-            normalizedUrl === 'chrome-search://local-ntp/local-ntp.html' ||
-            normalizedUrl === 'edge://newtab/';
+        const isInternalNewTabLike = isRuntimeOptionalPageUrl(normalizedUrl);
         const isPlaceholderPage =
             isInternalNewTabLike ||
             (!normalizedTitle && !normalizedUrl);
@@ -1194,50 +1220,20 @@ async function getVisiblePagesDetailed() {
             seenPlaceholderKeys.add(key);
         }
 
-        let focusState = {
-            hasFocus: false,
-            visibilityState: 'unknown',
-            lastFocusAt: 0,
-            lastBlurAt: 0,
-            lastVisibleAt: 0,
-            updatedAt: 0
-        };
-        try {
-            focusState = await withTimeout(
-                page.evaluate((trackerScript) => {
-                    try {
-                        globalThis.eval(trackerScript);
-                    } catch {
-                        // ignore
-                    }
-
-                    const tracker = globalThis.__yisheFocusTracker || {};
-                    return {
-                        hasFocus: typeof document?.hasFocus === 'function' ? document.hasFocus() : false,
-                        visibilityState: document?.visibilityState || 'unknown',
-                        lastFocusAt: Number(tracker.lastFocusAt || 0),
-                        lastBlurAt: Number(tracker.lastBlurAt || 0),
-                        lastVisibleAt: Number(tracker.lastVisibleAt || 0),
-                        updatedAt: Number(tracker.updatedAt || 0)
-                    };
-                }, FOCUS_TRACKER_SCRIPT),
-                probeTimeoutMs,
-                'page.focusState'
-            );
-        } catch {
-            // ignore page state probing failures during navigation
-        }
-
         visiblePages.push({
             page,
             title,
             url,
-            hasFocus: !!focusState?.hasFocus,
-            visibilityState: String(focusState?.visibilityState || 'unknown'),
-            lastFocusAt: Number(focusState?.lastFocusAt || 0),
-            lastBlurAt: Number(focusState?.lastBlurAt || 0),
-            lastVisibleAt: Number(focusState?.lastVisibleAt || 0),
-            updatedAt: Number(focusState?.updatedAt || 0)
+            hasFocus: !!runtimeState?.hasFocus,
+            visibilityState: String(runtimeState?.visibilityState || 'unknown'),
+            lastFocusAt: Number(runtimeState?.lastFocusAt || 0),
+            lastBlurAt: Number(runtimeState?.lastBlurAt || 0),
+            lastVisibleAt: Number(runtimeState?.lastVisibleAt || 0),
+            updatedAt: Number(runtimeState?.updatedAt || 0),
+            runtimeReachable: !!runtimeState,
+            isPlaceholderPage,
+            lastHeartbeatAt: Number(runtimeState?.lastHeartbeatAt || 0),
+            lastProbeAt: Number(runtimeState?.lastProbeAt || 0)
         });
     }
 
@@ -1271,6 +1267,8 @@ async function getVisiblePagesDetailed() {
         url: item.url,
         hasFocus: item.hasFocus,
         visibilityState: item.visibilityState,
+        runtimeReachable: item.runtimeReachable,
+        isPlaceholderPage: item.isPlaceholderPage,
         isFocusedTab: focusedIndex >= 0 ? index === focusedIndex : false,
         isVisibleTab: visibleIndex >= 0 ? index === visibleIndex : false
     }));
@@ -1396,6 +1394,7 @@ export async function closeBrowser(options = {}) {
         currentCdpEndpoint = null;
         currentManagedProfileId = null;
         currentBrowserVersion = null;
+        currentBrowserOpenedAt = null;
     } catch (error) {
         logger.error('清理浏览器资源时出错:', error);
     }

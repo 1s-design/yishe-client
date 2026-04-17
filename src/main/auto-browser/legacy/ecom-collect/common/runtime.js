@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
+import { ensureDirectory, resolveAutoBrowserPath } from '../../utils/workspacePaths.js';
 
 export function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -141,12 +141,10 @@ export function ensureSnapshotDir(options = {}) {
         'runtime',
     );
 
-    const dir = workspaceDir
-        ? path.resolve(workspaceDir, 'browser-automation', 'ecom-collect', 'screenshots', runFolder)
-        : path.join(os.tmpdir(), 'yishe-ecom-collect', runFolder);
-
-    fs.mkdirSync(dir, { recursive: true });
-    return dir;
+    const baseDir = workspaceDir
+        ? path.resolve(workspaceDir, 'auto-browser', 'ecom-collect', 'screenshots')
+        : resolveAutoBrowserPath('ecom-collect', 'screenshots');
+    return ensureDirectory(path.resolve(baseDir, runFolder));
 }
 
 export function nowIso() {

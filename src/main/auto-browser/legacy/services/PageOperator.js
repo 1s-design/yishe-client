@@ -2,7 +2,9 @@
  * 页面操作器 - 提供通用的页面操作工具
  */
 
+import path from 'path';
 import { logger } from '../utils/logger.js';
+import { buildAutoBrowserScreenshotPath } from '../utils/workspacePaths.js';
 
 /**
  * 页面操作器类
@@ -256,11 +258,14 @@ export class PageOperator {
      */
     async takeScreenshot(page, filename) {
         try {
+            const savePath = path.isAbsolute(String(filename || ''))
+                ? filename
+                : buildAutoBrowserScreenshotPath(filename);
             const screenshot = await page.screenshot({
-                path: filename,
+                path: savePath,
                 fullPage: true
             });
-            logger.info(`截图已保存: ${filename}`);
+            logger.info(`截图已保存: ${savePath}`);
             return screenshot;
         } catch (error) {
             logger.error('截图失败:', error);

@@ -143,6 +143,9 @@ const selectWorkspaceDirectory = async () => {
     }
 
     workspaceDirectory.value = selectedPath;
+    websocketClient.updateClientInfo({
+      workspaceDirectory: String(selectedPath || "").trim(),
+    });
     showToast({
       color: "success",
       icon: "mdi-folder-check-outline",
@@ -207,6 +210,9 @@ const clearWorkspaceDirectory = async () => {
 
     await nativeApi.setWorkspaceDirectory("");
     workspaceDirectory.value = "";
+    websocketClient.updateClientInfo({
+      workspaceDirectory: "",
+    });
     showToast({
       color: "success",
       icon: "mdi-delete-circle-outline",

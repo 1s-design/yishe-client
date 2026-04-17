@@ -12,13 +12,14 @@ import {
 import {
     join
 } from 'path';
+import { getAutoBrowserAuthDataDir } from './workspacePaths.js';
 
 /**
  * 快手认证管理类
  */
 export class KuaishouAuth {
     constructor() {
-        this.authDataPath = join(process.cwd(), 'auth-data', 'kuaishou-auth.txt');
+        this.authDataPath = join(getAutoBrowserAuthDataDir(), 'kuaishou-auth.txt');
         this.cookies = [];
         this.headers = {};
     }

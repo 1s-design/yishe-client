@@ -7,6 +7,7 @@ import { getOrCreateBrowser } from '../services/BrowserService.js';
 import { PageOperator } from '../services/PageOperator.js';
 import { logger } from '../utils/logger.js';
 import { kuaishouAuth } from '../utils/kuaishouAuth.js';
+import { buildAutoBrowserScreenshotPath } from '../utils/workspacePaths.js';
 
 /**
  * 快手发布器类
@@ -123,7 +124,10 @@ class KuaishouPublisher {
             // 截图保存错误现场
             if (page) {
                 try {
-                    await page.screenshot({ path: `error_kuaishou_${Date.now()}.png`, fullPage: true });
+                    await page.screenshot({
+                        path: buildAutoBrowserScreenshotPath(`error_kuaishou_${Date.now()}.png`),
+                        fullPage: true
+                    });
                 } catch (e) {
                     logger.warn('截图失败:', e);
                 }
@@ -434,7 +438,10 @@ class KuaishouPublisher {
                 // 截图记录
                 if (retryCount % 10 === 0) {
                     try {
-                        await page.screenshot({ path: `publishing_ks_${Date.now()}.png`, fullPage: true });
+                        await page.screenshot({
+                            path: buildAutoBrowserScreenshotPath(`publishing_ks_${Date.now()}.png`),
+                            fullPage: true
+                        });
                     } catch (e) {
                         // 忽略截图错误
                     }

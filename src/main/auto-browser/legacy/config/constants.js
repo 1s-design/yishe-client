@@ -1,19 +1,9 @@
 /**
  * 常量配置
  */
-import os from 'os';
-import path from 'path';
+import { resolveAutoBrowserPath } from '../utils/workspacePaths.js';
 
-const defaultPuppeteerUserDataDir = (() => {
-  if (process.platform === 'win32') {
-    return 'C:\\temp\\puppeteer-user-data';
-  }
-  const homeDir = os.homedir();
-  const safeBase = homeDir && typeof homeDir === 'string'
-    ? homeDir
-    : process.cwd();
-  return path.resolve(safeBase, '.yishe-auto-browser', 'puppeteer-user-data');
-})();
+const defaultPuppeteerUserDataDir = resolveAutoBrowserPath('puppeteer-user-data');
 
 export const DEFAULT_CONFIG = {
   // 浏览器配置
