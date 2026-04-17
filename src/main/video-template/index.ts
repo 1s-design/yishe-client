@@ -42,8 +42,17 @@ function ensureVideoTemplateDirectories() {
   return directories;
 }
 
-function getVideoTemplateEntryPoint() {
+function getVideoTemplateEntryPointCandidates() {
   const packagedCandidates = [
+    // Prefer app.asar first so webpack can resolve dependencies from the same
+    // bundled app tree in production.
+    path.join(
+      app.getAppPath(),
+      "out",
+      "video-template-source",
+      "remotion",
+      "index.ts",
+    ),
     path.join(
       process.resourcesPath,
       "app.asar.unpacked",
@@ -52,18 +61,13 @@ function getVideoTemplateEntryPoint() {
       "remotion",
       "index.ts",
     ),
-    path.join(
-      app.getAppPath(),
-      "out",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-  ];
-  for (const packagedEntry of packagedCandidates) {
-    if (fs.existsSync(packagedEntry)) {
-      return packagedEntry;
-    }
+  ].filter((candidate, index, list) => list.indexOf(candidate) === index);
+
+  const existingPackagedCandidates = packagedCandidates.filter((candidate) =>
+    fs.existsSync(candidate),
+  );
+  if (existingPackagedCandidates.length) {
+    return existingPackagedCandidates;
   }
 
   const devEntry = path.resolve(
@@ -75,7 +79,7 @@ function getVideoTemplateEntryPoint() {
     "index.ts",
   );
   if (fs.existsSync(devEntry)) {
-    return devEntry;
+    return [devEntry];
   }
 
   throw new Error(
@@ -85,6 +89,21 @@ function getVideoTemplateEntryPoint() {
       `Checked dev path: ${devEntry}`,
     ].join(" "),
   );
+}
+
+async function bundleVideoTemplateFromEntry(entryPoint: string, outputDirectory: string) {
+  console.info(`[video-template] bundling from entry: ${entryPoint}`);
+  return bundle({
+    entryPoint,
+    webpackOverride: (config) => {
+      config.output = config.output || {};
+      config.output.path = outputDirectory;
+      return config;
+    },
+    onProgress(progress) {
+      console.info(`[video-template] bundling: ${progress}%`);
+    },
+  });
 }
 
 function formatJob(jobId: string, job: VideoTemplateJobState | undefined | null) {
@@ -166,17 +185,24 @@ async function ensureVideoTemplateServeUrl() {
   if (!bundlePromise) {
     bundlePromise = (async () => {
       const directories = ensureVideoTemplateDirectories();
-      return bundle({
-        entryPoint: getVideoTemplateEntryPoint(),
-        webpackOverride: (config) => {
-          config.output = config.output || {};
-          config.output.path = directories.bundles;
-          return config;
-        },
-        onProgress(progress) {
-          console.info(`[video-template] bundling: ${progress}%`);
-        },
-      });
+      const entryCandidates = getVideoTemplateEntryPointCandidates();
+      let lastError: unknown = null;
+
+      for (const entryPoint of entryCandidates) {
+        try {
+          return await bundleVideoTemplateFromEntry(entryPoint, directories.bundles);
+        } catch (error) {
+          lastError = error;
+          console.error(
+            `[video-template] Failed to bundle entry ${entryPoint}:`,
+            error,
+          );
+        }
+      }
+
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("[video-template] Failed to bundle any entry candidate");
     })();
   }
 
