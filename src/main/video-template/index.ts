@@ -78,7 +78,13 @@ function getVideoTemplateEntryPoint() {
     return devEntry;
   }
 
-  return packagedEntry;
+  throw new Error(
+    [
+      "[video-template] Entry point not found.",
+      `Checked packaged paths: ${packagedCandidates.join(", ")}`,
+      `Checked dev path: ${devEntry}`,
+    ].join(" "),
+  );
 }
 
 function formatJob(jobId: string, job: VideoTemplateJobState | undefined | null) {

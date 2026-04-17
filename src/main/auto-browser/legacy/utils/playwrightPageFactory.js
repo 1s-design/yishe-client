@@ -148,18 +148,25 @@ async function activatePageTab(page, options = {}) {
     const windowSession = await getPageWindowSession(page);
     const shouldRestoreWindow = options.restoreWindow === true;
     const shouldFocusWindow = options.focusWindow === true;
+    const windowState = String(windowSession?.windowState || '').trim().toLowerCase();
+    const isWindowMinimized = windowState === 'minimized' || windowState === 'hidden';
 
     try {
         if (
             shouldRestoreWindow
             && windowSession?.cdp
             && windowSession?.windowId
-            && (windowSession.windowState === 'minimized' || windowSession.windowState === 'hidden')
+            && isWindowMinimized
         ) {
             await windowSession.cdp.send('Browser.setWindowBounds', {
                 windowId: windowSession.windowId,
                 bounds: { windowState: 'normal' }
             }).catch(() => null);
+        }
+
+        if (isWindowMinimized && !shouldRestoreWindow) {
+            logger.debug(`浏览器窗口当前为 ${windowState}，保留任务页在后台，不主动恢复或抢占焦点`);
+            return page;
         }
 
         await page.bringToFront().catch((error) => {
@@ -168,8 +175,7 @@ async function activatePageTab(page, options = {}) {
 
         if (
             shouldFocusWindow
-            && windowSession?.windowState !== 'minimized'
-            && windowSession?.windowState !== 'hidden'
+            && !isWindowMinimized
         ) {
             await page.evaluate(() => {
                 try {

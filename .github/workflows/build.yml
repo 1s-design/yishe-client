@@ -7,7 +7,10 @@ on:
     paths:
       - package.json
       - electron-builder.yml
+      - electron.vite.config.ts
       - src/main/externalProcessConfig.ts
+      - src/main/image-tool/**
+      - src/main/video-template/**
       - scripts/download-latest-plugins.mjs
       - .github/workflows/build.yml
   workflow_dispatch:
@@ -68,9 +71,11 @@ jobs:
         include:
           - os: macos-latest
             build_args: --mac dmg --config electron-builder.yml
+            prepare_plugins_cmd: npm run prepare:plugins:mac
             csc_identity_auto_discovery: "true"
           - os: windows-latest
             build_args: --win portable --config electron-builder.yml
+            prepare_plugins_cmd: npm run prepare:plugins:win
             csc_identity_auto_discovery: ""
 
     steps:
@@ -89,8 +94,8 @@ jobs:
       - name: Clean managed plugins before build
         run: npm run clean:plugins
 
-      - name: Download managed plugins for unified build
-        run: npm run prepare:plugins
+      - name: Download managed plugins for current platform build
+        run: ${{ matrix.prepare_plugins_cmd }}
 
       - name: Build/Release Electron app
         uses: samuelmeuli/action-electron-builder@v1

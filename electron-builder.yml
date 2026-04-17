@@ -1,5 +1,5 @@
 appId: com.yishe.electron
-productName: 衣设客户端
+productName: yishe-client
 directories:
   buildResources: build
   output: release
@@ -28,8 +28,12 @@ win:
       to: resources/google-art/win32
       filter:
         - dezoomify-rs-win.exe
+    - from: resources/plugin/win32/image-tool
+      to: resources/plugin/win32/image-tool
     - from: resources/plugin/win32
       to: resources/plugin/win32
+      filter:
+        - yishe-ps-windows.exe
 nsis:
   differentialPackage: false
 mac:
@@ -55,7 +59,7 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
 dmg:
-  title: 衣设客户端
+  title: yishe-client
   icon: build/icon.icns
   artifactName: yishe-client.${ext}
   writeUpdateInfo: false
