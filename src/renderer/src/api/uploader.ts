@@ -9,6 +9,8 @@ import type {
   EcomCollectRunResult,
 } from "../types/ecomCollect";
 
+const IDENTITY_STORAGE_KEY = "yishe.ws.identity";
+
 type UploaderFetchResponse = {
   ok: boolean;
   status: number;
@@ -113,6 +115,25 @@ function normalizeUploaderRequestBody(init?: RequestInit) {
   }
 
   return body;
+}
+
+function getCurrentClientMachineCode() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return "";
+    }
+    const saved = window.localStorage.getItem(IDENTITY_STORAGE_KEY);
+    if (!saved) {
+      return "";
+    }
+    const parsed =
+      typeof saved === "string" && saved.trim() ? JSON.parse(saved) : null;
+    return typeof parsed?.machineCode === "string"
+      ? parsed.machineCode.trim()
+      : "";
+  } catch {
+    return "";
+  }
 }
 
 function buildUploaderFetchResponse(
@@ -2004,10 +2025,17 @@ export async function createUploaderProfile(
   message?: string;
 }> {
   try {
+    const payload: Record<string, unknown> =
+      data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+    const machineCode = getCurrentClientMachineCode();
+    if (machineCode && !String(payload.machineCode || "").trim()) {
+      payload.machineCode = machineCode;
+    }
+
     const res = await fetch(`${UPLOADER_API_BASE}/api/browser/profiles`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data || {}),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(10000),
     });
     const json = await res.json().catch(() => ({}));

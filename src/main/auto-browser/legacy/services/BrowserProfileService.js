@@ -1,5 +1,7 @@
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import fs from 'fs-extra';
+import ElectronStore from 'electron-store';
 import { getAutoBrowserWorkspaceDir } from '../utils/workspacePaths.js';
 
 const REGISTRY_FILENAME = 'profiles.json';
@@ -8,9 +10,32 @@ const PROFILE_DIRNAME = 'browser-profiles';
 const USER_DATA_DIRNAME = 'user-data';
 const DEBUG_PORT_BASE = Number(process.env.BROWSER_PROFILE_DEBUG_PORT_BASE) || 9333;
 const DEBUG_PORT_MAX = Number(process.env.BROWSER_PROFILE_DEBUG_PORT_MAX) || 9999;
+const MACHINE_CODE_STORE_KEY = 'clientMachineCode';
+const Store = ElectronStore?.default || ElectronStore;
+
+let identityStoreInstance = null;
 
 function getDefaultWorkspaceDir() {
     return getAutoBrowserWorkspaceDir();
+}
+
+function getIdentityStore() {
+    if (identityStoreInstance) {
+        return identityStoreInstance;
+    }
+
+    try {
+        identityStoreInstance = new Store({
+            defaults: {
+                workspaceDirectory: '',
+                [MACHINE_CODE_STORE_KEY]: '',
+            },
+        });
+    } catch {
+        identityStoreInstance = null;
+    }
+
+    return identityStoreInstance;
 }
 
 export function getBrowserProfilesWorkspaceDir() {
@@ -52,6 +77,10 @@ function normalizeProfileId(value, fallback = '') {
     return normalized || '';
 }
 
+function normalizeMachineCode(value, fallback = '') {
+    return normalizeProfileId(String(value || fallback || '').toUpperCase());
+}
+
 function normalizeProfileList(items = []) {
     return (Array.isArray(items) ? items : [])
         .map((item) => ({
@@ -84,6 +113,30 @@ function isManagedProfileDebugPort(value) {
 function normalizeManagedProfileDebugPort(value) {
     const port = normalizeDebugPort(value);
     return isManagedProfileDebugPort(port) ? port : null;
+}
+
+function generateMachineCode() {
+    return `YC-${randomUUID().replace(/[^a-zA-Z0-9]/g, '').slice(-12).toUpperCase()}`;
+}
+
+function getDefaultMachineCode() {
+    const store = getIdentityStore();
+    const storedCode = normalizeMachineCode(store?.get(MACHINE_CODE_STORE_KEY, ''));
+    if (storedCode) {
+        return storedCode;
+    }
+
+    const nextCode = generateMachineCode();
+    try {
+        store?.set(MACHINE_CODE_STORE_KEY, nextCode);
+    } catch {
+        // ignore
+    }
+    return nextCode;
+}
+
+function escapeRegExp(value = '') {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function loadProfileRecordsByRegistry(registry) {
@@ -327,16 +380,28 @@ function summarizeProfile(profile, registry) {
     };
 }
 
-function getNextProfileId(items = []) {
-    const used = new Set((Array.isArray(items) ? items : []).map((item) => normalizeProfileId(item?.id)));
-    for (let index = 1; index < 1000; index += 1) {
-        const candidate = String(index).padStart(3, '0');
-        if (!used.has(candidate)) {
+function getNextProfileId(items = [], machineCode = '') {
+    const prefix = normalizeMachineCode(machineCode, getDefaultMachineCode());
+    const usedNumbers = new Set();
+    const pattern = new RegExp(`^${escapeRegExp(prefix)}-(\\d+)$`);
+
+    for (const item of Array.isArray(items) ? items : []) {
+        const currentId = normalizeProfileId(item?.id);
+        const match = currentId.match(pattern);
+        const number = Number(match?.[1] || 0);
+        if (Number.isInteger(number) && number > 0) {
+            usedNumbers.add(number);
+        }
+    }
+
+    for (let index = 1; index < 1000000; index += 1) {
+        const candidate = `${prefix}-${String(index).padStart(3, '0')}`;
+        if (!usedNumbers.has(index) && !fs.existsSync(getProfileDirectory(candidate))) {
             return candidate;
         }
     }
 
-    return `profile_${Date.now()}`;
+    throw new Error(`设备 ${prefix} 已达到可用环境编号上限`);
 }
 
 export function ensureBrowserProfilesWorkspace() {
@@ -396,7 +461,7 @@ export function createBrowserProfile(payload = {}) {
     const registry = loadRegistry();
     const records = reconcileProfileDebugPorts(registry);
     const requestedId = normalizeProfileId(payload.id);
-    const profileId = requestedId || getNextProfileId(registry.items);
+    const profileId = requestedId || getNextProfileId(registry.items, payload.machineCode);
 
     if (registry.items.some((item) => item.id === profileId)) {
         throw new Error(`环境已存在: ${profileId}`);
