@@ -73,10 +73,12 @@ jobs:
             build_args: --mac dmg --config electron-builder.yml
             prepare_plugins_cmd: npm run prepare:plugins:mac
             csc_identity_auto_discovery: "true"
+            artifact_path: release/yishe-client.dmg
           - os: windows-latest
             build_args: --win portable --config electron-builder.yml
             prepare_plugins_cmd: npm run prepare:plugins:win
             csc_identity_auto_discovery: ""
+            artifact_path: release/yishe-client.exe
 
     steps:
       - name: Check out Git repository
@@ -97,16 +99,26 @@ jobs:
       - name: Download managed plugins for current platform build
         run: ${{ matrix.prepare_plugins_cmd }}
 
-      - name: Build/Release Electron app
-        uses: samuelmeuli/action-electron-builder@v1
-        with:
-          github_token: ${{ secrets.github_token }}
-          release: true
-          skip_build: true
-          args: ${{ matrix.build_args }}
+      - name: Build app
+        run: npm run build
+
+      - name: Package Electron app
+        run: npx electron-builder ${{ matrix.build_args }} --publish never
         env:
           GH_TOKEN: ${{ secrets.github_token }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: v${{ needs.check-version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: ${{ matrix.artifact_path }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.github_token }}
 
   # electron-builder 仍会附带 latest*.yml、blockmap 等；仅保留固定文件名的两枚安装包，便于 https://github.com/.../releases/latest/download/ 稳定直链
   prune-release-assets:
