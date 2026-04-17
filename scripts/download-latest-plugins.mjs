@@ -51,8 +51,11 @@ const LATEST_PLUGIN_DOWNLOADS = {
         process.env.YISHE_IMAGES_PLUGIN_URL_WIN32 ||
         "https://github.com/chan-max/yishe-images/releases/latest/download/yishe-images-windows-x64-plugin.zip",
       optional: true,
-      executables: ["yishe-images/runtime/node.exe"],
-      cleanupPaths: ["yishe-images.exe"],
+      executables: [[
+        "yishe-images/runtime/yishe-image-tool.exe",
+        "yishe-images/runtime/node.exe",
+      ]],
+      cleanupPaths: ["yishe-image-tool.exe", "yishe-images.exe"],
     },
   ],
   darwin: [
@@ -79,8 +82,11 @@ const LATEST_PLUGIN_DOWNLOADS = {
         process.env.YISHE_IMAGES_PLUGIN_URL_DARWIN_X64 ||
         "https://github.com/chan-max/yishe-images/releases/latest/download/yishe-images-macos-x64-plugin.zip",
       optional: true,
-      executables: ["yishe-images/runtime/node"],
-      cleanupPaths: ["yishe-images"],
+      executables: [[
+        "yishe-images/runtime/yishe-image-tool",
+        "yishe-images/runtime/node",
+      ]],
+      cleanupPaths: ["yishe-image-tool", "yishe-images"],
     },
     {
       id: "video-template",
@@ -159,6 +165,26 @@ async function ensurePathExists(targetPath, label) {
   } catch {
     throw new Error(`${label} not found: ${targetPath}`);
   }
+}
+
+async function resolveExistingExecutablePath(platform, executableEntry) {
+  const candidates = Array.isArray(executableEntry)
+    ? executableEntry
+    : [executableEntry];
+
+  for (const candidate of candidates) {
+    const candidatePath = getPlatformPluginPath(platform, candidate);
+    try {
+      await fs.access(candidatePath);
+      return candidatePath;
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error(
+    `executable not found: ${candidates.join(" | ")}`,
+  );
 }
 
 async function extractArchive(archivePath, destinationDir) {
@@ -240,12 +266,11 @@ async function installArchiveDownload(item) {
     );
   }
 
-  for (const executableRelativePath of item.executables || []) {
-    const executablePath = getPlatformPluginPath(
+  for (const executableEntry of item.executables || []) {
+    const executablePath = await resolveExistingExecutablePath(
       item.platform,
-      executableRelativePath,
+      executableEntry,
     );
-    await ensurePathExists(executablePath, `${item.id} executable`);
 
     if (process.platform !== "win32") {
       await fs.chmod(executablePath, 0o755);

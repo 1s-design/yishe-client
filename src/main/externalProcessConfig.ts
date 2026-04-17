@@ -76,10 +76,14 @@ function buildImageProcessingRuntimeConfig(): ProcessConfig | null {
   const standaloneExecutable =
     process.platform === "win32"
       ? resolveExistingPlatformPluginPath(
+          "yishe-images/yishe-image-tool.exe",
+          "yishe-image-tool.exe",
           "yishe-images/yishe-images.exe",
           "yishe-images.exe",
         )
       : resolveExistingPlatformPluginPath(
+          "yishe-images/yishe-image-tool",
+          "yishe-image-tool",
           "yishe-images/yishe-images",
           "yishe-images",
         );
@@ -106,10 +110,12 @@ function buildImageProcessingRuntimeConfig(): ProcessConfig | null {
   const runtimeExecutable =
     process.platform === "win32"
       ? resolveExistingPlatformPluginPath(
+          "yishe-images/runtime/yishe-image-tool.exe",
           "yishe-images/runtime/node.exe",
           "yishe-images/runtime/node/node.exe",
         )
       : resolveExistingPlatformPluginPath(
+          "yishe-images/runtime/yishe-image-tool",
           "yishe-images/runtime/node",
           "yishe-images/runtime/node/bin/node",
         );
