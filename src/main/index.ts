@@ -77,6 +77,7 @@ import {
   getVideoTemplateRender,
   getVideoTemplateStatus,
   listVideoTemplateRenders,
+  warmVideoTemplateService,
 } from "./video-template";
 
 function resolveBundledImageMagickDirectory(): string | null {
@@ -693,6 +694,12 @@ if (!gotTheLock) {
 app.whenReady().then(() => {
   // 初始化默认工作目录（在创建窗口之前）
   initializeDefaultWorkspaceDirectory();
+
+  if (app.isPackaged) {
+    void warmVideoTemplateService().catch((error) => {
+      console.error("❌ 预热 Video Template 服务失败:", error);
+    });
+  }
 
   // 添加协议注册代码
 

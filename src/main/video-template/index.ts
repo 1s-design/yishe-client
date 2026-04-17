@@ -7,10 +7,12 @@ import { makeRenderQueue, type VideoTemplateJobState } from "./render-queue";
 import { publicTemplateCatalog, templateCatalog } from "./templates/registry";
 
 type WorkspaceResolver = () => string;
+type VideoTemplateQueue = ReturnType<typeof makeRenderQueue>;
 
 let resolveWorkspaceDirectory: WorkspaceResolver = () => "";
 let bundlePromise: Promise<string> | null = null;
-let queueInstance: ReturnType<typeof makeRenderQueue> | null = null;
+let queueWarmupPromise: Promise<VideoTemplateQueue> | null = null;
+let queueInstance: VideoTemplateQueue | null = null;
 
 function configureVideoTemplate(options: { getWorkspaceDirectory?: WorkspaceResolver }) {
   if (typeof options?.getWorkspaceDirectory === "function") {
@@ -44,15 +46,6 @@ function ensureVideoTemplateDirectories() {
 
 function getVideoTemplateEntryPointCandidates() {
   const packagedCandidates = [
-    // Prefer app.asar first so webpack can resolve dependencies from the same
-    // bundled app tree in production.
-    path.join(
-      app.getAppPath(),
-      "out",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
     path.join(
       process.resourcesPath,
       "app.asar.unpacked",
@@ -61,11 +54,35 @@ function getVideoTemplateEntryPointCandidates() {
       "remotion",
       "index.ts",
     ),
+    path.join(
+      process.resourcesPath,
+      "out",
+      "video-template-source",
+      "remotion",
+      "index.ts",
+    ),
+    path.join(
+      app.getAppPath(),
+      "out",
+      "video-template-source",
+      "remotion",
+      "index.ts",
+    ),
+    path.join(
+      path.dirname(app.getAppPath()),
+      "app.asar.unpacked",
+      "out",
+      "video-template-source",
+      "remotion",
+      "index.ts",
+    ),
+    path.join(__dirname, "../../video-template-source/remotion/index.ts"),
+    path.join(__dirname, "../video-template-source/remotion/index.ts"),
   ].filter((candidate, index, list) => list.indexOf(candidate) === index);
 
-  const existingPackagedCandidates = packagedCandidates.filter((candidate) =>
-    fs.existsSync(candidate),
-  );
+  const existingPackagedCandidates = app.isPackaged
+    ? packagedCandidates.filter((candidate) => fs.existsSync(candidate))
+    : [];
   if (existingPackagedCandidates.length) {
     return existingPackagedCandidates;
   }
@@ -203,10 +220,42 @@ async function ensureVideoTemplateServeUrl() {
       throw lastError instanceof Error
         ? lastError
         : new Error("[video-template] Failed to bundle any entry candidate");
-    })();
+    })().catch((error) => {
+      bundlePromise = null;
+      throw error;
+    });
   }
 
   return bundlePromise;
+}
+
+async function warmVideoTemplateService() {
+  if (queueInstance) {
+    return queueInstance;
+  }
+
+  if (!queueWarmupPromise) {
+    queueWarmupPromise = (async () => {
+      const directories = ensureVideoTemplateDirectories();
+      const serveUrl = await ensureVideoTemplateServeUrl();
+
+      const queue = makeRenderQueue({
+        serveUrl,
+        rendersDir: directories.renders,
+        browserExecutable: null,
+        binariesDirectory: null,
+      });
+
+      queueInstance = queue;
+      return queue;
+    })().catch((error) => {
+      queueWarmupPromise = null;
+      queueInstance = null;
+      throw error;
+    });
+  }
+
+  return queueWarmupPromise;
 }
 
 async function ensureVideoTemplateQueue() {
@@ -214,17 +263,7 @@ async function ensureVideoTemplateQueue() {
     return queueInstance;
   }
 
-  const directories = ensureVideoTemplateDirectories();
-  const serveUrl = await ensureVideoTemplateServeUrl();
-
-  queueInstance = makeRenderQueue({
-    serveUrl,
-    rendersDir: directories.renders,
-    browserExecutable: null,
-    binariesDirectory: null,
-  });
-
-  return queueInstance;
+  return warmVideoTemplateService();
 }
 
 function sanitizeInputProps(
@@ -372,4 +411,5 @@ export {
   getVideoTemplateRender,
   getVideoTemplateStatus,
   listVideoTemplateRenders,
+  warmVideoTemplateService,
 };
