@@ -102,8 +102,7 @@ jobs:
         with:
           github_token: ${{ secrets.github_token }}
           release: true
-          draft: false
-          prerelease: false
+          skip_build: true
           args: ${{ matrix.build_args }}
         env:
           GH_TOKEN: ${{ secrets.github_token }}
