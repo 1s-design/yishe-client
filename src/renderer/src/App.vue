@@ -30,6 +30,20 @@ interface ExtensionConnectionStatus {
   clientId?: string;
   clientSource?: string;
   connectedAt?: string;
+  lastClientInfoAt?: string;
+  workspaceDirectory?: string;
+  user?: {
+    id?: string | number | null;
+    account?: string | null;
+    name?: string | null;
+    nickname?: string | null;
+    email?: string | null;
+  } | null;
+  machine?: {
+    code?: string | null;
+    platform?: string | null;
+    createdAt?: string | null;
+  } | null;
   totalConnections?: number;
 }
 
@@ -418,6 +432,7 @@ function handleWindowForegroundRecovery() {
   void checkPsServiceStatus();
   void checkUploaderServiceStatus();
   void checkLocalServiceStatus();
+  void websocketClient.syncServiceRuntime("video-template");
 }
 
 async function checkServerStatus() {
@@ -971,6 +986,11 @@ const dashboardMetaItems = computed<DashboardMetaItem[]>(() => [
     value: userInfo.value?.username || userInfo.value?.account || "--",
   },
   {
+    key: "workspace",
+    label: "工作目录",
+    value: clientProfile.workspaceDirectory || "--",
+  },
+  {
     key: "extension",
     label: "插件连接",
     value: extensionConnectionStatus.value?.totalConnections
@@ -1053,6 +1073,7 @@ onMounted(() => {
   psServiceStatusInterval = setInterval(checkPsServiceStatus, 8000);
 
   void websocketClient.syncServiceRuntime("image-processing");
+  void websocketClient.syncServiceRuntime("video-template");
 
   void checkUploaderServiceStatus();
   uploaderServiceStatusInterval = setInterval(checkUploaderServiceStatus, 3000);

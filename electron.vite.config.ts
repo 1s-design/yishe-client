@@ -1,10 +1,27 @@
 import { resolve } from 'path'
+import fs from 'fs'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 
+function copyVideoTemplateSourcePlugin() {
+  const sourceDir = resolve('src/main/video-template')
+  const targetDir = resolve('out/video-template-source')
+
+  return {
+    name: 'copy-video-template-source',
+    closeBundle() {
+      if (!fs.existsSync(sourceDir)) {
+        return
+      }
+      fs.rmSync(targetDir, { recursive: true, force: true })
+      fs.cpSync(sourceDir, targetDir, { recursive: true })
+    }
+  }
+}
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin(), copyVideoTemplateSourcePlugin()],
     build: {
       minify: false,  // 禁用压缩混淆
       sourcemap: true,  // 生成sourcemap方便调试

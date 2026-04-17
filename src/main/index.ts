@@ -69,6 +69,15 @@ import {
   processImageWithPrompt,
   saveImageToolInput,
 } from "./image-tool";
+import {
+  cancelVideoTemplateRender,
+  configureVideoTemplate,
+  enqueueVideoTemplateRender,
+  getVideoTemplateCatalog,
+  getVideoTemplateRender,
+  getVideoTemplateStatus,
+  listVideoTemplateRenders,
+} from "./video-template";
 
 function resolveBundledImageMagickDirectory(): string | null {
   const candidates = [
@@ -112,6 +121,10 @@ const store = new Store({
 });
 
 configureImageTool({
+  getWorkspaceDirectory: () =>
+    (store.get("workspaceDirectory", "") as string) || "",
+});
+configureVideoTemplate({
   getWorkspaceDirectory: () =>
     (store.get("workspaceDirectory", "") as string) || "",
 });
@@ -1079,6 +1092,30 @@ ipcMain.handle("image-tool:delete-file", async (_event, payload: any) => {
 
 ipcMain.handle("image-tool:clear-files", async (_event, payload: any) => {
   return await clearImageToolFiles(payload || {});
+});
+
+ipcMain.handle("video-template:get-status", async () => {
+  return await getVideoTemplateStatus();
+});
+
+ipcMain.handle("video-template:get-catalog", async () => {
+  return await getVideoTemplateCatalog();
+});
+
+ipcMain.handle("video-template:list-renders", async () => {
+  return await listVideoTemplateRenders();
+});
+
+ipcMain.handle("video-template:get-render", async (_event, jobId: string) => {
+  return await getVideoTemplateRender(jobId);
+});
+
+ipcMain.handle("video-template:enqueue-render", async (_event, payload: any) => {
+  return await enqueueVideoTemplateRender(payload || {});
+});
+
+ipcMain.handle("video-template:cancel-render", async (_event, jobId: string) => {
+  return await cancelVideoTemplateRender(jobId);
 });
 
 ipcMain.handle("open-path", async (_event, path: string) => {

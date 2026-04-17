@@ -73,7 +73,7 @@ const REMOTION_TEMPLATE_REQUEST_TIMEOUT_MS = 5_000;
 const REMOTION_TEMPLATE_CACHE_TTL_MS = 60_000;
 const REMOTION_RECORD_PROGRESS_PERSIST_STEP = 10;
 const REMOTION_RECORD_PROGRESS_PERSIST_INTERVAL_MS = 15_000;
-const REMOTION_LOCAL_BASE = "http://127.0.0.1:1572";
+const REMOTION_LOCAL_BASE = "electron://video-template";
 const PROD_WS_ENDPOINT = "https://1s.design:1520/ws";
 const DEV_WS_ENDPOINT = "http://localhost:1520/ws";
 const FALLBACK_ENDPOINT = import.meta.env.PROD
@@ -2282,61 +2282,64 @@ function queueUploaderRuntimeSync() {
   return uploaderRuntimeSyncPromise;
 }
 
-async function ensureRemotionProcessStarted() {
-  const nativeApi = getNativeApi();
-  if (!nativeApi?.startExternalProcess) {
-    throw new Error("当前环境未注入桌面端插件启动能力");
-  }
-
-  await nativeApi.startExternalProcess("video-template");
-}
-
 async function fetchRemotionJson(
   path: string,
   init?: RequestInit & { timeoutMs?: number },
 ) {
   const { timeoutMs = REMOTION_REQUEST_TIMEOUT_MS, ...requestInit } =
     init || {};
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  let cleanupAbortListener: (() => void) | null = null;
-
-  if (requestInit.signal) {
-    if (requestInit.signal.aborted) {
-      controller.abort();
-    } else {
-      const abortFromUpstream = () => controller.abort();
-      requestInit.signal.addEventListener("abort", abortFromUpstream, {
-        once: true,
-      });
-      cleanupAbortListener = () => {
-        requestInit.signal?.removeEventListener("abort", abortFromUpstream);
-      };
-    }
+  const nativeApi = getNativeApi() as any;
+  if (!nativeApi) {
+    throw new Error("当前环境未注入桌面端 video-template 能力");
   }
 
+  const bodyPayload =
+    typeof requestInit.body === "string" && requestInit.body.trim()
+      ? JSON.parse(requestInit.body)
+      : requestInit.body && typeof requestInit.body === "object"
+        ? requestInit.body
+        : {};
+
+  const action = async () => {
+    if (path === "/api/health") {
+      return nativeApi.getVideoTemplateStatus?.();
+    }
+    if (path === "/api/templates") {
+      return nativeApi.getVideoTemplateCatalog?.();
+    }
+    if (path === "/api/renders") {
+      if (String(requestInit.method || "GET").toUpperCase() === "POST") {
+        return nativeApi.enqueueVideoTemplateRender?.(bodyPayload || {});
+      }
+      return nativeApi.listVideoTemplateRenders?.();
+    }
+    if (path.startsWith("/api/renders/")) {
+      const jobId = decodeURIComponent(path.replace("/api/renders/", "").trim());
+      if (!jobId) {
+        throw new Error("缺少 jobId");
+      }
+      if (String(requestInit.method || "GET").toUpperCase() === "DELETE") {
+        return nativeApi.cancelVideoTemplateRender?.(jobId);
+      }
+      return nativeApi.getVideoTemplateRender?.(jobId);
+    }
+
+    throw new Error(`未实现的 video-template 路径: ${path}`);
+  };
+
   try {
-    const response = await fetch(`${REMOTION_LOCAL_BASE}${path}`, {
-      ...requestInit,
-      signal: controller.signal,
-    });
-    const json = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        String(
-          json?.message || json?.msg || `Remotion 请求失败: ${response.status}`,
+    const result = await Promise.race([
+      action(),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Video Template 心跳超时 (${timeoutMs}ms)`)),
+          timeoutMs,
         ),
-      );
-    }
-    return json;
+      ),
+    ]);
+    return result;
   } catch (error: any) {
-    if (error?.name === "AbortError") {
-      throw new Error(`Video Template 心跳超时 (${timeoutMs}ms)`);
-    }
     throw error;
-  } finally {
-    clearTimeout(timeoutId);
-    cleanupAbortListener?.();
   }
 }
 
@@ -2353,7 +2356,9 @@ async function getCachedRemotionTemplates(force = false) {
   const templatesRes = await fetchRemotionJson("/api/templates", {
     timeoutMs: REMOTION_TEMPLATE_REQUEST_TIMEOUT_MS,
   });
-  const templates = Array.isArray(templatesRes?.data)
+  const templates = Array.isArray(templatesRes?.templates)
+    ? templatesRes.templates
+    : Array.isArray(templatesRes?.data)
     ? templatesRes.data
     : Array.isArray(templatesRes)
       ? templatesRes
@@ -2561,13 +2566,6 @@ function getRemotionPayloadMetaValue(
 async function getRemotionRuntime() {
   const checkedAt = new Date().toISOString();
   const startedAt = Date.now();
-  const nativeApi = getNativeApi();
-  const processList = await nativeApi
-    ?.listExternalProcesses?.()
-    .catch(() => []);
-  const processInfo = Array.isArray(processList)
-    ? processList.find((item: any) => item?.id === "video-template")
-    : null;
   const previousRuntime = clientInfo.services?.["video-template"];
   const previousDetails =
     previousRuntime?.details && typeof previousRuntime.details === "object"
@@ -2643,7 +2641,7 @@ async function getRemotionRuntime() {
       details: {
         templates,
         health: healthPayload,
-        processStatus: processInfo?.status || null,
+        processStatus: "embedded",
         serviceHealthy: true,
         heartbeatLatencyMs,
         lastHeartbeatAt: checkedAt,
@@ -2677,17 +2675,13 @@ async function getRemotionRuntime() {
     };
   } catch (error) {
     const errorMessage = serializeError(error);
-    const looksOffline =
-      !processInfo ||
-      processInfo.status === "stopped" ||
-      processInfo.status === "stopping";
 
     return {
       label: "Video Template 视频引擎",
       connected: false,
       available: false,
-      status: looksOffline ? ("disconnected" as const) : ("error" as const),
-      state: looksOffline ? ("offline" as const) : ("error" as const),
+      status: "error" as const,
+      state: "error" as const,
       busy: false,
       message: "服务不可用",
       endpoint: REMOTION_LOCAL_BASE,
@@ -2698,7 +2692,7 @@ async function getRemotionRuntime() {
         templates: Array.isArray(previousDetails.templates)
           ? previousDetails.templates
           : remotionTemplateCache.items,
-        processStatus: processInfo?.status || null,
+        processStatus: "embedded",
         serviceHealthy: false,
         lastHeartbeatAt: checkedAt,
         heartbeatError: errorMessage,
@@ -2920,7 +2914,6 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
     throw new Error("缺少 templateId");
   }
 
-  await ensureRemotionProcessStarted();
   await syncRemotionRecordStatus(
     recordId,
     {
@@ -3000,7 +2993,7 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
           {
             status: "success",
             progress: 100,
-            message: "视频渲染完成并已上传 COS",
+            message: "视频渲染完成",
             remotionJobId: jobId,
             remotionVideoUrl: uploadedVideo.url,
             resultUrl: uploadedVideo.url,

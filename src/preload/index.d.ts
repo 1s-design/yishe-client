@@ -72,6 +72,15 @@ declare global {
       clearImageToolFiles(payload: {
         directory?: 'uploads' | 'output' | 'template' | 'temp'
       }): Promise<any>
+      getVideoTemplateStatus(): Promise<any>
+      getVideoTemplateCatalog(): Promise<any>
+      listVideoTemplateRenders(): Promise<any>
+      getVideoTemplateRender(jobId: string): Promise<any>
+      enqueueVideoTemplateRender(payload: {
+        templateId: string
+        inputProps?: Record<string, any>
+      }): Promise<any>
+      cancelVideoTemplateRender(jobId: string): Promise<any>
       openPath(path: string): Promise<void>
       // 文件下载相关方法
       downloadFile(url: string): Promise<{

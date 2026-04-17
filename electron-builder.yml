@@ -15,6 +15,7 @@ files:
   - "!resources/plugin/**/*"
 asarUnpack:
   - resources/**
+  - out/video-template-source/**
 generateUpdatesFilesForAllChannels: false
 win:
   target:

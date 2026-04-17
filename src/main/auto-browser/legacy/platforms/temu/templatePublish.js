@@ -406,6 +406,7 @@ async function submitTemuTemplatePayload(payload = {}, sessionBundle = {}, optio
     }
 
     let lastError = null;
+    const attemptDetails = [];
 
     for (const headers of headerCandidates) {
         try {
@@ -427,7 +428,8 @@ async function submitTemuTemplatePayload(payload = {}, sessionBundle = {}, optio
                     submitUrl,
                     headersUsed: headers,
                     response: responsePayload,
-                    rawText
+                    rawText,
+                    attemptDetails
                 };
             }
 
@@ -437,14 +439,29 @@ async function submitTemuTemplatePayload(payload = {}, sessionBundle = {}, optio
                 || rawText
                 || `Temu 商品提交失败，状态码 ${response.status}`
             );
+            attemptDetails.push({
+                success: false,
+                status: response.status,
+                message: lastError.message,
+                hasAntiContent: !!headers['anti-content'],
+                hasMallId: !!headers.mallid
+            });
         } catch (error) {
             lastError = error;
+            attemptDetails.push({
+                success: false,
+                status: 0,
+                message: lastError?.message || String(lastError),
+                hasAntiContent: !!headers['anti-content'],
+                hasMallId: !!headers.mallid
+            });
         }
     }
 
     return {
         success: false,
-        message: lastError?.message || 'Temu 商品提交失败'
+        message: lastError?.message || 'Temu 商品提交失败',
+        attemptDetails
     };
 }
 
@@ -483,6 +500,8 @@ function buildTemplatePublishResult({
             publishImageUploadRequestedCount: publishImageUploadResult?.requestedImageCount || 0,
             publishImageUploadUploadedCount: publishImageUploadResult?.uploadedCount || 0,
             publishImageUploadFailedImages: publishImageUploadResult?.failedImages || [],
+            publishImageUploadRetryEvents: publishImageUploadResult?.retryEvents || [],
+            publishImageUploadSession: publishImageUploadResult?.sessionContext || null,
             productTemplatePayloadSummary: payloadSummary || null,
             productTemplatePayloadPreview: payloadPreview || null,
             publishSubmitResult: submitResult
@@ -491,7 +510,8 @@ function buildTemplatePublishResult({
                     status: submitResult.status || 0,
                     submitUrl: submitResult.submitUrl || '',
                     response: submitResult.response || null,
-                    rawText: submitResult.rawText || ''
+                    rawText: submitResult.rawText || '',
+                    attemptDetails: submitResult.attemptDetails || []
                 }
                 : null,
             executionTrace,

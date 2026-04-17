@@ -39,6 +39,8 @@ const TEMU_IMAGE_SECTION_KEYWORDS = [
 ];
 
 const TEMU_IMAGE_PICKER_CONFIRM_LABELS = ['确定', '确认', '完成', '选择', '提交', '保存'];
+const TEMU_UPLOAD_RETRY_LIMIT = 3;
+const TEMU_SESSION_REFRESH_RETRY_LIMIT = 1;
 
 function normalizeText(value) {
     return String(value || '').trim();
@@ -458,11 +460,18 @@ function extractFileNameHints(value = '') {
 
 async function uploadSingleTemuImage(fileEntry, headerCandidates = []) {
     let lastError = null;
+    const attemptDetails = [];
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
         const signatureResult = await requestTemuUploadSignature(headerCandidates);
         if (!signatureResult.success) {
             lastError = new Error(signatureResult.message || '获取图片上传签名失败');
+            attemptDetails.push({
+                stage: 'request_signature',
+                attempt: attempt + 1,
+                success: false,
+                message: lastError.message
+            });
             continue;
         }
 
@@ -493,7 +502,8 @@ async function uploadSingleTemuImage(fileEntry, headerCandidates = []) {
                 if (response.ok && normalized.url) {
                     return {
                         success: true,
-                        uploadedImage: normalized
+                        uploadedImage: normalized,
+                        attemptDetails
                     };
                 }
 
@@ -503,16 +513,54 @@ async function uploadSingleTemuImage(fileEntry, headerCandidates = []) {
                     || rawText
                     || `上传图片失败，状态码 ${response.status}`
                 );
+                attemptDetails.push({
+                    stage: 'upload_image',
+                    attempt: attempt + 1,
+                    success: false,
+                    status: response.status,
+                    message: lastError.message,
+                    hasAntiContent: !!headers['anti-content'],
+                    hasMallId: !!headers.mallid
+                });
             } catch (error) {
                 lastError = error;
+                attemptDetails.push({
+                    stage: 'upload_image',
+                    attempt: attempt + 1,
+                    success: false,
+                    message: lastError?.message || String(lastError),
+                    hasAntiContent: !!headers['anti-content'],
+                    hasMallId: !!headers.mallid
+                });
             }
         }
     }
 
     return {
         success: false,
-        message: lastError?.message || `上传图片失败: ${fileEntry.fileName || fileEntry.source || ''}`
+        message: lastError?.message || `上传图片失败: ${fileEntry.fileName || fileEntry.source || ''}`,
+        attemptDetails
     };
+}
+
+async function refreshTemuUploadSession(page, options = {}) {
+    const fallbackHeadersTemplate = {
+        origin: options.requestCaptureState?.origin || 'https://agentseller.temu.com',
+        referer:
+            options.requestCaptureState?.referer
+            || normalizeText(page?.url?.())
+            || TEMU_DEFAULT_UPLOAD_REFERER,
+        'user-agent': options.requestCaptureState?.userAgent || '',
+        'anti-content': options.requestCaptureState?.antiContent || '',
+        mallid: options.requestCaptureState?.mallId || ''
+    };
+
+    return await getTemuCurrentSessionContext(page, {
+        region: 'global',
+        headersTemplate: fallbackHeadersTemplate,
+        mallId: options.requestCaptureState?.mallId || '',
+        antiContent: options.requestCaptureState?.antiContent || ''
+    });
 }
 
 export function createTemuLiveRequestCapture(context) {
@@ -883,47 +931,52 @@ export async function bindTemuUploadedImagesToEditPage(page, uploadedImages = []
         }
         usedCandidateKeys.add(candidateKey);
 
-        const clickResult = await clickTemuImageTriggerCandidate(page, candidate);
-        if (!clickResult.success) {
+        for (let pickerAttempt = 0; pickerAttempt < 2; pickerAttempt += 1) {
+            const clickResult = await clickTemuImageTriggerCandidate(page, candidate);
+            if (!clickResult.success) {
+                attemptResults.push({
+                    candidate,
+                    pickerAttempt: pickerAttempt + 1,
+                    success: false,
+                    reason: clickResult.reason || 'trigger_click_failed'
+                });
+                break;
+            }
+
+            await page.waitForTimeout(1_500);
+            const selectionResult = await selectTemuImagesInPicker(page, images, images.length);
+            if (!selectionResult.selectedCount) {
+                attemptResults.push({
+                    candidate,
+                    pickerAttempt: pickerAttempt + 1,
+                    success: false,
+                    reason: 'picker_images_not_selected',
+                    selectionResult
+                });
+                continue;
+            }
+
+            const confirmResult = await confirmTemuImagePicker(page);
             attemptResults.push({
                 candidate,
-                success: false,
-                reason: clickResult.reason || 'trigger_click_failed'
+                pickerAttempt: pickerAttempt + 1,
+                success: !!confirmResult.success,
+                reason: confirmResult.success ? '' : confirmResult.reason || 'picker_confirm_failed',
+                selectionResult,
+                confirmResult
             });
-            continue;
-        }
 
-        await page.waitForTimeout(1_500);
-        const selectionResult = await selectTemuImagesInPicker(page, images, images.length);
-        if (!selectionResult.selectedCount) {
-            attemptResults.push({
-                candidate,
-                success: false,
-                reason: 'picker_images_not_selected',
-                selectionResult
-            });
-            continue;
-        }
-
-        const confirmResult = await confirmTemuImagePicker(page);
-        attemptResults.push({
-            candidate,
-            success: !!confirmResult.success,
-            reason: confirmResult.success ? '' : confirmResult.reason || 'picker_confirm_failed',
-            selectionResult,
-            confirmResult
-        });
-
-        if (confirmResult.success) {
-            return {
-                success: true,
-                skipped: false,
-                selectedCount: selectionResult.selectedCount || 0,
-                matchedCount: selectionResult.matchedCount || 0,
-                usedFallback: !!selectionResult.usedFallback,
-                candidate,
-                attemptResults
-            };
+            if (confirmResult.success) {
+                return {
+                    success: true,
+                    skipped: false,
+                    selectedCount: selectionResult.selectedCount || 0,
+                    matchedCount: selectionResult.matchedCount || 0,
+                    usedFallback: !!selectionResult.usedFallback,
+                    candidate,
+                    attemptResults
+                };
+            }
         }
     }
 
@@ -971,20 +1024,8 @@ export async function uploadTemuImagesToCloud(page, imageSources = [], options =
         };
     }
 
-    const sessionContext = normalizeTemuUploadSessionContext(options.sessionContext)
-        || await getTemuCurrentSessionContext(page, {
-            region: 'global',
-            headersTemplate: {
-                origin: options.requestCaptureState?.origin || 'https://agentseller.temu.com',
-                referer:
-                    options.requestCaptureState?.referer
-                    || normalizeText(page?.url?.())
-                    || TEMU_DEFAULT_UPLOAD_REFERER,
-                'user-agent': options.requestCaptureState?.userAgent || '',
-                'anti-content': options.requestCaptureState?.antiContent || '',
-                mallid: options.requestCaptureState?.mallId || ''
-            }
-        });
+    let sessionContext = normalizeTemuUploadSessionContext(options.sessionContext)
+        || await refreshTemuUploadSession(page, options);
 
     if (!sessionContext?.success) {
         logger.error(`${PLATFORM_NAME}${resourceLabel}上传前获取会话失败`, {
@@ -1060,6 +1101,7 @@ export async function uploadTemuImagesToCloud(page, imageSources = [], options =
 
     const uploadedImages = [];
     const failedImages = [];
+    const retryEvents = [];
 
     try {
         logger.info(`${PLATFORM_NAME}${resourceLabel}本地文件准备完成`, {
@@ -1079,12 +1121,58 @@ export async function uploadTemuImagesToCloud(page, imageSources = [], options =
                 total
             });
 
-            const uploadResult = await uploadSingleTemuImage(fileEntry, headerCandidates);
-            if (!uploadResult.success) {
+            let activeHeaderCandidates = headerCandidates;
+            let uploadResult = null;
+
+            for (let uploadAttempt = 0; uploadAttempt < TEMU_UPLOAD_RETRY_LIMIT; uploadAttempt += 1) {
+                uploadResult = await uploadSingleTemuImage(fileEntry, activeHeaderCandidates);
+                if (uploadResult.success) {
+                    break;
+                }
+
+                const canRefreshSession = uploadAttempt < TEMU_UPLOAD_RETRY_LIMIT - 1
+                    && uploadAttempt < TEMU_SESSION_REFRESH_RETRY_LIMIT
+                    && page;
+                if (!canRefreshSession) {
+                    break;
+                }
+
+                const refreshedSessionContext = normalizeTemuUploadSessionContext(
+                    await refreshTemuUploadSession(page, options)
+                );
+                if (!refreshedSessionContext?.success) {
+                    retryEvents.push({
+                        source: fileEntry.source,
+                        fileName: fileEntry.fileName,
+                        uploadAttempt: uploadAttempt + 1,
+                        refreshed: false,
+                        message: refreshedSessionContext?.message || 'refresh_session_failed'
+                    });
+                    break;
+                }
+
+                sessionContext = refreshedSessionContext;
+                const rebuiltHeaders = buildTemuUploadHeaderCandidates(
+                    sessionContext,
+                    options.requestCaptureState
+                );
+                activeHeaderCandidates = rebuiltHeaders.headerCandidates || activeHeaderCandidates;
+                retryEvents.push({
+                    source: fileEntry.source,
+                    fileName: fileEntry.fileName,
+                    uploadAttempt: uploadAttempt + 1,
+                    refreshed: true,
+                    mallId: sessionContext.mallId || '',
+                    antiContentReady: !!sessionContext.antiContent
+                });
+            }
+
+            if (!uploadResult?.success) {
                 failedImages.push({
                     source: fileEntry.source,
                     fileName: fileEntry.fileName,
-                    error: uploadResult.message || 'upload_failed'
+                    error: uploadResult?.message || 'upload_failed',
+                    attemptDetails: uploadResult?.attemptDetails || []
                 });
                 logger.error(`${PLATFORM_NAME}${resourceLabel}上传到Temu云文件失败 ${current}/${total}`, {
                     source: fileEntry.source,
@@ -1092,7 +1180,7 @@ export async function uploadTemuImagesToCloud(page, imageSources = [], options =
                     fileName: fileEntry.fileName,
                     current,
                     total,
-                    message: uploadResult.message || 'upload_failed'
+                    message: uploadResult?.message || 'upload_failed'
                 });
                 continue;
             }
@@ -1136,11 +1224,13 @@ export async function uploadTemuImagesToCloud(page, imageSources = [], options =
         uploadedCount: uploadedImages.length,
         uploadedImages,
         failedImages,
+        retryEvents,
         sessionContext: {
             currentUrl: sessionContext.currentUrl || '',
             cookieCount: sessionContext.cookieCount || 0,
             mallId: sessionContext.mallId || '',
-            effectiveRegion: sessionContext.effectiveRegion || 'global'
+            effectiveRegion: sessionContext.effectiveRegion || 'global',
+            antiContentReady: !!sessionContext.antiContent
         }
     };
 }

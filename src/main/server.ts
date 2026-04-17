@@ -44,7 +44,62 @@ export function isTokenExist(): boolean {
 
 let stopServerFn: (() => Promise<void>) | null = null;
 let ioServer: SocketIOServer | null = null;
-let extensionConnections = new Map<string, { socketId: string; connectedAt: string }>();
+type ExtensionClientInfoSnapshot = {
+  appVersion?: string;
+  workspaceDirectory?: string;
+  user?: {
+    id?: string | number | null;
+    account?: string | null;
+    name?: string | null;
+    nickname?: string | null;
+    email?: string | null;
+  };
+  machine?: {
+    code?: string | null;
+    platform?: string | null;
+    createdAt?: string | null;
+  };
+};
+
+type ExtensionConnectionInfo = {
+  socketId: string;
+  connectedAt: string;
+  clientSource?: string;
+  lastClientInfoAt?: string;
+  clientInfo?: ExtensionClientInfoSnapshot;
+};
+
+let extensionConnections = new Map<string, ExtensionConnectionInfo>();
+
+function normalizeExtensionClientInfo(data: any): ExtensionClientInfoSnapshot {
+  const workspaceDirectory = String(data?.workspaceDirectory || '').trim();
+  const appVersion = String(data?.appVersion || '').trim();
+  const user =
+    data?.user && typeof data.user === 'object'
+      ? {
+          id: data.user.id ?? null,
+          account: data.user.account ? String(data.user.account).trim() : null,
+          name: data.user.name ? String(data.user.name).trim() : null,
+          nickname: data.user.nickname ? String(data.user.nickname).trim() : null,
+          email: data.user.email ? String(data.user.email).trim() : null,
+        }
+      : undefined;
+  const machine =
+    data?.machine && typeof data.machine === 'object'
+      ? {
+          code: data.machine.code ? String(data.machine.code).trim() : null,
+          platform: data.machine.platform ? String(data.machine.platform).trim() : null,
+          createdAt: data.machine.createdAt ? String(data.machine.createdAt).trim() : null,
+        }
+      : undefined;
+
+  return {
+    appVersion: appVersion || undefined,
+    workspaceDirectory: workspaceDirectory || undefined,
+    user,
+    machine,
+  };
+}
 
 export function startServer(port: number = 1519): (() => Promise<void>) {
   // 如果服务器已经在运行，先停止它
@@ -288,7 +343,8 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     
     extensionConnections.set(clientId, {
       socketId: socket.id,
-      connectedAt: new Date().toISOString()
+      connectedAt: new Date().toISOString(),
+      clientSource,
     });
 
     // 通知主窗口插件连接状态
@@ -314,6 +370,30 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     // 处理客户端信息
     socket.on('client-info', (data) => {
       console.log(`[WS] 收到客户端信息: ${clientId}`, data);
+      const previous = extensionConnections.get(clientId);
+      const nextInfo: ExtensionConnectionInfo = {
+        socketId: socket.id,
+        connectedAt: previous?.connectedAt || new Date().toISOString(),
+        clientSource,
+        lastClientInfoAt: new Date().toISOString(),
+        clientInfo: normalizeExtensionClientInfo(data),
+      };
+      extensionConnections.set(clientId, nextInfo);
+
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) {
+        mainWindow.webContents.send('extension-connection-status', {
+          connected: true,
+          clientId,
+          clientSource,
+          connectedAt: nextInfo.connectedAt,
+          lastClientInfoAt: nextInfo.lastClientInfoAt,
+          workspaceDirectory: nextInfo.clientInfo?.workspaceDirectory || '',
+          user: nextInfo.clientInfo?.user || null,
+          machine: nextInfo.clientInfo?.machine || null,
+          totalConnections: extensionConnections.size
+        });
+      }
     });
 
     // 处理断开连接
@@ -370,7 +450,11 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
   app.get('/api/extension/connections', (_req, res) => {
     const connections = Array.from(extensionConnections.entries()).map(([clientId, info]) => ({
       clientId,
-      ...info
+      ...info,
+      workspaceDirectory: info.clientInfo?.workspaceDirectory || '',
+      user: info.clientInfo?.user || null,
+      machine: info.clientInfo?.machine || null,
+      appVersion: info.clientInfo?.appVersion || '',
     }));
     res.json({
       total: extensionConnections.size,

@@ -256,6 +256,10 @@ export async function publishToTemu(publishInfo = {}) {
                             publishImageUploadResult.uploadedCount || 0,
                         publishImageUploadFailedImages:
                             publishImageUploadResult.failedImages || [],
+                        publishImageUploadRetryEvents:
+                            publishImageUploadResult.retryEvents || [],
+                        publishImageUploadSession:
+                            publishImageUploadResult.sessionContext || null,
                         executionTrace,
                         pageKeptOpen: shouldKeepPageOpen
                     }
@@ -387,6 +391,8 @@ export async function publishToTemu(publishInfo = {}) {
                 publishImageUploadRequestedCount: publishImageUploadResult?.requestedImageCount || 0,
                 publishImageUploadUploadedCount: publishImageUploadResult?.uploadedCount || 0,
                 publishImageUploadFailedImages: publishImageUploadResult?.failedImages || [],
+                publishImageUploadRetryEvents: publishImageUploadResult?.retryEvents || [],
+                publishImageUploadSession: publishImageUploadResult?.sessionContext || null,
                 publishImageBindCompleted:
                     !!publishImageBindResult?.success && !publishImageBindResult?.skipped,
                 publishImageBindSkipped: !!publishImageBindResult?.skipped,

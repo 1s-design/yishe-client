@@ -6,6 +6,7 @@
     "strict": false,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
+    "jsx": "react-jsx",
     "types": ["electron-vite/node"]
   }
 }

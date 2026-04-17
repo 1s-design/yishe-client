@@ -201,19 +201,6 @@ const psAutomationExecutable = resolvePlatformPluginPath(
   "ps-automation/yishe-ps-windows.exe",
   "yishe-ps-windows.exe",
 );
-const remotionExecutable =
-  process.platform === "win32"
-    ? resolvePlatformPluginPath(
-        "yishe-remotion/yishe-remotion.exe",
-        "yishe-remotion.exe",
-        "yishe-video-tool.exe",
-      )
-    : resolvePlatformPluginPath(
-        "yishe-remotion/yishe-remotion",
-        "yishe-remotion",
-        "yishe-video-tool",
-      );
-
 const pluginProcessConfigsInternal: ProcessConfig[] = [];
 const imageProcessingRuntimeConfig = null;
 
@@ -228,28 +215,6 @@ if (
     platforms: ["win32"],
     autoStart: false,
     autoRestart: false,
-  });
-}
-
-if (
-  (process.platform === "win32" || process.platform === "darwin") &&
-  hasBundledResource(remotionExecutable)
-) {
-  pluginProcessConfigsInternal.push({
-    id: "video-template",
-    name: "Video Template 视频引擎",
-    executable: remotionExecutable,
-    platforms: ["win32", "darwin"],
-    autoStart: true,
-    autoRestart: true,
-    restartDelay: 3000,
-    healthCheck: {
-      type: "http",
-      url: "http://127.0.0.1:1572/api/health",
-      interval: 5000,
-      timeout: 2500,
-      failureThreshold: 2,
-    },
   });
 }
 

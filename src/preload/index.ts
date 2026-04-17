@@ -54,6 +54,13 @@ const api = {
     ipcRenderer.invoke('image-tool:delete-file', payload),
   clearImageToolFiles: (payload: { directory?: 'uploads' | 'output' | 'template' | 'temp' }) =>
     ipcRenderer.invoke('image-tool:clear-files', payload),
+  getVideoTemplateStatus: () => ipcRenderer.invoke('video-template:get-status'),
+  getVideoTemplateCatalog: () => ipcRenderer.invoke('video-template:get-catalog'),
+  listVideoTemplateRenders: () => ipcRenderer.invoke('video-template:list-renders'),
+  getVideoTemplateRender: (jobId: string) => ipcRenderer.invoke('video-template:get-render', jobId),
+  enqueueVideoTemplateRender: (payload: { templateId: string; inputProps?: Record<string, any> }) =>
+    ipcRenderer.invoke('video-template:enqueue-render', payload),
+  cancelVideoTemplateRender: (jobId: string) => ipcRenderer.invoke('video-template:cancel-render', jobId),
   openPath: (path: string) => ipcRenderer.invoke('open-path', path),
   // 文件下载相关方法
   downloadFile: (url: string) => ipcRenderer.invoke('download-file', url),
