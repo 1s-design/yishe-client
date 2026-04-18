@@ -1,6 +1,7 @@
 import { makeCancelSignal, renderMedia, selectComposition } from "@remotion/renderer";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import type { RemotionChromeMode } from "./remotion-browser";
 
 export interface VideoTemplateJobData {
   templateId: string;
@@ -229,11 +230,13 @@ export function makeRenderQueue({
   rendersDir,
   browserExecutable,
   binariesDirectory,
+  chromeMode,
 }: {
   serveUrl: string;
   rendersDir: string;
   browserExecutable: string | null;
   binariesDirectory: string | null;
+  chromeMode: RemotionChromeMode;
 }) {
   const jobs = new Map<string, VideoTemplateJobState>();
   let queue: Promise<unknown> = Promise.resolve();
@@ -304,6 +307,7 @@ export function makeRenderQueue({
         inputProps,
         browserExecutable,
         binariesDirectory,
+        chromeMode,
         timeoutInMilliseconds: timeoutMs,
       });
       const totalFrames = Math.max(0, Number(composition.durationInFrames) || 0);
@@ -337,6 +341,7 @@ export function makeRenderQueue({
         codec: "h264",
         browserExecutable,
         binariesDirectory,
+        chromeMode,
         timeoutInMilliseconds: resolveRenderTimeout(inputProps),
         onStart: () => {
           setJob(

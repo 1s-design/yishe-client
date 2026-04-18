@@ -26,6 +26,7 @@ import {
     withDefaultActivatedPageOptions
 } from '../utils/playwrightPageFactory.js';
 import {
+    getDefaultChromeExecutablePath,
     getPlaywrightChromium
 } from '../utils/playwrightRuntime.js';
 import {
@@ -89,32 +90,6 @@ let browserStatus = {
     lastActivity: null,
     pageCount: 0
 };
-
-function existsAny(paths = []) {
-    for (const p of paths) {
-        try {
-            if (p && existsSync(p)) return p;
-        } catch {
-            // ignore
-        }
-    }
-    return null;
-}
-
-function getDefaultExecutablePath() {
-    if (process.platform === 'win32') {
-        const pf = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-        const pf64 = process.env.ProgramFiles || 'C:\\Program Files';
-        return existsAny([
-            pathJoin(pf64, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-            pathJoin(pf, 'Google', 'Chrome', 'Application', 'chrome.exe')
-        ]) || pathJoin(pf64, 'Google', 'Chrome', 'Application', 'chrome.exe');
-    }
-    if (process.platform === 'darwin') {
-        return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-    }
-    return '/usr/bin/google-chrome';
-}
 
 /**
  * 获取默认的 CDP User Data 目录（独立目录，避免与系统 Chrome 冲突）
@@ -586,7 +561,7 @@ function tryListProfiles(userDataDir) {
  * 支持无头模式通过 headless 参数或 HEADLESS 环境变量
  */
 export function launchWithDebugPort({ port = null, headless = null, userDataDir = null, executablePath = null, profileId = null } = {}) {
-    const exe = String(executablePath || getDefaultExecutablePath()).trim();
+    const exe = String(executablePath || getDefaultChromeExecutablePath()).trim();
     if (!exe || !existsSync(exe)) {
         throw new Error(`未找到 Chrome 可执行文件: ${exe}，请确认已安装 Google Chrome`);
     }

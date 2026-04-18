@@ -4,6 +4,7 @@ import { app } from "electron";
 import fs from "fs";
 import path from "path";
 import { makeRenderQueue, type VideoTemplateJobState } from "./render-queue";
+import { resolveRemotionBrowser } from "./remotion-browser";
 import { publicTemplateCatalog, templateCatalog } from "./templates/registry";
 
 type WorkspaceResolver = () => string;
@@ -431,6 +432,7 @@ async function warmVideoTemplateService() {
       const directories = ensureVideoTemplateDirectories();
       const serveUrl = await ensureVideoTemplateServeUrl();
       const binariesDirectory = resolveRemotionBinariesDirectory();
+      const browser = resolveRemotionBrowser();
 
       if (binariesDirectory) {
         console.info(
@@ -442,11 +444,22 @@ async function warmVideoTemplateService() {
         );
       }
 
+      if (browser.executablePath) {
+        console.info(
+          `[video-template] using ${browser.source} browser (${browser.chromeMode}): ${browser.executablePath}`,
+        );
+      } else {
+        console.warn(
+          `[video-template] using Remotion managed browser download (${browser.chromeMode})`,
+        );
+      }
+
       const queue = makeRenderQueue({
         serveUrl,
         rendersDir: directories.renders,
-        browserExecutable: null,
+        browserExecutable: browser.executablePath,
         binariesDirectory,
+        chromeMode: browser.chromeMode,
       });
 
       queueInstance = queue;

@@ -23,6 +23,10 @@ extraResources:
     to: resources/remotion
     filter:
       - "**/*"
+  - from: resources/remotion-browser
+    to: resources/remotion-browser
+    filter:
+      - "**/*"
 generateUpdatesFilesForAllChannels: false
 win:
   target:
