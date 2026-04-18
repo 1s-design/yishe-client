@@ -109,6 +109,49 @@ function getVideoTemplateEntryPointCandidates() {
   );
 }
 
+function getVideoTemplateBundleCandidates() {
+  return [
+    path.join(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "out",
+      "video-template-bundle",
+    ),
+    path.join(
+      process.resourcesPath,
+      "out",
+      "video-template-bundle",
+    ),
+    path.join(
+      app.getAppPath(),
+      "out",
+      "video-template-bundle",
+    ),
+    path.join(
+      path.dirname(app.getAppPath()),
+      "app.asar.unpacked",
+      "out",
+      "video-template-bundle",
+    ),
+    path.join(__dirname, "../../video-template-bundle"),
+    path.join(__dirname, "../video-template-bundle"),
+  ].filter((candidate, index, list) => list.indexOf(candidate) === index);
+}
+
+function resolvePrebuiltVideoTemplateBundle() {
+  if (!app.isPackaged) {
+    return null;
+  }
+
+  for (const candidate of getVideoTemplateBundleCandidates()) {
+    if (fs.existsSync(path.join(candidate, "index.html"))) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 async function bundleVideoTemplateFromEntry(entryPoint: string, outputDirectory: string) {
   // 打包版运行在只读应用目录附近时，Remotion 的 webpack 缓存和工作根目录
   // 不能再落到安装目录，否则容易因为权限导致预热失败。
@@ -212,6 +255,12 @@ function formatJob(jobId: string, job: VideoTemplateJobState | undefined | null)
 }
 
 async function ensureVideoTemplateServeUrl() {
+  const prebuiltBundle = resolvePrebuiltVideoTemplateBundle();
+  if (prebuiltBundle) {
+    console.info(`[video-template] using prebuilt bundle: ${prebuiltBundle}`);
+    return prebuiltBundle;
+  }
+
   if (!bundlePromise) {
     bundlePromise = (async () => {
       const directories = ensureVideoTemplateDirectories();

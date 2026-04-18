@@ -1,5 +1,6 @@
 import { resolve } from 'path'
 import fs from 'fs'
+import { bundle as bundleRemotion } from '@remotion/bundler'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 
@@ -19,9 +20,43 @@ function copyVideoTemplateSourcePlugin() {
   }
 }
 
+function buildVideoTemplateBundlePlugin() {
+  const entryPoint = resolve('src/main/video-template/remotion/index.ts')
+  const targetDir = resolve('out/video-template-bundle')
+
+  return {
+    name: 'build-video-template-bundle',
+    async closeBundle() {
+      if (!fs.existsSync(entryPoint)) {
+        return
+      }
+
+      fs.rmSync(targetDir, { recursive: true, force: true })
+      fs.mkdirSync(targetDir, { recursive: true })
+
+      console.info(`[video-template] building prebuilt bundle: ${targetDir}`)
+
+      await bundleRemotion({
+        entryPoint,
+        outDir: targetDir,
+        enableCaching: false,
+        onProgress(progress) {
+          if (progress === 100 || progress >= 95) {
+            console.info(`[video-template] prebuilt bundle progress: ${progress}%`)
+          }
+        }
+      })
+    }
+  }
+}
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), copyVideoTemplateSourcePlugin()],
+    plugins: [
+      externalizeDepsPlugin(),
+      copyVideoTemplateSourcePlugin(),
+      buildVideoTemplateBundlePlugin()
+    ],
     build: {
       minify: false,  // 禁用压缩混淆
       sourcemap: true,  // 生成sourcemap方便调试

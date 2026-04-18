@@ -16,6 +16,7 @@ files:
 asarUnpack:
   - resources/**
   - out/video-template-source/**
+  - out/video-template-bundle/**
 generateUpdatesFilesForAllChannels: false
 win:
   target:
