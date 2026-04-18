@@ -298,6 +298,49 @@ function formatJob(jobId: string, job: VideoTemplateJobState | undefined | null)
     completedAt,
     updatedAt: job.updatedAt ?? now,
     elapsedMs,
+    stage: String(job.stage || "").trim() || null,
+    message: String(job.message || "").trim() || null,
+    lastHeartbeatAt:
+      typeof job.lastHeartbeatAt === "number" ? job.lastHeartbeatAt : null,
+    timeoutMs: typeof job.timeoutMs === "number" ? job.timeoutMs : null,
+    progressDetails:
+      job.progressDetails &&
+      typeof job.progressDetails === "object" &&
+      !Array.isArray(job.progressDetails)
+        ? {
+            renderedFrames:
+              typeof job.progressDetails.renderedFrames === "number"
+                ? job.progressDetails.renderedFrames
+                : 0,
+            encodedFrames:
+              typeof job.progressDetails.encodedFrames === "number"
+                ? job.progressDetails.encodedFrames
+                : 0,
+            stitchStage:
+              String(job.progressDetails.stitchStage || "").trim() || "encoding",
+            renderEstimatedTime:
+              typeof job.progressDetails.renderEstimatedTime === "number"
+                ? job.progressDetails.renderEstimatedTime
+                : 0,
+            renderedDoneIn:
+              typeof job.progressDetails.renderedDoneIn === "number"
+                ? job.progressDetails.renderedDoneIn
+                : null,
+            encodedDoneIn:
+              typeof job.progressDetails.encodedDoneIn === "number"
+                ? job.progressDetails.encodedDoneIn
+                : null,
+          }
+        : null,
+    logs: Array.isArray(job.logs)
+      ? job.logs.map((entry) => ({
+          timestamp:
+            typeof entry?.timestamp === "number" ? entry.timestamp : now,
+          level: String(entry?.level || "info").trim() || "info",
+          stage: String(entry?.stage || "").trim() || null,
+          message: String(entry?.message || "").trim(),
+        }))
+      : [],
   };
 
   if (job.status === "queued") {

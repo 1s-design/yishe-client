@@ -2402,6 +2402,8 @@ function normalizeRemotionQueueJob(job: any) {
     progress: Number.isFinite(numericProgress)
       ? Math.max(0, Math.min(1, numericProgress))
       : null,
+    stage: String(job?.stage || "").trim() || null,
+    message: String(job?.message || "").trim() || null,
     createdAt:
       typeof job?.createdAt === "number" ? Number(job.createdAt) : null,
     startedAt:
@@ -2410,6 +2412,10 @@ function normalizeRemotionQueueJob(job: any) {
       typeof job?.completedAt === "number" ? Number(job.completedAt) : null,
     updatedAt:
       typeof job?.updatedAt === "number" ? Number(job.updatedAt) : null,
+    lastHeartbeatAt:
+      typeof job?.lastHeartbeatAt === "number"
+        ? Number(job.lastHeartbeatAt)
+        : null,
     elapsedMs:
       typeof job?.elapsedMs === "number" ? Number(job.elapsedMs) : null,
     videoUrl: String(job?.videoUrl || "").trim() || null,
@@ -2517,9 +2523,12 @@ function buildRemotionQueuePayload(
         ? snapshot.processingJobsCount
         : null,
     localJobStatus: targetJob?.status || null,
+    localJobStage: targetJob?.stage || null,
+    localJobMessage: targetJob?.message || null,
     createdAt: toRemotionIsoTimestamp(targetJob?.createdAt),
     startedAt: toRemotionIsoTimestamp(targetJob?.startedAt),
     completedAt: toRemotionIsoTimestamp(targetJob?.completedAt),
+    lastHeartbeatAt: toRemotionIsoTimestamp(targetJob?.lastHeartbeatAt),
     updatedAt: toRemotionIsoTimestamp(targetJob?.updatedAt),
     elapsedMs:
       typeof targetJob?.elapsedMs === "number" ? targetJob.elapsedMs : null,
@@ -2760,9 +2769,12 @@ function buildRemotionRecordRealtimePayload(
       "queueProcessingCount",
     ),
     localJobStatus: getRemotionPayloadMetaValue(payload, "localJobStatus"),
+    localJobStage: getRemotionPayloadMetaValue(payload, "localJobStage"),
+    localJobMessage: getRemotionPayloadMetaValue(payload, "localJobMessage"),
     createdAt: getRemotionPayloadMetaValue(payload, "createdAt"),
     startedAt: getRemotionPayloadMetaValue(payload, "startedAt"),
     completedAt: getRemotionPayloadMetaValue(payload, "completedAt"),
+    lastHeartbeatAt: getRemotionPayloadMetaValue(payload, "lastHeartbeatAt"),
     elapsedMs: getRemotionPayloadMetaValue(payload, "elapsedMs"),
     reportedAt: new Date().toISOString(),
   };
@@ -2805,6 +2817,8 @@ function shouldPersistRemotionRecordStatus(
       payload,
       "queueProcessingCount",
     ),
+    localJobStage: getRemotionPayloadMetaValue(payload, "localJobStage"),
+    localJobMessage: getRemotionPayloadMetaValue(payload, "localJobMessage"),
   });
 
   if (currentFingerprint === cacheEntry.lastPersistedFingerprint) {
@@ -2885,6 +2899,8 @@ async function syncRemotionRecordStatus(
         payload,
         "queueProcessingCount",
       ),
+      localJobStage: getRemotionPayloadMetaValue(payload, "localJobStage"),
+      localJobMessage: getRemotionPayloadMetaValue(payload, "localJobMessage"),
     });
     cacheEntry.lastPersistedAt = Date.now();
     cacheEntry.lastPersistedProgress = normalizedProgress;
