@@ -45,6 +45,93 @@ function ensureVideoTemplateDirectories() {
   return directories;
 }
 
+function getRemotionBinaryFileNames() {
+  if (process.platform === "win32") {
+    return {
+      compositor: "remotion.exe",
+      ffmpeg: "ffmpeg.exe",
+      ffprobe: "ffprobe.exe",
+    };
+  }
+
+  return {
+    compositor: "remotion",
+    ffmpeg: "ffmpeg",
+    ffprobe: "ffprobe",
+  };
+}
+
+function getRemotionPackageDirectoryName() {
+  if (process.platform === "win32" && process.arch === "x64") {
+    return "compositor-win32-x64-msvc";
+  }
+
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    return "compositor-darwin-arm64";
+  }
+
+  if (process.platform === "darwin" && process.arch === "x64") {
+    return "compositor-darwin-x64";
+  }
+
+  if (process.platform === "linux" && process.arch === "x64") {
+    return "compositor-linux-x64-gnu";
+  }
+
+  if (process.platform === "linux" && process.arch === "arm64") {
+    return "compositor-linux-arm64-gnu";
+  }
+
+  return null;
+}
+
+function isCompleteRemotionBinariesDirectory(directory: string) {
+  const binaries = getRemotionBinaryFileNames();
+  return (
+    fs.existsSync(path.join(directory, binaries.compositor)) &&
+    fs.existsSync(path.join(directory, binaries.ffmpeg)) &&
+    fs.existsSync(path.join(directory, binaries.ffprobe))
+  );
+}
+
+function getRemotionBinariesDirectoryCandidates() {
+  const packageDirName = getRemotionPackageDirectoryName();
+  if (!packageDirName) {
+    return [];
+  }
+
+  const packageRelativePath = path.join(
+    "node_modules",
+    "@remotion",
+    packageDirName,
+  );
+  const resourceRelativePath = path.join("resources", "remotion", packageDirName);
+  const appPath = app.getAppPath();
+  const appAsarUnpackedPath = appPath.replace(/app\.asar$/, "app.asar.unpacked");
+
+  return [
+    path.join(process.resourcesPath, resourceRelativePath),
+    path.join(process.resourcesPath, "remotion", packageDirName),
+    path.join(process.resourcesPath, "app.asar.unpacked", resourceRelativePath),
+    path.join(process.resourcesPath, "app.asar.unpacked", packageRelativePath),
+    path.join(process.resourcesPath, packageRelativePath),
+    path.join(appAsarUnpackedPath, resourceRelativePath),
+    path.join(appAsarUnpackedPath, packageRelativePath),
+    path.join(appPath, packageRelativePath),
+    path.resolve(process.cwd(), packageRelativePath),
+  ].filter((candidate, index, list) => list.indexOf(candidate) === index);
+}
+
+function resolveRemotionBinariesDirectory() {
+  for (const candidate of getRemotionBinariesDirectoryCandidates()) {
+    if (isCompleteRemotionBinariesDirectory(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function getVideoTemplateEntryPointCandidates() {
   const packagedCandidates = [
     path.join(
@@ -300,12 +387,23 @@ async function warmVideoTemplateService() {
     queueWarmupPromise = (async () => {
       const directories = ensureVideoTemplateDirectories();
       const serveUrl = await ensureVideoTemplateServeUrl();
+      const binariesDirectory = resolveRemotionBinariesDirectory();
+
+      if (binariesDirectory) {
+        console.info(
+          `[video-template] using remotion binaries: ${binariesDirectory}`,
+        );
+      } else if (app.isPackaged) {
+        console.warn(
+          "[video-template] packaged build could not resolve remotion binaries directory; falling back to renderer defaults",
+        );
+      }
 
       const queue = makeRenderQueue({
         serveUrl,
         rendersDir: directories.renders,
         browserExecutable: null,
-        binariesDirectory: null,
+        binariesDirectory,
       });
 
       queueInstance = queue;

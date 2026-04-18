@@ -1,6 +1,6 @@
 {
   "name": "yishe-client",
-  "version": "1.2.47",
+  "version": "1.2.49",
   "description": "1s client",
   "main": "./out/main/index.js",
   "author": "Jc",
@@ -13,6 +13,8 @@
     "prepare:plugins:win": "cross-env YISHE_PLUGIN_DOWNLOAD_PLATFORM=win32 node scripts/download-latest-plugins.mjs",
     "prepare:plugins:mac": "cross-env YISHE_PLUGIN_DOWNLOAD_PLATFORM=darwin node scripts/download-latest-plugins.mjs",
     "prepare:plugins:linux": "cross-env YISHE_PLUGIN_DOWNLOAD_PLATFORM=linux node scripts/download-latest-plugins.mjs",
+    "prepare:remotion": "node scripts/prepare-remotion-binaries.mjs",
+    "prepare:remotion:win": "cross-env YISHE_REMOTION_TARGET_PLATFORM=win32 YISHE_REMOTION_TARGET_ARCH=x64 node scripts/prepare-remotion-binaries.mjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
@@ -21,10 +23,10 @@
     "dev:win": "chcp 65001 && electron-vite dev",
     "build": " electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:unpack": "npm run prepare:plugins:win && npm run build && electron-builder --dir",
-    "build:win": "npm run prepare:plugins:win && npm run build && electron-builder --win",
-    "build:mac": "npm run prepare:plugins:mac && npm run build && electron-builder --mac",
-    "build:linux": "npm run prepare:plugins:linux && npm run build && electron-builder --linux"
+    "build:unpack": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run build && electron-builder --dir",
+    "build:win": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run build && electron-builder --win",
+    "build:mac": "npm run prepare:plugins:mac && npm run prepare:remotion && npm run build && electron-builder --mac",
+    "build:linux": "npm run prepare:plugins:linux && npm run prepare:remotion && npm run build && electron-builder --linux"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.434",

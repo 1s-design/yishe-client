@@ -15,8 +15,14 @@ files:
   - "!resources/plugin/**/*"
 asarUnpack:
   - resources/**
+  - node_modules/@remotion/**
   - out/video-template-source/**
   - out/video-template-bundle/**
+extraResources:
+  - from: resources/remotion
+    to: resources/remotion
+    filter:
+      - "**/*"
 generateUpdatesFilesForAllChannels: false
 win:
   target:
