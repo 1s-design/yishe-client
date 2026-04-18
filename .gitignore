@@ -2,9 +2,11 @@ node_modules
 dist
 out
 .DS_Store
+.cache
 .eslintcache
 *.log*
 release
 temp
+generated
 resources/remotion
 resources/remotion-browser

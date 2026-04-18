@@ -4,9 +4,16 @@ import { bundle as bundleRemotion } from '@remotion/bundler'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 
+const videoTemplateBuildRoot = resolve('generated')
+const videoTemplateSourceTargetDir = resolve('generated/video-template-source')
+const videoTemplateBundleTargetDir = resolve('generated/video-template-bundle')
+const mainBuildOutDir = 'generated/main'
+const preloadBuildOutDir = 'generated/preload'
+const rendererBuildOutDir = 'generated/renderer'
+
 function copyVideoTemplateSourcePlugin() {
   const sourceDir = resolve('src/main/video-template')
-  const targetDir = resolve('out/video-template-source')
+  const targetDir = videoTemplateSourceTargetDir
 
   return {
     name: 'copy-video-template-source',
@@ -14,6 +21,7 @@ function copyVideoTemplateSourcePlugin() {
       if (!fs.existsSync(sourceDir)) {
         return
       }
+      fs.mkdirSync(videoTemplateBuildRoot, { recursive: true })
       fs.rmSync(targetDir, { recursive: true, force: true })
       fs.cpSync(sourceDir, targetDir, { recursive: true })
     }
@@ -22,7 +30,7 @@ function copyVideoTemplateSourcePlugin() {
 
 function buildVideoTemplateBundlePlugin() {
   const entryPoint = resolve('src/main/video-template/remotion/index.ts')
-  const targetDir = resolve('out/video-template-bundle')
+  const targetDir = videoTemplateBundleTargetDir
 
   return {
     name: 'build-video-template-bundle',
@@ -31,6 +39,7 @@ function buildVideoTemplateBundlePlugin() {
         return
       }
 
+      fs.mkdirSync(videoTemplateBuildRoot, { recursive: true })
       fs.rmSync(targetDir, { recursive: true, force: true })
       fs.mkdirSync(targetDir, { recursive: true })
 
@@ -58,6 +67,7 @@ export default defineConfig({
       buildVideoTemplateBundlePlugin()
     ],
     build: {
+      outDir: mainBuildOutDir,
       minify: false,  // 禁用压缩混淆
       sourcemap: true,  // 生成sourcemap方便调试
               rollupOptions: {
@@ -72,7 +82,10 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      outDir: preloadBuildOutDir
+    }
   },
   renderer: {
     publicDir: resolve('public'), // 指定 public 目录位置
@@ -93,6 +106,7 @@ export default defineConfig({
       }
     },
     build: {
+      outDir: rendererBuildOutDir,
       sourcemap: true // 生成sourcemap
     }
   }

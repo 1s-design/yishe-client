@@ -2,7 +2,7 @@
   "name": "yishe-client",
   "version": "1.2.51",
   "description": "1s client",
-  "main": "./out/main/index.js",
+  "main": "./generated/main/index.js",
   "author": "Jc",
   "homepage": "",
   "scripts": {
@@ -31,10 +31,10 @@
     "dev:win": "chcp 65001 && electron-vite dev",
     "build": " electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:unpack": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run prepare:browser:win && npm run build && electron-builder --dir",
-    "build:win": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run prepare:browser:win && npm run build && electron-builder --win",
-    "build:mac": "npm run prepare:plugins:mac && npm run prepare:remotion && npm run prepare:browser:mac && npm run build && electron-builder --mac",
-    "build:linux": "npm run prepare:plugins:linux && npm run prepare:remotion && npm run prepare:browser:linux && npm run build && electron-builder --linux"
+    "build:unpack": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run prepare:browser:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --dir",
+    "build:win": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run prepare:browser:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --win",
+    "build:mac": "npm run prepare:plugins:mac && npm run prepare:remotion && npm run prepare:browser:mac && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --mac",
+    "build:linux": "npm run prepare:plugins:linux && npm run prepare:remotion && npm run prepare:browser:linux && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --linux"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.434",

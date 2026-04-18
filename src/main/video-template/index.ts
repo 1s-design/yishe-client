@@ -138,6 +138,36 @@ function getVideoTemplateEntryPointCandidates() {
     path.join(
       process.resourcesPath,
       "app.asar.unpacked",
+      "generated",
+      "video-template-source",
+      "remotion",
+      "index.ts",
+    ),
+    path.join(
+      process.resourcesPath,
+      "generated",
+      "video-template-source",
+      "remotion",
+      "index.ts",
+    ),
+    path.join(
+      app.getAppPath(),
+      "generated",
+      "video-template-source",
+      "remotion",
+      "index.ts",
+    ),
+    path.join(
+      path.dirname(app.getAppPath()),
+      "app.asar.unpacked",
+      "generated",
+      "video-template-source",
+      "remotion",
+      "index.ts",
+    ),
+    path.join(
+      process.resourcesPath,
+      "app.asar.unpacked",
       "out",
       "video-template-source",
       "remotion",
@@ -199,6 +229,28 @@ function getVideoTemplateEntryPointCandidates() {
 
 function getVideoTemplateBundleCandidates() {
   return [
+    path.join(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "generated",
+      "video-template-bundle",
+    ),
+    path.join(
+      process.resourcesPath,
+      "generated",
+      "video-template-bundle",
+    ),
+    path.join(
+      app.getAppPath(),
+      "generated",
+      "video-template-bundle",
+    ),
+    path.join(
+      path.dirname(app.getAppPath()),
+      "app.asar.unpacked",
+      "generated",
+      "video-template-bundle",
+    ),
     path.join(
       process.resourcesPath,
       "app.asar.unpacked",

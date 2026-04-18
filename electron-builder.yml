@@ -11,13 +11,16 @@ files:
   - "!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
   - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
   - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
+  - "!out/**/*"
+  - "!out/video-template-source/**/*"
+  - "!out/video-template-bundle/**/*"
   - "!resources/google-art/**/*"
   - "!resources/plugin/**/*"
 asarUnpack:
   - resources/**
   - node_modules/@remotion/**
-  - out/video-template-source/**
-  - out/video-template-bundle/**
+  - generated/video-template-source/**
+  - generated/video-template-bundle/**
 extraResources:
   - from: resources/remotion
     to: resources/remotion

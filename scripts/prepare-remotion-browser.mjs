@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const require = createRequire(import.meta.url);
+const browserResourcesRoot = path.join(rootDir, "resources", "remotion-browser");
 
 function resolveChromeMode() {
   const configuredMode = String(
@@ -135,6 +136,31 @@ function ensureExecutable(filePath) {
   }
 }
 
+function cleanupStaleBrowserModes(activeChromeMode) {
+  fs.mkdirSync(browserResourcesRoot, { recursive: true });
+
+  for (const entry of fs.readdirSync(browserResourcesRoot, {
+    withFileTypes: true,
+  })) {
+    if (!entry.isDirectory() || entry.name === activeChromeMode) {
+      continue;
+    }
+
+    fs.rmSync(path.join(browserResourcesRoot, entry.name), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
+function readPreparedMetadata(metadataPath) {
+  try {
+    return JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   const { TESTED_VERSION, getChromeDownloadUrl } = require(path.join(
     rootDir,
@@ -175,16 +201,33 @@ async function main() {
     chromeMode,
   });
   const outputDir = path.join(
-    rootDir,
-    "resources",
-    "remotion-browser",
+    browserResourcesRoot,
     chromeMode,
   );
   const executablePath = path.join(outputDir, expectedExecutableRelativePath);
+  const metadataPath = path.join(outputDir, "metadata.json");
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yishe-remotion-browser-"));
   const archivePath = path.join(tempRoot, "browser.zip");
 
   try {
+    cleanupStaleBrowserModes(chromeMode);
+
+    const existingMetadata = readPreparedMetadata(metadataPath);
+    if (
+      existingMetadata?.chromeMode === chromeMode &&
+      existingMetadata?.version === TESTED_VERSION &&
+      existingMetadata?.platform === platform &&
+      existingMetadata?.arch === arch &&
+      existingMetadata?.downloadPlatform === downloadPlatform &&
+      existingMetadata?.executableRelativePath === expectedExecutableRelativePath &&
+      fs.existsSync(executablePath)
+    ) {
+      console.info(
+        `[remotion-browser] Reusing cached ${chromeMode}@${TESTED_VERSION} -> ${executablePath}`,
+      );
+      return;
+    }
+
     fs.rmSync(outputDir, { recursive: true, force: true });
     fs.mkdirSync(outputDir, { recursive: true });
 
@@ -207,7 +250,7 @@ async function main() {
     ensureExecutable(executablePath);
 
     fs.writeFileSync(
-      path.join(outputDir, "metadata.json"),
+      metadataPath,
       JSON.stringify(
         {
           chromeMode,
