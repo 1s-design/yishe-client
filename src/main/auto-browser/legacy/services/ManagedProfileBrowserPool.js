@@ -8,6 +8,7 @@ import {
 } from "./BrowserProfileService.js";
 import { logger } from "../utils/logger.js";
 import {
+  buildMissingLocalChromeMessage,
   getPlaywrightChromium,
   getDefaultChromeExecutablePath,
   initBundledPlaywrightEnv,
@@ -24,6 +25,7 @@ import {
   probeBrowserPageRuntime,
 } from "../utils/browserPageRuntime.js";
 import { spawn, exec } from "child_process";
+import { existsSync } from "fs";
 import http from "http";
 import https from "https";
 
@@ -438,7 +440,12 @@ function launchChromeWithDebugPort({ port, headless = false, userDataDir, execut
     throw new Error("缺少 userDataDir");
   }
   if (!safeExecutablePath) {
-    throw new Error("缺少 Chrome 可执行文件路径");
+    throw new Error(buildMissingLocalChromeMessage());
+  }
+  if (!existsSync(safeExecutablePath)) {
+    throw new Error(
+      `缺少本地浏览器：指定的浏览器路径不存在 (${safeExecutablePath})。请安装本地 Chrome/Chromium，或设置 YISHE_BROWSER_EXECUTABLE。`,
+    );
   }
 
   const child = spawn(

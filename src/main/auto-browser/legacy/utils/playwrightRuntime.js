@@ -31,138 +31,6 @@ export function getAppDir() {
     return path.resolve(__dirname, '../..');
 }
 
-function uniquePaths(paths = []) {
-    return paths.filter((candidate, index, list) => candidate && list.indexOf(candidate) === index);
-}
-
-function resolveEmbeddedChromeMode() {
-    const configuredMode = String(
-        process.env.YISHE_BROWSER_CHROME_MODE ||
-        process.env.YISHE_REMOTION_CHROME_MODE ||
-        ''
-    ).trim();
-
-    if (configuredMode === 'headless-shell') {
-        return configuredMode;
-    }
-
-    return 'chrome-for-testing';
-}
-
-function getEmbeddedExecutableRelativePath(chromeMode) {
-    if (chromeMode === 'headless-shell') {
-        if (process.platform === 'win32' && process.arch === 'x64') {
-            return path.join('chrome-headless-shell-win64', 'chrome-headless-shell.exe');
-        }
-
-        if (process.platform === 'darwin' && process.arch === 'arm64') {
-            return path.join('chrome-headless-shell-mac-arm64', 'chrome-headless-shell');
-        }
-
-        if (process.platform === 'darwin' && process.arch === 'x64') {
-            return path.join('chrome-headless-shell-mac-x64', 'chrome-headless-shell');
-        }
-
-        if (process.platform === 'linux' && process.arch === 'arm64') {
-            return path.join('chrome-headless-shell-linux-arm64', 'headless_shell');
-        }
-
-        if (process.platform === 'linux') {
-            return path.join('chrome-headless-shell-linux64', 'chrome-headless-shell');
-        }
-
-        return null;
-    }
-
-    if (process.platform === 'win32' && process.arch === 'x64') {
-        return path.join('chrome-win64', 'chrome.exe');
-    }
-
-    if (process.platform === 'darwin' && process.arch === 'arm64') {
-        return path.join(
-            'chrome-mac-arm64',
-            'Google Chrome for Testing.app',
-            'Contents',
-            'MacOS',
-            'Google Chrome for Testing'
-        );
-    }
-
-    if (process.platform === 'darwin' && process.arch === 'x64') {
-        return path.join(
-            'chrome-mac-x64',
-            'Google Chrome for Testing.app',
-            'Contents',
-            'MacOS',
-            'Google Chrome for Testing'
-        );
-    }
-
-    if (process.platform === 'linux') {
-        return path.join('chrome-linux64', 'chrome');
-    }
-
-    return null;
-}
-
-function getEmbeddedExecutableCandidates(chromeMode) {
-    const executableRelativePath = getEmbeddedExecutableRelativePath(chromeMode);
-    if (!executableRelativePath) {
-        return [];
-    }
-
-    const nestedResourcePath = path.join('resources', 'remotion-browser', chromeMode);
-    const flatResourcePath = path.join('remotion-browser', chromeMode);
-
-    return uniquePaths([
-        process.resourcesPath
-            ? path.join(process.resourcesPath, nestedResourcePath, executableRelativePath)
-            : '',
-        process.resourcesPath
-            ? path.join(process.resourcesPath, flatResourcePath, executableRelativePath)
-            : '',
-        process.resourcesPath
-            ? path.join(process.resourcesPath, 'app.asar.unpacked', nestedResourcePath, executableRelativePath)
-            : '',
-        process.resourcesPath
-            ? path.join(process.resourcesPath, 'app.asar.unpacked', flatResourcePath, executableRelativePath)
-            : '',
-        path.resolve(process.cwd(), 'resources', 'remotion-browser', chromeMode, executableRelativePath),
-    ]);
-}
-
-export function getBundledChromeExecutablePath() {
-    const preferredMode = resolveEmbeddedChromeMode();
-    const searchOrder = preferredMode === 'headless-shell'
-        ? ['headless-shell', 'chrome-for-testing']
-        : ['chrome-for-testing', 'headless-shell'];
-
-    for (const chromeMode of searchOrder) {
-        for (const candidate of getEmbeddedExecutableCandidates(chromeMode)) {
-            try {
-                if (candidate && existsSync(candidate)) {
-                    return candidate;
-                }
-            } catch {
-                // ignore
-            }
-        }
-    }
-
-    return null;
-}
-
-export function initBundledPlaywrightEnv() {
-    const executablePath = getBundledChromeExecutablePath();
-    return {
-        browsersPath: null,
-        executablePath,
-        exists: !!executablePath,
-        source: executablePath ? 'bundled-chrome' : 'local-chrome',
-        usingBundledPath: !!executablePath,
-    };
-}
-
 function existsAny(paths = []) {
     for (const candidate of paths) {
         try {
@@ -177,35 +45,121 @@ function existsAny(paths = []) {
     return null;
 }
 
-export function getDefaultChromeExecutablePath() {
-    const configuredPath = normalizeDir(
-        process.env.YISHE_BROWSER_EXECUTABLE ||
-        process.env.YISHE_REMOTION_BROWSER_EXECUTABLE ||
-        process.env.CHROME_EXECUTABLE_PATH
-    );
-    if (configuredPath) {
-        return configuredPath;
+function getConfiguredChromeExecutableInfo() {
+    const candidates = [
+        ['YISHE_BROWSER_EXECUTABLE', process.env.YISHE_BROWSER_EXECUTABLE],
+        ['YISHE_REMOTION_BROWSER_EXECUTABLE', process.env.YISHE_REMOTION_BROWSER_EXECUTABLE],
+        ['CHROME_EXECUTABLE_PATH', process.env.CHROME_EXECUTABLE_PATH],
+    ];
+
+    for (const [envName, value] of candidates) {
+        const normalizedPath = normalizeDir(value);
+        if (normalizedPath) {
+            return {
+                configuredBy: envName,
+                executablePath: normalizedPath,
+            };
+        }
     }
 
-    const bundledPath = getBundledChromeExecutablePath();
-    if (bundledPath) {
-        return bundledPath;
-    }
+    return null;
+}
 
+function getSystemChromeExecutableCandidates() {
     if (process.platform === 'win32') {
         const pf = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
         const pf64 = process.env.ProgramFiles || 'C:\\Program Files';
-        return existsAny([
+        const localAppData = process.env.LOCALAPPDATA || '';
+        return [
             path.join(pf64, 'Google', 'Chrome', 'Application', 'chrome.exe'),
             path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-        ]) || path.join(pf64, 'Google', 'Chrome', 'Application', 'chrome.exe');
+            localAppData
+                ? path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe')
+                : '',
+        ].filter(Boolean);
     }
 
     if (process.platform === 'darwin') {
-        return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+        return [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            path.join(
+                process.env.HOME || '',
+                'Applications',
+                'Google Chrome.app',
+                'Contents',
+                'MacOS',
+                'Google Chrome'
+            ),
+        ].filter(Boolean);
     }
 
-    return '/usr/bin/google-chrome';
+    return [
+        '/usr/bin/google-chrome',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/chromium',
+        '/snap/bin/chromium',
+    ];
+}
+
+export function getDefaultChromeExecutableInfo() {
+    const configuredInfo = getConfiguredChromeExecutableInfo();
+    if (configuredInfo) {
+        return {
+            executablePath: configuredInfo.executablePath,
+            exists: existsSync(configuredInfo.executablePath),
+            source: 'env',
+            configuredBy: configuredInfo.configuredBy,
+            checkedPaths: [configuredInfo.executablePath],
+        };
+    }
+
+    const checkedPaths = getSystemChromeExecutableCandidates();
+    const executablePath = existsAny(checkedPaths) || checkedPaths[0] || null;
+
+    return {
+        executablePath,
+        exists: !!(executablePath && existsSync(executablePath)),
+        source: 'system',
+        configuredBy: null,
+        checkedPaths,
+    };
+}
+
+export function buildMissingLocalChromeMessage(
+    info = getDefaultChromeExecutableInfo()
+) {
+    const executablePath = String(info?.executablePath || '').trim();
+    const configuredBy = String(info?.configuredBy || '').trim();
+    const checkedPaths = Array.isArray(info?.checkedPaths)
+        ? info.checkedPaths.filter(Boolean)
+        : [];
+    const checkedPathText = checkedPaths.length
+        ? `已检查路径: ${checkedPaths.join(', ')}`
+        : '未检测到可检查的浏览器路径';
+
+    if (configuredBy && executablePath) {
+        return `缺少本地浏览器：环境变量 ${configuredBy} 指向的浏览器不存在 (${executablePath})。请安装本地 Chrome/Chromium，或修正 ${configuredBy}。`;
+    }
+
+    return `缺少本地浏览器，请先安装 Chrome/Chromium，或设置 YISHE_BROWSER_EXECUTABLE。${checkedPathText}`;
+}
+
+export function getDefaultChromeExecutablePath() {
+    return getDefaultChromeExecutableInfo().executablePath;
+}
+
+export function initBundledPlaywrightEnv() {
+    const info = getDefaultChromeExecutableInfo();
+    return {
+        browsersPath: null,
+        executablePath: info.executablePath,
+        exists: info.exists,
+        source: info.exists ? 'local-chrome' : 'missing-local-chrome',
+        usingBundledPath: false,
+        checkedPaths: info.checkedPaths,
+        configuredBy: info.configuredBy,
+        message: info.exists ? null : buildMissingLocalChromeMessage(info),
+    };
 }
 
 export async function getPlaywrightChromium() {

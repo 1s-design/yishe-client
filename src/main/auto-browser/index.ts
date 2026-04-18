@@ -29,6 +29,10 @@ import {
 } from "./legacy/services/BrowserService.js";
 import { PlatformLoginService } from "./legacy/services/PlatformLoginService.js";
 import {
+  buildMissingLocalChromeMessage,
+  getDefaultChromeExecutableInfo,
+} from "./legacy/utils/playwrightRuntime.js";
+import {
   listBrowserAutomationSmallFeatures,
   runBrowserAutomationSmallFeature,
 } from "./legacy/services/BrowserAutomationSmallFeatureService.js";
@@ -73,6 +77,28 @@ function normalizeRequestPath(value: unknown) {
 function normalizeString(value: unknown) {
   const normalized = String(value ?? "").trim();
   return normalized || "";
+}
+
+function getLocalBrowserRequirementStatus() {
+  const chromeInfo = getDefaultChromeExecutableInfo();
+  const executablePath = String(chromeInfo?.executablePath || "").trim();
+  const checkedPaths = Array.isArray(chromeInfo?.checkedPaths)
+    ? chromeInfo.checkedPaths.filter(Boolean)
+    : [];
+  const available =
+    !!chromeInfo?.exists &&
+    !!executablePath &&
+    fs.existsSync(executablePath);
+
+  return {
+    available,
+    source: chromeInfo?.source || "system",
+    configuredBy: chromeInfo?.configuredBy || null,
+    executablePath: available ? executablePath : null,
+    checkedPath: executablePath || null,
+    checkedPaths,
+    message: available ? null : buildMissingLocalChromeMessage(chromeInfo),
+  };
 }
 
 function normalizeQueryValue(
@@ -1004,7 +1030,21 @@ class AutoBrowserService {
       lightweight: true,
       includePages: false,
     });
-    return this.ok({ success: true, data: status });
+    const localBrowser = getLocalBrowserRequirementStatus();
+    const message =
+      (!status?.hasInstance && !localBrowser.available && localBrowser.message) ||
+      (typeof status?.lastError === "string" && status.lastError.trim()
+        ? status.lastError.trim()
+        : undefined);
+
+    return this.ok({
+      success: true,
+      data: {
+        ...status,
+        localBrowser,
+      },
+      ...(message ? { message } : {}),
+    });
   }
 
   private async handleBrowserConnect(body: Record<string, any>) {

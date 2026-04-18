@@ -2436,10 +2436,46 @@ function toRemotionIsoTimestamp(value: unknown) {
   return normalized || null;
 }
 
+function resolveRemotionResponseMessage(
+  payload: Record<string, any> | null | undefined,
+  fallbackMessage: string,
+) {
+  const candidates = [
+    payload?.message,
+    payload?.error,
+    payload?.error?.message,
+    payload?.data?.message,
+    payload?.data?.error,
+    payload?.data?.error?.message,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return fallbackMessage;
+}
+
+function ensureRemotionResponseOk(
+  payload: Record<string, any> | null | undefined,
+  fallbackMessage: string,
+) {
+  if (payload?.success === false) {
+    throw new Error(resolveRemotionResponseMessage(payload, fallbackMessage));
+  }
+
+  return payload;
+}
+
 async function getRemotionQueueSnapshot(targetJobId?: string | null) {
-  const response = await fetchRemotionJson("/api/renders", {
-    timeoutMs: REMOTION_HEALTH_TIMEOUT_MS,
-  });
+  const response = ensureRemotionResponseOk(
+    await fetchRemotionJson("/api/renders", {
+      timeoutMs: REMOTION_HEALTH_TIMEOUT_MS,
+    }),
+    "获取本地视频渲染队列失败",
+  );
   const jobList = Array.isArray(response?.data)
     ? response.data
     : Array.isArray(response)
@@ -2597,7 +2633,12 @@ async function getRemotionRuntime() {
         "status" in healthPayload &&
         healthPayload.status !== "ok")
     ) {
-      throw new Error("Video Template 健康检查返回异常");
+      throw new Error(
+        resolveRemotionResponseMessage(
+          healthPayload || health,
+          "Video Template 健康检查返回异常",
+        ),
+      );
     }
 
     const templateCount = Number(
@@ -2692,7 +2733,7 @@ async function getRemotionRuntime() {
       status: "error" as const,
       state: "error" as const,
       busy: false,
-      message: "服务不可用",
+      message: errorMessage,
       endpoint: REMOTION_LOCAL_BASE,
       lastCheckedAt: checkedAt,
       lastError: errorMessage,
@@ -2952,7 +2993,9 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
       templateId,
       inputProps: command.payload?.inputProps || {},
     }),
-  });
+  }).then((result) =>
+    ensureRemotionResponseOk(result, "本地 Video Template 创建渲染任务失败"),
+  );
 
   const jobId = String(createRes?.data?.jobId || createRes?.jobId || "").trim();
   if (!jobId) {
@@ -2986,8 +3029,9 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
 
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    const jobRes = await fetchRemotionJson(
-      `/api/renders/${encodeURIComponent(jobId)}`,
+    const jobRes = ensureRemotionResponseOk(
+      await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`),
+      "查询本地视频渲染任务失败",
     );
     const payload = jobRes?.data || jobRes || {};
     const status = normalizeRemotionQueueJobStatus(payload?.status);
@@ -5636,6 +5680,11 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
   const browser = await getUploaderBrowserStatus();
   const available = browser.success && isUploaderBrowserReady(browser.data);
   const browserData = browser.data;
+  const browserMessage =
+    browser.message ||
+    browserData?.lastError ||
+    browserData?.localBrowser?.message ||
+    null;
   const profileInstances = buildBrowserAutomationProfileInstances(
     profileItems,
     (browserData as Record<string, any> | undefined) || null,
@@ -5654,11 +5703,11 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
     busy: browserAutomationExecutionState.running,
     message: available
       ? "自动化服务与浏览器实例已连接"
-      : browser.message || "自动化服务已启动，但浏览器实例未就绪",
+      : browserMessage || "自动化服务已启动，但浏览器实例未就绪",
     version: status.apiInfo?.version,
     endpoint: "ipc://auto-browser",
     lastCheckedAt: checkedAt,
-    lastError: browser.success ? null : (browser.message ?? null),
+    lastError: available ? null : browserMessage,
     supportedCommands: [
       "refreshRuntime",
       "health",
@@ -5691,6 +5740,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       browserConnected: !!browserData?.isConnected,
       hasInstance: !!browserData?.hasInstance,
       pageCount: browserData?.pageCount ?? 0,
+      localBrowser: browserData?.localBrowser ?? null,
       lastActivity: browserData?.lastActivity ?? null,
       connection: browserData?.connection ?? null,
       pages: Array.isArray(browserData?.pages) ? browserData?.pages : [],

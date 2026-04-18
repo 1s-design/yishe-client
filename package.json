@@ -1,6 +1,6 @@
 {
   "name": "yishe-client",
-  "version": "1.2.52",
+  "version": "1.2.53",
   "description": "1s client",
   "main": "./generated/main/index.js",
   "author": "Jc",
@@ -15,14 +15,6 @@
     "prepare:plugins:linux": "cross-env YISHE_PLUGIN_DOWNLOAD_PLATFORM=linux node scripts/download-latest-plugins.mjs",
     "prepare:remotion": "node scripts/prepare-remotion-binaries.mjs",
     "prepare:remotion:win": "cross-env YISHE_REMOTION_TARGET_PLATFORM=win32 YISHE_REMOTION_TARGET_ARCH=x64 node scripts/prepare-remotion-binaries.mjs",
-    "prepare:browser": "node scripts/prepare-remotion-browser.mjs",
-    "prepare:browser:win": "cross-env YISHE_REMOTION_TARGET_PLATFORM=win32 YISHE_REMOTION_TARGET_ARCH=x64 node scripts/prepare-remotion-browser.mjs",
-    "prepare:browser:mac": "cross-env YISHE_REMOTION_TARGET_PLATFORM=darwin node scripts/prepare-remotion-browser.mjs",
-    "prepare:browser:linux": "cross-env YISHE_REMOTION_TARGET_PLATFORM=linux node scripts/prepare-remotion-browser.mjs",
-    "prepare:remotion:browser": "node scripts/prepare-remotion-browser.mjs",
-    "prepare:remotion:browser:win": "cross-env YISHE_REMOTION_TARGET_PLATFORM=win32 YISHE_REMOTION_TARGET_ARCH=x64 node scripts/prepare-remotion-browser.mjs",
-    "prepare:remotion:browser:mac": "cross-env YISHE_REMOTION_TARGET_PLATFORM=darwin node scripts/prepare-remotion-browser.mjs",
-    "prepare:remotion:browser:linux": "cross-env YISHE_REMOTION_TARGET_PLATFORM=linux node scripts/prepare-remotion-browser.mjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
@@ -31,10 +23,10 @@
     "dev:win": "chcp 65001 && electron-vite dev",
     "build": " electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:unpack": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run prepare:browser:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --dir",
-    "build:win": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run prepare:browser:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --win",
-    "build:mac": "npm run prepare:plugins:mac && npm run prepare:remotion && npm run prepare:browser:mac && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --mac",
-    "build:linux": "npm run prepare:plugins:linux && npm run prepare:remotion && npm run prepare:browser:linux && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --linux"
+    "build:unpack": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --dir",
+    "build:win": "npm run prepare:plugins:win && npm run prepare:remotion:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --win",
+    "build:mac": "npm run prepare:plugins:mac && npm run prepare:remotion && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --mac",
+    "build:linux": "npm run prepare:plugins:linux && npm run prepare:remotion && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --linux"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.434",

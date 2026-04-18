@@ -26,7 +26,8 @@ import {
     withDefaultActivatedPageOptions
 } from '../utils/playwrightPageFactory.js';
 import {
-    getDefaultChromeExecutablePath,
+    buildMissingLocalChromeMessage,
+    getDefaultChromeExecutableInfo,
     getPlaywrightChromium
 } from '../utils/playwrightRuntime.js';
 import {
@@ -561,9 +562,22 @@ function tryListProfiles(userDataDir) {
  * 支持无头模式通过 headless 参数或 HEADLESS 环境变量
  */
 export function launchWithDebugPort({ port = null, headless = null, userDataDir = null, executablePath = null, profileId = null } = {}) {
-    const exe = String(executablePath || getDefaultChromeExecutablePath()).trim();
-    if (!exe || !existsSync(exe)) {
-        throw new Error(`未找到 Chrome 可执行文件: ${exe}，请确认已安装 Google Chrome`);
+    const explicitExecutablePath = normalizePathLike(executablePath);
+    if (explicitExecutablePath && !existsSync(explicitExecutablePath)) {
+        throw new Error(
+            `缺少本地浏览器：指定的浏览器路径不存在 (${explicitExecutablePath})。请安装本地 Chrome/Chromium，或传入有效的 executablePath。`
+        );
+    }
+
+    const chromeInfo = explicitExecutablePath
+        ? {
+            executablePath: explicitExecutablePath,
+            exists: true,
+        }
+        : getDefaultChromeExecutableInfo();
+    const exe = String(chromeInfo.executablePath || '').trim();
+    if (!exe || !chromeInfo.exists || !existsSync(exe)) {
+        throw new Error(buildMissingLocalChromeMessage(chromeInfo));
     }
 
     const normalizedUserDataDir = normalizePathLike(userDataDir);

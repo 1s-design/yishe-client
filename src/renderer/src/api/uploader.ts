@@ -252,6 +252,7 @@ export interface UploaderBrowserStatus {
   isConnected: boolean;
   pageCount: number;
   lastActivity: string | null;
+  lastError?: string | null;
   connection?: {
     port?: number | null;
     mode?: string;
@@ -266,6 +267,15 @@ export interface UploaderBrowserStatus {
   pages?: UploaderBrowserPage[];
   profiles?: UploaderBrowserProfileSummary[];
   instances?: UploaderBrowserInstanceSummary[];
+  localBrowser?: {
+    available: boolean;
+    source?: string | null;
+    configuredBy?: string | null;
+    executablePath?: string | null;
+    checkedPath?: string | null;
+    checkedPaths?: string[];
+    message?: string | null;
+  };
 }
 
 export interface UploaderBrowserPage {
@@ -444,6 +454,10 @@ function normalizeUploaderBrowserStatus(data: unknown): UploaderBrowserStatus {
   const pages = normalizeUploaderBrowserPages(source.pages);
   const profiles = Array.isArray(source.profiles) ? source.profiles : [];
   const instances = Array.isArray(source.instances) ? source.instances : [];
+  const localBrowser =
+    source.localBrowser && typeof source.localBrowser === "object"
+      ? (source.localBrowser as Record<string, any>)
+      : null;
   const connection =
     source.connection && typeof source.connection === "object"
       ? source.connection
@@ -472,6 +486,10 @@ function normalizeUploaderBrowserStatus(data: unknown): UploaderBrowserStatus {
     pageCount:
       typeof source.pageCount === "number" ? source.pageCount : pages.length,
     lastActivity: normalizedLastActivity,
+    lastError:
+      typeof source.lastError === "string" && source.lastError.trim()
+        ? source.lastError.trim()
+        : null,
     connection,
     timestamp:
       typeof source.timestamp === "string" && source.timestamp.trim()
@@ -480,6 +498,39 @@ function normalizeUploaderBrowserStatus(data: unknown): UploaderBrowserStatus {
     pages,
     profiles,
     instances: instances as UploaderBrowserInstanceSummary[],
+    localBrowser: localBrowser
+      ? {
+          available: localBrowser.available !== false,
+          source:
+            typeof localBrowser.source === "string" && localBrowser.source.trim()
+              ? localBrowser.source.trim()
+              : null,
+          configuredBy:
+            typeof localBrowser.configuredBy === "string" &&
+            localBrowser.configuredBy.trim()
+              ? localBrowser.configuredBy.trim()
+              : null,
+          executablePath:
+            typeof localBrowser.executablePath === "string" &&
+            localBrowser.executablePath.trim()
+              ? localBrowser.executablePath.trim()
+              : null,
+          checkedPath:
+            typeof localBrowser.checkedPath === "string" &&
+            localBrowser.checkedPath.trim()
+              ? localBrowser.checkedPath.trim()
+              : null,
+          checkedPaths: Array.isArray(localBrowser.checkedPaths)
+            ? localBrowser.checkedPaths
+                .map((item) => String(item || "").trim())
+                .filter(Boolean)
+            : [],
+          message:
+            typeof localBrowser.message === "string" && localBrowser.message.trim()
+              ? localBrowser.message.trim()
+              : null,
+        }
+      : undefined,
   };
 }
 
@@ -982,9 +1033,19 @@ export async function getUploaderBrowserStatus(): Promise<{
         message: json?.message ?? "获取浏览器状态失败",
       };
     }
+    const normalizedStatus = normalizeUploaderBrowserStatus(json.data);
+    const messageCandidates = [
+      json?.message,
+      normalizedStatus.lastError,
+      normalizedStatus.localBrowser?.message,
+    ];
+    const message = messageCandidates.find(
+      (item) => typeof item === "string" && item.trim(),
+    ) as string | undefined;
     return {
       success: true,
-      data: normalizeUploaderBrowserStatus(json.data),
+      data: normalizedStatus,
+      ...(message ? { message: message.trim() } : {}),
     };
   } catch (e: unknown) {
     const err = e as Error;

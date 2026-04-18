@@ -308,7 +308,7 @@ function resolveVideoTemplateRuntimeMeta() {
   const description = !hasChecked
     ? ""
     : !available
-      ? "服务不可用"
+      ? String(runtime?.lastError || runtime?.message || "服务不可用")
       : isBusy
         ? queuedJobsCount > 0
           ? `当前有 ${activeJobsCount} 个任务，排队中 ${queuedJobsCount} 个`
@@ -513,6 +513,11 @@ async function checkUploaderServiceStatus() {
     }
 
     uploaderServiceStatus.value = browserStatus.success ? "warning" : "error";
+    const browserMessage =
+      browserStatus.message ||
+      browserStatus.data?.lastError ||
+      browserStatus.data?.localBrowser?.message ||
+      "自动化服务已启动，但浏览器实例未就绪";
     websocketClient.updateServiceStatus("uploader", {
       label: "浏览器自动化",
       connected: true,
@@ -520,11 +525,9 @@ async function checkUploaderServiceStatus() {
       status: "connected",
       state: browserStatus.success ? "offline" : "error",
       busy: false,
-      message: browserStatus.message || "自动化服务已启动，但浏览器实例未就绪",
+      message: browserMessage,
       lastCheckedAt,
-      lastError: browserStatus.success
-        ? null
-        : (browserStatus.message ?? "浏览器状态检测失败"),
+      lastError: browserMessage,
       supportedCommands: ["refreshRuntime", "health"],
       details: browserDetails,
     }, { emitClientInfo: false });
@@ -889,9 +892,17 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
       uploaderServiceStatus.value === "running"
         ? "服务与浏览器已连接"
         : uploaderServiceStatus.value === "warning"
-          ? "等待浏览器实例连接"
+          ? String(
+              clientProfile.services?.uploader?.message ||
+                clientProfile.services?.uploader?.lastError ||
+                "等待浏览器实例连接",
+            )
           : uploaderServiceStatus.value === "error"
-            ? "状态检测异常"
+            ? String(
+                clientProfile.services?.uploader?.message ||
+                  clientProfile.services?.uploader?.lastError ||
+                  "状态检测异常",
+              )
             : "服务未启动",
     icon: "mdi-robot-outline",
     tone: browserAutomationToneByState(uploaderServiceStatus.value),
