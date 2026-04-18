@@ -35,6 +35,7 @@ function ensureVideoTemplateDirectories() {
     downloads: path.join(root, "downloads"),
     temp: path.join(root, "temp"),
     bundles: path.join(root, "bundles"),
+    bundlerRoot: path.join(root, "bundler-root"),
   };
 
   for (const dir of Object.values(directories)) {
@@ -109,9 +110,21 @@ function getVideoTemplateEntryPointCandidates() {
 }
 
 async function bundleVideoTemplateFromEntry(entryPoint: string, outputDirectory: string) {
+  // 打包版运行在只读应用目录附近时，Remotion 的 webpack 缓存和工作根目录
+  // 不能再落到安装目录，否则容易因为权限导致预热失败。
+  const bundlerRoot = app.isPackaged
+    ? ensureVideoTemplateDirectories().bundlerRoot
+    : undefined;
+
   console.info(`[video-template] bundling from entry: ${entryPoint}`);
+  if (bundlerRoot) {
+    console.info(`[video-template] using packaged bundler root: ${bundlerRoot}`);
+  }
+
   return bundle({
     entryPoint,
+    rootDir: bundlerRoot,
+    enableCaching: !app.isPackaged,
     webpackOverride: (config) => {
       config.output = config.output || {};
       config.output.path = outputDirectory;

@@ -213,8 +213,9 @@ if (
     name: "PS 自动化端",
     executable: psAutomationExecutable,
     platforms: ["win32"],
-    autoStart: false,
-    autoRestart: false,
+    autoStart: true,
+    autoRestart: true,
+    restartDelay: 3000,
   });
 }
 
