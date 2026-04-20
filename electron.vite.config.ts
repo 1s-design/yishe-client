@@ -96,8 +96,9 @@ export default defineConfig({
     },
     plugins: [vue()],
     server: {
+      port: 5175,
       hmr: {
-        port: 5173, // 指定HMR端口
+        port: 5175, // 指定HMR端口
         overlay: true // 显示错误覆盖层
       },
       watch: {

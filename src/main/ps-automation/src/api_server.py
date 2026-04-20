@@ -198,6 +198,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",  # Vite 开发服务器
         "http://localhost:5174",  # Vite 备用端口
+        "http://localhost:5175",  # Vite 客户端当前开发端口
         "http://localhost:1521",  # admin 本地开发端口
         "http://localhost:3000",  # 其他可能的开发服务器
         "http://localhost:1519",  # 本地客户端
