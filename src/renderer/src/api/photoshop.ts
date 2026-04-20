@@ -252,6 +252,17 @@ export const photoshopApi = {
   },
 
   /**
+   * 使用 Photoshop 运行时分析 PSD 文件
+   * @param psdPath PSD 文件路径
+   */
+  async analyzePsdRuntime(psdPath: string): Promise<PSDAnalysisResponse> {
+    const response = await psApiClient.post<PSDAnalysisResponse>('/analyzePsdRuntime', {
+      psd_path: psdPath
+    })
+    return response.data
+  },
+
+  /**
    * 处理 PSD 文件（替换智能对象并导出）
    * @param request 处理请求参数
    */

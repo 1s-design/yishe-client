@@ -5502,6 +5502,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
         "restartPhotoshop",
         "processPsdSet",
         "analyzePsd",
+        "runtimeAnalyzePsd",
         "debugProcess",
       ],
       details: {
@@ -5931,6 +5932,19 @@ function registerBuiltInLocalServices() {
         return {
           success: true,
           message: "PSD 分析完成",
+          data,
+        };
+      }
+
+      if (command.action === "runtimeAnalyzePsd") {
+        const psdPath = command.payload?.psdPath;
+        if (!psdPath) {
+          throw new Error("缺少 psdPath");
+        }
+        const data = await photoshopApi.analyzePsdRuntime(psdPath);
+        return {
+          success: true,
+          message: "PSD 运行时分析完成",
           data,
         };
       }

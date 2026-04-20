@@ -118,7 +118,7 @@ except ImportError:
 
 # 导入 Photoshop 状态检测服务
 try:
-    from src.services import check_photoshop_status, analyze_psd
+    from src.services import check_photoshop_status, analyze_psd, analyze_psd_runtime
 except ImportError:
     # 如果相对导入失败，尝试绝对导入
     import importlib.util
@@ -134,6 +134,12 @@ except ImportError:
     psd_analysis = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(psd_analysis)
     analyze_psd = psd_analysis.analyze_psd
+    
+    runtime_analysis_path = Path(__file__).parent / "services" / "runtime_psd_analysis_service.py"
+    spec = importlib.util.spec_from_file_location("runtime_psd_analysis", runtime_analysis_path)
+    runtime_psd_analysis = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime_psd_analysis)
+    analyze_psd_runtime = runtime_psd_analysis.analyze_psd_runtime
 
 # Photoshop 启动工具
 try:
@@ -1698,6 +1704,68 @@ async def analyze_psd_file(request: PSDAnalysisRequest):
             "traceback": traceback.format_exc()
         }
         raise HTTPException(status_code=500, detail=error_detail)
+
+
+@app.post(
+    "/analyzePsdRuntime",
+    response_model=PSDAnalysisResponse,
+    tags=["PSD 分析"],
+    summary="运行时分析 PSD 文件",
+    description="""
+    使用 Photoshop 运行时文档对象分析 PSD。
+
+    **功能说明**：
+    - 先使用静态分析提取完整结构骨架
+    - 再通过 Photoshop 打开文档，补采更接近真实的画板与智能对象几何信息
+    - 适合用于静态分析中 `width/height/position` 为 0 的复杂 PSD
+
+    **技术说明**：
+    - 需要 Photoshop 已安装并可连接
+    - 会自动启动 Photoshop（如果未运行）
+    - 返回结构与 `/analyzePsd` 保持一致，但统计中会标记 `analysis_mode=runtime`
+    """
+)
+async def analyze_psd_runtime_file(request: PSDAnalysisRequest):
+    try:
+        analysis_result = analyze_psd_runtime(request.psd_path)
+        return PSDAnalysisResponse(
+            file_info=analysis_result["file_info"],
+            document_info=analysis_result["document_info"],
+            smart_objects=analysis_result["smart_objects"],
+            statistics=analysis_result["statistics"],
+            layer_structure=analysis_result.get("layer_structure", []),
+            artboards=analysis_result.get("artboards", []),
+            timestamp=analysis_result["timestamp"]
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "文件不存在",
+                "message": str(e),
+                "suggestion": "请检查文件路径是否正确，确保文件存在"
+            }
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "参数错误",
+                "message": str(e),
+                "suggestion": "请确保文件是 PSD 格式"
+            }
+        )
+    except Exception as e:
+        import traceback
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "运行时分析 PSD 文件失败",
+                "message": str(e),
+                "type": type(e).__name__,
+                "traceback": traceback.format_exc()
+            }
+        )
 
 
 # 注意：启动服务的入口文件已移动到项目根目录的 start_api_server.py
