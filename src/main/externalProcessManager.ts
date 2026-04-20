@@ -127,6 +127,11 @@ export class ExternalProcessManager {
   private resolveExecutablePath(config: ProcessConfig): string {
     const { executable } = config
 
+    // 允许直接使用 PATH 中的命令，例如 python / py / node
+    if (!isAbsolute(executable) && !executable.includes('/') && !executable.includes('\\')) {
+      return executable
+    }
+
     // 如果是绝对路径，直接返回
     if (isAbsolute(executable)) {
       return executable
@@ -214,7 +219,10 @@ export class ExternalProcessManager {
 
     // 解析可执行文件路径
     const executablePath = this.resolveExecutablePath(config)
-    if (!existsSync(executablePath)) {
+    if (
+      executablePath !== config.executable &&
+      !existsSync(executablePath)
+    ) {
       console.error(`❌ 可执行文件不存在: ${executablePath}`)
       const info: ProcessInfo = {
         config,

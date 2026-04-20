@@ -20,16 +20,7 @@ const runtimeArch = String(
 const cleanOnly = process.argv.includes("--clean");
 
 // Mirrors the stable latest-download links shown in managed plugin releases.
-const LATEST_PLUGIN_DOWNLOADS = {
-  win32: [
-    {
-      id: "ps-automation",
-      type: "file",
-      fileName: "yishe-ps-windows.exe",
-      url: "https://github.com/1s-design/yishe-ps/releases/latest/download/yishe-ps-windows.exe",
-    },
-  ],
-};
+const LATEST_PLUGIN_DOWNLOADS = {};
 
 function getDownloadsForPlatform(platform, arch) {
   return (Array.isArray(LATEST_PLUGIN_DOWNLOADS[platform])

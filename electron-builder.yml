@@ -41,8 +41,8 @@ win:
         - dezoomify-rs-win.exe
     - from: resources/plugin/win32/image-tool
       to: resources/plugin/win32/image-tool
-    - from: resources/plugin/win32
-      to: resources/plugin/win32
+    - from: resources/plugin/win32/ps-automation
+      to: resources/plugin/win32/ps-automation
       filter:
         - yishe-ps-windows.exe
 nsis:

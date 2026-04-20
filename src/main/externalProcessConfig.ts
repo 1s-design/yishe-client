@@ -4,6 +4,8 @@ import { app } from "electron";
 import { is } from "@electron-toolkit/utils";
 import { ProcessConfig } from "./externalProcessManager";
 
+const PS_AUTOMATION_PORT = "1595";
+
 function resolveBundledResourcePath(relativePath: string): string {
   if (is.dev) {
     return resolve(__dirname, "../../", relativePath);
@@ -204,19 +206,99 @@ const psAutomationExecutable = resolvePlatformPluginPath(
 const pluginProcessConfigsInternal: ProcessConfig[] = [];
 const imageProcessingRuntimeConfig = null;
 
-if (
-  process.platform === "win32" &&
-  hasBundledResource(psAutomationExecutable)
-) {
-  pluginProcessConfigsInternal.push({
+function resolvePsAutomationProjectRoot(): string {
+  if (is.dev) {
+    return resolve(__dirname, "../../src/main/ps-automation");
+  }
+
+  return resolveBundledResourcePath("resources/plugin/win32/ps-automation");
+}
+
+function resolveDevPythonExecutable(psProjectRoot: string): string {
+  const candidates = [
+    process.env.YISHE_PS_PYTHON,
+    join(psProjectRoot, ".venv", "Scripts", "python.exe"),
+    join(psProjectRoot, ".venv", "bin", "python"),
+    "python",
+  ].filter((value): value is string => !!value);
+
+  return candidates.find((candidate) => {
+    if (candidate === "python") {
+      return true;
+    }
+
+    return existsSync(candidate);
+  }) || "python";
+}
+
+function buildPsAutomationConfig(): ProcessConfig | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+
+  const psProjectRoot = resolvePsAutomationProjectRoot();
+
+  if (is.dev) {
+    const entryFile = join(psProjectRoot, "ps.py");
+    if (!existsSync(entryFile)) {
+      return null;
+    }
+
+    return {
+      id: "ps-automation",
+      name: "PS 自动化端",
+      executable: resolveDevPythonExecutable(psProjectRoot),
+      cwd: psProjectRoot,
+      args: [entryFile, "--host", "127.0.0.1", "--port", PS_AUTOMATION_PORT],
+      stopExecutable: resolveDevPythonExecutable(psProjectRoot),
+      stopArgs: [entryFile, "--stop"],
+      env: {
+        PYTHONIOENCODING: "utf-8",
+        PORT: PS_AUTOMATION_PORT,
+      },
+      platforms: ["win32"],
+      autoStart: true,
+      autoRestart: true,
+      restartDelay: 3000,
+      healthCheck: {
+        type: "http",
+        url: `http://127.0.0.1:${PS_AUTOMATION_PORT}/health`,
+        interval: 5000,
+        timeout: 2500,
+        failureThreshold: 2,
+      },
+    };
+  }
+
+  if (!hasBundledResource(psAutomationExecutable)) {
+    return null;
+  }
+
+  return {
     id: "ps-automation",
     name: "PS 自动化端",
     executable: psAutomationExecutable,
+    env: {
+      PORT: PS_AUTOMATION_PORT,
+    },
     platforms: ["win32"],
     autoStart: true,
     autoRestart: true,
     restartDelay: 3000,
-  });
+    healthCheck: {
+      type: "http",
+      url: `http://127.0.0.1:${PS_AUTOMATION_PORT}/health`,
+      interval: 5000,
+      timeout: 2500,
+      failureThreshold: 2,
+    },
+  };
+}
+
+const psAutomationConfig = buildPsAutomationConfig();
+
+if (psAutomationConfig) {
+  pluginProcessConfigsInternal.push(psAutomationConfig);
 }
 
 if (
