@@ -69,6 +69,10 @@ function shouldCreateBackgroundPage(options = {}) {
         return false;
     }
 
+    if (shouldActivateForegroundPage(options)) {
+        return false;
+    }
+
     return options.background !== false;
 }
 
