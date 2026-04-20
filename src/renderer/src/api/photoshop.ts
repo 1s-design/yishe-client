@@ -137,6 +137,12 @@ export interface SmartObjectConfig {
   tile_size?: number
 }
 
+export interface ColorLayerConfig {
+  layer_name?: string
+  layer_path?: string
+  color: string
+}
+
 // 全局默认配置
 export interface DefaultOptions {
   resize_mode?: 'stretch' | 'contain' | 'cover' | 'custom'
@@ -148,6 +154,7 @@ export interface ProcessRequest {
   psd_path: string
   // ========== 新格式：支持多个智能对象 ==========
   smart_objects?: SmartObjectConfig[]
+  color_layers?: ColorLayerConfig[]
   defaults?: DefaultOptions
   // ========== 旧格式：向后兼容（单个智能对象） ==========
   image_path?: string

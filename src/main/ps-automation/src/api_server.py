@@ -369,6 +369,41 @@ class SmartObjectConfig(BaseModel):
         return self
 
 
+class ColorLayerConfig(BaseModel):
+    """单个颜色控制图层配置"""
+    layer_name: Optional[str] = Field(
+        None,
+        description="颜色控制图层名称（可选，不指定则优先按路径匹配）",
+        example="Deskmat Color"
+    )
+    layer_path: Optional[str] = Field(
+        None,
+        description="颜色控制图层完整路径（推荐）",
+        example="画板 1/Deskmat/Deskmat Color"
+    )
+    color: str = Field(
+        ...,
+        description="目标颜色，支持 #RRGGBB 或 #RGB",
+        example="#FFFFFF"
+    )
+
+    @validator('color')
+    def validate_color(cls, v):
+        normalized = str(v or '').strip()
+        if normalized.startswith('#'):
+            normalized = normalized[1:]
+        if len(normalized) == 3:
+            normalized = ''.join(ch * 2 for ch in normalized)
+        if len(normalized) != 6:
+            raise ValueError("颜色必须是 #RRGGBB 或 #RGB 格式")
+        int(normalized, 16)
+        return f"#{normalized.upper()}"
+
+    @model_validator(mode='after')
+    def validate_reference(self):
+        return self
+
+
 class DefaultOptions(BaseModel):
     """全局默认配置"""
     resize_mode: str = Field(
@@ -436,6 +471,30 @@ class ProcessRequest(BaseModel):
               "smart_object_name": "右图",
               "image_path": "D:\\images\\right.png",
               "resize_mode": "cover"
+            }
+          ]
+        }
+        ```
+        """,
+        example=None
+    )
+    color_layers: Optional[list[ColorLayerConfig]] = Field(
+        None,
+        description="""
+        颜色控制图层配置数组（与 smart_objects 同级）
+
+        **使用说明**：
+        - 用于修改 PSD 中可直接调色的颜色控制层
+        - 推荐使用 layer_path 精确定位图层
+        - 当前版本优先支持纯色填充层（双击可直接弹出拾色器的那类图层）
+
+        **示例**：
+        ```json
+        {
+          "color_layers": [
+            {
+              "layer_path": "画板 1/Deskmat/Deskmat Color",
+              "color": "#1F1F1F"
             }
           ]
         }
@@ -1223,7 +1282,8 @@ async def process_psd(request: ProcessRequest, response: Response):
                 'export_dir': export_dir,
                 'output_filename': unique_filename,
                 'verbose': request.verbose,
-                'smart_objects_config': smart_objects_config  # 新格式：传递配置数组
+                'smart_objects_config': smart_objects_config,  # 新格式：传递配置数组
+                'color_layer_configs': [item.dict() for item in request.color_layers] if request.color_layers else None
             }
             
             # 调用处理函数（新格式）
@@ -1233,27 +1293,31 @@ async def process_psd(request: ProcessRequest, response: Response):
             )
         else:
             # ========== 旧格式：单个智能对象（向后兼容） ==========
-            # 将旧格式转换为新格式，统一使用 process_psd_with_image_multi
             print(f"📋 检测到旧格式请求，转换为新格式并使用 process_psd_with_image_multi")
-            
-            # 构建单个智能对象的配置
-            smart_object_config = {
-                'smart_object_name': request.smart_object_name,
-                'image_path': request.image_path,
-                'resize_mode': request.resize_mode,
-                'tile_size': request.tile_size,
-            }
-            
-            # 如果使用自定义模式，添加 custom_options
-            if request.resize_mode == 'custom' and request.custom_options:
-                smart_object_config['custom_options'] = request.custom_options.dict()
+
+            smart_objects_config = []
+            if request.image_path:
+                # 构建单个智能对象的配置
+                smart_object_config = {
+                    'smart_object_name': request.smart_object_name,
+                    'image_path': request.image_path,
+                    'resize_mode': request.resize_mode,
+                    'tile_size': request.tile_size,
+                }
+
+                # 如果使用自定义模式，添加 custom_options
+                if request.resize_mode == 'custom' and request.custom_options:
+                    smart_object_config['custom_options'] = request.custom_options.dict()
+
+                smart_objects_config.append(smart_object_config)
             
             # 构建新格式的配置
             config = {
                 'export_dir': export_dir,
                 'output_filename': unique_filename,
                 'verbose': request.verbose,
-                'smart_objects_config': [smart_object_config]  # 转换为数组格式
+                'smart_objects_config': smart_objects_config,
+                'color_layer_configs': [item.dict() for item in request.color_layers] if request.color_layers else None
             }
             
             # 统一使用 process_psd_with_image_multi（默认方法）

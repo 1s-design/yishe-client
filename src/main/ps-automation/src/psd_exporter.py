@@ -17,6 +17,7 @@ try:
     from .utils.permission_utils import check_write_permission
     from .layer_finder import find_artboard_layers
     from .smart_object_replacer import replace_smart_object_content
+    from .color_layer_service import apply_color_layer_configs
     from .utils import create_photoshop_session
     from .layer_finder import find_smart_object_layers
 except ImportError:
@@ -24,6 +25,7 @@ except ImportError:
         from src.utils.permission_utils import check_write_permission
         from src.layer_finder import find_artboard_layers
         from src.smart_object_replacer import replace_smart_object_content
+        from src.color_layer_service import apply_color_layer_configs
         from src.utils import create_photoshop_session
         from src.layer_finder import find_smart_object_layers
     except ImportError:
@@ -45,6 +47,7 @@ def replace_and_export_psd_multi(
     psd_path: Path,
     export_dir: Path,
     smart_objects_config: list[dict],
+    color_layer_configs: Optional[list[dict]] = None,
     output_filename: Optional[str] = None
 ) -> tuple[List[Path], float]:
     """
@@ -69,32 +72,35 @@ def replace_and_export_psd_multi(
         app = session.app
         doc = app.open(str(psd_path))
         
-        # 查找所有智能对象
-        all_smart_objects = find_smart_object_layers(doc, None, debug=False)
-        
-        if not all_smart_objects:
-            print("\n⚠️ 第一次查找未找到智能对象，启用详细调试模式重新查找...\n")
-            all_smart_objects = find_smart_object_layers(doc, None, debug=True)
-        
-        if not all_smart_objects:
-            doc.close()
-            raise ValueError("PSD 文件中没有找到任何智能对象图层")
-        
-        # ========== 过滤掉包含忽略标志的智能对象 ==========
-        total_count = len(all_smart_objects)
+        all_smart_objects = []
         ignored_smart_objects = []
-        filtered_smart_objects = []
-        
-        for so in all_smart_objects:
-            so_name = so.get('name', '')
-            # 检查智能对象名称是否包含忽略标志（不区分大小写）
-            if IGNORE_SMART_OBJECT_PREFIX.lower() in so_name.lower():
-                ignored_smart_objects.append(so)
-            else:
-                filtered_smart_objects.append(so)
-        
-        all_smart_objects = filtered_smart_objects
-        
+        total_count = 0
+        if smart_objects_config:
+            # 查找所有智能对象
+            all_smart_objects = find_smart_object_layers(doc, None, debug=False)
+
+            if not all_smart_objects:
+                print("\n⚠️ 第一次查找未找到智能对象，启用详细调试模式重新查找...\n")
+                all_smart_objects = find_smart_object_layers(doc, None, debug=True)
+
+            if not all_smart_objects:
+                doc.close()
+                raise ValueError("PSD 文件中没有找到任何智能对象图层")
+
+            # ========== 过滤掉包含忽略标志的智能对象 ==========
+            total_count = len(all_smart_objects)
+            filtered_smart_objects = []
+
+            for so in all_smart_objects:
+                so_name = so.get('name', '')
+                # 检查智能对象名称是否包含忽略标志（不区分大小写）
+                if IGNORE_SMART_OBJECT_PREFIX.lower() in so_name.lower():
+                    ignored_smart_objects.append(so)
+                else:
+                    filtered_smart_objects.append(so)
+
+            all_smart_objects = filtered_smart_objects
+
         # ========== 打印 PSD 文件基本信息 ==========
         print("\n" + "=" * 70)
         print("📋 PSD 文件信息")
@@ -108,7 +114,8 @@ def replace_and_export_psd_multi(
         print(f"需要处理的智能对象: {len(all_smart_objects)}")
         if ignored_smart_objects:
             print(f"已忽略的智能对象: {len(ignored_smart_objects)} (包含标志 '{IGNORE_SMART_OBJECT_PREFIX}')")
-        print(f"配置数量: {len(smart_objects_config)}")
+        print(f"智能对象配置数量: {len(smart_objects_config)}")
+        print(f"颜色图层配置数量: {len(color_layer_configs or [])}")
         print("=" * 70)
         
         # 打印被忽略的智能对象信息
@@ -121,7 +128,7 @@ def replace_and_export_psd_multi(
                 print(f"      路径: {so.get('path', '未知路径')}")
             print("=" * 70)
         
-        if not all_smart_objects:
+        if smart_objects_config and not all_smart_objects:
             doc.close()
             raise ValueError(f"PSD 文件中的所有智能对象都包含忽略标志 '{IGNORE_SMART_OBJECT_PREFIX}'，没有可处理的智能对象")
         
@@ -134,132 +141,144 @@ def replace_and_export_psd_multi(
         matched_pairs = []  # [(smart_object, config), ...]
         used_config_indices = set()  # 已使用的配置索引
         used_smart_object_indices = set()  # 已使用的智能对象索引
-        
-        # 第一轮：按名称模糊匹配（包含关键字即可，不区分大小写）
-        for config_idx, so_config in enumerate(smart_objects_config):
-            if so_config.get('smart_object_name'):
-                target_keyword = so_config['smart_object_name'].strip()
-                matched = False
-                for so_idx, so in enumerate(all_smart_objects):
-                    if so_idx in used_smart_object_indices:
-                        continue
-                    # 模糊匹配：PS中的名字包含参数中的关键字（不区分大小写）
-                    so_name = so['name']
-                    if target_keyword.lower() in so_name.lower():
-                        matched_pairs.append((so, so_config))
-                        used_config_indices.add(config_idx)
-                        used_smart_object_indices.add(so_idx)
-                        print(f"✅ 匹配: 智能对象 '{so_name}' <-> 配置[{config_idx}] (关键字: '{target_keyword}')")
-                        matched = True
-                        break
-                
-                if not matched:
-                    print(f"⚠️  警告: 配置[{config_idx}] 的关键字 '{target_keyword}' 未匹配到任何智能对象，将按顺序匹配")
-        
-        # 第二轮：按顺序匹配剩余的配置和智能对象
-        config_idx = 0
-        for so_idx, so in enumerate(all_smart_objects):
-            if so_idx in used_smart_object_indices:
-                continue
-            
-            # 找到下一个未使用的配置
-            while config_idx < len(smart_objects_config) and config_idx in used_config_indices:
-                config_idx += 1
-            
-            if config_idx < len(smart_objects_config):
-                so_config = smart_objects_config[config_idx]
-                matched_pairs.append((so, so_config))
-                used_config_indices.add(config_idx)
-                used_smart_object_indices.add(so_idx)
-                # 检查配置是否指定了名称但未匹配到
+
+        if smart_objects_config:
+            # 第一轮：按名称模糊匹配（包含关键字即可，不区分大小写）
+            for config_idx, so_config in enumerate(smart_objects_config):
                 if so_config.get('smart_object_name'):
-                    print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[{config_idx}] (按顺序，配置中的关键字 '{so_config['smart_object_name']}' 未匹配到)")
-                else:
-                    print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[{config_idx}] (按顺序)")
-                config_idx += 1
-            else:
-                # 配置用完了，复用第一个配置
-                if len(smart_objects_config) > 0:
-                    so_config = smart_objects_config[0]
+                    target_keyword = so_config['smart_object_name'].strip()
+                    matched = False
+                    for so_idx, so in enumerate(all_smart_objects):
+                        if so_idx in used_smart_object_indices:
+                            continue
+                        # 模糊匹配：PS中的名字包含参数中的关键字（不区分大小写）
+                        so_name = so['name']
+                        if target_keyword.lower() in so_name.lower():
+                            matched_pairs.append((so, so_config))
+                            used_config_indices.add(config_idx)
+                            used_smart_object_indices.add(so_idx)
+                            print(f"✅ 匹配: 智能对象 '{so_name}' <-> 配置[{config_idx}] (关键字: '{target_keyword}')")
+                            matched = True
+                            break
+
+                    if not matched:
+                        print(f"⚠️  警告: 配置[{config_idx}] 的关键字 '{target_keyword}' 未匹配到任何智能对象，将按顺序匹配")
+
+            # 第二轮：按顺序匹配剩余的配置和智能对象
+            config_idx = 0
+            for so_idx, so in enumerate(all_smart_objects):
+                if so_idx in used_smart_object_indices:
+                    continue
+
+                # 找到下一个未使用的配置
+                while config_idx < len(smart_objects_config) and config_idx in used_config_indices:
+                    config_idx += 1
+
+                if config_idx < len(smart_objects_config):
+                    so_config = smart_objects_config[config_idx]
                     matched_pairs.append((so, so_config))
+                    used_config_indices.add(config_idx)
                     used_smart_object_indices.add(so_idx)
-                    print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[0] (复用)")
-        
-        if not matched_pairs:
+                    # 检查配置是否指定了名称但未匹配到
+                    if so_config.get('smart_object_name'):
+                        print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[{config_idx}] (按顺序，配置中的关键字 '{so_config['smart_object_name']}' 未匹配到)")
+                    else:
+                        print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[{config_idx}] (按顺序)")
+                    config_idx += 1
+                else:
+                    # 配置用完了，复用第一个配置
+                    if len(smart_objects_config) > 0:
+                        so_config = smart_objects_config[0]
+                        matched_pairs.append((so, so_config))
+                        used_smart_object_indices.add(so_idx)
+                        print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[0] (复用)")
+
+        if smart_objects_config and not matched_pairs:
             doc.close()
             raise ValueError("未能匹配任何智能对象和配置")
         
         print(f"\n📊 匹配结果: 共匹配 {len(matched_pairs)} 个智能对象")
         
         # ========== 打印智能对象详细信息 ==========
-        print("\n" + "=" * 70)
-        print("🔗 智能对象处理计划")
-        print("=" * 70)
-        for i, (so, so_config) in enumerate(matched_pairs, 1):
-            print(f"\n  [{i}/{len(matched_pairs)}] {so['name']}")
-            print(f"      图层路径: {so['path']}")
-            print(f"      图片路径: {so_config['image_path']}")
-            print(f"      缩放模式: {so_config.get('resize_mode', 'contain')}")
-            print(f"      分块尺寸: {so_config.get('tile_size', 512)}")
-        print("=" * 70)
+        if matched_pairs:
+            print("\n" + "=" * 70)
+            print("🔗 智能对象处理计划")
+            print("=" * 70)
+            for i, (so, so_config) in enumerate(matched_pairs, 1):
+                print(f"\n  [{i}/{len(matched_pairs)}] {so['name']}")
+                print(f"      图层路径: {so['path']}")
+                print(f"      图片路径: {so_config['image_path']}")
+                print(f"      缩放模式: {so_config.get('resize_mode', 'contain')}")
+                print(f"      分块尺寸: {so_config.get('tile_size', 512)}")
+            print("=" * 70)
         
         # ========== 处理所有智能对象 ==========
-        print("\n" + "=" * 70)
-        print("🔄 开始处理")
-        print("=" * 70)
-        
         processed_count = 0
-        for i, (so, so_config) in enumerate(matched_pairs, 1):
-            print(f"\n⏳ [{i}/{len(matched_pairs)}] 正在替换智能对象: {so['name']}...")
-            try:
-                image_path = Path(so_config['image_path'])
-                resize_mode = so_config.get('resize_mode', 'contain')
-                tile_size = so_config.get('tile_size', 512)
-                custom_options = so_config.get('custom_options')
-                
-                replace_smart_object_content(
-                    session,
-                    doc,
-                    so['layer'],
-                    image_path,
-                    export_dir,
-                    tile_size,
-                    resize_mode,
-                    custom_options
-                )
-                print(f"✅ [{i}/{len(matched_pairs)}] 智能对象 '{so['name']}' 已替换")
-                processed_count += 1
-                
-                # 确保回到主文档（每个替换操作后）
+        if matched_pairs:
+            print("\n" + "=" * 70)
+            print("🔄 开始处理")
+            print("=" * 70)
+
+            for i, (so, so_config) in enumerate(matched_pairs, 1):
+                print(f"\n⏳ [{i}/{len(matched_pairs)}] 正在替换智能对象: {so['name']}...")
                 try:
-                    time.sleep(0.3)
-                    current_active = session.active_document
-                    if current_active != doc:
-                        doc.activeLayer = so['layer']
-                        print(f"    ✅ 已确保回到主文档")
+                    image_path = Path(so_config['image_path'])
+                    resize_mode = so_config.get('resize_mode', 'contain')
+                    tile_size = so_config.get('tile_size', 512)
+                    custom_options = so_config.get('custom_options')
+
+                    replace_smart_object_content(
+                        session,
+                        doc,
+                        so['layer'],
+                        image_path,
+                        export_dir,
+                        tile_size,
+                        resize_mode,
+                        custom_options
+                    )
+                    print(f"✅ [{i}/{len(matched_pairs)}] 智能对象 '{so['name']}' 已替换")
+                    processed_count += 1
+
+                    # 确保回到主文档（每个替换操作后）
+                    try:
+                        time.sleep(0.3)
+                        current_active = session.active_document
+                        if current_active != doc:
+                            doc.activeLayer = so['layer']
+                            print(f"    ✅ 已确保回到主文档")
+                    except Exception as e:
+                        print(f"    ⚠️ 警告: 检查主文档时出错: {e}")
+
                 except Exception as e:
-                    print(f"    ⚠️ 警告: 检查主文档时出错: {e}")
-                    
-            except Exception as e:
-                print(f"❌ [{i}/{len(matched_pairs)}] 处理智能对象 '{so['name']}' 时出错: {e}")
-                import traceback
-                traceback.print_exc()
-                # 继续处理下一个智能对象
-                continue
-        
+                    print(f"❌ [{i}/{len(matched_pairs)}] 处理智能对象 '{so['name']}' 时出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # 继续处理下一个智能对象
+                    continue
+
         print(f"\n✅ 处理完成: 成功处理 {processed_count}/{len(matched_pairs)} 个智能对象")
-        
+
         # 确保活动文档是主文档
-        try:
-            time.sleep(0.3)
-            current_active = session.active_document
-            if current_active != doc:
-                if matched_pairs:
-                    doc.activeLayer = matched_pairs[0][0]['layer']
-                    print(f"    ✅ 已激活主文档和目标图层")
-        except Exception as e:
-            print(f"    ⚠️ 警告: 检查活动文档时出错: {e}")
+        if matched_pairs:
+            try:
+                time.sleep(0.3)
+                current_active = session.active_document
+                if current_active != doc:
+                    if matched_pairs:
+                        doc.activeLayer = matched_pairs[0][0]['layer']
+                        print(f"    ✅ 已激活主文档和目标图层")
+            except Exception as e:
+                print(f"    ⚠️ 警告: 检查活动文档时出错: {e}")
         
+        applied_color_layers = []
+        if color_layer_configs:
+            print("\n" + "=" * 70)
+            print("🎨 开始处理颜色控制图层")
+            print("=" * 70)
+            applied_color_layers = apply_color_layer_configs(session, doc, color_layer_configs)
+            print(f"✅ 颜色控制图层处理完成: {len(applied_color_layers)} 个")
+
         # ========== 查找画板并导出 ==========
         # 参考 erpfile.py 的原理：直接使用 doc.layerSets 获取所有图层组（画板）
         print(f"\n" + "=" * 70)

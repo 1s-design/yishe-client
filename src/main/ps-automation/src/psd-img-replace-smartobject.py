@@ -562,6 +562,7 @@ def process_psd_with_image_multi(
     default_config = {
         'export_dir': None,  # 必需参数
         'smart_objects_config': None,  # 必需参数
+        'color_layer_configs': None,
         'output_filename': None,
         'verbose': True
     }
@@ -576,11 +577,12 @@ def process_psd_with_image_multi(
     if final_config['export_dir'] is None:
         raise ValueError("config['export_dir'] 是必需参数，请提供导出目录路径")
     
-    if final_config['smart_objects_config'] is None or len(final_config['smart_objects_config']) == 0:
-        raise ValueError("config['smart_objects_config'] 是必需参数，且不能为空，请提供至少一个智能对象配置")
-    
+    smart_objects_config = final_config['smart_objects_config'] or []
+    color_layer_configs = final_config['color_layer_configs'] or []
+    if len(smart_objects_config) == 0 and len(color_layer_configs) == 0:
+        raise ValueError("至少需要提供 smart_objects_config 或 color_layer_configs 中的一项")
+
     export_dir = Path(final_config['export_dir'])
-    smart_objects_config = final_config['smart_objects_config']
     
     # 如果 verbose 为 False，临时禁用 print（通过重定向）
     if not final_config['verbose']:
@@ -591,6 +593,7 @@ def process_psd_with_image_multi(
                 psd_path=psd_path,
                 export_dir=export_dir,
                 smart_objects_config=smart_objects_config,
+                color_layer_configs=color_layer_configs,
                 output_filename=final_config['output_filename']
             )
     else:
@@ -598,6 +601,7 @@ def process_psd_with_image_multi(
             psd_path=psd_path,
             export_dir=export_dir,
             smart_objects_config=smart_objects_config,
+            color_layer_configs=color_layer_configs,
             output_filename=final_config['output_filename']
         )
 
