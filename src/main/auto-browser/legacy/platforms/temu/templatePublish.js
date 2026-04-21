@@ -259,6 +259,108 @@ function fillTemplateTitle(payload = {}, title = '') {
     return nextPayload;
 }
 
+function resolveTemuTemplateInfoCandidates(publishInfo = {}) {
+    const settings = publishInfo.platformOptions
+        || publishInfo.publishOptions
+        || publishInfo.platformSettings?.[PLATFORM_KEY]
+        || {};
+
+    return {
+        settings,
+        stickerCode: normalizeText(
+            settings.stickerCode
+            || publishInfo.stickerCode
+            || publishInfo.data?.stickerCode
+            || publishInfo.meta?.stickerCode
+            || publishInfo.metadata?.stickerCode
+            || publishInfo.code
+            || publishInfo.data?.code
+        ),
+        vendorCode: normalizeText(
+            settings.vendorCode
+            || publishInfo.vendorCode
+            || publishInfo.data?.vendorCode
+            || publishInfo.meta?.vendorCode
+            || publishInfo.metadata?.vendorCode
+        ),
+        explicitProductCode: normalizeText(
+            settings.productCode
+            || publishInfo.productCode
+            || publishInfo.data?.productCode
+            || publishInfo.meta?.productCode
+            || publishInfo.metadata?.productCode
+        )
+    };
+}
+
+function resolveTemuTemplateProductCode(publishInfo = {}) {
+    const info = resolveTemuTemplateInfoCandidates(publishInfo);
+    if (info.explicitProductCode) {
+        return info.explicitProductCode;
+    }
+
+    return [info.stickerCode, info.vendorCode].filter(Boolean).join('-');
+}
+
+function hasTemuTemplateMagicVariables(value) {
+    if (typeof value === 'string') {
+        return /^\$productCode$/.test(value.trim()) || /^\$image\[\d+\]$/.test(value.trim());
+    }
+
+    if (Array.isArray(value)) {
+        return value.some((item) => hasTemuTemplateMagicVariables(item));
+    }
+
+    if (isPlainObject(value)) {
+        return Object.values(value).some((item) => hasTemuTemplateMagicVariables(item));
+    }
+
+    return false;
+}
+
+function replaceTemuTemplateMagicVariables(value, context, state = { warnings: [] }) {
+    if (typeof value === 'string') {
+        const normalized = value.trim();
+        if (!normalized) {
+            return value;
+        }
+
+        if (normalized === '$productCode') {
+            if (context.productCode) {
+                return context.productCode;
+            }
+            state.warnings.push('missing_product_code');
+            return value;
+        }
+
+        const imageMatch = normalized.match(/^\$image\[(\d+)\]$/);
+        if (imageMatch) {
+            const index = Number(imageMatch[1]);
+            const imageUrl = normalizeText(context.uploadedImageUrls?.[index]);
+            if (imageUrl) {
+                return imageUrl;
+            }
+            state.warnings.push(`missing_image_${index}`);
+            return value;
+        }
+
+        return value;
+    }
+
+    if (Array.isArray(value)) {
+        return value.map((item) => replaceTemuTemplateMagicVariables(item, context, state));
+    }
+
+    if (isPlainObject(value)) {
+        return Object.entries(value).reduce((acc, [key, item]) => {
+            acc[key] = replaceTemuTemplateMagicVariables(item, context, state);
+            return acc;
+        }, {});
+    }
+
+    return value;
+}
+
 function assignTemplateImages(payload = {}, uploadedImageUrls = []) {
     const nextPayload = isPlainObject(payload) ? { ...payload } : {};
     const imageUrls = uploadedImageUrls.map((item) => normalizeText(item)).filter(Boolean);
@@ -390,9 +492,24 @@ function stripTemuTemplateEditOnlyFields(payload = {}) {
 function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
     const templatePayload = cloneSerializable(productTemplate) || {};
     const titleAppliedPayload = fillTemplateTitle(templatePayload, options.title);
-    const imageAppliedPayload = assignTemplateImages(titleAppliedPayload, options.uploadedImageUrls || []);
+    const variableContext = {
+        productCode: normalizeText(options.productCode || ''),
+        uploadedImageUrls: (options.uploadedImageUrls || []).map((item) => normalizeText(item)).filter(Boolean)
+    };
+    const templateUsesMagicVariables = hasTemuTemplateMagicVariables(titleAppliedPayload);
+    const variableState = { warnings: [] };
+    const variableAppliedPayload = templateUsesMagicVariables
+        ? replaceTemuTemplateMagicVariables(titleAppliedPayload, variableContext, variableState)
+        : titleAppliedPayload;
+    const imageAppliedPayload = templateUsesMagicVariables
+        ? variableAppliedPayload
+        : assignTemplateImages(variableAppliedPayload, options.uploadedImageUrls || []);
     const normalizedSkuPayload = normalizeTemuTemplateSkuFields(imageAppliedPayload);
-    return stripTemuTemplateEditOnlyFields(normalizedSkuPayload);
+    return {
+        payload: stripTemuTemplateEditOnlyFields(normalizedSkuPayload),
+        templateUsesMagicVariables,
+        variableWarnings: Array.from(new Set(variableState.warnings))
+    };
 }
 
 async function submitTemuTemplatePayload(payload = {}, sessionBundle = {}, options = {}) {
@@ -691,10 +808,13 @@ export async function publishTemuByProductTemplate(
         firstImageUrl: uploadedImageUrls[0] || ''
     });
 
-    const finalPayload = buildTemuTemplatePublishPayload(productTemplate, {
+    const resolvedProductCode = resolveTemuTemplateProductCode(publishInfo);
+    const buildPayloadResult = buildTemuTemplatePublishPayload(productTemplate, {
         title: resolvedTitle,
-        uploadedImageUrls
+        uploadedImageUrls,
+        productCode: resolvedProductCode
     });
+    const finalPayload = buildPayloadResult.payload;
     const payloadPreview = buildTemuTemplatePayloadPreview(finalPayload);
     logger.info(`${PLATFORM_NAME}模板直发最终提交类目`, {
         cat1Id: finalPayload.cat1Id ?? null,
@@ -709,11 +829,18 @@ export async function publishTemuByProductTemplate(
         cat10Id: finalPayload.cat10Id ?? null
     });
     logger.info(`${PLATFORM_NAME}模板直发最终提交价格预览`, payloadPreview);
+    logger.info(`${PLATFORM_NAME}模板变量解析结果`, {
+        templateUsesMagicVariables: !!buildPayloadResult.templateUsesMagicVariables,
+        productCode: resolvedProductCode,
+        variableWarnings: buildPayloadResult.variableWarnings || []
+    });
     const payloadSummary = summarizeTemuTemplatePayload(finalPayload);
     pushTrace(executionTrace, 'build_publish_payload', 'success', payloadSummary);
     logger.info(`${PLATFORM_NAME}模板直发已完成发布参数组装`, {
         payloadSummary,
-        titlePreview: limitLogText(finalPayload.productName, 80)
+        titlePreview: limitLogText(finalPayload.productName, 80),
+        templateUsesMagicVariables: !!buildPayloadResult.templateUsesMagicVariables,
+        variableWarnings: buildPayloadResult.variableWarnings || []
     });
 
     logger.info(`${PLATFORM_NAME}模板直发准备调用Temu商品提交接口`, {
