@@ -225,6 +225,78 @@ function compactObject<T extends Record<string, any>>(input: T): T {
   return next
 }
 
+function cloneSerializable<T>(value: T): T | undefined {
+  if (value === undefined) return undefined
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch {
+    return undefined
+  }
+}
+
+function resolvePublishConfigData(row: any): Record<string, any> {
+  const candidates = [
+    row?.data?.configData,
+    row?.configData,
+    row?.data?.publishConfig?.configData,
+    row?.publishConfig?.configData,
+    row?.data?.meta?.configData,
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      return candidate
+    }
+  }
+
+  return {}
+}
+
+function buildExplicitPublishFields(platform: string, publishData: any, row: any): Record<string, any> {
+  const configData = resolvePublishConfigData(row)
+  const explicitProductCode = [
+    publishData?.productCode,
+    configData?.productCode,
+    publishData?.platformOptions?.productCode,
+    publishData?.publishOptions?.productCode,
+    publishData?.platformSettings?.[platform]?.productCode,
+  ].find((item) => typeof item === 'string' && item.trim())
+
+  const explicitFields = compactObject({
+    productCode: typeof explicitProductCode === 'string' ? explicitProductCode.trim() : undefined,
+  })
+
+  if (platform === 'temu') {
+    const productTemplate = cloneSerializable(
+      publishData?.productTemplate
+      ?? configData?.productTemplate
+      ?? publishData?.platformOptions?.productTemplate
+      ?? publishData?.publishOptions?.productTemplate
+      ?? publishData?.platformSettings?.temu?.productTemplate
+    )
+    const templateImageBindings = cloneSerializable(
+      publishData?.templateImageBindings
+      ?? configData?.templateImageBindings
+      ?? publishData?.platformOptions?.templateImageBindings
+      ?? publishData?.publishOptions?.templateImageBindings
+      ?? publishData?.platformSettings?.temu?.templateImageBindings
+    )
+
+    if (productTemplate && typeof productTemplate === 'object' && !Array.isArray(productTemplate)) {
+      explicitFields.productTemplate = productTemplate
+    }
+    if (
+      templateImageBindings &&
+      typeof templateImageBindings === 'object' &&
+      !Array.isArray(templateImageBindings)
+    ) {
+      explicitFields.templateImageBindings = templateImageBindings
+    }
+  }
+
+  return explicitFields
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -322,7 +394,7 @@ function buildRuntimeSnapshot(
   })
 }
 
-function normalizeFromFlatPublishData(platform: string, publishData: any, meta: any): NormalizedPublishTask {
+function normalizeFromFlatPublishData(platform: string, publishData: any, meta: any, row?: any): NormalizedPublishTask {
   const nestedPlatformOptions = publishData?.platformOptions && typeof publishData.platformOptions === 'object'
     ? publishData.platformOptions
     : {}
@@ -356,15 +428,19 @@ function normalizeFromFlatPublishData(platform: string, publishData: any, meta: 
           )
       ),
   })
+  const explicitFields = buildExplicitPublishFields(platform, nextPublishData, row)
 
   return {
     platform: nextPublishData.platform || platform,
-    publishData: nextPublishData,
+    publishData: compactObject({
+      ...nextPublishData,
+      ...explicitFields,
+    }),
     resourceProcessing: meta?.resourceProcessing || {},
   }
 }
 
-function normalizeFromPostAssets(platform: string, data: any, meta: any): NormalizedPublishTask {
+function normalizeFromPostAssets(platform: string, data: any, meta: any, row?: any): NormalizedPublishTask {
   const post = data?.post && typeof data.post === 'object' ? data.post : {}
   const assets = data?.assets && typeof data.assets === 'object' ? data.assets : {}
   const options = data?.options && typeof data.options === 'object' ? data.options : {}
@@ -378,10 +454,14 @@ function normalizeFromPostAssets(platform: string, data: any, meta: any): Normal
     videoSource: Array.isArray(assets?.videos) && assets.videos[0] ? String(assets.videos[0]).trim() : undefined,
     ...options,
   })
+  const explicitFields = buildExplicitPublishFields(platform, nextPublishData, row)
 
   return {
     platform: nextPublishData.platform || platform,
-    publishData: nextPublishData,
+    publishData: compactObject({
+      ...nextPublishData,
+      ...explicitFields,
+    }),
     resourceProcessing: data?.processing || meta?.resourceProcessing || {},
   }
 }
@@ -408,17 +488,23 @@ function normalizeLegacyTask(platform: string, row: any): NormalizedPublishTask 
     ? data.videoUrl.trim()
     : (typeof data?.filePathSource === 'string' && data.filePathSource.trim() && !isImagePath(data.filePathSource) ? data.filePathSource.trim() : undefined)
 
+  const basePublishData = compactObject({
+    platform: resolvedPlatform,
+    title: typeof data?.title === 'string' ? data.title.trim() : undefined,
+    description: typeof data?.description === 'string' ? data.description.trim() : undefined,
+    content: typeof data?.content === 'string' ? data.content.trim() : undefined,
+    tags: normalizeTags(data?.tags),
+    imageSources: normalizeStringArray(imageSources),
+    videoSource,
+    ...platformOptions,
+  })
+  const explicitFields = buildExplicitPublishFields(resolvedPlatform, basePublishData, row)
+
   return {
     platform: resolvedPlatform,
     publishData: compactObject({
-      platform: resolvedPlatform,
-      title: typeof data?.title === 'string' ? data.title.trim() : undefined,
-      description: typeof data?.description === 'string' ? data.description.trim() : undefined,
-      content: typeof data?.content === 'string' ? data.content.trim() : undefined,
-      tags: normalizeTags(data?.tags),
-      imageSources: normalizeStringArray(imageSources),
-      videoSource,
-      ...platformOptions,
+      ...basePublishData,
+      ...explicitFields,
     }),
     resourceProcessing: data?.executionHints?.resourceProcessing || {},
   }
@@ -431,9 +517,16 @@ function normalizePublishTask(platform: string, row: any): NormalizedPublishTask
 
   if (publishData && typeof publishData === 'object') {
     if (publishData.post || publishData.assets || publishData.options) {
-      return normalizeFromPostAssets(platform, publishData, meta)
+      return normalizeFromPostAssets(platform, publishData, meta, row)
     }
-    return normalizeFromFlatPublishData(platform, publishData, meta)
+    const normalized = normalizeFromFlatPublishData(platform, publishData, meta, row)
+    return {
+      ...normalized,
+      publishData: compactObject({
+        ...normalized.publishData,
+        ...buildExplicitPublishFields(platform, normalized.publishData, row),
+      }),
+    }
   }
 
   return normalizeLegacyTask(platform, row)

@@ -11,8 +11,6 @@ export interface PublishConfig {
   configData: any
   isActive: boolean
   titlePromptTitle?: string
-  titleTemplate?: string
-  titleConfig?: any
 }
 
 export const publishConfigApi = {

@@ -60,6 +60,28 @@ function parseTemplateCandidate(value) {
     }
 }
 
+function parseTemplateImageBindingsCandidate(value) {
+    if (isPlainObject(value)) {
+        return cloneSerializable(value);
+    }
+
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const raw = value.trim();
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        return isPlainObject(parsed) ? cloneSerializable(parsed) : null;
+    } catch {
+        return null;
+    }
+}
+
 export function resolveTemuProductTemplate(publishInfo = {}) {
     const settings = publishInfo.platformOptions
         || publishInfo.publishOptions
@@ -76,6 +98,30 @@ export function resolveTemuProductTemplate(publishInfo = {}) {
 
     for (const candidate of candidates) {
         const parsed = parseTemplateCandidate(candidate);
+        if (parsed) {
+            return parsed;
+        }
+    }
+
+    return null;
+}
+
+export function resolveTemuTemplateImageBindings(publishInfo = {}) {
+    const settings = publishInfo.platformOptions
+        || publishInfo.publishOptions
+        || publishInfo.platformSettings?.[PLATFORM_KEY]
+        || {};
+
+    const candidates = [
+        publishInfo.templateImageBindings,
+        settings.templateImageBindings,
+        publishInfo.data?.templateImageBindings,
+        publishInfo.meta?.templateImageBindings,
+        publishInfo.metadata?.templateImageBindings
+    ];
+
+    for (const candidate of candidates) {
+        const parsed = parseTemplateImageBindingsCandidate(candidate);
         if (parsed) {
             return parsed;
         }
@@ -420,6 +466,143 @@ function assignTemplateImages(payload = {}, uploadedImageUrls = []) {
     return nextPayload;
 }
 
+function normalizeImageBindingIndexes(value) {
+    if (value === undefined || value === null || value === '') {
+        return [];
+    }
+
+    const list = Array.isArray(value) ? value : [value];
+    return list
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item >= 0);
+}
+
+function buildImageBindingDebugInfo(imageUrls = [], bindings = null) {
+    const normalizedImageUrls = Array.isArray(imageUrls)
+        ? imageUrls.map((item) => normalizeText(item)).filter(Boolean)
+        : [];
+    const normalizedBindings = isPlainObject(bindings) ? bindings : {};
+    const fieldKeys = [
+        'materialImgUrl',
+        'carouselImageUrls',
+        'productSkcReqs[].previewImgUrls',
+        'productSkcReqs[].productSkuReqs[].thumbUrl'
+    ];
+
+    return fieldKeys.reduce((acc, fieldKey) => {
+        const rawValue = normalizedBindings[fieldKey];
+        const indexes = normalizeImageBindingIndexes(rawValue);
+        const matchedUrls = indexes
+            .map((index) => normalizeText(normalizedImageUrls[index]))
+            .filter(Boolean);
+
+        acc[fieldKey] = {
+            rawValue: rawValue ?? null,
+            indexes,
+            requestedCount: indexes.length,
+            matchedCount: matchedUrls.length,
+            missingIndexes: indexes.filter((index) => !normalizeText(normalizedImageUrls[index])),
+            matchedUrls
+        };
+        return acc;
+    }, {});
+}
+
+function pickImageUrlsByIndexes(imageUrls = [], bindingValue, { fallbackToAll = false } = {}) {
+    const indexes = normalizeImageBindingIndexes(bindingValue);
+    const matchedUrls = indexes
+        .map((index) => normalizeText(imageUrls[index]))
+        .filter(Boolean);
+
+    if (matchedUrls.length) {
+        return matchedUrls;
+    }
+
+    return fallbackToAll ? imageUrls.map((item) => normalizeText(item)).filter(Boolean) : [];
+}
+
+function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bindings = null) {
+    if (!isPlainObject(bindings)) {
+        return assignTemplateImages(payload, uploadedImageUrls);
+    }
+
+    const nextPayload = isPlainObject(payload) ? { ...payload } : {};
+    const imageUrls = uploadedImageUrls.map((item) => normalizeText(item)).filter(Boolean);
+    if (!imageUrls.length) {
+        return nextPayload;
+    }
+
+    logger.info(`${PLATFORM_NAME}模板图片绑定调试信息`, {
+        uploadedImageCount: imageUrls.length,
+        bindings: isPlainObject(bindings) ? bindings : null,
+        fieldDebug: buildImageBindingDebugInfo(imageUrls, bindings)
+    });
+
+    const carouselUrls = pickImageUrlsByIndexes(
+        imageUrls,
+        bindings.carouselImageUrls,
+        { fallbackToAll: true }
+    );
+    if (carouselUrls.length) {
+        nextPayload.carouselImageUrls = carouselUrls;
+    }
+
+    const materialUrl = pickImageUrlsByIndexes(imageUrls, bindings.materialImgUrl)[0] || imageUrls[0];
+    if (materialUrl) {
+        nextPayload.materialImgUrl = materialUrl;
+    }
+
+    if (!Array.isArray(nextPayload.productSkcReqs)) {
+        return nextPayload;
+    }
+
+    const skuThumbIndexes = normalizeImageBindingIndexes(
+        bindings['productSkcReqs[].productSkuReqs[].thumbUrl']
+    );
+    const hasSkuThumbBinding = skuThumbIndexes.length > 0;
+    let skuImageIndex = 0;
+
+    nextPayload.productSkcReqs = nextPayload.productSkcReqs.map((skc) => {
+        const nextSkc = isPlainObject(skc) ? { ...skc } : {};
+        const skuList = Array.isArray(nextSkc.productSkuReqs) ? nextSkc.productSkuReqs : [];
+        let skcPreviewUrl = '';
+
+        nextSkc.productSkuReqs = skuList.map((sku) => {
+            const nextSku = isPlainObject(sku) ? { ...sku } : {};
+            const bindingIndex = hasSkuThumbBinding ? skuThumbIndexes[skuImageIndex] : skuImageIndex;
+            const assignedThumbUrl = normalizeText(
+                imageUrls[bindingIndex]
+                || (hasSkuThumbBinding ? imageUrls[skuThumbIndexes[0]] : '')
+                || imageUrls[0]
+            );
+            skuImageIndex += 1;
+
+            if (assignedThumbUrl) {
+                nextSku.thumbUrl = assignedThumbUrl;
+                if (!skcPreviewUrl) {
+                    skcPreviewUrl = assignedThumbUrl;
+                }
+            }
+
+            return nextSku;
+        });
+
+        const previewBinding = bindings['productSkcReqs[].previewImgUrls'];
+        const previewUrls = pickImageUrlsByIndexes(imageUrls, previewBinding);
+        if (previewUrls.length) {
+            nextSkc.previewImgUrls = previewUrls;
+        } else if (skcPreviewUrl) {
+            nextSkc.previewImgUrls = [skcPreviewUrl];
+        } else if (imageUrls[0]) {
+            nextSkc.previewImgUrls = [imageUrls[0]];
+        }
+
+        return nextSkc;
+    });
+
+    return nextPayload;
+}
+
 function buildTemuSkuSuggestedPriceReq(sku = {}) {
     const supplierPrice = Number(sku.supplierPrice);
     const existingSuggestedPriceReq = isPlainObject(sku.productSkuSuggestedPriceReq)
@@ -482,6 +665,30 @@ function normalizeTemuTemplateSkuFields(payload = {}) {
     return nextPayload;
 }
 
+function normalizeTemuTemplateExtCodes(payload = {}, productCode = '') {
+    const nextPayload = isPlainObject(payload) ? { ...payload } : {};
+    const baseProductCode = normalizeText(productCode);
+    if (!baseProductCode || !Array.isArray(nextPayload.productSkcReqs)) {
+        return nextPayload;
+    }
+
+    nextPayload.productSkcReqs = nextPayload.productSkcReqs.map((skc, skcIndex) => {
+        const nextSkc = isPlainObject(skc) ? { ...skc } : {};
+        nextSkc.extCode = `${baseProductCode}-skc-${skcIndex + 1}`;
+
+        const skuList = Array.isArray(nextSkc.productSkuReqs) ? nextSkc.productSkuReqs : [];
+        nextSkc.productSkuReqs = skuList.map((sku, skuIndex) => {
+            const nextSku = isPlainObject(sku) ? { ...sku } : {};
+            nextSku.extCode = `${baseProductCode}-sku-${skcIndex + 1}-${skuIndex + 1}`;
+            return nextSku;
+        });
+
+        return nextSkc;
+    });
+
+    return nextPayload;
+}
+
 function stripTemuTemplateEditOnlyFields(payload = {}) {
     const nextPayload = isPlainObject(payload) ? { ...payload } : {};
     delete nextPayload.productId;
@@ -492,23 +699,20 @@ function stripTemuTemplateEditOnlyFields(payload = {}) {
 function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
     const templatePayload = cloneSerializable(productTemplate) || {};
     const titleAppliedPayload = fillTemplateTitle(templatePayload, options.title);
-    const variableContext = {
-        productCode: normalizeText(options.productCode || ''),
-        uploadedImageUrls: (options.uploadedImageUrls || []).map((item) => normalizeText(item)).filter(Boolean)
-    };
-    const templateUsesMagicVariables = hasTemuTemplateMagicVariables(titleAppliedPayload);
-    const variableState = { warnings: [] };
-    const variableAppliedPayload = templateUsesMagicVariables
-        ? replaceTemuTemplateMagicVariables(titleAppliedPayload, variableContext, variableState)
-        : titleAppliedPayload;
-    const imageAppliedPayload = templateUsesMagicVariables
-        ? variableAppliedPayload
-        : assignTemplateImages(variableAppliedPayload, options.uploadedImageUrls || []);
-    const normalizedSkuPayload = normalizeTemuTemplateSkuFields(imageAppliedPayload);
+    const imageAppliedPayload = assignTemplateImagesByBindings(
+        titleAppliedPayload,
+        options.uploadedImageUrls || [],
+        options.templateImageBindings || null
+    );
+    const extCodeAppliedPayload = normalizeTemuTemplateExtCodes(
+        imageAppliedPayload,
+        options.productCode || ''
+    );
+    const normalizedSkuPayload = normalizeTemuTemplateSkuFields(extCodeAppliedPayload);
     return {
         payload: stripTemuTemplateEditOnlyFields(normalizedSkuPayload),
-        templateUsesMagicVariables,
-        variableWarnings: Array.from(new Set(variableState.warnings))
+        templateUsesMagicVariables: false,
+        variableWarnings: []
     };
 }
 
@@ -582,6 +786,22 @@ async function submitTemuTemplatePayload(payload = {}, sessionBundle = {}, optio
     };
 }
 
+function sanitizeSubmitHeadersForLog(headers = {}) {
+    if (!isPlainObject(headers)) {
+        return {};
+    }
+
+    const nextHeaders = { ...headers };
+    if (nextHeaders.cookie) {
+        nextHeaders.cookie = '[REDACTED]';
+    }
+    if (nextHeaders['anti-content']) {
+        nextHeaders['anti-content'] = '[REDACTED]';
+    }
+
+    return nextHeaders;
+}
+
 function buildTemplatePublishResult({
     success,
     message,
@@ -592,6 +812,7 @@ function buildTemplatePublishResult({
     submitResult,
     payloadSummary,
     payloadPreview,
+    finalPayload,
     shouldKeepPageOpen
 }) {
     return {
@@ -621,6 +842,14 @@ function buildTemplatePublishResult({
             publishImageUploadSession: publishImageUploadResult?.sessionContext || null,
             productTemplatePayloadSummary: payloadSummary || null,
             productTemplatePayloadPreview: payloadPreview || null,
+            productTemplateFinalPayload: finalPayload || null,
+            publishSubmitRequest: submitResult
+                ? {
+                    submitUrl: submitResult.submitUrl || '',
+                    headers: sanitizeSubmitHeadersForLog(submitResult.headersUsed || {}),
+                    body: finalPayload || null
+                }
+                : null,
             publishSubmitResult: submitResult
                 ? {
                     success: !!submitResult.success,
@@ -809,10 +1038,12 @@ export async function publishTemuByProductTemplate(
     });
 
     const resolvedProductCode = resolveTemuTemplateProductCode(publishInfo);
+    const templateImageBindings = resolveTemuTemplateImageBindings(publishInfo);
     const buildPayloadResult = buildTemuTemplatePublishPayload(productTemplate, {
         title: resolvedTitle,
         uploadedImageUrls,
-        productCode: resolvedProductCode
+        productCode: resolvedProductCode,
+        templateImageBindings
     });
     const finalPayload = buildPayloadResult.payload;
     const payloadPreview = buildTemuTemplatePayloadPreview(finalPayload);
@@ -832,7 +1063,8 @@ export async function publishTemuByProductTemplate(
     logger.info(`${PLATFORM_NAME}模板变量解析结果`, {
         templateUsesMagicVariables: !!buildPayloadResult.templateUsesMagicVariables,
         productCode: resolvedProductCode,
-        variableWarnings: buildPayloadResult.variableWarnings || []
+        variableWarnings: buildPayloadResult.variableWarnings || [],
+        templateImageBindings: templateImageBindings || null
     });
     const payloadSummary = summarizeTemuTemplatePayload(finalPayload);
     pushTrace(executionTrace, 'build_publish_payload', 'success', payloadSummary);
@@ -842,6 +1074,7 @@ export async function publishTemuByProductTemplate(
         templateUsesMagicVariables: !!buildPayloadResult.templateUsesMagicVariables,
         variableWarnings: buildPayloadResult.variableWarnings || []
     });
+    logger.info(`${PLATFORM_NAME}模板直发最终提交完整请求体`, finalPayload);
 
     logger.info(`${PLATFORM_NAME}模板直发准备调用Temu商品提交接口`, {
         submitUrl: templateSettings.submitUrl,
@@ -881,6 +1114,7 @@ export async function publishTemuByProductTemplate(
             submitResult,
             payloadSummary,
             payloadPreview,
+            finalPayload,
             shouldKeepPageOpen
         });
     }
@@ -902,6 +1136,7 @@ export async function publishTemuByProductTemplate(
         submitResult,
         payloadSummary,
         payloadPreview,
+        finalPayload,
         shouldKeepPageOpen
     });
 }
