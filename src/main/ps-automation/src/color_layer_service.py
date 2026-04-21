@@ -119,7 +119,7 @@ def _match_color_layers(
 
     candidate_layers = _collect_color_layer_candidates(doc)
     if not candidate_layers:
-        raise ValueError("当前 PSD 中没有识别到可疑的纯色填充图层候选")
+        return []
 
     matched_pairs: list[tuple[Any, dict[str, Any], str]] = []
     used_layer_indices: set[int] = set()
@@ -393,6 +393,14 @@ def apply_color_layer_configs(
     matched_pairs = _match_color_layers(doc, color_layer_configs)
     applied_results: list[dict[str, Any]] = []
     candidate_layers = _collect_color_layer_candidates(doc)
+
+    if not candidate_layers or not matched_pairs:
+        print("\n" + "=" * 70)
+        print("🎨 颜色图层处理计划")
+        print("=" * 70)
+        print("⚠️ 未识别到可处理的颜色图层候选，已跳过颜色处理，不影响后续导出")
+        print("=" * 70)
+        return []
 
     print("\n" + "=" * 70)
     print("🎨 颜色图层处理计划")
