@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from photoshop.api.enumerations import LayerKind
+from photoshop.api import ActionDescriptor
+from photoshop.api.enumerations import DialogModes, LayerKind
 
 
 def _iter_layers(layers: Iterable[Any], parent_path: str = ""):
@@ -64,6 +65,13 @@ def _safe_layer_kind_text(layer: Any) -> str:
 def _safe_layer_typename(layer: Any) -> str:
     try:
         return str(layer.typename)
+    except Exception as error:
+        return f"<unavailable: {error}>"
+
+
+def _safe_layer_bool_attr(layer: Any, attr_name: str) -> str:
+    try:
+        return str(getattr(layer, attr_name))
     except Exception as error:
         return f"<unavailable: {error}>"
 
@@ -180,6 +188,200 @@ def _set_fill_color_with_dom(session: Any, layer: Any, color: str) -> dict[str, 
     }
 
 
+def _set_adjustment_layer_color(layer: Any, color: str) -> dict[str, Any]:
+    rgb = parse_hex_color(color)
+    adjustment_layer = layer.adjustmentLayer
+    adjustment_layer.color = (rgb["red"], rgb["green"], rgb["blue"])
+    return {
+        "rgb": rgb,
+        "method": "dom.adjustmentLayer.color",
+    }
+
+
+def _set_fill_color_with_dict(layer: Any, color: str) -> dict[str, Any]:
+    rgb = parse_hex_color(color)
+    layer.fillColor = {
+        "red": rgb["red"],
+        "green": rgb["green"],
+        "blue": rgb["blue"],
+    }
+    return {
+        "rgb": rgb,
+        "method": "dom.fillColor.dict",
+    }
+
+
+def _set_raster_layer_color(session: Any, doc: Any, layer: Any, color: str) -> dict[str, Any]:
+    rgb = parse_hex_color(color)
+    solid_color = session.SolidColor()
+    solid_color.rgb.red = rgb["red"]
+    solid_color.rgb.green = rgb["green"]
+    solid_color.rgb.blue = rgb["blue"]
+
+    original_active_layer = None
+    original_all_locked = None
+    original_pixels_locked = None
+
+    try:
+        original_active_layer = doc.activeLayer
+    except Exception:
+        original_active_layer = None
+
+    try:
+        original_all_locked = layer.allLocked
+    except Exception:
+        original_all_locked = None
+
+    try:
+        original_pixels_locked = layer.pixelsLocked
+    except Exception:
+        original_pixels_locked = None
+
+    try:
+        doc.activeLayer = layer
+        try:
+            if original_all_locked:
+                layer.allLocked = False
+        except Exception:
+            pass
+        try:
+            if original_pixels_locked:
+                layer.pixelsLocked = False
+        except Exception:
+            pass
+
+        print("      [raster] step=select_all")
+        doc.selection.selectAll()
+        print("      [raster] step=set_foreground_color")
+        session.app.foregroundColor = solid_color
+        print("      [raster] step=build_action_descriptor")
+
+        string_id = getattr(session.app, "stringIDToTypeID", None)
+        execute_action = getattr(session.app, "executeAction", None)
+        if not callable(string_id):
+            raise RuntimeError(f"session.app.stringIDToTypeID 不可调用: {string_id}")
+        if not callable(execute_action):
+            raise RuntimeError(f"session.app.executeAction 不可调用: {execute_action}")
+
+        fill_descriptor = ActionDescriptor()
+        fill_descriptor.putEnumerated(
+            string_id("using"),
+            string_id("fillContents"),
+            string_id("foregroundColor"),
+        )
+        fill_descriptor.putUnitDouble(string_id("opacity"), string_id("percentUnit"), 100.0)
+        fill_descriptor.putEnumerated(
+            string_id("mode"),
+            string_id("blendMode"),
+            string_id("normal"),
+        )
+        print("      [raster] step=execute_fill_action")
+        execute_action(string_id("fill"), fill_descriptor, DialogModes.DisplayNoDialogs)
+        print("      [raster] step=deselect")
+        doc.selection.deselect()
+    finally:
+        try:
+            doc.selection.deselect()
+        except Exception:
+            pass
+        try:
+            if original_all_locked is not None:
+                layer.allLocked = original_all_locked
+        except Exception:
+            pass
+        try:
+            if original_pixels_locked is not None:
+                layer.pixelsLocked = original_pixels_locked
+        except Exception:
+            pass
+        try:
+            if original_active_layer is not None:
+                doc.activeLayer = original_active_layer
+        except Exception:
+            pass
+
+    return {
+        "rgb": rgb,
+        "method": "raster.action.fillForeground",
+    }
+
+
+def _apply_color_with_fallbacks(session: Any, layer: Any, color: str) -> dict[str, Any]:
+    attempts = [
+        ("dom.adjustmentLayer.color", lambda: _set_adjustment_layer_color(layer, color)),
+        ("dom.fillColor", lambda: _set_fill_color_with_dom(session, layer, color)),
+        ("dom.fillColor.dict", lambda: _set_fill_color_with_dict(layer, color)),
+    ]
+    errors: list[str] = []
+
+    for method_name, runner in attempts:
+        try:
+            print(f"    尝试改色方法: {method_name}")
+            result = runner()
+            print(f"    ✅ 方法成功: {method_name}")
+            return result
+        except Exception as error:
+            errors.append(f"{method_name} -> {error}")
+            print(f"    ❌ 方法失败: {method_name}: {error}")
+
+    raise RuntimeError("; ".join(errors))
+
+
+def _apply_color_with_all_fallbacks(session: Any, doc: Any, layer: Any, color: str) -> dict[str, Any]:
+    errors: list[str] = []
+    try:
+        return _apply_color_with_fallbacks(session, layer, color)
+    except Exception as error:
+        errors.append(str(error))
+
+    layer_kind = _safe_layer_kind_text(layer).strip().upper()
+    layer_typename = _safe_layer_typename(layer).strip().upper()
+    looks_like_raster = layer_kind in {"3", "LAYERKIND.NORMAL"} or "ARTLAYER" in layer_typename
+
+    if looks_like_raster:
+        try:
+            print("    尝试改色方法: raster.action.fillForeground")
+            result = _set_raster_layer_color(session, doc, layer, color)
+            print("    ✅ 方法成功: raster.action.fillForeground")
+            return result
+        except Exception as error:
+            errors.append(f"raster.action.fillForeground -> {error}")
+            print(f"    ❌ 方法失败: raster.action.fillForeground: {error}")
+
+    raise RuntimeError("; ".join(errors))
+
+
+def _safe_read_adjustment_layer_color(layer: Any) -> str:
+    try:
+        adjustment_layer = layer.adjustmentLayer
+    except Exception as error:
+        return f"<unavailable: adjustmentLayer={error}>"
+
+    try:
+        color_value = adjustment_layer.color
+        return str(color_value)
+    except Exception as error:
+        return f"<unavailable: adjustmentLayer.color={error}>"
+
+
+def _safe_read_fill_color(layer: Any) -> str:
+    try:
+        fill_color = layer.fillColor
+    except Exception as error:
+        return f"<unavailable: fillColor={error}>"
+
+    try:
+        red = getattr(getattr(fill_color, "rgb", None), "red", None)
+        green = getattr(getattr(fill_color, "rgb", None), "green", None)
+        blue = getattr(getattr(fill_color, "rgb", None), "blue", None)
+        if red is not None or green is not None or blue is not None:
+            return f"rgb=({red}, {green}, {blue})"
+    except Exception:
+        pass
+
+    return str(fill_color)
+
+
 def apply_color_layer_configs(
     session: Any,
     doc: Any,
@@ -228,7 +430,22 @@ def apply_color_layer_configs(
         print(f"    path={matched_path}")
         print(f"    kind={layer_kind}")
         print(f"    typename={layer_typename}")
+        print(f"    isBackgroundLayer={_safe_layer_bool_attr(target_layer, 'isBackgroundLayer')}")
+        print(f"    visible={_safe_layer_bool_attr(target_layer, 'visible')}")
+        print(f"    allLocked={_safe_layer_bool_attr(target_layer, 'allLocked')}")
         print(f"    probably_solid_fill={is_solid_fill}")
+        try:
+            has_adjustment_layer = hasattr(target_layer, "adjustmentLayer")
+        except Exception:
+            has_adjustment_layer = False
+        try:
+            has_fill_color = hasattr(target_layer, "fillColor")
+        except Exception:
+            has_fill_color = False
+        print(f"    has_adjustment_layer={has_adjustment_layer}")
+        print(f"    has_fillColor={has_fill_color}")
+        print(f"    current_adjustmentLayer.color={_safe_read_adjustment_layer_color(target_layer)}")
+        print(f"    current_fillColor={_safe_read_fill_color(target_layer)}")
 
         if not is_solid_fill:
             warning_message = (
@@ -253,11 +470,11 @@ def apply_color_layer_configs(
             continue
 
         try:
-            result = _set_fill_color_with_dom(session, target_layer, color)
+            result = _apply_color_with_all_fallbacks(session, doc, target_layer, color)
             print(f"✅ 颜色图层改色成功[{index}]: {result}")
         except Exception as error:
             warning_message = (
-                f"颜色图层处理跳过[{index}/{len(matched_pairs)}]: fillColor 改色失败: "
+                f"颜色图层处理跳过[{index}/{len(matched_pairs)}]: 多种 DOM 改色方式均失败: "
                 f"name={layer_name}, path={matched_path}, "
                 f"kind={layer_kind}, typename={layer_typename}, error={error}"
             )
@@ -269,7 +486,7 @@ def apply_color_layer_configs(
                     "color": f"#{color.strip().lstrip('#').upper()}",
                     "kind": layer_kind,
                     "typename": layer_typename,
-                    "method": "dom.fillColor",
+                    "method": "dom.color.fallbacks",
                     "success": False,
                     "skipped": True,
                     "message": warning_message,
@@ -284,7 +501,7 @@ def apply_color_layer_configs(
                 "color": f"#{color.strip().lstrip('#').upper()}",
                 "kind": layer_kind,
                 "typename": layer_typename,
-                "method": "dom.fillColor",
+                "method": result.get("method"),
                 "success": True,
             }
         )
