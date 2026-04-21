@@ -1292,34 +1292,142 @@ async function clickWithFallback(locator, fallback, successMessage, fallbackMess
     }
 }
 
-async function clickDetailFillFromMainButton(page) {
+async function inspectDetailFillFromMainButton(page) {
     return await page.evaluate(({ fieldSelector, text }) => {
+        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const normalizedText = normalize(text).replace(/\s+/g, '');
         const field = document.querySelector(fieldSelector);
-        if (!(field instanceof HTMLElement)) {
-            return {
-                clicked: false,
-                reason: 'field-not-found'
-            };
-        }
+        const candidateSelector = [
+            'button',
+            '[role="button"]',
+            '.arco-btn',
+            '.semi-button',
+            '[class*="button"]',
+            '[class*="Button"]',
+            '[class*="btn"]',
+            '[class*="Btn"]'
+        ].join(', ');
 
-        const buttons = Array.from(field.querySelectorAll('button'));
-        const target = buttons.find((node) => {
+        const isVisible = (node) => {
             if (!(node instanceof HTMLElement)) return false;
-            const content = String(node.textContent || '').replace(/\s+/g, '').trim();
+            const style = window.getComputedStyle(node);
             const rect = node.getBoundingClientRect();
-            return content.includes(String(text || '').replace(/\s+/g, '').trim())
+            return style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0'
                 && rect.width > 0
                 && rect.height > 0;
-        });
+        };
 
-        if (!(target instanceof HTMLElement)) {
+        const describeButton = (node, scope) => {
+            if (!(node instanceof HTMLElement)) return null;
+            const rect = node.getBoundingClientRect();
+            return {
+                scope,
+                text: normalize(node.textContent),
+                className: normalize(node.className),
+                disabled: !!node.disabled || node.getAttribute('aria-disabled') === 'true',
+                visible: isVisible(node),
+                rect: {
+                    top: rect.top,
+                    left: rect.left,
+                    width: rect.width,
+                    height: rect.height
+                }
+            };
+        };
+
+        const matchButtons = (scopeRoot, scope) => {
+            if (!scopeRoot || typeof scopeRoot.querySelectorAll !== 'function') {
+                return [];
+            }
+            return Array.from(scopeRoot.querySelectorAll(candidateSelector))
+                .filter((node) => normalize(node.textContent).replace(/\s+/g, '').includes(normalizedText))
+                .map((node) => describeButton(node, scope))
+                .filter(Boolean);
+        };
+
+        const fieldMatches = matchButtons(field, 'field');
+        const documentMatches = matchButtons(document, 'document');
+        return {
+            fieldFound: field instanceof HTMLElement,
+            fieldButtonCount: field instanceof HTMLElement ? field.querySelectorAll('button').length : 0,
+            matchedFieldButtons: fieldMatches.slice(0, 5),
+            matchedDocumentButtons: documentMatches.slice(0, 8)
+        };
+    }, { fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR, text: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT });
+}
+
+async function clickDetailFillFromMainButton(page) {
+    return await page.evaluate(({ fieldSelector, text }) => {
+        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const normalizedText = normalize(text).replace(/\s+/g, '');
+        const field = document.querySelector(fieldSelector);
+        const candidateSelector = [
+            'button',
+            '[role="button"]',
+            '.arco-btn',
+            '.semi-button',
+            '[class*="button"]',
+            '[class*="Button"]',
+            '[class*="btn"]',
+            '[class*="Btn"]'
+        ].join(', ');
+
+        const isVisible = (node) => {
+            if (!(node instanceof HTMLElement)) return false;
+            const style = window.getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            return style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0'
+                && rect.width > 0
+                && rect.height > 0;
+        };
+
+        const isEnabled = (node) => {
+            if (!(node instanceof HTMLElement)) return false;
+            return !node.disabled && node.getAttribute('aria-disabled') !== 'true';
+        };
+
+        const collectMatches = (scopeRoot, scope) => {
+            if (!scopeRoot || typeof scopeRoot.querySelectorAll !== 'function') {
+                return [];
+            }
+
+            return Array.from(scopeRoot.querySelectorAll(candidateSelector))
+                .filter((node) => normalize(node.textContent).replace(/\s+/g, '').includes(normalizedText))
+                .map((node) => ({
+                    node,
+                    scope,
+                    visible: isVisible(node),
+                    enabled: isEnabled(node),
+                    text: normalize(node.textContent),
+                    className: normalize(node.className)
+                }));
+        };
+
+        const fieldMatches = collectMatches(field, 'field');
+        const documentMatches = collectMatches(document, 'document')
+            .filter((item) => !fieldMatches.some((fieldItem) => fieldItem.node === item.node));
+        const allMatches = [...fieldMatches, ...documentMatches];
+        const targetMeta = allMatches.find((item) => item.visible && item.enabled)
+            || allMatches.find((item) => item.visible)
+            || allMatches[0]
+            || null;
+
+        if (!(targetMeta?.node instanceof HTMLElement)) {
             return {
                 clicked: false,
                 reason: 'button-not-found',
-                buttonCount: buttons.length
+                fieldFound: field instanceof HTMLElement,
+                fieldButtonCount: field instanceof HTMLElement ? field.querySelectorAll(candidateSelector).length : 0,
+                matchedFieldButtonCount: fieldMatches.length,
+                matchedDocumentButtonCount: documentMatches.length
             };
         }
 
+        const target = targetMeta.node;
         target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
         const rect = target.getBoundingClientRect();
         const eventInit = {
@@ -1336,8 +1444,11 @@ async function clickDetailFillFromMainButton(page) {
         return {
             clicked: true,
             reason: 'event-dispatched',
-            text: String(target.textContent || '').replace(/\s+/g, ' ').trim(),
-            className: String(target.className || ''),
+            scope: targetMeta.scope,
+            visible: targetMeta.visible,
+            enabled: targetMeta.enabled,
+            text: normalize(target.textContent),
+            className: normalize(target.className),
             rect: {
                 top: rect.top,
                 left: rect.left,
@@ -1348,32 +1459,67 @@ async function clickDetailFillFromMainButton(page) {
     }, { fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR, text: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT });
 }
 
+async function resolveDetailFillFromMainButtonLocator(page) {
+    const candidates = [
+        page.locator(`${DETAIL_IMAGE_FIELD_SELECTOR} button`).filter({ hasText: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT }),
+        page.locator(`${DETAIL_IMAGE_FIELD_SELECTOR} [role="button"]`).filter({ hasText: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT }),
+        page.locator(`${DETAIL_IMAGE_FIELD_SELECTOR} .arco-btn`).filter({ hasText: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT }),
+        page.locator(`${DETAIL_IMAGE_FIELD_SELECTOR} .semi-button`).filter({ hasText: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT }),
+        page.locator(DETAIL_IMAGE_FIELD_SELECTOR).getByText(DETAIL_IMAGE_FILL_FROM_MAIN_TEXT, { exact: false }),
+        page.locator('button').filter({ hasText: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT }),
+        page.locator('[role="button"]').filter({ hasText: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT })
+    ];
+
+    for (const candidate of candidates) {
+        try {
+            if (await candidate.count()) {
+                return candidate.first();
+            }
+        } catch (error) {
+            logger.warn(`抖店商品详情逻辑：解析“从主图填入”按钮 locator 失败: ${error?.message || error}`);
+        }
+    }
+
+    return page.locator('button').filter({ hasText: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT }).first();
+}
+
 async function waitForDetailFillFromMainReady(page) {
     await page.waitForFunction(({ fieldSelector, selectors, text }) => {
+        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const normalizedText = normalize(text);
         const field = document.querySelector(fieldSelector);
-        if (!(field instanceof HTMLElement)) {
-            return false;
-        }
+        const candidateSelector = [
+            'button',
+            '[role="button"]',
+            '.arco-btn',
+            '.semi-button',
+            '[class*="button"]',
+            '[class*="Button"]',
+            '[class*="btn"]',
+            '[class*="Btn"]'
+        ].join(', ');
 
-        const previewNodes = selectors.flatMap((selector) => Array.from(field.querySelectorAll(selector)));
-        const hasPreviewImage = previewNodes.some((node) => {
-            if (!(node instanceof HTMLImageElement)) return false;
-            const src = node.currentSrc || node.src || '';
-            const width = node.naturalWidth || node.width || 0;
-            const height = node.naturalHeight || node.height || 0;
-            return !!src && (width > 32 || height > 32 || /^blob:|^data:image\//.test(String(src)));
-        });
-
-        if (hasPreviewImage) {
-            window.__doudianDetailFillReadySince = 0;
-            return false;
-        }
-
-        const button = Array.from(field.querySelectorAll('button')).find((node) => {
+        const isVisible = (node) => {
             if (!(node instanceof HTMLElement)) return false;
-            const content = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+            const style = window.getComputedStyle(node);
             const rect = node.getBoundingClientRect();
-            return content.includes(text) && rect.width > 0 && rect.height > 0;
+            return style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0'
+                && rect.width > 0
+                && rect.height > 0;
+        };
+
+        const isEnabled = (node) => {
+            if (!(node instanceof HTMLElement)) return false;
+            return !node.disabled && node.getAttribute('aria-disabled') !== 'true';
+        };
+
+        const fieldButtons = field instanceof HTMLElement ? Array.from(field.querySelectorAll(candidateSelector)) : [];
+        const documentButtons = Array.from(document.querySelectorAll(candidateSelector));
+        const button = [...fieldButtons, ...documentButtons].find((node) => {
+            const content = normalize(node.textContent);
+            return content.includes(normalizedText) && isVisible(node) && isEnabled(node);
         });
 
         if (!(button instanceof HTMLElement)) {
@@ -1879,13 +2025,27 @@ export async function publishToDoudian(publishInfo = {}) {
 
             logger.info('抖店商品详情逻辑：准备点击“从主图填入”按钮');
             await triggerHover(page, DETAIL_IMAGE_FIELD_SELECTOR, hoverMode, '抖店商品详情逻辑');
-            await waitForDetailFillFromMainReady(page);
-            await page.waitForTimeout(200);
-            const fillButtonClickResult = await clickDetailFillFromMainButton(page);
-            logger.info('抖店商品详情逻辑：“从主图填入”按钮JS点击结果', fillButtonClickResult);
-            if (!fillButtonClickResult?.clicked) {
-                throw new Error(`“从主图填入”按钮点击失败: ${fillButtonClickResult?.reason || 'unknown'}`);
+            logger.info('抖店商品详情逻辑：“从主图填入”按钮等待前快照', await inspectDetailFillFromMainButton(page));
+            try {
+                await waitForDetailFillFromMainReady(page);
+            } catch (error) {
+                logger.warn(`抖店商品详情逻辑：“从主图填入”按钮等待就绪超时，继续尝试点击: ${error?.message || error}`);
+                logger.info('抖店商品详情逻辑：“从主图填入”按钮等待失败快照', await inspectDetailFillFromMainButton(page));
             }
+            await page.waitForTimeout(200);
+            let fillButtonClickResult = null;
+            const fillButton = await resolveDetailFillFromMainButtonLocator(page);
+            await fillButton.scrollIntoViewIfNeeded().catch(() => undefined);
+            await clickWithFallback(
+                fillButton,
+                async () => {
+                    fillButtonClickResult = await clickDetailFillFromMainButton(page);
+                    logger.info('抖店商品详情逻辑：“从主图填入”按钮JS点击结果', fillButtonClickResult);
+                    return !!fillButtonClickResult?.clicked;
+                },
+                '抖店商品详情逻辑：已点击“从主图填入”按钮',
+                '抖店商品详情逻辑：已使用JS点击“从主图填入”按钮'
+            );
             detailSectionReady = true;
             await page.waitForTimeout(300);
         } catch (error) {
@@ -1925,47 +2085,6 @@ export async function publishToDoudian(publishInfo = {}) {
         let publishSuccessDetail = '';
         let publishFinalUrl = page.url();
         try {
-            if (detailSectionReady) {
-                try {
-                    logger.info('抖店发布前补充动作：准备再次点击“从主图填入”按钮');
-                    await triggerHover(page, DETAIL_IMAGE_FIELD_SELECTOR, hoverMode, '抖店发布前补充动作');
-                    await page.waitForTimeout(300);
-                    const beforeDetailKeys = await collectDetailImagePreviewKeys(page);
-                    const refillResult = await clickDetailFillFromMainButton(page);
-                    logger.info('抖店发布前补充动作：“从主图填入”按钮JS点击结果', refillResult);
-                    if (refillResult?.clicked) {
-                        try {
-                            await page.waitForFunction(({ fieldSelector, previousKeys, selectors }) => {
-                                const field = document.querySelector(fieldSelector);
-                                if (!(field instanceof HTMLElement)) return false;
-                                const nodes = selectors.flatMap((selector) => Array.from(field.querySelectorAll(selector)));
-                                const uniqueKeys = new Set();
-                                nodes.forEach((node) => {
-                                    if (!(node instanceof HTMLImageElement)) return;
-                                    const src = node.currentSrc || node.src || '';
-                                    const width = node.naturalWidth || node.width || 0;
-                                    const height = node.naturalHeight || node.height || 0;
-                                    if (!src) return;
-                                    if (width > 32 || height > 32 || /^blob:|^data:image\//.test(src)) {
-                                        uniqueKeys.add(`${src}|${width}|${height}`);
-                                    }
-                                });
-                                const currentKeys = Array.from(uniqueKeys);
-                                return currentKeys.length > previousKeys.length || currentKeys.some((key) => !previousKeys.includes(key));
-                            }, {
-                                fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR,
-                                previousKeys: beforeDetailKeys,
-                                selectors: PREVIEW_IMAGE_SELECTORS
-                            }, { timeout: 5000 });
-                        } catch (error) {
-                            logger.warn(`抖店发布前补充动作：点击“从主图填入”后未观察到详情图变化: ${error?.message || error}`);
-                        }
-                    }
-                } catch (error) {
-                    logger.warn(`抖店发布前补充动作执行失败: ${error?.message || error}`);
-                }
-            }
-
             logger.info('抖店发布提交流程：准备点击“发布商品”按钮');
             const publishButton = page.locator('button').filter({ hasText: '发布商品' }).first();
             await publishButton.waitFor({ timeout: 5000, state: 'visible' });
