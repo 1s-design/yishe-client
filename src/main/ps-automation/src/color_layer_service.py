@@ -1,12 +1,13 @@
 """
 颜色控制图层处理模块
-支持按路径/名称/顺序匹配颜色图层，并更新其纯色填充颜色。
+仅针对纯色填充图层（Solid Color Fill Layer）提供直接改色能力。
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any, Iterable, Optional
+
+from photoshop.api.enumerations import LayerKind
 
 
 def _iter_layers(layers: Iterable[Any], parent_path: str = ""):
@@ -26,6 +27,10 @@ def _iter_layers(layers: Iterable[Any], parent_path: str = ""):
 
         if children:
             yield from _iter_layers(children, current_path)
+
+
+def _normalize_ref(value: Optional[str]) -> str:
+    return str(value or "").strip()
 
 
 def parse_hex_color(value: str) -> dict[str, int]:
@@ -49,59 +54,65 @@ def parse_hex_color(value: str) -> dict[str, int]:
     return {"red": red, "green": green, "blue": blue}
 
 
-def _build_set_solid_fill_script(red: int, green: int, blue: int) -> str:
-    payload = json.dumps({"red": red, "green": green, "blue": blue}, ensure_ascii=True)
-    return f"""
-(function() {{
-  var input = {payload};
-  var makeColor = function() {{
-    var colorDesc = new ActionDescriptor();
-    colorDesc.putDouble(charIDToTypeID("Rd  "), input.red);
-    colorDesc.putDouble(charIDToTypeID("Grn "), input.green);
-    colorDesc.putDouble(charIDToTypeID("Bl  "), input.blue);
-    return colorDesc;
-  }};
-
-  try {{
-    var desc = new ActionDescriptor();
-    var ref = new ActionReference();
-    ref.putEnumerated(stringIDToTypeID("contentLayer"), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
-    desc.putReference(charIDToTypeID("null"), ref);
-
-    var solidColorDesc = new ActionDescriptor();
-    solidColorDesc.putObject(charIDToTypeID("Clr "), stringIDToTypeID("RGBColor"), makeColor());
-
-    desc.putObject(charIDToTypeID("T   "), stringIDToTypeID("solidColorLayer"), solidColorDesc);
-    executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
-    "ok";
-  }} catch (error) {{
-    throw new Error("set_solid_fill_failed:" + error);
-  }}
-}})();
-""".strip()
+def _safe_layer_kind_text(layer: Any) -> str:
+    try:
+        return str(layer.kind)
+    except Exception as error:
+        return f"<unavailable: {error}>"
 
 
-def _execute_javascript(app: Any, script: str):
-    for method_name in ("doJavaScript", "DoJavaScript"):
-        method = getattr(app, method_name, None)
-        if callable(method):
-            return method(script)
-    raise RuntimeError("当前 Photoshop API 不支持 doJavaScript")
+def _safe_layer_typename(layer: Any) -> str:
+    try:
+        return str(layer.typename)
+    except Exception as error:
+        return f"<unavailable: {error}>"
 
 
-def _normalize_ref(value: Optional[str]) -> str:
-    return str(value or "").strip()
+def _safe_layer_name(layer: Any) -> str:
+    try:
+        return str(layer.name)
+    except Exception as error:
+        return f"<unavailable: {error}>"
 
 
-def _match_color_layers(doc: Any, color_layer_configs: list[dict[str, Any]]) -> list[tuple[Any, dict[str, Any], str]]:
+def _is_probably_solid_fill_layer(layer: Any) -> bool:
+    try:
+        layer_kind = layer.kind
+        if hasattr(LayerKind, "SolidFillLayer") and layer_kind == LayerKind.SolidFillLayer:
+            return True
+    except Exception:
+        pass
+
+    kind_text = _safe_layer_kind_text(layer).upper()
+    typename = _safe_layer_typename(layer).upper()
+    if kind_text in {"3", "LAYERKIND.SOLIDFILLLAYER", "LAYERKIND.SOLIDFILLLAYER"}:
+        return True
+    return "SOLID" in kind_text or "FILL" in kind_text or "CONTENTLAYER" in typename
+
+
+def _collect_color_layer_candidates(doc: Any) -> list[tuple[Any, str, str, str]]:
+    candidates: list[tuple[Any, str, str, str]] = []
+    for layer, _, current_path in _iter_layers(doc.layers):
+        layer_name = _safe_layer_name(layer)
+        layer_kind = _safe_layer_kind_text(layer)
+        layer_typename = _safe_layer_typename(layer)
+        if _is_probably_solid_fill_layer(layer):
+            candidates.append((layer, current_path, layer_kind, layer_typename))
+    return candidates
+
+
+def _match_color_layers(
+    doc: Any,
+    color_layer_configs: list[dict[str, Any]],
+) -> list[tuple[Any, dict[str, Any], str]]:
     all_layers = list(_iter_layers(doc.layers))
     if not all_layers:
         raise ValueError("当前 PSD 中没有可匹配的图层")
 
-    # 规则：
-    # 1. 如果只有一个配置，则复用给所有图层
-    # 2. 如果有多个配置，则按顺序一一匹配
-    # 3. 如果某个配置显式给了 layer_path / layer_name，优先定向到对应图层
+    candidate_layers = _collect_color_layer_candidates(doc)
+    if not candidate_layers:
+        raise ValueError("当前 PSD 中没有识别到可疑的纯色填充图层候选")
+
     matched_pairs: list[tuple[Any, dict[str, Any], str]] = []
     used_layer_indices: set[int] = set()
 
@@ -110,14 +121,10 @@ def _match_color_layers(doc: Any, color_layer_configs: list[dict[str, Any]]) -> 
         target_name = _normalize_ref(config.get("layer_name")).lower()
         if target_path:
             for layer_idx, (layer, _, current_path) in enumerate(all_layers):
-                if layer_idx in used_layer_indices:
-                    continue
                 if current_path == target_path:
                     return layer_idx, layer, current_path
         if target_name:
             for layer_idx, (layer, layer_name, current_path) in enumerate(all_layers):
-                if layer_idx in used_layer_indices:
-                    continue
                 if target_name in layer_name.strip().lower():
                     return layer_idx, layer, current_path
         return None
@@ -127,14 +134,13 @@ def _match_color_layers(doc: Any, color_layer_configs: list[dict[str, Any]]) -> 
         explicit_match = match_explicit_target(config)
         if explicit_match:
             layer_idx, layer, current_path = explicit_match
-            used_layer_indices.add(layer_idx)
             matched_pairs.append((layer, config, current_path))
-            for fallback_idx, (fallback_layer, _, fallback_path) in enumerate(all_layers):
-                if fallback_idx in used_layer_indices:
+            for fallback_layer, fallback_path, _, _ in candidate_layers:
+                if fallback_path == current_path:
                     continue
                 matched_pairs.append((fallback_layer, config, fallback_path))
         else:
-            for layer, _, current_path in all_layers:
+            for layer, current_path, _, _ in candidate_layers:
                 matched_pairs.append((layer, config, current_path))
         return matched_pairs
 
@@ -142,49 +148,144 @@ def _match_color_layers(doc: Any, color_layer_configs: list[dict[str, Any]]) -> 
     for config in color_layer_configs:
         explicit_match = match_explicit_target(config)
         if explicit_match:
-            layer_idx, layer, current_path = explicit_match
-            used_layer_indices.add(layer_idx)
+            _, layer, current_path = explicit_match
             matched_pairs.append((layer, config, current_path))
             continue
 
-        while layer_cursor < len(all_layers) and layer_cursor in used_layer_indices:
+        while layer_cursor < len(candidate_layers) and layer_cursor in used_layer_indices:
             layer_cursor += 1
 
-        if layer_cursor < len(all_layers):
-            layer, _, current_path = all_layers[layer_cursor]
+        if layer_cursor < len(candidate_layers):
+            layer, current_path, _, _ = candidate_layers[layer_cursor]
             used_layer_indices.add(layer_cursor)
             matched_pairs.append((layer, config, current_path))
             layer_cursor += 1
-        elif all_layers:
-            # 配置多于图层时，继续复用最后一个可用图层
-            layer, _, current_path = all_layers[-1]
+        elif candidate_layers:
+            layer, current_path, _, _ = candidate_layers[-1]
             matched_pairs.append((layer, config, current_path))
 
     return matched_pairs
 
 
-def apply_color_layer_configs(session: Any, doc: Any, color_layer_configs: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+def _set_fill_color_with_dom(session: Any, layer: Any, color: str) -> dict[str, Any]:
+    rgb = parse_hex_color(color)
+    solid_color = session.SolidColor()
+    solid_color.rgb.red = rgb["red"]
+    solid_color.rgb.green = rgb["green"]
+    solid_color.rgb.blue = rgb["blue"]
+    layer.fillColor = solid_color
+    return {
+        "rgb": rgb,
+        "method": "dom.fillColor",
+    }
+
+
+def apply_color_layer_configs(
+    session: Any,
+    doc: Any,
+    color_layer_configs: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
     if not color_layer_configs:
         return []
 
-    app = session.app
     matched_pairs = _match_color_layers(doc, color_layer_configs)
     applied_results: list[dict[str, Any]] = []
+    candidate_layers = _collect_color_layer_candidates(doc)
+
+    print("\n" + "=" * 70)
+    print("🎨 颜色图层处理计划")
+    print("=" * 70)
+    print(f"可疑纯色填充图层候选总数: {len(candidate_layers)}")
+    for candidate_index, (_, candidate_path, candidate_kind, candidate_typename) in enumerate(candidate_layers, 1):
+        print(
+            f"候选[{candidate_index}] path={candidate_path} "
+            f"kind={candidate_kind} typename={candidate_typename}"
+        )
+    print("-" * 70)
+    print(f"本次实际命中处理数: {len(matched_pairs)}")
+    for index, (layer, config, matched_path) in enumerate(matched_pairs, 1):
+        print(f"[{index}] name={_safe_layer_name(layer)}")
+        print(f"    path={matched_path}")
+        print(f"    kind={_safe_layer_kind_text(layer)}")
+        print(f"    typename={_safe_layer_typename(layer)}")
+        print(f"    target_color={config.get('color')}")
+    print("=" * 70)
 
     for index, (target_layer, config, matched_path) in enumerate(matched_pairs, 1):
         color = config.get("color")
         if not color:
             raise ValueError(f"颜色图层配置[{index}] 缺少 color")
 
-        rgb = parse_hex_color(color)
         doc.activeLayer = target_layer
-        _execute_javascript(app, _build_set_solid_fill_script(rgb["red"], rgb["green"], rgb["blue"]))
+
+        layer_name = _safe_layer_name(target_layer)
+        layer_kind = _safe_layer_kind_text(target_layer)
+        layer_typename = _safe_layer_typename(target_layer)
+        is_solid_fill = _is_probably_solid_fill_layer(target_layer)
+
+        print(f"🔎 颜色图层探测[{index}]")
+        print(f"    name={layer_name}")
+        print(f"    path={matched_path}")
+        print(f"    kind={layer_kind}")
+        print(f"    typename={layer_typename}")
+        print(f"    probably_solid_fill={is_solid_fill}")
+
+        if not is_solid_fill:
+            warning_message = (
+                f"颜色图层处理跳过[{index}/{len(matched_pairs)}]: 当前图层看起来不是纯色填充图层，"
+                f"无法直接使用 fillColor 修改: "
+                f"name={layer_name}, path={matched_path}, kind={layer_kind}, typename={layer_typename}"
+            )
+            print(f"⚠️ {warning_message}")
+            applied_results.append(
+                {
+                    "layer_name": layer_name,
+                    "layer_path": matched_path,
+                    "color": f"#{color.strip().lstrip('#').upper()}",
+                    "kind": layer_kind,
+                    "typename": layer_typename,
+                    "method": "dom.fillColor",
+                    "success": False,
+                    "skipped": True,
+                    "message": warning_message,
+                }
+            )
+            continue
+
+        try:
+            result = _set_fill_color_with_dom(session, target_layer, color)
+            print(f"✅ 颜色图层改色成功[{index}]: {result}")
+        except Exception as error:
+            warning_message = (
+                f"颜色图层处理跳过[{index}/{len(matched_pairs)}]: fillColor 改色失败: "
+                f"name={layer_name}, path={matched_path}, "
+                f"kind={layer_kind}, typename={layer_typename}, error={error}"
+            )
+            print(f"⚠️ {warning_message}")
+            applied_results.append(
+                {
+                    "layer_name": layer_name,
+                    "layer_path": matched_path,
+                    "color": f"#{color.strip().lstrip('#').upper()}",
+                    "kind": layer_kind,
+                    "typename": layer_typename,
+                    "method": "dom.fillColor",
+                    "success": False,
+                    "skipped": True,
+                    "message": warning_message,
+                }
+            )
+            continue
 
         applied_results.append(
             {
-                "layer_name": getattr(target_layer, "name", config.get("layer_name") or f"layer_{index}"),
+                "layer_name": layer_name,
                 "layer_path": matched_path,
                 "color": f"#{color.strip().lstrip('#').upper()}",
+                "kind": layer_kind,
+                "typename": layer_typename,
+                "method": "dom.fillColor",
+                "success": True,
             }
         )
 
