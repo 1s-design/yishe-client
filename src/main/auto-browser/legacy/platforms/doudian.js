@@ -23,6 +23,11 @@ const PREVIEW_IMAGE_SELECTORS = [
 const MAIN_IMAGE_FIELD_SELECTOR = '[attr-field-id="主图"]';
 const MAIN_IMAGE_DELETE_STANDARD_SELECTOR = '[class*="hoverBottomWrapper"] > div:nth-child(2)';
 const MAIN_IMAGE_DELETE_HOVER_DELAY_MS = 320;
+const DETAIL_IMAGE_FIELD_SELECTOR = '[attr-field-id="商品详情"]';
+const DETAIL_IMAGE_HOVER_SELECTOR = `${DETAIL_IMAGE_FIELD_SELECTOR} [class*="styles_imgWrapper__"]`;
+const DETAIL_IMAGE_DELETE_STANDARD_SELECTOR = `${DETAIL_IMAGE_FIELD_SELECTOR} [class*="styles_iconDelete__"]`;
+const DETAIL_IMAGE_DELETE_HOVER_DELAY_MS = 320;
+const DETAIL_IMAGE_FILL_FROM_MAIN_TEXT = '从主图填入';
 const DOUDIAN_PUBLISH_SUCCESS_TEXT_PATTERNS = [
     '商品提交成功',
     '商品创建成功',
@@ -55,6 +60,14 @@ function normalizeHoverMode(value) {
     return String(value || '').trim().toLowerCase() === 'js' ? 'js' : 'native';
 }
 
+function isLikelyPreviewImageMeta(src, width, height) {
+    const normalizedSrc = String(src || '').trim();
+    const normalizedWidth = Number(width || 0);
+    const normalizedHeight = Number(height || 0);
+    if (!normalizedSrc) return false;
+    return normalizedWidth > 32 || normalizedHeight > 32;
+}
+
 function resolveCreateUrl(copyId) {
     const normalizedCopyId = String(copyId || '').trim();
     return normalizedCopyId
@@ -74,7 +87,7 @@ async function countUploadedPreviewImages(page) {
                 const width = node.naturalWidth || node.width || 0;
                 const height = node.naturalHeight || node.height || 0;
                 if (!src) return;
-                if (width > 32 || height > 32 || /^blob:|^data:image\//.test(src)) {
+                if (width > 32 || height > 32) {
                     uniqueKeys.add(`${src}|${width}|${height}`);
                 }
             });
@@ -99,7 +112,7 @@ async function collectUploadedPreviewKeys(page) {
                 const width = node.naturalWidth || node.width || 0;
                 const height = node.naturalHeight || node.height || 0;
                 if (!src) return;
-                if (width > 32 || height > 32 || /^blob:|^data:image\//.test(src)) {
+                if (width > 32 || height > 32) {
                     uniqueKeys.add(`${src}|${width}|${height}`);
                 }
             });
@@ -145,6 +158,69 @@ async function collectMainImagePreviewKeys(page) {
     }
 }
 
+async function collectDetailImagePreviewKeys(page) {
+    try {
+        return await page.evaluate(({ fieldSelector, selectors }) => {
+            const field = document.querySelector(fieldSelector);
+            if (!(field instanceof HTMLElement)) {
+                return [];
+            }
+
+            const nodes = selectors.flatMap((selector) => Array.from(field.querySelectorAll(selector)));
+            const uniqueKeys = new Set();
+
+            nodes.forEach((node) => {
+                if (!(node instanceof HTMLImageElement)) return;
+                const src = node.currentSrc || node.src || '';
+                const width = node.naturalWidth || node.width || 0;
+                const height = node.naturalHeight || node.height || 0;
+                if (!src) return;
+                if (width > 32 || height > 32) {
+                    uniqueKeys.add(`${src}|${width}|${height}`);
+                }
+            });
+
+            return Array.from(uniqueKeys);
+        }, {
+            fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR,
+            selectors: PREVIEW_IMAGE_SELECTORS
+        });
+    } catch (error) {
+        logger.warn(`抖店采集详情图预览失败: ${error?.message || error}`);
+        return [];
+    }
+}
+
+async function collectDetailImageWrapperKeys(page) {
+    try {
+        return await page.evaluate((fieldSelector) => {
+            const field = document.querySelector(fieldSelector);
+            if (!(field instanceof HTMLElement)) {
+                return [];
+            }
+
+            const wrappers = Array.from(field.querySelectorAll('[class*="styles_imgWrapper__"]'));
+            return wrappers.flatMap((node, index) => {
+                if (!(node instanceof HTMLElement)) {
+                    return [];
+                }
+
+                const image = node.querySelector('img');
+                const src = image instanceof HTMLImageElement ? (image.currentSrc || image.src || '') : '';
+
+                return [[
+                    index,
+                    String(node.className || ''),
+                    src
+                ].join('|')];
+            });
+        }, DETAIL_IMAGE_FIELD_SELECTOR);
+    } catch (error) {
+        logger.warn(`抖店采集详情图 wrapper 失败: ${error?.message || error}`);
+        return [];
+    }
+}
+
 async function clickMainImageDeleteButtonByPreviewIndex(page, previewIndex, { hoverMode = 'native' } = {}) {
     try {
         return await page.evaluate(({
@@ -156,7 +232,6 @@ async function clickMainImageDeleteButtonByPreviewIndex(page, previewIndex, { ho
         }) => {
             const field = document.querySelector(fieldSelector);
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-            const previewPattern = /^blob:|^data:image\//;
 
             const describe = (node) => {
                 if (!(node instanceof HTMLElement)) {
@@ -189,7 +264,7 @@ async function clickMainImageDeleteButtonByPreviewIndex(page, previewIndex, { ho
                 const src = node.currentSrc || node.src || '';
                 const width = node.naturalWidth || node.width || 0;
                 const height = node.naturalHeight || node.height || 0;
-                return !!src && (width > 32 || height > 32 || previewPattern.test(src));
+                return !!src && (width > 32 || height > 32);
             };
 
             const getImageKey = (node) => {
@@ -374,12 +449,211 @@ async function clickMainImageDeleteButtonByPreviewIndex(page, previewIndex, { ho
     }
 }
 
+async function clickDetailImageDeleteButtonByPreviewIndex(page, previewIndex, { hoverMode = 'native' } = {}) {
+    try {
+        return await page.evaluate(({
+            fieldSelector,
+            deleteSelector,
+            previewIndex,
+            hoverMode
+        }) => {
+            const field = document.querySelector(fieldSelector);
+            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+
+            const describe = (node) => {
+                if (!(node instanceof HTMLElement)) {
+                    return '';
+                }
+
+                return [
+                    node.tagName.toLowerCase(),
+                    normalize(node.getAttribute('attr-field-id')),
+                    normalize(node.getAttribute('aria-label')),
+                    normalize(node.getAttribute('title')),
+                    normalize(node.className),
+                    normalize(node.textContent).slice(0, 80)
+                ].filter(Boolean).join(' | ');
+            };
+
+            const isVisible = (element) => {
+                if (!(element instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && style.opacity !== '0'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+
+            const getWrapperKey = (node, index) => {
+                if (!(node instanceof HTMLElement)) return `wrapper-${index}`;
+                const image = node.querySelector('img');
+                const src = image instanceof HTMLImageElement ? (image.currentSrc || image.src || '') : '';
+                return [index, String(node.className || ''), src].join('|');
+            };
+
+            const dispatchHover = (target) => {
+                if (!(target instanceof HTMLElement)) return;
+                const rect = target.getBoundingClientRect();
+                const eventInit = {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: rect.left + (rect.width / 2),
+                    clientY: rect.top + (rect.height / 2)
+                };
+
+                target.dispatchEvent(new MouseEvent('pointerover', eventInit));
+                target.dispatchEvent(new MouseEvent('mouseover', eventInit));
+                target.dispatchEvent(new MouseEvent('mouseenter', eventInit));
+                target.dispatchEvent(new MouseEvent('pointerenter', eventInit));
+                target.dispatchEvent(new MouseEvent('mousemove', eventInit));
+            };
+
+            const toUniqueElements = (nodes) => Array.from(new Set(
+                nodes.filter((node) => node instanceof HTMLElement)
+            ));
+
+            const collectStandardDeleteButtons = (scope) => {
+                if (!(scope instanceof HTMLElement)) return [];
+                return toUniqueElements(
+                    Array.from(scope.querySelectorAll(deleteSelector))
+                        .filter((node) => isVisible(node))
+                );
+            };
+
+            const findPreferredScope = (wrapper) => {
+                let current = wrapper;
+                while (current && current instanceof HTMLElement) {
+                    if (collectStandardDeleteButtons(current).length > 0) {
+                        return current;
+                    }
+                    if (current === field) {
+                        break;
+                    }
+                    current = current.parentElement;
+                }
+                return null;
+            };
+
+            if (!(field instanceof HTMLElement)) {
+                return {
+                    clicked: false,
+                    hoverMode,
+                    imageIndex: previewIndex,
+                    previewCount: 0,
+                    visibleDeleteCount: 0,
+                    scopedDeleteCount: 0,
+                    deleteDescriptor: '',
+                    candidateDeleteDescriptors: [],
+                    reason: 'detail-image-field-not-found'
+                };
+            }
+
+            const previewWrappers = toUniqueElements(
+                Array.from(field.querySelectorAll('[class*="styles_imgWrapper__"]'))
+            );
+            const targetWrapper = previewWrappers[previewIndex];
+
+            if (!(targetWrapper instanceof HTMLElement)) {
+                const fieldDeleteButtons = collectStandardDeleteButtons(field);
+                return {
+                    clicked: false,
+                    hoverMode,
+                    imageIndex: previewIndex,
+                    previewCount: previewWrappers.length,
+                    visibleDeleteCount: fieldDeleteButtons.length,
+                    scopedDeleteCount: 0,
+                    deleteDescriptor: '',
+                    candidateDeleteDescriptors: fieldDeleteButtons.slice(0, 5).map((node) => describe(node)),
+                    reason: 'target-wrapper-not-found'
+                };
+            }
+
+            const preferredScope = findPreferredScope(targetWrapper);
+            dispatchHover(preferredScope);
+            dispatchHover(targetWrapper);
+            const fieldDeleteButtons = collectStandardDeleteButtons(field);
+            const scopedDeleteButtons = collectStandardDeleteButtons(preferredScope);
+            const target = scopedDeleteButtons[0] || null;
+
+            if (!(target instanceof HTMLElement)) {
+                return {
+                    clicked: false,
+                    hoverMode,
+                    imageIndex: previewIndex,
+                    previewCount: previewWrappers.length,
+                    visibleDeleteCount: fieldDeleteButtons.length,
+                    scopedDeleteCount: scopedDeleteButtons.length,
+                    deleteDescriptor: '',
+                    candidateDeleteDescriptors: fieldDeleteButtons.slice(0, 5).map((node) => describe(node)),
+                    scopeDescriptor: describe(preferredScope),
+                    matchedScopeDescriptor: describe(preferredScope),
+                    imageKey: getWrapperKey(targetWrapper, previewIndex),
+                    imageDescriptor: describe(targetWrapper),
+                    reason: 'standard-delete-button-not-found'
+                };
+            }
+
+            const rect = target.getBoundingClientRect();
+            const eventInit = {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: rect.left + (rect.width / 2),
+                clientY: rect.top + (rect.height / 2)
+            };
+
+            target.dispatchEvent(new MouseEvent('pointerdown', eventInit));
+            target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+            target.dispatchEvent(new MouseEvent('pointerup', eventInit));
+            target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+            target.dispatchEvent(new MouseEvent('click', eventInit));
+
+            return {
+                clicked: true,
+                hoverMode,
+                imageIndex: previewIndex,
+                previewCount: previewWrappers.length,
+                visibleDeleteCount: fieldDeleteButtons.length,
+                scopedDeleteCount: scopedDeleteButtons.length,
+                deleteDescriptor: describe(target),
+                candidateDeleteDescriptors: fieldDeleteButtons.slice(0, 5).map((node) => describe(node)),
+                scopeDescriptor: describe(preferredScope),
+                matchedScopeDescriptor: describe(preferredScope),
+                imageKey: getWrapperKey(targetWrapper, previewIndex),
+                imageDescriptor: describe(targetWrapper),
+                reason: 'clicked',
+                searchStrategy: 'ancestor-standard-selector'
+            };
+        }, {
+            fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR,
+            deleteSelector: DETAIL_IMAGE_DELETE_STANDARD_SELECTOR,
+            previewIndex,
+            hoverMode
+        });
+    } catch (error) {
+        logger.warn(`抖店详情图删除点击失败: previewIndex=${previewIndex}, error=${error?.message || error}`);
+        return {
+            clicked: false,
+            hoverMode,
+            imageIndex: previewIndex,
+            previewCount: 0,
+            visibleDeleteCount: 0,
+            scopedDeleteCount: 0,
+            deleteDescriptor: '',
+            candidateDeleteDescriptors: [],
+            reason: error?.message || String(error || '')
+        };
+    }
+}
+
 async function clickOneMainImageDeleteButton(page) {
     try {
         return await page.evaluate(({ fieldSelector, previewSelectors, deleteSelector }) => {
             const field = document.querySelector(fieldSelector);
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-            const previewPattern = /^blob:|^data:image\//;
 
             const describe = (node) => {
                 if (!(node instanceof HTMLElement)) {
@@ -426,7 +700,7 @@ async function clickOneMainImageDeleteButton(page) {
                 const src = node.currentSrc || node.src || '';
                 const width = node.naturalWidth || node.width || 0;
                 const height = node.naturalHeight || node.height || 0;
-                return !!src && (width > 32 || height > 32 || previewPattern.test(src));
+                return !!src && (width > 32 || height > 32);
             };
 
             const getImageKey = (node) => {
@@ -594,7 +868,6 @@ async function hoverAndClickOneMainImageDeleteButton(page, hoverMode = 'native')
                 const isPreviewImage = !!meta?.src && (
                     Number(meta?.width || 0) > 32
                     || Number(meta?.height || 0) > 32
-                    || /^blob:|^data:image\//.test(String(meta?.src || ''))
                 );
 
                 if (!isPreviewImage) {
@@ -641,6 +914,90 @@ async function hoverAndClickOneMainImageDeleteButton(page, hoverMode = 'native')
     return fallbackResult;
 }
 
+async function hoverAndClickOneDetailImageDeleteButton(page, hoverMode = 'native') {
+    if (hoverMode === 'js') {
+        return await clickDetailImageDeleteButtonByPreviewIndex(page, 0, { hoverMode });
+    }
+
+    try {
+        const wrapperLocator = page.locator(DETAIL_IMAGE_HOVER_SELECTOR);
+        const wrapperCount = await wrapperLocator.count();
+        let previewIndex = 0;
+
+        for (let index = 0; index < wrapperCount; index += 1) {
+            const wrapper = wrapperLocator.nth(index);
+            try {
+                const meta = await wrapper.evaluate((node) => {
+                    if (!(node instanceof HTMLElement)) {
+                        return {
+                            src: '',
+                            width: 0,
+                            height: 0,
+                            wrapperClassName: ''
+                        };
+                    }
+
+                    const image = node.querySelector('img');
+                    if (!(image instanceof HTMLImageElement)) {
+                        return {
+                            src: '',
+                            width: 0,
+                            height: 0,
+                            wrapperClassName: String(node.className || '')
+                        };
+                    }
+
+                    return {
+                        src: image.currentSrc || image.src || '',
+                        width: image.naturalWidth || image.width || 0,
+                        height: image.naturalHeight || image.height || 0,
+                        className: String(image.className || ''),
+                        alt: String(image.alt || ''),
+                        wrapperClassName: String(node.className || '')
+                    };
+                });
+
+                const currentPreviewIndex = previewIndex;
+                previewIndex += 1;
+
+                logger.info('抖店商品详情清理：准备悬停当前图片', {
+                    hoverMode,
+                    imageIndex: currentPreviewIndex,
+                    domIndex: index,
+                    hoverDelayMs: DETAIL_IMAGE_DELETE_HOVER_DELAY_MS,
+                    width: meta?.width || 0,
+                    height: meta?.height || 0,
+                    alt: meta?.alt || '',
+                    className: meta?.className || '',
+                    wrapperClassName: meta?.wrapperClassName || '',
+                    src: String(meta?.src || '').slice(0, 180)
+                });
+                await wrapper.scrollIntoViewIfNeeded().catch(() => undefined);
+                await wrapper.hover({ force: true });
+                await page.waitForTimeout(DETAIL_IMAGE_DELETE_HOVER_DELAY_MS);
+
+                const clickResult = await clickDetailImageDeleteButtonByPreviewIndex(page, currentPreviewIndex, { hoverMode });
+                logger.info('抖店商品详情清理：当前图片标准删除结果', clickResult);
+                if (clickResult?.clicked) {
+                    return {
+                        ...clickResult,
+                        nativeHoverIndex: currentPreviewIndex,
+                        nativeHoverDomIndex: index
+                    };
+                }
+            } catch (error) {
+                logger.warn(`抖店详情图原生 hover 删除尝试失败: wrapper[${index}], error=${error?.message || error}`);
+            }
+        }
+    } catch (error) {
+        logger.warn(`抖店详情图扫描可 hover 容器失败: ${error?.message || error}`);
+    }
+
+    const fallbackResult = await clickDetailImageDeleteButtonByPreviewIndex(page, 0, { hoverMode: 'js' });
+    logger.info('抖店商品详情清理：原生 hover 路径未成功，执行JS标准删除结果', fallbackResult);
+    return fallbackResult;
+}
+
 async function waitForMainImagePreviewDecrease(page, beforeKeys) {
     try {
         await page.waitForFunction(({ fieldSelector, selectors, previousKeys, previousCount }) => {
@@ -676,6 +1033,84 @@ async function waitForMainImagePreviewDecrease(page, beforeKeys) {
         return true;
     } catch (error) {
         logger.warn(`抖店主图删除后未检测到预览减少: ${error?.message || error}`);
+        return false;
+    }
+}
+
+async function waitForDetailImagePreviewDecrease(page, beforeKeys) {
+    try {
+        await page.waitForFunction(({ fieldSelector, selectors, previousKeys, previousCount }) => {
+            const field = document.querySelector(fieldSelector);
+            if (!(field instanceof HTMLElement)) {
+                return true;
+            }
+
+            const nodes = selectors.flatMap((selector) => Array.from(field.querySelectorAll(selector)));
+            const uniqueKeys = new Set();
+
+            nodes.forEach((node) => {
+                if (!(node instanceof HTMLImageElement)) return;
+                const src = node.currentSrc || node.src || '';
+                const width = node.naturalWidth || node.width || 0;
+                const height = node.naturalHeight || node.height || 0;
+                if (!src) return;
+                if (width > 32 || height > 32) {
+                    uniqueKeys.add(`${src}|${width}|${height}`);
+                }
+            });
+
+            const currentKeys = Array.from(uniqueKeys);
+            return currentKeys.length < previousCount || previousKeys.some((key) => !currentKeys.includes(key));
+        }, {
+            fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR,
+            selectors: PREVIEW_IMAGE_SELECTORS,
+            previousKeys: beforeKeys,
+            previousCount: beforeKeys.length
+        }, {
+            timeout: 6000
+        });
+        return true;
+    } catch (error) {
+        logger.warn(`抖店详情图删除后未检测到预览减少: ${error?.message || error}`);
+        return false;
+    }
+}
+
+async function waitForDetailImageWrapperDecrease(page, beforeKeys) {
+    try {
+        await page.waitForFunction(({ fieldSelector, previousKeys, previousCount }) => {
+            const field = document.querySelector(fieldSelector);
+            if (!(field instanceof HTMLElement)) {
+                return true;
+            }
+
+            const wrappers = Array.from(field.querySelectorAll('[class*="styles_imgWrapper__"]'));
+            const currentKeys = wrappers.flatMap((node, index) => {
+                if (!(node instanceof HTMLElement)) {
+                    return [];
+                }
+
+                const image = node.querySelector('img');
+                const src = image instanceof HTMLImageElement ? (image.currentSrc || image.src || '') : '';
+
+                return [[
+                    index,
+                    String(node.className || ''),
+                    src
+                ].join('|')];
+            });
+
+            return currentKeys.length < previousCount || previousKeys.some((key) => !currentKeys.includes(key));
+        }, {
+            fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR,
+            previousKeys: beforeKeys,
+            previousCount: beforeKeys.length
+        }, {
+            timeout: 6000
+        });
+        return true;
+    } catch (error) {
+        logger.warn(`抖店详情图删除后未检测到 wrapper 减少: ${error?.message || error}`);
         return false;
     }
 }
@@ -731,6 +1166,63 @@ async function clearMainImages(page, hoverMode = 'native') {
 
     const remainingKeys = await collectMainImagePreviewKeys(page);
     logger.info(`抖店商品主图清理结束: deleted=${deletedCount}, remaining=${remainingKeys.length}`);
+    return {
+        deletedCount,
+        remainingCount: remainingKeys.length
+    };
+}
+
+async function clearDetailImages(page, hoverMode = 'native') {
+    let deletedCount = 0;
+
+    for (let round = 1; round <= 8; round += 1) {
+        const beforeKeys = await collectDetailImageWrapperKeys(page);
+        if (beforeKeys.length <= 0) {
+            logger.info(`抖店商品详情清理完成: deleted=${deletedCount}, remaining=0`);
+            return {
+                deletedCount,
+                remainingCount: 0
+            };
+        }
+
+        const clickResult = await hoverAndClickOneDetailImageDeleteButton(page, hoverMode);
+        logger.info(`抖店商品详情清理：第 ${round} 轮删除尝试`, clickResult);
+
+        if (!clickResult?.clicked) {
+            logger.warn(`抖店商品详情清理：未找到可点击删除按钮，remaining=${beforeKeys.length}, reason=${clickResult?.reason || 'unknown'}`);
+            return {
+                deletedCount,
+                remainingCount: beforeKeys.length
+            };
+        }
+
+        await page.waitForTimeout(400);
+        await waitForDetailImageWrapperDecrease(page, beforeKeys);
+        const afterKeys = await collectDetailImageWrapperKeys(page);
+        const removedByCount = Math.max(0, beforeKeys.length - afterKeys.length);
+        const hasRemovedKey = beforeKeys.some((key) => !afterKeys.includes(key));
+        const removedCount = removedByCount > 0 ? removedByCount : (hasRemovedKey ? 1 : 0);
+
+        if (removedCount <= 0) {
+            logger.warn(`抖店商品详情清理：点击删除后预览未减少，before=${beforeKeys.length}, after=${afterKeys.length}`);
+            await page.waitForTimeout(200);
+            continue;
+        }
+
+        deletedCount += removedCount;
+        logger.info(`抖店商品详情清理：删除成功，round=${round}, removed=${removedCount}, remaining=${afterKeys.length}`);
+
+        if (afterKeys.length <= 0) {
+            logger.info(`抖店商品详情清理完成: deleted=${deletedCount}, remaining=0`);
+            return {
+                deletedCount,
+                remainingCount: 0
+            };
+        }
+    }
+
+    const remainingKeys = await collectDetailImageWrapperKeys(page);
+    logger.info(`抖店商品详情清理结束: deleted=${deletedCount}, remaining=${remainingKeys.length}`);
     return {
         deletedCount,
         remainingCount: remainingKeys.length
@@ -798,6 +1290,109 @@ async function clickWithFallback(locator, fallback, successMessage, fallbackMess
         }
         logger.info(fallbackMessage);
     }
+}
+
+async function clickDetailFillFromMainButton(page) {
+    return await page.evaluate(({ fieldSelector, text }) => {
+        const field = document.querySelector(fieldSelector);
+        if (!(field instanceof HTMLElement)) {
+            return {
+                clicked: false,
+                reason: 'field-not-found'
+            };
+        }
+
+        const buttons = Array.from(field.querySelectorAll('button'));
+        const target = buttons.find((node) => {
+            if (!(node instanceof HTMLElement)) return false;
+            const content = String(node.textContent || '').replace(/\s+/g, '').trim();
+            const rect = node.getBoundingClientRect();
+            return content.includes(String(text || '').replace(/\s+/g, '').trim())
+                && rect.width > 0
+                && rect.height > 0;
+        });
+
+        if (!(target instanceof HTMLElement)) {
+            return {
+                clicked: false,
+                reason: 'button-not-found',
+                buttonCount: buttons.length
+            };
+        }
+
+        target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        const rect = target.getBoundingClientRect();
+        const eventInit = {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: rect.left + (rect.width / 2),
+            clientY: rect.top + (rect.height / 2)
+        };
+
+        ['pointerover', 'mouseover', 'mouseenter', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']
+            .forEach((type) => target.dispatchEvent(new MouseEvent(type, eventInit)));
+
+        return {
+            clicked: true,
+            reason: 'event-dispatched',
+            text: String(target.textContent || '').replace(/\s+/g, ' ').trim(),
+            className: String(target.className || ''),
+            rect: {
+                top: rect.top,
+                left: rect.left,
+                width: rect.width,
+                height: rect.height
+            }
+        };
+    }, { fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR, text: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT });
+}
+
+async function waitForDetailFillFromMainReady(page) {
+    await page.waitForFunction(({ fieldSelector, selectors, text }) => {
+        const field = document.querySelector(fieldSelector);
+        if (!(field instanceof HTMLElement)) {
+            return false;
+        }
+
+        const previewNodes = selectors.flatMap((selector) => Array.from(field.querySelectorAll(selector)));
+        const hasPreviewImage = previewNodes.some((node) => {
+            if (!(node instanceof HTMLImageElement)) return false;
+            const src = node.currentSrc || node.src || '';
+            const width = node.naturalWidth || node.width || 0;
+            const height = node.naturalHeight || node.height || 0;
+            return !!src && (width > 32 || height > 32 || /^blob:|^data:image\//.test(String(src)));
+        });
+
+        if (hasPreviewImage) {
+            window.__doudianDetailFillReadySince = 0;
+            return false;
+        }
+
+        const button = Array.from(field.querySelectorAll('button')).find((node) => {
+            if (!(node instanceof HTMLElement)) return false;
+            const content = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+            const rect = node.getBoundingClientRect();
+            return content.includes(text) && rect.width > 0 && rect.height > 0;
+        });
+
+        if (!(button instanceof HTMLElement)) {
+            window.__doudianDetailFillReadySince = 0;
+            return false;
+        }
+
+        const now = Date.now();
+        if (!window.__doudianDetailFillReadySince) {
+            window.__doudianDetailFillReadySince = now;
+            return false;
+        }
+
+        return now - window.__doudianDetailFillReadySince >= 500;
+    }, {
+        fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR,
+        selectors: PREVIEW_IMAGE_SELECTORS,
+        text: DETAIL_IMAGE_FILL_FROM_MAIN_TEXT
+    }, { timeout: 8000 });
 }
 
 async function prepareImages(images, imageManager) {
@@ -1274,48 +1869,23 @@ export async function publishToDoudian(publishInfo = {}) {
 
         let detailSectionReady = false;
         try {
-            const detailFieldSelector = '[attr-field-id="商品详情"]';
-            const detailHoverSelector = `${detailFieldSelector} [class*="styles_imgWrapper__"]`;
-            const detailDeleteSelector = `${detailFieldSelector} [class*="styles_iconDelete__"]`;
             logger.info('抖店商品详情逻辑：准备处理商品详情区域');
+            const clearResult = await clearDetailImages(page, hoverMode);
+            logger.info('抖店商品详情逻辑：旧详情图清理结果', clearResult);
 
-            await triggerHover(page, detailHoverSelector, hoverMode, '抖店商品详情逻辑');
+            if ((clearResult?.remainingCount || 0) > 0) {
+                throw new Error(`旧详情图未清理干净，remaining=${clearResult.remainingCount}`);
+            }
 
-            const deleteLocator = page.locator(detailDeleteSelector).first();
-            await deleteLocator.waitFor({ timeout: 5000, state: 'visible' });
-            await deleteLocator.scrollIntoViewIfNeeded().catch(() => undefined);
-            await page.waitForTimeout(200);
-            await clickWithFallback(
-                deleteLocator,
-                () => page.evaluate((selector) => {
-                    const target = document.querySelector(selector);
-                    if (!(target instanceof HTMLElement)) return false;
-                    target.click();
-                    return true;
-                }, detailDeleteSelector),
-                `抖店商品详情逻辑：已点击删除按钮 locator(${detailDeleteSelector}).first()`,
-                `抖店商品详情逻辑：已使用JS点击删除按钮 ${detailDeleteSelector}`
-            );
-
-            await page.waitForTimeout(300);
             logger.info('抖店商品详情逻辑：准备点击“从主图填入”按钮');
-            const fillButton = page.locator(`${detailFieldSelector} button`).filter({ hasText: '从主图填入' }).first();
-            await fillButton.waitFor({ timeout: 5000, state: 'visible' });
-            await fillButton.scrollIntoViewIfNeeded().catch(() => undefined);
+            await triggerHover(page, DETAIL_IMAGE_FIELD_SELECTOR, hoverMode, '抖店商品详情逻辑');
+            await waitForDetailFillFromMainReady(page);
             await page.waitForTimeout(200);
-            await clickWithFallback(
-                fillButton,
-                () => page.evaluate((fieldSelector) => {
-                    const field = document.querySelector(fieldSelector);
-                    if (!(field instanceof HTMLElement)) return false;
-                    const target = Array.from(field.querySelectorAll('button')).find((button) => String(button.textContent || '').includes('从主图填入'));
-                    if (!(target instanceof HTMLElement)) return false;
-                    target.click();
-                    return true;
-                }, detailFieldSelector),
-                '抖店商品详情逻辑：已点击“从主图填入”按钮',
-                '抖店商品详情逻辑：已使用JS点击“从主图填入”按钮'
-            );
+            const fillButtonClickResult = await clickDetailFillFromMainButton(page);
+            logger.info('抖店商品详情逻辑：“从主图填入”按钮JS点击结果', fillButtonClickResult);
+            if (!fillButtonClickResult?.clicked) {
+                throw new Error(`“从主图填入”按钮点击失败: ${fillButtonClickResult?.reason || 'unknown'}`);
+            }
             detailSectionReady = true;
             await page.waitForTimeout(300);
         } catch (error) {
@@ -1355,6 +1925,47 @@ export async function publishToDoudian(publishInfo = {}) {
         let publishSuccessDetail = '';
         let publishFinalUrl = page.url();
         try {
+            if (detailSectionReady) {
+                try {
+                    logger.info('抖店发布前补充动作：准备再次点击“从主图填入”按钮');
+                    await triggerHover(page, DETAIL_IMAGE_FIELD_SELECTOR, hoverMode, '抖店发布前补充动作');
+                    await page.waitForTimeout(300);
+                    const beforeDetailKeys = await collectDetailImagePreviewKeys(page);
+                    const refillResult = await clickDetailFillFromMainButton(page);
+                    logger.info('抖店发布前补充动作：“从主图填入”按钮JS点击结果', refillResult);
+                    if (refillResult?.clicked) {
+                        try {
+                            await page.waitForFunction(({ fieldSelector, previousKeys, selectors }) => {
+                                const field = document.querySelector(fieldSelector);
+                                if (!(field instanceof HTMLElement)) return false;
+                                const nodes = selectors.flatMap((selector) => Array.from(field.querySelectorAll(selector)));
+                                const uniqueKeys = new Set();
+                                nodes.forEach((node) => {
+                                    if (!(node instanceof HTMLImageElement)) return;
+                                    const src = node.currentSrc || node.src || '';
+                                    const width = node.naturalWidth || node.width || 0;
+                                    const height = node.naturalHeight || node.height || 0;
+                                    if (!src) return;
+                                    if (width > 32 || height > 32 || /^blob:|^data:image\//.test(src)) {
+                                        uniqueKeys.add(`${src}|${width}|${height}`);
+                                    }
+                                });
+                                const currentKeys = Array.from(uniqueKeys);
+                                return currentKeys.length > previousKeys.length || currentKeys.some((key) => !previousKeys.includes(key));
+                            }, {
+                                fieldSelector: DETAIL_IMAGE_FIELD_SELECTOR,
+                                previousKeys: beforeDetailKeys,
+                                selectors: PREVIEW_IMAGE_SELECTORS
+                            }, { timeout: 5000 });
+                        } catch (error) {
+                            logger.warn(`抖店发布前补充动作：点击“从主图填入”后未观察到详情图变化: ${error?.message || error}`);
+                        }
+                    }
+                } catch (error) {
+                    logger.warn(`抖店发布前补充动作执行失败: ${error?.message || error}`);
+                }
+            }
+
             logger.info('抖店发布提交流程：准备点击“发布商品”按钮');
             const publishButton = page.locator('button').filter({ hasText: '发布商品' }).first();
             await publishButton.waitFor({ timeout: 5000, state: 'visible' });
