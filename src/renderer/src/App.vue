@@ -819,12 +819,14 @@ const sidebarRuntimeItems = computed(() => [
     label: "客户端服务",
     value: serverStatus.value ? "在线" : "离线",
     tone: serviceToneByState(serverStatus.value),
+    neutralValue: false,
   },
   {
     key: "ws",
     label: "远程链路",
     value: websocketText(wsState.status),
     tone: websocketTone(wsState.status),
+    neutralValue: false,
   },
   {
     key: "uploader",
@@ -838,24 +840,28 @@ const sidebarRuntimeItems = computed(() => [
             ? "异常"
             : "未启动",
     tone: browserAutomationToneByState(uploaderServiceStatus.value),
+    neutralValue: false,
   },
   {
     key: "ps",
     label: "Photoshop",
     value: photoshopRuntimeMeta.value.summaryText,
     tone: photoshopRuntimeMeta.value.tone,
+    neutralValue: photoshopRuntimeMeta.value.busy,
   },
   {
     key: "video-template",
     label: "Video Template",
     value: videoTemplateRuntimeMeta.value.summaryText,
     tone: videoTemplateRuntimeMeta.value.tone,
+    neutralValue: false,
   },
   {
     key: "image-processing",
     label: "Image Tool",
     value: imageProcessingRuntimeMeta.value.summaryText,
     tone: imageProcessingRuntimeMeta.value.tone,
+    neutralValue: false,
   },
 ]);
 
@@ -1221,7 +1227,7 @@ onBeforeUnmount(() => {
                   v-for="item in sidebarRuntimeItems"
                   :key="item.key"
                   class="sidebar-runtime"
-                  :class="toneClass(item.tone)"
+                  :class="[toneClass(item.tone), { 'is-neutral-value': item.neutralValue }]"
                 >
                   <span class="sidebar-runtime__signal"></span>
                   <span class="sidebar-runtime__label">{{ item.label }}</span>
@@ -1548,6 +1554,10 @@ onBeforeUnmount(() => {
   color: inherit;
   font-size: 9px;
   font-weight: 700;
+}
+
+.sidebar-runtime.is-neutral-value .sidebar-runtime__value {
+  color: var(--theme-text);
 }
 
 .sidebar-runtime.is-success {

@@ -101,6 +101,14 @@ def replace_and_export_psd_multi(
 
             all_smart_objects = filtered_smart_objects
 
+            if len(smart_objects_config) > len(all_smart_objects):
+                doc.close()
+                raise ValueError(
+                    "传入的智能对象配置数量多于 PSD 中可处理的智能对象数量，"
+                    f"配置数={len(smart_objects_config)}，可处理智能对象数={len(all_smart_objects)}。"
+                    "为避免部分素材被静默忽略，已终止本次导出。"
+                )
+
         # ========== 打印 PSD 文件基本信息 ==========
         print("\n" + "=" * 70)
         print("📋 PSD 文件信息")
@@ -214,6 +222,7 @@ def replace_and_export_psd_multi(
         
         # ========== 处理所有智能对象 ==========
         processed_count = 0
+        failed_pairs = []
         if matched_pairs:
             print("\n" + "=" * 70)
             print("🔄 开始处理")
@@ -254,10 +263,36 @@ def replace_and_export_psd_multi(
                     print(f"❌ [{i}/{len(matched_pairs)}] 处理智能对象 '{so['name']}' 时出错: {e}")
                     import traceback
                     traceback.print_exc()
+                    failed_pairs.append({
+                        "index": i,
+                        "name": so.get("name"),
+                        "path": so.get("path"),
+                        "image_path": so_config.get("image_path"),
+                        "error": str(e),
+                    })
                     # 继续处理下一个智能对象
                     continue
 
         print(f"\n✅ 处理完成: 成功处理 {processed_count}/{len(matched_pairs)} 个智能对象")
+
+        if failed_pairs:
+            print("\n" + "=" * 70)
+            print("❌ 智能对象替换未全部成功，已阻止导出")
+            print("=" * 70)
+            for item in failed_pairs:
+                print(
+                    f"  [{item['index']}/{len(matched_pairs)}] {item['name']} | "
+                    f"path={item['path']} | image={item['image_path']} | error={item['error']}"
+                )
+            print("=" * 70)
+            try:
+                doc.close()
+            except Exception as close_error:
+                print(f"⚠️ 关闭主文档时出错: {close_error}")
+            raise RuntimeError(
+                "智能对象替换未全部成功，已取消导出，"
+                f"成功 {processed_count}/{len(matched_pairs)}，失败 {len(failed_pairs)}。"
+            )
 
         # 确保活动文档是主文档
         if matched_pairs:
