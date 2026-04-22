@@ -4,6 +4,9 @@ import {
     TEMU_USERINFO_API_URL
 } from './constants.js';
 import {
+    ensureTemuGlobalRegionAuthorization
+} from './login.js';
+import {
     logger
 } from '../../utils/logger.js';
 
@@ -758,6 +761,17 @@ export async function collectTemuSessionBundle(page, options = {}) {
             collectRegionCookies: options.collectRegionCookies !== false,
             currentUrl: page.url()
         });
+
+        const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
+        if (!authorizationResult.success) {
+            return {
+                success: false,
+                reason: authorizationResult.reason === 'not_logged_in'
+                    ? 'login_required'
+                    : (authorizationResult.reason || 'global_region_authorization_failed'),
+                message: authorizationResult.message || 'Temu 全球区授权确认失败，无法继续采集会话'
+            };
+        }
 
         await page.goto(TEMU_SELLER_HOME_URL, {
             waitUntil: 'domcontentloaded',

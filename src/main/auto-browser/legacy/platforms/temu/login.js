@@ -14,7 +14,10 @@ import {
     TEMU_LOGIN_FAILURE_KEYWORDS,
     TEMU_EDIT_URL_KEYWORD,
     TEMU_LOGIN_URL,
-    TEMU_SELLER_HOST_KEYWORDS
+    TEMU_SELLER_HOST_KEYWORDS,
+    TEMU_GLOBAL_SETTLE_LOGIN_URL,
+    TEMU_GLOBAL_AUTH_LABEL_CONTAINER_SELECTOR,
+    TEMU_GLOBAL_AUTH_ENTER_SELECTOR
 } from './constants.js';
 import {
     limitText
@@ -31,6 +34,11 @@ import {
 } from '../../utils/logger.js';
 
 const TEMU_TEXT_CLICK_SELECTOR = 'button,[role="button"],a,span,div,label,p';
+
+function isTemuGlobalSettlePage(pageUrl) {
+    const currentUrl = String(pageUrl || '');
+    return currentUrl.includes('/settle/site-main');
+}
 
 function isTemuSellerPage(pageUrl) {
     const currentUrl = String(pageUrl || '');
@@ -280,6 +288,172 @@ async function waitForTemuLoginSuccess(page, timeoutMs = TEMU_LOGIN_SUCCESS_TIME
     };
 }
 
+async function clickTemuAuthorizationLabel(page, timeoutMs = 15_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const clicked = await page.evaluate((containerSelector) => {
+            const isVisible = (element) => {
+                if (!(element instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+
+            const container = document.querySelector(containerSelector);
+            if (!(container instanceof HTMLElement) || !isVisible(container)) {
+                return null;
+            }
+
+            const matched = Array.from(container.querySelectorAll('label')).find((element) => isVisible(element));
+
+            if (!matched) {
+                return null;
+            }
+
+            matched.click();
+            return {
+                text: String(matched.innerText || matched.textContent || '').trim()
+            };
+        }, TEMU_GLOBAL_AUTH_LABEL_CONTAINER_SELECTOR).catch(() => null);
+
+        if (clicked) {
+            return {
+                success: true,
+                clicked: true,
+                text: clicked.text
+            };
+        }
+
+        await page.waitForTimeout(500);
+    }
+
+    return {
+        success: false,
+        reason: 'authorization_label_not_found'
+    };
+}
+
+async function clickTemuAuthorizationConfirmButton(page, timeoutMs = 15_000) {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+        const clicked = await page.evaluate((selector) => {
+            const isVisible = (element) => {
+                if (!(element instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+            const button = Array.from(document.querySelectorAll(selector))
+                .find((element) => isVisible(element));
+
+            if (!button) {
+                return null;
+            }
+
+            button.click();
+            return {
+                text: String(button.innerText || button.textContent || '').trim(),
+                tagName: button.tagName
+            };
+        }, TEMU_GLOBAL_AUTH_ENTER_SELECTOR).catch(() => null);
+
+        if (clicked) {
+            return {
+                success: true,
+                ...clicked
+            };
+        }
+
+        await page.waitForTimeout(500);
+    }
+
+    return {
+        success: false,
+        reason: 'authorization_confirm_not_found'
+    };
+}
+
+export async function ensureTemuGlobalRegionAuthorization(page) {
+    const initialUrl = String(page?.url?.() || '');
+    const initialState = await resolveTemuLoginState(page);
+    if (!initialState.loggedIn) {
+        return {
+            success: false,
+            reason: 'not_logged_in',
+            loginState: initialState
+        };
+    }
+
+    logger.info(`${PLATFORM_NAME}准备进入全球区并处理授权确认`, {
+        currentUrl: initialUrl
+    });
+
+    await page.goto(TEMU_GLOBAL_SETTLE_LOGIN_URL, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60_000
+    });
+    await page.waitForTimeout(2500);
+
+    const currentUrl = String(page.url() || '');
+    if (isTemuSellerPage(currentUrl) && !isTemuGlobalSettlePage(currentUrl)) {
+        return {
+            success: true,
+            reason: 'already_entered_global_region',
+            currentUrl,
+            loginState: await resolveTemuLoginState(page)
+        };
+    }
+
+    const labelResult = await clickTemuAuthorizationLabel(page, 5_000);
+    if (labelResult.success) {
+        await page.waitForTimeout(600);
+    }
+
+    const confirmResult = await clickTemuAuthorizationConfirmButton(page, 5_000);
+    if (labelResult.success && !confirmResult?.success) {
+        logger.warn(`${PLATFORM_NAME}已勾选授权但未找到进入按钮，继续按当前页面状态判断`, {
+            currentUrl: page.url()
+        });
+    }
+
+    await page.waitForTimeout(1500);
+
+    const finalState = await waitForTemuLoginSuccess(page, 20_000);
+    if (!finalState.success) {
+        const currentState = await resolveTemuLoginState(page);
+        if (currentState.loggedIn) {
+            return {
+                success: true,
+                reason: 'authorization_optional_step_skipped',
+                currentUrl: page.url(),
+                loginState: currentState
+            };
+        }
+
+        return {
+            success: false,
+            reason: finalState.reason || 'authorization_navigation_timeout',
+            message: `${PLATFORM_NAME}已点击授权确认，但未成功进入全球区`,
+            bodyPreview: finalState.bodyPreview,
+            loginState: finalState.loginState || await resolveTemuLoginState(page)
+        };
+    }
+
+    return {
+        success: true,
+        reason: 'global_region_authorized',
+        currentUrl: page.url(),
+        loginState: finalState.loginState
+    };
+}
+
 export async function performTemuLogin(page, settings, pageOperator) {
     if (!settings.account || !settings.password) {
         return {
@@ -298,10 +472,15 @@ export async function performTemuLogin(page, settings, pageOperator) {
 
     const formState = await waitForTemuLoginForm(page);
     if (formState.alreadyLoggedIn) {
+        const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
+        if (!authorizationResult.success) {
+            return authorizationResult;
+        }
+
         return {
             success: true,
             reason: 'already_logged_in',
-            loginState: formState.loginState
+            loginState: authorizationResult.loginState || formState.loginState
         };
     }
 
@@ -368,9 +547,14 @@ export async function performTemuLogin(page, settings, pageOperator) {
     }
 
     logger.info(`${PLATFORM_NAME}自动登录成功`, successState.loginState);
+    const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
+    if (!authorizationResult.success) {
+        return authorizationResult;
+    }
+
     return {
         success: true,
         reason: 'login_success',
-        loginState: successState.loginState
+        loginState: authorizationResult.loginState || successState.loginState
     };
 }
