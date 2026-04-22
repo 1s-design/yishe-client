@@ -1,7 +1,7 @@
 import { getOrCreateBrowser } from '../../services/BrowserService.js';
 import { PageOperator } from '../../services/PageOperator.js';
 import { logger } from '../../utils/logger.js';
-import { PLATFORM_NAME } from './constants.js';
+import { PLATFORM_NAME, TEMU_SELLER_HOME_URL } from './constants.js';
 import {
     normalizeTemuSettings,
     pushTrace,
@@ -35,6 +35,22 @@ import {
     publishTemuByProductTemplate
 } from './templatePublish.js';
 
+function withStepTimeout(promise, timeoutMs, stepLabel) {
+    let timer = null;
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error(`${PLATFORM_NAME}${stepLabel}超时（${timeoutMs}ms）`));
+            }, timeoutMs);
+        })
+    ]).finally(() => {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    });
+}
+
 export async function publishToTemu(publishInfo = {}) {
     const pageOperator = new PageOperator();
     const settings = normalizeTemuSettings(publishInfo);
@@ -60,14 +76,123 @@ export async function publishToTemu(publishInfo = {}) {
             keepPageOpen: settings.keepPageOpen
         });
 
-        const browser = await getOrCreateBrowser({ profileId: publishInfo?.profileId });
-        page = await browser.newPage({ foreground: true });
-        await pageOperator.setupAntiDetection(page);
+        logger.info(`${PLATFORM_NAME}准备获取浏览器实例`, {
+            profileId: publishInfo?.profileId || ''
+        });
+        pushTrace(executionTrace, 'prepare_browser_instance', 'pending', {
+            profileId: publishInfo?.profileId || ''
+        });
+        const browser = await withStepTimeout(
+            getOrCreateBrowser({ profileId: publishInfo?.profileId }),
+            90_000,
+            '获取浏览器实例'
+        );
+        logger.info(`${PLATFORM_NAME}浏览器实例已就绪`, {
+            profileId: publishInfo?.profileId || ''
+        });
+        pushTrace(executionTrace, 'prepare_browser_instance', 'success', {
+            profileId: publishInfo?.profileId || ''
+        });
+
+        logger.info(`${PLATFORM_NAME}准备创建新页面`);
+        pushTrace(executionTrace, 'create_page', 'pending', {});
+        page = await withStepTimeout(
+            browser.newPage({ foreground: true }),
+            45_000,
+            '创建新页面'
+        );
+        logger.info(`${PLATFORM_NAME}新页面创建完成`, {
+            currentUrl: page?.url?.() || ''
+        });
+        pushTrace(executionTrace, 'create_page', 'success', {
+            currentUrl: page?.url?.() || ''
+        });
+
+        logger.info(`${PLATFORM_NAME}准备初始化页面环境`);
+        pushTrace(executionTrace, 'setup_page_runtime', 'pending', {});
+        await withStepTimeout(
+            pageOperator.setupAntiDetection(page),
+            15_000,
+            '初始化页面环境'
+        );
+        logger.info(`${PLATFORM_NAME}页面环境初始化完成`);
+        pushTrace(executionTrace, 'setup_page_runtime', 'success', {});
 
         if (hasTemuProductTemplate(publishInfo)) {
             pushTrace(executionTrace, 'detect_product_template_publish', 'success', {
                 mode: 'template_api_publish'
             });
+
+            logger.info(`${PLATFORM_NAME}模板直发准备打开卖家中心主页`, {
+                sellerHomeUrl: TEMU_SELLER_HOME_URL
+            });
+            await page.goto(TEMU_SELLER_HOME_URL, {
+                waitUntil: 'domcontentloaded',
+                timeout: 60000
+            });
+            await page.waitForTimeout(3000);
+            pushTrace(executionTrace, 'open_seller_home_for_template_publish', 'success', {
+                currentUrl: page.url()
+            });
+
+            let loginState = await resolveTemuLoginState(page);
+            logger.info(`${PLATFORM_NAME}模板直发登录检测结果: ${loginState.loggedIn ? '已登录' : '未登录'}`, loginState);
+            pushTrace(executionTrace, 'check_login_state_for_template_publish', loginState.loggedIn ? 'success' : 'pending', loginState);
+
+            if (!loginState.loggedIn) {
+                if (settings.needLogin) {
+                    const loginResult = await runTemuLoginSmallFeature({
+                        ...publishInfo,
+                        account: settings.account,
+                        password: settings.password,
+                        loginUrl: settings.loginUrl,
+                        keepPageOpen: true,
+                        profileId: publishInfo?.profileId
+                    }, {
+                        page,
+                        pageOperator
+                    });
+                    if (!loginResult.success) {
+                        pushTrace(executionTrace, 'perform_login_for_template_publish', 'failed', {
+                            reason: loginResult.data?.loginState?.reason || loginResult.message,
+                            currentUrl: page.url()
+                        });
+                        const snapshot = await collectTemuFrameworkSnapshot(page);
+                        return {
+                            success: false,
+                            message: loginResult.message || `${PLATFORM_NAME}模板直发自动登录失败`,
+                            data: {
+                                frameworkReady: false,
+                                loginRequired: true,
+                                autoLoginAttempted: true,
+                                autoLoginSuccess: false,
+                                currentUrl: page.url(),
+                                snapshot,
+                                executionTrace
+                            }
+                        };
+                    }
+
+                    loginState = loginResult.data?.loginState || await resolveTemuLoginState(page);
+                    pushTrace(executionTrace, 'perform_login_for_template_publish', 'success', {
+                        currentUrl: page.url()
+                    });
+                } else {
+                    const snapshot = await collectTemuFrameworkSnapshot(page);
+                    return {
+                        success: false,
+                        message: `${PLATFORM_NAME}当前环境未登录，请先登录后再执行模板直发`,
+                        data: {
+                            frameworkReady: false,
+                            loginRequired: true,
+                            autoLoginAttempted: false,
+                            currentUrl: page.url(),
+                            snapshot,
+                            executionTrace
+                        }
+                    };
+                }
+            }
 
             return await publishTemuByProductTemplate(page, publishInfo, {
                 executionTrace,
