@@ -17,7 +17,6 @@ try:
     from .utils.permission_utils import check_write_permission
     from .layer_finder import find_artboard_layers
     from .smart_object_replacer import replace_smart_object_content
-    from .color_layer_service import apply_color_layer_configs
     from .utils import create_photoshop_session
     from .layer_finder import find_smart_object_layers
 except ImportError:
@@ -25,11 +24,14 @@ except ImportError:
         from src.utils.permission_utils import check_write_permission
         from src.layer_finder import find_artboard_layers
         from src.smart_object_replacer import replace_smart_object_content
-        from src.color_layer_service import apply_color_layer_configs
         from src.utils import create_photoshop_session
         from src.layer_finder import find_smart_object_layers
     except ImportError:
         raise ImportError("无法导入必要的模块")
+
+
+# 颜色图层处理已临时停用。保留入参与日志，避免影响现有调用方。
+COLOR_LAYER_PROCESSING_ENABLED = False
 
 
 def _safe_get_active_layer_name(doc) -> str:
@@ -309,10 +311,16 @@ def replace_and_export_psd_multi(
         applied_color_layers = []
         if color_layer_configs:
             print("\n" + "=" * 70)
-            print("🎨 开始处理颜色控制图层")
+            print("🎨 颜色控制图层")
             print("=" * 70)
-            applied_color_layers = apply_color_layer_configs(session, doc, color_layer_configs)
-            print(f"✅ 颜色控制图层处理完成: {len(applied_color_layers)} 个")
+            if COLOR_LAYER_PROCESSING_ENABLED:
+                print("⚠️ 颜色图层处理开关已开启，但当前版本未接入执行逻辑")
+            else:
+                print(
+                    f"⚠️ 颜色图层处理已临时停用，已忽略 {len(color_layer_configs)} 个颜色图层配置，"
+                    "避免错误和额外耗时"
+                )
+            print("=" * 70)
 
         # ========== 查找画板并导出 ==========
         # 参考 erpfile.py 的原理：直接使用 doc.layerSets 获取所有图层组（画板）

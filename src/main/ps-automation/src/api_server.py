@@ -484,9 +484,9 @@ class ProcessRequest(BaseModel):
         颜色控制图层配置数组（与 smart_objects 同级）
 
         **使用说明**：
-        - 用于修改 PSD 中可直接调色的颜色控制层
-        - 推荐使用 layer_path 精确定位图层
-        - 当前版本优先支持纯色填充层（双击可直接弹出拾色器的那类图层）
+        - 该能力当前已临时停用，传入后会被忽略
+        - 保留字段仅用于兼容旧调用方，避免请求结构报错
+        - 后续恢复时再重新启用颜色图层处理
 
         **示例**：
         ```json
@@ -1245,6 +1245,11 @@ async def process_psd(request: ProcessRequest, response: Response):
         # 生成带时间戳的唯一文件名，防止文件被覆盖
         psd_path_obj = Path(request.psd_path)
         unique_filename = generate_unique_filename(request.output_filename, psd_path_obj)
+        color_layer_configs = [item.dict() for item in request.color_layers] if request.color_layers else None
+        if color_layer_configs:
+            print(
+                f"⚠️ API层: 颜色图层处理已临时停用，已忽略 {len(color_layer_configs)} 个颜色图层配置"
+            )
         
         # 判断使用新格式还是旧格式
         if request.smart_objects is not None:
@@ -1283,7 +1288,7 @@ async def process_psd(request: ProcessRequest, response: Response):
                 'output_filename': unique_filename,
                 'verbose': request.verbose,
                 'smart_objects_config': smart_objects_config,  # 新格式：传递配置数组
-                'color_layer_configs': [item.dict() for item in request.color_layers] if request.color_layers else None
+                'color_layer_configs': None
             }
             
             # 调用处理函数（新格式）
@@ -1317,7 +1322,7 @@ async def process_psd(request: ProcessRequest, response: Response):
                 'output_filename': unique_filename,
                 'verbose': request.verbose,
                 'smart_objects_config': smart_objects_config,
-                'color_layer_configs': [item.dict() for item in request.color_layers] if request.color_layers else None
+                'color_layer_configs': None
             }
             
             # 统一使用 process_psd_with_image_multi（默认方法）

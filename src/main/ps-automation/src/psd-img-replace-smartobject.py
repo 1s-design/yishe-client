@@ -580,7 +580,9 @@ def process_psd_with_image_multi(
     smart_objects_config = final_config['smart_objects_config'] or []
     color_layer_configs = final_config['color_layer_configs'] or []
     if len(smart_objects_config) == 0 and len(color_layer_configs) == 0:
-        raise ValueError("至少需要提供 smart_objects_config 或 color_layer_configs 中的一项")
+        raise ValueError("至少需要提供 smart_objects_config")
+    if len(smart_objects_config) == 0 and len(color_layer_configs) > 0:
+        raise ValueError("颜色图层处理已临时停用，请至少提供 smart_objects_config")
 
     export_dir = Path(final_config['export_dir'])
     
