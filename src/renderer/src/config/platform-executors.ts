@@ -6,7 +6,7 @@ import {
   type UploaderTaskSourceId,
   type UploaderTaskSummary,
 } from '../api/uploader'
-import { getTokenFromClient } from '../api/user'
+import { getPlatformSessions, getTokenFromClient } from '../api/user'
 
 const IMAGE_LIMITS_DEFAULT = {
   maxSide: 2000,
@@ -234,6 +234,100 @@ function cloneSerializable<T>(value: T): T | undefined {
   }
 }
 
+function isPlainObject(value: any): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeTextValue(value: any): string {
+  return String(value || '').trim()
+}
+
+function buildCookieHeader(cookies: Record<string, any> = {}): string {
+  return Object.entries(cookies)
+    .filter(([name, value]) => normalizeTextValue(name) && value !== undefined && value !== null)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('; ')
+}
+
+function buildTemuStoredSessionBundle(profileData: any): Record<string, any> | undefined {
+  const profileRecord = isPlainObject(profileData) ? profileData : {}
+  const userInfo = isPlainObject(profileRecord.userInfo) ? profileRecord.userInfo : {}
+  const session = isPlainObject(profileRecord.session) ? profileRecord.session : {}
+  const globalSession = isPlainObject(session.global) ? session.global : {}
+  const usSession = isPlainObject(session.us) ? session.us : {}
+  const euSession = isPlainObject(session.eu) ? session.eu : {}
+
+  const globalCookies = isPlainObject(globalSession.cookies)
+    ? globalSession.cookies
+    : (
+      isPlainObject(profileRecord.cookies_global)
+        ? profileRecord.cookies_global
+        : (isPlainObject(profileRecord.cookies) ? profileRecord.cookies : {})
+    )
+  const usCookies = isPlainObject(usSession.cookies) ? usSession.cookies : {}
+  const euCookies = isPlainObject(euSession.cookies) ? euSession.cookies : {}
+  const headersTemplate = isPlainObject(globalSession.headers)
+    ? globalSession.headers
+    : (isPlainObject(profileRecord.headersTemplate) ? profileRecord.headersTemplate : {})
+  const usHeaders = isPlainObject(usSession.headers) ? usSession.headers : {}
+  const euHeaders = isPlainObject(euSession.headers) ? euSession.headers : {}
+  const cookieHeader = buildCookieHeader(globalCookies)
+
+  if (!cookieHeader) {
+    return undefined
+  }
+
+  // 把服务端 profile 结构归一为发布端统一消费的 session bundle，后续发布逻辑不再关心后台存储细节。
+  return compactObject({
+    source: 'stored_platform_session',
+    success: true,
+    requestedRegion: 'global',
+    effectiveRegion: 'global',
+    currentUrl: normalizeTextValue(headersTemplate.referer || headersTemplate.origin),
+    userAgent: normalizeTextValue(headersTemplate['user-agent'] || profileRecord.userAgent),
+    mallId: normalizeTextValue(profileRecord.mallId || userInfo.mallId || headersTemplate.mallid),
+    mallName: normalizeTextValue(profileRecord.mallName || userInfo.mallName),
+    accountId: normalizeTextValue(profileRecord.accountId || userInfo.accountId),
+    accountType: normalizeTextValue(profileRecord.accountType || userInfo.accountType),
+    mallList: Array.isArray(profileRecord.mallList)
+      ? cloneSerializable(profileRecord.mallList)
+      : (
+        Array.isArray(userInfo.mallList)
+          ? cloneSerializable(userInfo.mallList)
+          : undefined
+      ),
+    account: normalizeTextValue(session.account || profileRecord.account),
+    password: normalizeTextValue(session.password || profileRecord.password),
+    antiContent: normalizeTextValue(headersTemplate['anti-content'] || profileRecord.antiContent),
+    headers: cloneSerializable(headersTemplate) || {},
+    headersTemplate: cloneSerializable(headersTemplate) || {},
+    regionHeaders: {
+      global: cloneSerializable(headersTemplate) || {},
+      us: cloneSerializable(usHeaders) || {},
+      eu: cloneSerializable(euHeaders) || {},
+    },
+    cookies: cloneSerializable(globalCookies) || {},
+    cookies_global: cloneSerializable(globalCookies) || {},
+    cookies_us: cloneSerializable(usCookies) || {},
+    cookies_eu: cloneSerializable(euCookies) || {},
+    cookieHeader,
+    cookieHeaders: {
+      global: cookieHeader,
+      us: buildCookieHeader(usCookies),
+      eu: buildCookieHeader(euCookies),
+    },
+    cookieCount: Object.keys(globalCookies).length,
+    cookieCounts: {
+      global: Object.keys(globalCookies).length,
+      us: Object.keys(usCookies).length,
+      eu: Object.keys(euCookies).length,
+    },
+    collectedAt: normalizeTextValue(
+      profileRecord.updatedAt || globalSession.updatedAt || userInfo.fetchedAt,
+    ),
+  })
+}
+
 function resolvePublishConfigData(row: any): Record<string, any> {
   const candidates = [
     row?.data?.configData,
@@ -262,7 +356,7 @@ function buildExplicitPublishFields(platform: string, publishData: any, row: any
     publishData?.platformSettings?.[platform]?.productCode,
   ].find((item) => typeof item === 'string' && item.trim())
 
-  const explicitFields = compactObject({
+  const explicitFields: Record<string, any> = compactObject({
     productCode: typeof explicitProductCode === 'string' ? explicitProductCode.trim() : undefined,
   })
 
@@ -336,6 +430,52 @@ function resolveBrowserProfileId(row: any): string | undefined {
   }
 
   return undefined
+}
+
+async function enrichTemuStoredSession(
+  publishData: Record<string, any>,
+  row: any,
+  platform: string,
+): Promise<Record<string, any>> {
+  if (platform !== 'temu') {
+    return publishData
+  }
+
+  const profileId = normalizeTextValue(publishData?.profileId || resolveBrowserProfileId(row))
+  if (!profileId) {
+    return publishData
+  }
+
+  if (isPlainObject(publishData?.temuStoredSession) && Object.keys(publishData.temuStoredSession).length > 0) {
+    return compactObject({
+      ...publishData,
+      profileId,
+    })
+  }
+
+  try {
+    // 任务真正下发前再补一次 Temu 实时会话，避免创建任务时携带的是旧快照。
+    const profileSession = await getPlatformSessions({
+      platform: 'temu',
+      profileId,
+    })
+    const temuStoredSession = buildTemuStoredSessionBundle(profileSession)
+
+    return compactObject({
+      ...publishData,
+      profileId,
+      ...(temuStoredSession ? { temuStoredSession } : {}),
+    })
+  } catch (error) {
+    console.warn('preparePublishTask: 加载 Temu 已存储会话失败', {
+      profileId,
+      error,
+    })
+    return compactObject({
+      ...publishData,
+      profileId,
+    })
+  }
 }
 
 function mapUploaderTaskStatus(status?: string): 'processing' | 'completed' | 'failed' {
@@ -643,9 +783,10 @@ async function localizeVideo(pathLike: string): Promise<string> {
 
 async function preparePublishTask(row: any, platform: string): Promise<NormalizedPublishTask & { processedAssets: PublishRequestPreviewResult['processedAssets'] }> {
   const normalized = normalizePublishTask(platform, row)
-  const nextPublishData = {
+  let nextPublishData = {
     ...normalized.publishData,
   }
+  nextPublishData = await enrichTemuStoredSession(nextPublishData, row, normalized.platform)
   const resourceProcessing = normalized.resourceProcessing || {}
   const processedAssets: PublishRequestPreviewResult['processedAssets'] = {
     images: [],

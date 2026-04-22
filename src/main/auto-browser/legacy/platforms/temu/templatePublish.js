@@ -2,10 +2,10 @@ import { logger } from '../../utils/logger.js';
 import { PLATFORM_KEY, PLATFORM_NAME } from './constants.js';
 import { resolveTemuPublishBasicInfo } from './editForm.js';
 import {
+    resolveTemuValidatedSessionContext,
     resolveTemuPublishImageSources,
     uploadTemuImagesToCloud
 } from './imageUpload.js';
-import { collectTemuSessionBundle } from './session.js';
 import { normalizeText, pushTrace } from './utils.js';
 
 const TEMU_PRODUCT_ADD_URL = 'https://agentseller.temu.com/visage-agent-seller/product/add';
@@ -825,6 +825,7 @@ function buildTemplatePublishResult({
             currentUrl: page?.url?.() || '',
             sessionContext: sessionBundle
                 ? {
+                    source: sessionBundle.source || '',
                     mallId: sessionBundle.mallId || '',
                     mallName: sessionBundle.mallName || '',
                     antiContentReady: !!sessionBundle.antiContent,
@@ -918,32 +919,56 @@ export async function publishTemuByProductTemplate(
         imageCount: resolveTemuPublishImageSources(publishInfo).length
     });
 
-    const sessionResult = await collectTemuSessionBundle(page, {
-        collectRegionCookies: false
+    // 模板 API 提交前统一走“实时读取 -> 校验 -> 现场采集/自动登录 -> 回写”这条链路。
+    const resolvedSession = await resolveTemuValidatedSessionContext(publishInfo, {
+        preferredSessionContext: options.sessionContext,
+        page,
+        collectRegionCookies: false,
+        persistCollectedSession: true
     });
-    if (!sessionResult?.success || !sessionResult.sessionBundle) {
-        logger.error(`${PLATFORM_NAME}模板直发采集会话失败`, {
-            message: sessionResult?.message || 'session_bundle_unavailable'
+    const sessionBundle = resolvedSession?.success
+        ? resolvedSession.sessionContext
+        : null;
+
+    if (!sessionBundle) {
+        logger.error(`${PLATFORM_NAME}模板直发会话准备失败`, {
+            message: resolvedSession?.message || 'session_bundle_unavailable'
         });
-        pushTrace(executionTrace, 'collect_session_bundle', 'failed', {
-            message: sessionResult?.message || 'session_bundle_unavailable'
+        pushTrace(executionTrace, page ? 'collect_session_bundle' : 'load_stored_session_bundle', 'failed', {
+            message: resolvedSession?.message || 'session_bundle_unavailable'
         });
         return buildTemplatePublishResult({
             success: false,
-            message: sessionResult?.message || `${PLATFORM_NAME}当前环境未登录，无法执行模板直发`,
+            message: resolvedSession?.message || `${PLATFORM_NAME}当前缺少可用会话，无法执行模板直发`,
             page,
             executionTrace,
             shouldKeepPageOpen
         });
     }
 
-    const sessionBundle = sessionResult.sessionBundle;
-    pushTrace(executionTrace, 'collect_session_bundle', 'success', {
+    logger.info(`${PLATFORM_NAME}模板直发命中可用会话`, {
+        source: sessionBundle.source || resolvedSession?.source || 'stored_platform_session',
         mallId: sessionBundle.mallId || '',
+        mallName: sessionBundle.mallName || '',
+        cookieCount: Object.keys(sessionBundle.cookies || {}).length,
         antiContentReady: !!sessionBundle.antiContent,
-        cookieCount: Object.keys(sessionBundle.cookies || {}).length
+        persisted: !!resolvedSession?.persisted
     });
-    logger.info(`${PLATFORM_NAME}模板直发会话采集完成`, {
+    pushTrace(
+        executionTrace,
+        resolvedSession?.source === 'live_page_session' ? 'collect_session_bundle' : 'load_stored_session_bundle',
+        'success',
+        {
+            source: sessionBundle.source || resolvedSession?.source || 'stored_platform_session',
+            mallId: sessionBundle.mallId || '',
+            antiContentReady: !!sessionBundle.antiContent,
+            cookieCount: Object.keys(sessionBundle.cookies || {}).length,
+            persisted: !!resolvedSession?.persisted
+        }
+    );
+
+    logger.info(`${PLATFORM_NAME}模板直发会话已就绪`, {
+        source: sessionBundle.source || 'live_page_session',
         mallId: sessionBundle.mallId || '',
         mallName: sessionBundle.mallName || '',
         cookieCount: Object.keys(sessionBundle.cookies || {}).length,
@@ -1086,6 +1111,7 @@ export async function publishTemuByProductTemplate(
     const submitResult = await submitTemuTemplatePayload(finalPayload, sessionBundle, {
         submitUrl: templateSettings.submitUrl
     });
+
     pushTrace(
         executionTrace,
         'submit_publish_payload',

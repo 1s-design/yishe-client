@@ -112,9 +112,15 @@ function extractKeywordCandidates(entries = []) {
 
 export function normalizeTemuSettings(publishInfo = {}) {
     const settings = publishInfo.platformOptions || publishInfo.publishOptions || publishInfo.platformSettings?.[PLATFORM_KEY] || {};
+    const storedSession = publishInfo.temuStoredSession && typeof publishInfo.temuStoredSession === 'object'
+        ? publishInfo.temuStoredSession
+        : {};
+    const storedSessionRecord = storedSession.session && typeof storedSession.session === 'object'
+        ? storedSession.session
+        : {};
     return {
-        account: String(settings.account || publishInfo.account || '').trim(),
-        password: String(settings.password || publishInfo.password || '').trim(),
+        account: String(settings.account || publishInfo.account || storedSession.account || storedSessionRecord.account || '').trim(),
+        password: String(settings.password || publishInfo.password || storedSession.password || storedSessionRecord.password || '').trim(),
         needLogin: normalizeBoolean(settings.needLogin ?? publishInfo.needLogin),
         keepPageOpen: normalizeBoolean(settings.keepPageOpen ?? publishInfo.keepPageOpen),
         createUrl: String(settings.createUrl || publishInfo.createUrl || TEMU_CREATE_URL).trim() || TEMU_CREATE_URL,

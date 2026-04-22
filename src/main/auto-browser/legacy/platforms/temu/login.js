@@ -1,9 +1,7 @@
 import {
     PLATFORM_NAME,
-    TEMU_LOGGED_IN_SELECTORS,
     TEMU_LOGIN_URL_KEYWORDS,
     TEMU_LOGIN_PASSWORD_SELECTORS,
-    TEMU_CATEGORY_KEYWORD_INPUT_SELECTORS,
     TEMU_LOGIN_MODE_LABELS,
     TEMU_LOGIN_SUCCESS_TIMEOUT,
     TEMU_LOGIN_ACCOUNT_SELECTORS,
@@ -12,16 +10,12 @@ import {
     TEMU_LOGIN_CONFIRM_LABELS,
     TEMU_LOGIN_RISK_KEYWORDS,
     TEMU_LOGIN_FAILURE_KEYWORDS,
-    TEMU_EDIT_URL_KEYWORD,
     TEMU_LOGIN_URL,
     TEMU_SELLER_HOST_KEYWORDS,
     TEMU_GLOBAL_SETTLE_LOGIN_URL,
     TEMU_GLOBAL_AUTH_LABEL_CONTAINER_SELECTOR,
     TEMU_GLOBAL_AUTH_ENTER_SELECTOR
 } from './constants.js';
-import {
-    limitText
-} from './utils.js';
 import {
     getBodyPreviewText,
     findFirstVisibleSelector,
@@ -45,19 +39,16 @@ function isTemuSellerPage(pageUrl) {
     return TEMU_SELLER_HOST_KEYWORDS.some((keyword) => currentUrl.includes(keyword));
 }
 
-export async function resolveTemuLoginState(page) {
-    const currentUrl = String(page.url() || '');
-    const userSelector = await findFirstVisibleSelector(page, TEMU_LOGGED_IN_SELECTORS);
-    if (userSelector) {
-        return {
-            loggedIn: true,
-            currentUrl,
-            reason: 'user_selector_detected',
-            matchedSelector: userSelector.selector
-        };
-    }
+function hasTemuLoginUrlKeyword(pageUrl) {
+    const currentUrl = String(pageUrl || '').toLowerCase();
+    return TEMU_LOGIN_URL_KEYWORDS.some((keyword) =>
+        currentUrl.includes(String(keyword || '').toLowerCase())
+    );
+}
 
-    if (TEMU_LOGIN_URL_KEYWORDS.some((keyword) => currentUrl.includes(keyword))) {
+export async function resolveTemuLoginState(page) {
+    const currentUrl = String(page?.url?.() || '');
+    if (hasTemuLoginUrlKeyword(currentUrl)) {
         return {
             loggedIn: false,
             currentUrl,
@@ -65,49 +56,18 @@ export async function resolveTemuLoginState(page) {
         };
     }
 
-    const passwordInput = await findFirstVisibleSelector(page, TEMU_LOGIN_PASSWORD_SELECTORS);
-    if (passwordInput) {
-        return {
-            loggedIn: false,
-            currentUrl,
-            reason: 'password_input_detected',
-            matchedSelector: passwordInput.selector
-        };
-    }
-
-    const categoryInput = await findFirstVisibleSelector(page, TEMU_CATEGORY_KEYWORD_INPUT_SELECTORS);
-    if (categoryInput) {
+    if (isTemuSellerPage(currentUrl)) {
         return {
             loggedIn: true,
             currentUrl,
-            reason: 'category_input_detected',
-            matchedSelector: categoryInput.selector
-        };
-    }
-
-    if (currentUrl.includes(TEMU_EDIT_URL_KEYWORD)) {
-        return {
-            loggedIn: true,
-            currentUrl,
-            reason: 'edit_page_url_detected'
-        };
-    }
-
-    const bodyText = await getBodyPreviewText(page, 1200);
-    if (/登录|sign in|log in/i.test(bodyText)) {
-        return {
-            loggedIn: false,
-            currentUrl,
-            reason: 'login_text_detected',
-            bodyPreview: bodyText
+            reason: 'seller_page_detected'
         };
     }
 
     return {
-        loggedIn: isTemuSellerPage(currentUrl),
+        loggedIn: false,
         currentUrl,
-        reason: isTemuSellerPage(currentUrl) ? 'seller_domain_fallback' : 'non_seller_page',
-        bodyPreview: limitText(bodyText, 240)
+        reason: 'non_seller_page'
     };
 }
 
@@ -307,7 +267,12 @@ async function clickTemuAuthorizationLabel(page, timeoutMs = 15_000) {
                 return null;
             }
 
-            const matched = Array.from(container.querySelectorAll('label')).find((element) => isVisible(element));
+            const visibleLabels = Array.from(container.querySelectorAll('label'))
+                .filter((element) => isVisible(element));
+            if (!visibleLabels.length) {
+                return null;
+            }
+            const matched = visibleLabels[0];
 
             if (!matched) {
                 return null;
@@ -380,6 +345,36 @@ async function clickTemuAuthorizationConfirmButton(page, timeoutMs = 15_000) {
     };
 }
 
+async function createTemuTemporaryAuthorizationPage(page) {
+    const context = page?.context?.();
+    if (!context?.newPage) {
+        return {
+            page,
+            temporary: false
+        };
+    }
+
+    try {
+        const temporaryPage = await context.newPage({ background: true, activate: false });
+        logger.info(`${PLATFORM_NAME}已创建临时授权页`, {
+            currentUrl: String(temporaryPage?.url?.() || ''),
+            activate: false
+        });
+        return {
+            page: temporaryPage,
+            temporary: temporaryPage !== page
+        };
+    } catch (error) {
+        logger.warn(`${PLATFORM_NAME}创建临时授权页失败，回退当前页继续执行授权`, {
+            message: error?.message || String(error)
+        });
+        return {
+            page,
+            temporary: false
+        };
+    }
+}
+
 export async function ensureTemuGlobalRegionAuthorization(page) {
     const initialUrl = String(page?.url?.() || '');
     const initialState = await resolveTemuLoginState(page);
@@ -387,71 +382,118 @@ export async function ensureTemuGlobalRegionAuthorization(page) {
         return {
             success: false,
             reason: 'not_logged_in',
+            currentUrl: initialUrl,
             loginState: initialState
         };
     }
 
-    logger.info(`${PLATFORM_NAME}准备进入全球区并处理授权确认`, {
-        currentUrl: initialUrl
-    });
+    const pageResult = await createTemuTemporaryAuthorizationPage(page);
+    const authorizationPage = pageResult.page || page;
+    const shouldCloseTemporaryPage = !!pageResult.temporary;
 
-    await page.goto(TEMU_GLOBAL_SETTLE_LOGIN_URL, {
-        waitUntil: 'domcontentloaded',
-        timeout: 60_000
-    });
-    await page.waitForTimeout(2500);
+    try {
+        // 登录成功后的原页会继续跳转，这里把全球区授权隔离到临时 tab，避免授权点击被原页跳转打断。
+        if (shouldCloseTemporaryPage && typeof authorizationPage?.bringToFront === 'function') {
+            await authorizationPage.bringToFront().catch((error) => {
+                logger.warn(`${PLATFORM_NAME}临时授权页置前失败，继续执行授权`, {
+                    message: error?.message || String(error)
+                });
+            });
+        }
 
-    const currentUrl = String(page.url() || '');
-    if (isTemuSellerPage(currentUrl) && !isTemuGlobalSettlePage(currentUrl)) {
-        return {
-            success: true,
-            reason: 'already_entered_global_region',
-            currentUrl,
-            loginState: await resolveTemuLoginState(page)
-        };
-    }
-
-    const labelResult = await clickTemuAuthorizationLabel(page, 5_000);
-    if (labelResult.success) {
-        await page.waitForTimeout(600);
-    }
-
-    const confirmResult = await clickTemuAuthorizationConfirmButton(page, 5_000);
-    if (labelResult.success && !confirmResult?.success) {
-        logger.warn(`${PLATFORM_NAME}已勾选授权但未找到进入按钮，继续按当前页面状态判断`, {
-            currentUrl: page.url()
+        logger.info(`${PLATFORM_NAME}准备在授权页执行全球区授权`, {
+            currentUrl: String(authorizationPage?.url?.() || ''),
+            useTemporaryPage: shouldCloseTemporaryPage
         });
-    }
 
-    await page.waitForTimeout(1500);
+        logger.info(`${PLATFORM_NAME}准备进入全球区并处理授权确认`, {
+            currentUrl: initialUrl,
+            useTemporaryPage: shouldCloseTemporaryPage
+        });
 
-    const finalState = await waitForTemuLoginSuccess(page, 20_000);
-    if (!finalState.success) {
-        const currentState = await resolveTemuLoginState(page);
-        if (currentState.loggedIn) {
+        await authorizationPage.goto(TEMU_GLOBAL_SETTLE_LOGIN_URL, {
+            waitUntil: 'domcontentloaded',
+            timeout: 60_000
+        });
+        await authorizationPage.waitForTimeout(2500);
+
+        let currentUrl = String(authorizationPage.url() || '');
+        let currentState = await resolveTemuLoginState(authorizationPage);
+
+        if (!currentState.loggedIn) {
             return {
-                success: true,
-                reason: 'authorization_optional_step_skipped',
-                currentUrl: page.url(),
+                success: false,
+                reason: 'not_logged_in',
+                currentUrl,
                 loginState: currentState
             };
         }
 
-        return {
-            success: false,
-            reason: finalState.reason || 'authorization_navigation_timeout',
-            message: `${PLATFORM_NAME}已点击授权确认，但未成功进入全球区`,
-            bodyPreview: finalState.bodyPreview,
-            loginState: finalState.loginState || await resolveTemuLoginState(page)
-        };
-    }
+        if (isTemuSellerPage(currentUrl) && !isTemuGlobalSettlePage(currentUrl)) {
+            logger.info(`${PLATFORM_NAME}全球区授权页已自动跳过`, {
+                currentUrl,
+                reason: 'already_entered_global_region'
+            });
+            return {
+                success: true,
+                reason: 'already_entered_global_region',
+                currentUrl,
+                loginState: currentState
+            };
+        }
 
-    return {
-        success: true,
-        reason: 'global_region_authorized',
-        currentUrl: page.url(),
-        loginState: finalState.loginState
-    };
+        const labelResult = await clickTemuAuthorizationLabel(authorizationPage, 5_000);
+        logger.info(`${PLATFORM_NAME}全球区授权勾选结果`, labelResult);
+        if (labelResult.success) {
+            await authorizationPage.waitForTimeout(600);
+        }
+
+        const confirmResult = await clickTemuAuthorizationConfirmButton(authorizationPage, 5_000);
+        logger.info(`${PLATFORM_NAME}全球区授权确认结果`, confirmResult || { success: false });
+        if (labelResult.success && !confirmResult?.success) {
+            logger.warn(`${PLATFORM_NAME}已勾选授权但未找到进入按钮，继续按当前页面状态判断`, {
+                currentUrl: authorizationPage.url()
+            });
+        }
+
+        await authorizationPage.waitForTimeout(1500);
+
+        const finalState = await waitForTemuLoginSuccess(authorizationPage, 20_000);
+        if (!finalState.success) {
+            const currentState = await resolveTemuLoginState(authorizationPage);
+            if (currentState.loggedIn) {
+                return {
+                    success: true,
+                    reason: 'authorization_optional_step_skipped',
+                    currentUrl: authorizationPage.url(),
+                    loginState: currentState
+                };
+            }
+
+            return {
+                success: false,
+                reason: finalState.reason || 'authorization_navigation_timeout',
+                message: `${PLATFORM_NAME}已点击授权确认，但未成功进入全球区`,
+                bodyPreview: finalState.bodyPreview,
+                loginState: finalState.loginState || await resolveTemuLoginState(authorizationPage)
+            };
+        }
+
+        return {
+            success: true,
+            reason: 'global_region_authorized',
+            currentUrl: authorizationPage.url(),
+            loginState: finalState.loginState
+        };
+    } finally {
+        if (shouldCloseTemporaryPage && authorizationPage && !authorizationPage.isClosed()) {
+            await authorizationPage.close().catch((error) => {
+                logger.warn(`${PLATFORM_NAME}关闭临时授权页失败`, {
+                    message: error?.message || String(error)
+                });
+            });
+        }
+    }
 }
 
 export async function performTemuLogin(page, settings, pageOperator) {

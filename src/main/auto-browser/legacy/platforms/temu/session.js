@@ -567,6 +567,41 @@ async function fetchTemuUserInfo(headersTemplate = {}, cookies = {}) {
     };
 }
 
+export async function validateTemuSessionBundle(sessionBundle = {}) {
+    const headersTemplate = sessionBundle?.headersTemplate && typeof sessionBundle.headersTemplate === 'object'
+        ? sessionBundle.headersTemplate
+        : (sessionBundle?.headers && typeof sessionBundle.headers === 'object'
+            ? sessionBundle.headers
+            : {});
+    const cookies = sessionBundle?.cookies && typeof sessionBundle.cookies === 'object'
+        ? sessionBundle.cookies
+        : (sessionBundle?.cookies_global && typeof sessionBundle.cookies_global === 'object'
+            ? sessionBundle.cookies_global
+            : {});
+
+    const userInfoResult = await fetchTemuUserInfo(headersTemplate, cookies);
+    if (!userInfoResult?.success) {
+        return {
+            success: false,
+            message: userInfoResult?.message || 'Temu session 校验失败',
+            status: userInfoResult?.status || 0,
+            accountId: '',
+            accountType: '',
+            mallList: []
+        };
+    }
+
+    return {
+        success: true,
+        message: userInfoResult.message || 'Temu session 校验成功',
+        status: userInfoResult.status || 200,
+        accountId: userInfoResult.accountId || '',
+        accountType: userInfoResult.accountType || '',
+        mallList: Array.isArray(userInfoResult.mallList) ? userInfoResult.mallList : [],
+        payload: userInfoResult.payload || null
+    };
+}
+
 async function findRegionSwitcherContainer(page) {
     const locator = page.locator('div');
     const containerIndex = await locator.evaluateAll((nodes, markers) => {
@@ -963,5 +998,6 @@ export async function collectTemuSessionBundle(page, options = {}) {
 
 export default {
     collectTemuSessionBundle,
-    getTemuCurrentSessionContext
+    getTemuCurrentSessionContext,
+    validateTemuSessionBundle
 };

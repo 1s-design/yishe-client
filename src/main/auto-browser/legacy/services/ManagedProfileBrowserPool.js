@@ -799,6 +799,8 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
   const profile = resolveProfile(options.profileId);
   const session = getSession(profile.id, true);
   const headless = typeof options.headless === "boolean" ? options.headless : getHeadlessMode();
+  const allowLaunch = options.allowLaunch !== false;
+  const skipWindowMaximize = options.skipWindowMaximize === true;
   const executablePath = String(
     options.chromeExecutablePath || process.env.CHROME_EXECUTABLE_PATH || getDefaultChromeExecutablePath(),
   ).trim();
@@ -861,6 +863,9 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
 
       const existingEndpoint = await checkCdpEndpointAvailable(cdpEndpoint);
       if (!existingEndpoint.ok) {
+        if (!allowLaunch) {
+          throw new Error(`当前环境浏览器未启动，静默采集不会自动拉起新窗口。请先打开该执行环境后再重试。`);
+        }
         const staleProcessCleanup = await killChromeProcessesByUserDataDir(profile.userDataDir, {
           excludePids: session.chromePid ? [session.chromePid] : [],
         }).catch(() => null);
@@ -951,7 +956,9 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
         background: true,
         headless,
       });
-      await setBrowserWindowMaximized(session.contextInstance, headless);
+      if (!skipWindowMaximize) {
+        await setBrowserWindowMaximized(session.contextInstance, headless);
+      }
       await installBrowserPageRuntime(session.contextInstance, () => buildProfileRuntimePayload(getBrowserProfile(profile.id) || profile), {
         logger,
         logLabel: "安装浏览器页面运行时失败:",

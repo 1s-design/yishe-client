@@ -25,6 +25,8 @@ import {
 import {
     bindTemuUploadedImagesToEditPage,
     createTemuLiveRequestCapture,
+    resolveTemuLoginCredentials,
+    resolveTemuValidatedSessionContext,
     uploadTemuPublishImages
 } from './imageUpload.js';
 import {
@@ -75,6 +77,35 @@ export async function publishToTemu(publishInfo = {}) {
             needLogin: settings.needLogin,
             keepPageOpen: settings.keepPageOpen
         });
+
+        // 模板直发优先尝试“服务端实时 session -> 直接接口发布”，命中后无需再拉起发布页。
+        const directTemplateSessionResult = hasTemuProductTemplate(publishInfo)
+            ? await resolveTemuValidatedSessionContext(publishInfo, {
+                page: null,
+                collectRegionCookies: false,
+                persistCollectedSession: false
+            })
+            : null;
+        const directTemplateSession = directTemplateSessionResult?.success
+            ? directTemplateSessionResult.sessionContext
+            : null;
+        if (directTemplateSession) {
+            logger.info(`${PLATFORM_NAME}模板直发命中实时会话，直接走接口发布`, {
+                mallId: directTemplateSession.mallId || '',
+                mallName: directTemplateSession.mallName || '',
+                cookieCount: Object.keys(directTemplateSession.cookies || {}).length
+            });
+            pushTrace(executionTrace, 'detect_product_template_publish', 'success', {
+                mode: 'template_api_publish_direct',
+                sessionSource: directTemplateSession.source || directTemplateSessionResult?.source || 'stored_platform_session'
+            });
+
+            return await publishTemuByProductTemplate(null, publishInfo, {
+                executionTrace,
+                shouldKeepPageOpen: false,
+                sessionContext: directTemplateSession
+            });
+        }
 
         logger.info(`${PLATFORM_NAME}准备获取浏览器实例`, {
             profileId: publishInfo?.profileId || ''
@@ -140,11 +171,15 @@ export async function publishToTemu(publishInfo = {}) {
             pushTrace(executionTrace, 'check_login_state_for_template_publish', loginState.loggedIn ? 'success' : 'pending', loginState);
 
             if (!loginState.loggedIn) {
-                if (settings.needLogin) {
+                const loginCredentials = await resolveTemuLoginCredentials(publishInfo);
+                if (loginCredentials?.account && loginCredentials?.password) {
+                    logger.info(`${PLATFORM_NAME}模板直发准备使用账号密码自动登录`, {
+                        credentialSource: loginCredentials.source || 'stored_platform_session'
+                    });
                     const loginResult = await runTemuLoginSmallFeature({
                         ...publishInfo,
-                        account: settings.account,
-                        password: settings.password,
+                        account: loginCredentials.account,
+                        password: loginCredentials.password,
                         loginUrl: settings.loginUrl,
                         keepPageOpen: true,
                         profileId: publishInfo?.profileId
@@ -217,11 +252,15 @@ export async function publishToTemu(publishInfo = {}) {
         pushTrace(executionTrace, 'check_login_state', loginState.loggedIn ? 'success' : 'pending', loginState);
 
         if (!loginState.loggedIn) {
-            if (settings.needLogin) {
+            const loginCredentials = await resolveTemuLoginCredentials(publishInfo);
+            if (loginCredentials?.account && loginCredentials?.password) {
+                logger.info(`${PLATFORM_NAME}准备使用账号密码自动登录`, {
+                    credentialSource: loginCredentials.source || 'stored_platform_session'
+                });
                 const loginResult = await runTemuLoginSmallFeature({
                     ...publishInfo,
-                    account: settings.account,
-                    password: settings.password,
+                    account: loginCredentials.account,
+                    password: loginCredentials.password,
                     loginUrl: settings.loginUrl,
                     keepPageOpen: true,
                     profileId: publishInfo?.profileId

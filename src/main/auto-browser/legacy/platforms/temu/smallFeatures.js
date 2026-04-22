@@ -999,17 +999,22 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
         });
 
         if (managePage) {
-            const browser = await getOrCreateBrowser({ profileId });
-            page = await browser.newPage({ foreground: true });
+            const browser = await getOrCreateBrowser({
+                profileId,
+                skipWindowMaximize: true
+            });
+            page = await browser.newPage({ background: true, activate: false });
             await pageOperator.setupAntiDetection(page);
             pushTrace(executionTrace, 'open_page', 'success', {
                 reusedCurrentPage: false,
-                currentUrl: page.url()
+                currentUrl: page.url(),
+                activated: false
             });
         } else {
             pushTrace(executionTrace, 'open_page', 'success', {
                 reusedCurrentPage: true,
-                currentUrl: page.url()
+                currentUrl: page.url(),
+                activated: false
             });
         }
 

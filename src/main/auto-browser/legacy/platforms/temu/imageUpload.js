@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { readFile } from 'fs/promises';
 import { basename, extname } from 'path';
+import { getTokenValue } from '../../../../server';
 import { ImageManager } from '../../services/ImageManager.js';
 import { logger } from '../../utils/logger.js';
 import {
@@ -10,8 +11,13 @@ import {
     TEMU_IMAGE_UPLOAD_SIGNATURE_URL,
     TEMU_STORE_IMAGE_URL
 } from './constants.js';
-import { getTemuCurrentSessionContext } from './session.js';
+import {
+    collectTemuSessionBundle,
+    getTemuCurrentSessionContext,
+    validateTemuSessionBundle
+} from './session.js';
 import { clickClickableByText } from './page.js';
+import { runTemuLoginSmallFeature } from './smallFeatures.js';
 
 const TEMU_IMAGE_TRIGGER_LABELS = [
     '选择图片',
@@ -41,13 +47,30 @@ const TEMU_IMAGE_SECTION_KEYWORDS = [
 const TEMU_IMAGE_PICKER_CONFIRM_LABELS = ['确定', '确认', '完成', '选择', '提交', '保存'];
 const TEMU_UPLOAD_RETRY_LIMIT = 3;
 const TEMU_SESSION_REFRESH_RETRY_LIMIT = 1;
+const TEMU_REMOTE_API_BASE = process.env.NODE_ENV === 'development'
+    ? (process.env.YISHE_LOCAL_API_BASE || 'http://localhost:1520/api')
+    : (process.env.YISHE_REMOTE_API_BASE || 'https://1s.design:1520/api');
 
 function normalizeText(value) {
     return String(value || '').trim();
 }
 
+function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 function dedupeStrings(values = []) {
     return Array.from(new Set(values.map((item) => normalizeText(item)).filter(Boolean)));
+}
+
+function resolveTemuStoredCredentialPair(record = {}) {
+    const normalizedRecord = isPlainObject(record) ? record : {};
+    const session = isPlainObject(normalizedRecord?.session) ? normalizedRecord.session : {};
+
+    return {
+        account: normalizeText(normalizedRecord?.account || session?.account),
+        password: normalizeText(normalizedRecord?.password || session?.password)
+    };
 }
 
 function summarizeImageSourceForLog(value = '') {
@@ -333,6 +356,549 @@ function normalizeTemuUploadSessionContext(sessionContext = {}) {
             ? cookieCount
             : Object.keys(cookies).length,
         effectiveRegion: normalizeText(sessionContext.effectiveRegion || 'global') || 'global'
+    };
+}
+
+export function resolveTemuStoredSessionContext(publishInfo = {}, preferredSessionContext = null) {
+    const settings = publishInfo.platformOptions
+        || publishInfo.publishOptions
+        || publishInfo.platformSettings?.temu
+        || {};
+    const candidates = [
+        {
+            value: preferredSessionContext,
+            source: normalizeText(preferredSessionContext?.source || '')
+        },
+        {
+            value: publishInfo.temuStoredSession,
+            source: 'stored_platform_session'
+        },
+        {
+            value: settings.temuStoredSession,
+            source: 'stored_platform_session'
+        }
+    ];
+
+    for (const candidate of candidates) {
+        const normalized = normalizeTemuUploadSessionContext(candidate.value);
+        if (normalized?.success) {
+            return {
+                ...normalized,
+                source: normalizeText(normalized.source || candidate.source)
+            };
+        }
+    }
+
+    return null;
+}
+
+function buildTemuRealtimeStoredSessionContext(profileData = {}) {
+    const profileRecord = isPlainObject(profileData) ? profileData : {};
+    const userInfo = isPlainObject(profileRecord.userInfo) ? profileRecord.userInfo : {};
+    const session = isPlainObject(profileRecord.session) ? profileRecord.session : {};
+    const globalSession = isPlainObject(session.global) ? session.global : {};
+    const usSession = isPlainObject(session.us) ? session.us : {};
+    const euSession = isPlainObject(session.eu) ? session.eu : {};
+    const globalCookies = isPlainObject(globalSession.cookies)
+        ? globalSession.cookies
+        : (isPlainObject(profileRecord.cookies_global)
+            ? profileRecord.cookies_global
+            : (isPlainObject(profileRecord.cookies) ? profileRecord.cookies : {}));
+    const headersTemplate = isPlainObject(globalSession.headers)
+        ? globalSession.headers
+        : (isPlainObject(profileRecord.headersTemplate) ? profileRecord.headersTemplate : {});
+
+    return normalizeTemuUploadSessionContext({
+        source: 'stored_platform_session',
+        success: true,
+        storedProfile: profileRecord,
+        account: normalizeText(session?.account || profileRecord.account),
+        password: normalizeText(session?.password || profileRecord.password),
+        currentUrl: normalizeText(headersTemplate.referer || headersTemplate.origin),
+        userAgent: normalizeText(headersTemplate['user-agent'] || profileRecord.userAgent),
+        mallId: normalizeText(profileRecord.mallId || userInfo.mallId || headersTemplate.mallid),
+        mallName: normalizeText(profileRecord.mallName || userInfo.mallName),
+        accountId: normalizeText(profileRecord.accountId || userInfo.accountId),
+        accountType: normalizeText(profileRecord.accountType || userInfo.accountType),
+        mallList: Array.isArray(profileRecord.mallList)
+            ? profileRecord.mallList
+            : (Array.isArray(userInfo.mallList) ? userInfo.mallList : []),
+        antiContent: normalizeText(headersTemplate['anti-content'] || profileRecord.antiContent),
+        headers: headersTemplate,
+        headersTemplate,
+        regionHeaders: {
+            global: headersTemplate,
+            us: isPlainObject(usSession.headers) ? usSession.headers : {},
+            eu: isPlainObject(euSession.headers) ? euSession.headers : {}
+        },
+        cookies: globalCookies,
+        cookies_global: globalCookies,
+        cookies_us: isPlainObject(usSession.cookies) ? usSession.cookies : {},
+        cookies_eu: isPlainObject(euSession.cookies) ? euSession.cookies : {}
+    });
+}
+
+async function fetchTemuRealtimeStoredSessionProfile(profileId = '') {
+    const normalizedProfileId = normalizeText(profileId);
+    if (!normalizedProfileId) {
+        return null;
+    }
+
+    const token = normalizeText(getTokenValue());
+    if (!token) {
+        return null;
+    }
+
+    try {
+        const response = await fetch(`${TEMU_REMOTE_API_BASE}/user/getPlatformSessions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                platform: 'temu',
+                profileId: normalizedProfileId
+            })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            logger.warn(`${PLATFORM_NAME}实时获取已存储会话失败`, {
+                profileId: normalizedProfileId,
+                status: response.status
+            });
+            return null;
+        }
+
+        return isPlainObject(payload?.data)
+            ? payload.data
+            : (isPlainObject(payload) ? payload : null);
+    } catch (error) {
+        logger.warn(`${PLATFORM_NAME}实时获取已存储会话异常`, {
+            profileId: normalizedProfileId,
+            message: error?.message || String(error)
+        });
+        return null;
+    }
+}
+
+async function fetchTemuRealtimeStoredSessionContext(profileId = '') {
+    const profileRecord = await fetchTemuRealtimeStoredSessionProfile(profileId);
+    if (!profileRecord) {
+        return null;
+    }
+
+    return buildTemuRealtimeStoredSessionContext(profileRecord);
+}
+
+export async function resolveTemuRealtimeSessionContext(publishInfo = {}, preferredSessionContext = null) {
+    const directSession = resolveTemuStoredSessionContext(publishInfo, preferredSessionContext);
+    if (directSession?.success) {
+        return directSession;
+    }
+
+    const profileId = normalizeText(
+        publishInfo?.profileId
+        || publishInfo?.browserAutomationProfileId
+        || publishInfo?.meta?.profileId
+        || publishInfo?.metadata?.profileId
+    );
+
+    return await fetchTemuRealtimeStoredSessionContext(profileId);
+}
+
+function resolveTemuPublishProfileId(publishInfo = {}) {
+    return normalizeText(
+        publishInfo?.profileId
+        || publishInfo?.browserAutomationProfileId
+        || publishInfo?.meta?.profileId
+        || publishInfo?.metadata?.profileId
+    );
+}
+
+export async function resolveTemuLoginCredentials(publishInfo = {}, preferredSessionContext = null) {
+    const publishSettings = publishInfo.platformOptions
+        || publishInfo.publishOptions
+        || publishInfo.platformSettings?.temu
+        || {};
+    const explicitCredentials = {
+        account: normalizeText(publishSettings?.account || publishInfo?.account),
+        password: normalizeText(publishSettings?.password || publishInfo?.password)
+    };
+    if (explicitCredentials.account && explicitCredentials.password) {
+        return {
+            ...explicitCredentials,
+            source: 'publish_info'
+        };
+    }
+
+    const directCandidates = [
+        preferredSessionContext,
+        publishInfo?.temuStoredSession,
+        publishInfo?.platformOptions?.temuStoredSession,
+        publishInfo?.publishOptions?.temuStoredSession,
+        publishInfo?.platformSettings?.temu?.temuStoredSession
+    ];
+    for (const candidate of directCandidates) {
+        const credentials = resolveTemuStoredCredentialPair(candidate);
+        if (credentials.account && credentials.password) {
+            return {
+                ...credentials,
+                source: normalizeText(candidate?.source || 'stored_platform_session')
+            };
+        }
+    }
+
+    const storedProfile = isPlainObject(preferredSessionContext?.storedProfile)
+        ? preferredSessionContext.storedProfile
+        : null;
+    const storedProfileCredentials = resolveTemuStoredCredentialPair(storedProfile);
+    if (storedProfileCredentials.account && storedProfileCredentials.password) {
+        return {
+            ...storedProfileCredentials,
+            source: 'stored_platform_session',
+            storedProfile
+        };
+    }
+
+    const profileId = resolveTemuPublishProfileId(publishInfo);
+    if (!profileId) {
+        return null;
+    }
+
+    const profileRecord = await fetchTemuRealtimeStoredSessionProfile(profileId);
+    const realtimeCredentials = resolveTemuStoredCredentialPair(profileRecord);
+    if (!realtimeCredentials.account || !realtimeCredentials.password) {
+        return null;
+    }
+
+    return {
+        ...realtimeCredentials,
+        source: 'stored_platform_session',
+        storedProfile: profileRecord
+    };
+}
+
+function buildMergedRegionSession(nextCookies = {}, nextHeaders = {}, fallbackSession = {}, updatedAt = '') {
+    const fallbackCookies = isPlainObject(fallbackSession?.cookies) ? fallbackSession.cookies : {};
+    const fallbackHeaders = isPlainObject(fallbackSession?.headers) ? fallbackSession.headers : {};
+
+    return {
+        cookies: Object.keys(nextCookies).length ? nextCookies : fallbackCookies,
+        headers: Object.keys(nextHeaders).length ? nextHeaders : fallbackHeaders,
+        updatedAt
+    };
+}
+
+function buildTemuStoredSessionUpdatePayload(sessionBundle = {}, profileId = '', existingProfile = {}, credentials = null) {
+    // 服务端结构尽量增量更新，避免现场采集时把历史可用区域信息整体抹掉。
+    const collectedAt = normalizeText(sessionBundle?.collectedAt || new Date().toISOString()) || new Date().toISOString();
+    const currentProfile = isPlainObject(existingProfile) ? existingProfile : {};
+    const currentSession = isPlainObject(currentProfile?.session) ? currentProfile.session : {};
+    const currentUserInfo = isPlainObject(currentProfile?.userInfo) ? currentProfile.userInfo : {};
+    const storedCredentials = resolveTemuStoredCredentialPair(currentProfile);
+    const nextCredentials = {
+        account: normalizeText(credentials?.account || sessionBundle?.account || storedCredentials.account),
+        password: normalizeText(credentials?.password || sessionBundle?.password || storedCredentials.password)
+    };
+    const headersTemplate = isPlainObject(sessionBundle?.headersTemplate)
+        ? sessionBundle.headersTemplate
+        : {};
+    const regionHeaders = isPlainObject(sessionBundle?.regionHeaders)
+        ? sessionBundle.regionHeaders
+        : {};
+    const nextGlobalHeaders = Object.keys(headersTemplate).length
+        ? headersTemplate
+        : (isPlainObject(regionHeaders?.global)
+            ? regionHeaders.global
+            : (isPlainObject(currentProfile?.headersTemplate) ? currentProfile.headersTemplate : {}));
+    const mallList = Array.isArray(sessionBundle?.mallList) && sessionBundle.mallList.length
+        ? sessionBundle.mallList
+        : (Array.isArray(currentProfile?.mallList)
+            ? currentProfile.mallList
+            : (Array.isArray(currentUserInfo?.mallList) ? currentUserInfo.mallList : []));
+    const mallId = normalizeText(sessionBundle?.mallId || currentProfile?.mallId || currentUserInfo?.mallId);
+    const mallName = normalizeText(sessionBundle?.mallName || currentProfile?.mallName || currentUserInfo?.mallName);
+    const accountId = normalizeText(sessionBundle?.accountId || currentProfile?.accountId || currentUserInfo?.accountId);
+    const accountType = normalizeText(sessionBundle?.accountType || currentProfile?.accountType || currentUserInfo?.accountType);
+    const hasFreshUserInfo = !!accountId || mallList.length > 0;
+
+    return {
+        profiles: {
+            [profileId]: {
+                mallId,
+                mallName,
+                accountId,
+                accountType,
+                mallList,
+                headersTemplate: nextGlobalHeaders,
+                userInfo: {
+                    status: hasFreshUserInfo
+                        ? 'success'
+                        : (normalizeText(currentUserInfo?.status || 'missing') || 'missing'),
+                    message: hasFreshUserInfo
+                        ? '发布时实时采集会话并同步用户信息'
+                        : (normalizeText(currentUserInfo?.message || '暂无用户信息，可手动获取') || '暂无用户信息，可手动获取'),
+                    fetchedAt: hasFreshUserInfo
+                        ? collectedAt
+                        : normalizeText(currentUserInfo?.fetchedAt || ''),
+                    accountId,
+                    accountType,
+                    mallId,
+                    mallName,
+                    mallList,
+                    mallCount: mallList.length
+                },
+                updatedAt: collectedAt,
+                validation: {
+                    status: 'fresh',
+                    message: '发布时实时采集会话已更新',
+                    checkedAt: collectedAt
+                },
+                session: {
+                    account: nextCredentials.account,
+                    password: nextCredentials.password,
+                    global: buildMergedRegionSession(
+                        isPlainObject(sessionBundle?.cookies_global)
+                            ? sessionBundle.cookies_global
+                            : (isPlainObject(sessionBundle?.cookies) ? sessionBundle.cookies : {}),
+                        nextGlobalHeaders,
+                        currentSession?.global,
+                        collectedAt
+                    ),
+                    us: buildMergedRegionSession(
+                        isPlainObject(sessionBundle?.cookies_us) ? sessionBundle.cookies_us : {},
+                        isPlainObject(regionHeaders?.us) ? regionHeaders.us : {},
+                        currentSession?.us,
+                        collectedAt
+                    ),
+                    eu: buildMergedRegionSession(
+                        isPlainObject(sessionBundle?.cookies_eu) ? sessionBundle.cookies_eu : {},
+                        isPlainObject(regionHeaders?.eu) ? regionHeaders.eu : {},
+                        currentSession?.eu,
+                        collectedAt
+                    )
+                }
+            }
+        }
+    };
+}
+
+async function persistTemuCollectedSessionToServer(sessionBundle = {}, profileId = '', existingProfile = null, credentials = null) {
+    const normalizedProfileId = normalizeText(profileId);
+    const token = normalizeText(getTokenValue());
+    if (!normalizedProfileId || !token) {
+        return {
+            success: false,
+            skipped: true,
+            message: !normalizedProfileId ? '缺少 profileId，跳过回写会话' : '缺少登录 token，跳过回写会话'
+        };
+    }
+
+    try {
+        let currentProfile = isPlainObject(existingProfile) ? existingProfile : {};
+        if (!Object.keys(currentProfile).length) {
+            currentProfile = await fetchTemuRealtimeStoredSessionProfile(normalizedProfileId) || {};
+        }
+
+        const response = await fetch(`${TEMU_REMOTE_API_BASE}/user/updatePlatformSessions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                platform: 'temu',
+                data: buildTemuStoredSessionUpdatePayload(sessionBundle, normalizedProfileId, currentProfile, credentials)
+            })
+        });
+        if (!response.ok) {
+            return {
+                success: false,
+                skipped: false,
+                message: `回写 Temu 会话失败，状态码 ${response.status}`
+            };
+        }
+
+        return {
+            success: true,
+            skipped: false,
+            message: 'Temu 会话已回写服务端'
+        };
+    } catch (error) {
+        return {
+            success: false,
+            skipped: false,
+            message: error?.message || String(error)
+        };
+    }
+}
+
+export async function resolveTemuValidatedSessionContext(publishInfo = {}, options = {}) {
+    const preferredSessionContext = options.preferredSessionContext || null;
+    const page = options.page || null;
+    const pageOperator = options.pageOperator || null;
+    const collectRegionCookies = options.collectRegionCookies !== false;
+    const persistCollectedSession = options.persistCollectedSession !== false;
+    const profileId = resolveTemuPublishProfileId(publishInfo);
+
+    logger.info(`${PLATFORM_NAME}准备获取并校验实时会话`, {
+        profileId: profileId || ''
+    });
+    // 发布前先取一次服务端实时 session，能直接用就不再打断当前浏览器环境。
+    const realtimeSession = await resolveTemuRealtimeSessionContext(
+        publishInfo,
+        preferredSessionContext
+    );
+    if (realtimeSession?.success) {
+        logger.info(`${PLATFORM_NAME}已获取服务端实时会话，开始校验`, {
+            profileId: profileId || '',
+            source: realtimeSession.source || 'stored_platform_session'
+        });
+        const validationResult = await validateTemuSessionBundle(realtimeSession);
+        if (validationResult?.success) {
+            logger.info(`${PLATFORM_NAME}实时会话校验通过`, {
+                profileId: profileId || '',
+                source: realtimeSession.source || 'stored_platform_session',
+                accountId: validationResult.accountId || '',
+                mallCount: Array.isArray(validationResult.mallList) ? validationResult.mallList.length : 0
+            });
+            return {
+                success: true,
+                source: realtimeSession.source || 'stored_platform_session',
+                sessionContext: {
+                    ...realtimeSession,
+                    accountId: realtimeSession.accountId || validationResult.accountId || '',
+                    accountType: realtimeSession.accountType || validationResult.accountType || '',
+                    mallList: Array.isArray(realtimeSession.mallList) && realtimeSession.mallList.length
+                        ? realtimeSession.mallList
+                        : validationResult.mallList || []
+                },
+                validationResult,
+                persisted: false
+            };
+        }
+
+        logger.warn(`${PLATFORM_NAME}实时会话校验失败，准备回退现场采集`, {
+            profileId: profileId || '',
+            source: realtimeSession.source || 'stored_platform_session',
+            message: validationResult?.message || 'session_invalid'
+        });
+    }
+
+    if (!page) {
+        return {
+            success: false,
+            message: realtimeSession?.success
+                ? '实时会话校验失败，且当前无可用页面执行现场采集'
+                : '当前未获取到可用 Temu 会话'
+        };
+    }
+
+    logger.info(`${PLATFORM_NAME}准备现场采集会话`, {
+        profileId: profileId || '',
+        collectRegionCookies
+    });
+    let collectedSessionResult = await collectTemuSessionBundle(page, {
+        collectRegionCookies
+    });
+    let resolvedLoginCredentials = null;
+    // 只有校验失败且页面明确处于未登录时，才回退到自动登录再重采。
+    if ((!collectedSessionResult?.success || !collectedSessionResult.sessionBundle) && collectedSessionResult?.reason === 'login_required') {
+        resolvedLoginCredentials = await resolveTemuLoginCredentials(
+            publishInfo,
+            realtimeSession || preferredSessionContext
+        );
+        if (resolvedLoginCredentials?.account && resolvedLoginCredentials?.password) {
+            logger.info(`${PLATFORM_NAME}现场采集检测到未登录，准备使用已存账号密码自动登录`, {
+                profileId: profileId || '',
+                credentialSource: resolvedLoginCredentials.source || 'stored_platform_session'
+            });
+            const loginResult = await runTemuLoginSmallFeature({
+                ...publishInfo,
+                profileId,
+                account: resolvedLoginCredentials.account,
+                password: resolvedLoginCredentials.password,
+                keepPageOpen: true
+            }, {
+                page,
+                pageOperator
+            });
+            if (!loginResult?.success) {
+                return {
+                    success: false,
+                    message: loginResult?.message || collectedSessionResult?.message || 'Temu 自动登录失败'
+                };
+            }
+
+            logger.info(`${PLATFORM_NAME}自动登录成功，准备重新采集会话`, {
+                profileId: profileId || '',
+                credentialSource: resolvedLoginCredentials.source || 'stored_platform_session'
+            });
+            collectedSessionResult = await collectTemuSessionBundle(page, {
+                collectRegionCookies
+            });
+        }
+    }
+    if (!collectedSessionResult?.success || !collectedSessionResult.sessionBundle) {
+        return {
+            success: false,
+            message: collectedSessionResult?.message || 'Temu 现场采集会话失败'
+        };
+    }
+
+    let persisted = false;
+    let persistMessage = '';
+    const storedProfile = isPlainObject(realtimeSession?.storedProfile) ? realtimeSession.storedProfile : null;
+    logger.info(`${PLATFORM_NAME}现场采集会话成功`, {
+        profileId: profileId || '',
+        cookieCount: Object.keys(collectedSessionResult.sessionBundle?.cookies || {}).length
+    });
+    if (persistCollectedSession) {
+        const persistResult = await persistTemuCollectedSessionToServer(
+            collectedSessionResult.sessionBundle,
+            profileId,
+            storedProfile,
+            resolvedLoginCredentials
+        );
+        persisted = !!persistResult?.success;
+        persistMessage = persistResult?.message || '';
+
+        if (persistResult?.success) {
+            logger.info(`${PLATFORM_NAME}现场采集会话已回写服务端`, {
+                profileId: profileId || ''
+            });
+        } else if (!persistResult?.skipped) {
+            logger.warn(`${PLATFORM_NAME}现场采集会话回写服务端失败`, {
+                profileId: profileId || '',
+                message: persistMessage
+            });
+        }
+    }
+
+    return {
+        success: true,
+        source: 'live_page_session',
+        sessionContext: {
+            ...collectedSessionResult.sessionBundle,
+            account: normalizeText(
+                collectedSessionResult.sessionBundle?.account
+                || resolvedLoginCredentials?.account
+                || realtimeSession?.account
+            ),
+            password: normalizeText(
+                collectedSessionResult.sessionBundle?.password
+                || resolvedLoginCredentials?.password
+                || realtimeSession?.password
+            ),
+            source: 'live_page_session'
+        },
+        validationResult: {
+            success: true,
+            message: '现场采集会话成功'
+        },
+        persisted,
+        persistMessage
     };
 }
 
@@ -990,11 +1556,21 @@ export async function bindTemuUploadedImagesToEditPage(page, uploadedImages = []
 }
 
 export async function uploadTemuPublishImages(page, publishInfo = {}, options = {}) {
+    const resolvedSession = await resolveTemuValidatedSessionContext(publishInfo, {
+        preferredSessionContext: options.sessionContext,
+        page,
+        collectRegionCookies: false,
+        persistCollectedSession: true
+    });
+
     return await uploadTemuImagesToCloud(
         page,
         resolveTemuPublishImageSources(publishInfo),
         {
             ...options,
+            sessionContext: resolvedSession?.success
+                ? resolvedSession.sessionContext
+                : options.sessionContext,
             resourceLabel: options.resourceLabel || '商品图片',
             emptyMessage: options.emptyMessage || `${PLATFORM_NAME}发布数据未提供图片，跳过图片上传`
         }
