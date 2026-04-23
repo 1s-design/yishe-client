@@ -200,6 +200,86 @@ function collectTemuCookieMaps(cookieEntries = [], options = {}) {
     };
 }
 
+export function inspectTemuSessionBundleCompleteness(sessionBundle = {}, options = {}) {
+    const requireRegionalCookies = options.requireRegionalCookies !== false;
+    const requireAntiContent = options.requireAntiContent !== false;
+    const requireIdentity = options.requireIdentity !== false;
+    const globalCookies = sessionBundle?.cookies_global && typeof sessionBundle.cookies_global === 'object'
+        ? sessionBundle.cookies_global
+        : (sessionBundle?.cookies && typeof sessionBundle.cookies === 'object'
+            ? sessionBundle.cookies
+            : {});
+    const usCookies = sessionBundle?.cookies_us && typeof sessionBundle.cookies_us === 'object'
+        ? sessionBundle.cookies_us
+        : {};
+    const euCookies = sessionBundle?.cookies_eu && typeof sessionBundle.cookies_eu === 'object'
+        ? sessionBundle.cookies_eu
+        : {};
+    const headersTemplate = sessionBundle?.headersTemplate && typeof sessionBundle.headersTemplate === 'object'
+        ? sessionBundle.headersTemplate
+        : (sessionBundle?.headers && typeof sessionBundle.headers === 'object'
+            ? sessionBundle.headers
+            : {});
+    const antiContent = String(
+        sessionBundle?.antiContent || headersTemplate['anti-content'] || ''
+    ).trim();
+    const mallList = Array.isArray(sessionBundle?.mallList) ? sessionBundle.mallList : [];
+    const accountId = String(sessionBundle?.accountId || '').trim();
+    const mallId = String(sessionBundle?.mallId || headersTemplate.mallid || '').trim();
+    const missing = [];
+
+    if (!Object.keys(globalCookies).length) {
+        missing.push('全球 Cookie');
+    }
+    if (requireRegionalCookies && !Object.keys(usCookies).length) {
+        missing.push('美区 Cookie');
+    }
+    if (requireRegionalCookies && !Object.keys(euCookies).length) {
+        missing.push('欧区 Cookie');
+    }
+    if (requireAntiContent && !antiContent) {
+        missing.push('anti-content');
+    }
+    if (requireIdentity && !accountId) {
+        missing.push('账号身份');
+    }
+    if (requireIdentity && !mallId) {
+        missing.push('店铺 ID');
+    }
+    if (requireIdentity && !mallList.length) {
+        missing.push('店铺列表');
+    }
+
+    return {
+        success: missing.length === 0,
+        missing,
+        cookieCounts: {
+            global: Object.keys(globalCookies).length,
+            us: Object.keys(usCookies).length,
+            eu: Object.keys(euCookies).length
+        },
+        accountId,
+        mallId,
+        mallCount: mallList.length,
+        antiContentReady: !!antiContent
+    };
+}
+
+function buildTemuSessionIncompleteMessage(completeness, extraReasons = []) {
+    const missingText = Array.isArray(completeness?.missing) && completeness.missing.length
+        ? `缺少 ${completeness.missing.join(' / ')}`
+        : '关键信息不完整';
+    const normalizedReasons = Array.from(new Set(
+        (Array.isArray(extraReasons) ? extraReasons : [])
+            .map((item) => String(item || '').trim())
+            .filter(Boolean)
+    ));
+
+    return normalizedReasons.length
+        ? `Temu 会话采集不完整，${missingText}；${normalizedReasons.join('；')}`
+        : `Temu 会话采集不完整，${missingText}`;
+}
+
 async function resolveTemuCurrentUserAgent(page, fallbackValue = '') {
     const fallback = String(fallbackValue || '').trim();
     if (!page) {
@@ -876,9 +956,6 @@ export async function collectTemuSessionBundle(page, options = {}) {
         }
 
         const userInfoResult = await fetchTemuUserInfo(headersTemplate, cookiesGlobal);
-        if (!userInfoResult.success) {
-            warnings.push(`mallList 获取失败: ${userInfoResult.message || 'unknown error'}`);
-        }
 
         const mallList = Array.isArray(userInfoResult.mallList) ? userInfoResult.mallList : [];
         const selectedMall = pickSelectedMall(mallList, initialMallId);
@@ -926,63 +1003,93 @@ export async function collectTemuSessionBundle(page, options = {}) {
             ]))
         );
 
+        const sessionBundle = {
+            collectedAt: new Date().toISOString(),
+            currentUrl: page.url(),
+            mallId,
+            mallName,
+            mallList,
+            accountId: userInfoResult.accountId || '',
+            accountType: userInfoResult.accountType || '',
+            antiContent: trafficCapture.state.antiContent || '',
+            userAgent,
+            headersTemplate,
+            regionHeaders: {
+                global: {
+                    ...headersTemplate
+                },
+                us: buildRegionHeaders('us', {
+                    userAgent,
+                    antiContent: trafficCapture.state.antiContent,
+                    mallId
+                }),
+                eu: buildRegionHeaders('eu', {
+                    userAgent,
+                    antiContent: trafficCapture.state.antiContent,
+                    mallId
+                })
+            },
+            cookies: cookiesGlobal,
+            cookies_global: cookiesGlobal,
+            cookies_us: regionCollection.us.cookies || {},
+            cookies_eu: regionCollection.eu.cookies || {},
+            cookieDomains: summarizeCookieDomains(temuCookieEntries),
+            requestCapture: {
+                requestCount: trafficCapture.state.requestCount,
+                lastRequestUrl: trafficCapture.state.lastRequestUrl,
+                mallIdFromTraffic: initialMallId,
+                capturedHeaders,
+                requestSamples: trafficCapture.state.requestSamples
+            },
+            regionCollection: {
+                enabled: regionCollection.enabled,
+                us: {
+                    success: !!regionCollection.us.success,
+                    currentUrl: regionCollection.us.currentUrl || '',
+                    strategy: regionCollection.us.strategy || '',
+                    cookieCount: regionCollection.us.cookieCount || 0
+                },
+                eu: {
+                    success: !!regionCollection.eu.success,
+                    currentUrl: regionCollection.eu.currentUrl || '',
+                    strategy: regionCollection.eu.strategy || '',
+                    cookieCount: regionCollection.eu.cookieCount || 0
+                }
+            },
+            warnings
+        };
+        const completeness = inspectTemuSessionBundleCompleteness(sessionBundle, {
+            requireRegionalCookies: options.collectRegionCookies !== false,
+            requireAntiContent: true,
+            requireIdentity: true
+        });
+        const failureReasons = [];
+
+        if (!userInfoResult.success) {
+            failureReasons.push(`身份信息拉取失败: ${userInfoResult.message || 'unknown error'}`);
+        }
+        if (!trafficCapture.state.antiContent) {
+            failureReasons.push('未捕获到 anti-content');
+        }
+        if (options.collectRegionCookies !== false && !regionCollection.us.success) {
+            failureReasons.push(`美区 Cookie 采集失败: ${regionCollection.us.warning || '未采集到独立 cookies'}`);
+        }
+        if (options.collectRegionCookies !== false && !regionCollection.eu.success) {
+            failureReasons.push(`欧区 Cookie 采集失败: ${regionCollection.eu.warning || '未采集到独立 cookies'}`);
+        }
+
+        if (!completeness.success) {
+            return {
+                success: false,
+                reason: 'session_incomplete',
+                message: buildTemuSessionIncompleteMessage(completeness, failureReasons),
+                sessionBundle
+            };
+        }
+
         return {
             success: true,
-            sessionBundle: {
-                collectedAt: new Date().toISOString(),
-                currentUrl: page.url(),
-                mallId,
-                mallName,
-                mallList,
-                accountId: userInfoResult.accountId || '',
-                accountType: userInfoResult.accountType || '',
-                antiContent: trafficCapture.state.antiContent || '',
-                userAgent,
-                headersTemplate,
-                regionHeaders: {
-                    global: {
-                        ...headersTemplate
-                    },
-                    us: buildRegionHeaders('us', {
-                        userAgent,
-                        antiContent: trafficCapture.state.antiContent,
-                        mallId
-                    }),
-                    eu: buildRegionHeaders('eu', {
-                        userAgent,
-                        antiContent: trafficCapture.state.antiContent,
-                        mallId
-                    })
-                },
-                cookies: cookiesGlobal,
-                cookies_global: cookiesGlobal,
-                cookies_us: regionCollection.us.cookies || {},
-                cookies_eu: regionCollection.eu.cookies || {},
-                cookieDomains: summarizeCookieDomains(temuCookieEntries),
-                requestCapture: {
-                    requestCount: trafficCapture.state.requestCount,
-                    lastRequestUrl: trafficCapture.state.lastRequestUrl,
-                    mallIdFromTraffic: initialMallId,
-                    capturedHeaders,
-                    requestSamples: trafficCapture.state.requestSamples
-                },
-                regionCollection: {
-                    enabled: regionCollection.enabled,
-                    us: {
-                        success: !!regionCollection.us.success,
-                        currentUrl: regionCollection.us.currentUrl || '',
-                        strategy: regionCollection.us.strategy || '',
-                        cookieCount: regionCollection.us.cookieCount || 0
-                    },
-                    eu: {
-                        success: !!regionCollection.eu.success,
-                        currentUrl: regionCollection.eu.currentUrl || '',
-                        strategy: regionCollection.eu.strategy || '',
-                        cookieCount: regionCollection.eu.cookieCount || 0
-                    }
-                },
-                warnings
-            }
+            sessionBundle
         };
     } catch (error) {
         logger.error(`${PLATFORM_NAME}采集会话信息失败:`, error);
@@ -999,5 +1106,6 @@ export async function collectTemuSessionBundle(page, options = {}) {
 export default {
     collectTemuSessionBundle,
     getTemuCurrentSessionContext,
+    inspectTemuSessionBundleCompleteness,
     validateTemuSessionBundle
 };

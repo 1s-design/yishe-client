@@ -1,7 +1,7 @@
 import { getOrCreateBrowser } from '../../services/BrowserService.js';
 import { PageOperator } from '../../services/PageOperator.js';
 import { logger } from '../../utils/logger.js';
-import { PLATFORM_NAME, TEMU_SELLER_HOME_URL } from './constants.js';
+import { PLATFORM_NAME } from './constants.js';
 import {
     normalizeTemuSettings,
     pushTrace,
@@ -153,81 +153,6 @@ export async function publishToTemu(publishInfo = {}) {
             pushTrace(executionTrace, 'detect_product_template_publish', 'success', {
                 mode: 'template_api_publish'
             });
-
-            logger.info(`${PLATFORM_NAME}模板直发准备打开卖家中心主页`, {
-                sellerHomeUrl: TEMU_SELLER_HOME_URL
-            });
-            await page.goto(TEMU_SELLER_HOME_URL, {
-                waitUntil: 'domcontentloaded',
-                timeout: 60000
-            });
-            await page.waitForTimeout(3000);
-            pushTrace(executionTrace, 'open_seller_home_for_template_publish', 'success', {
-                currentUrl: page.url()
-            });
-
-            let loginState = await resolveTemuLoginState(page);
-            logger.info(`${PLATFORM_NAME}模板直发登录检测结果: ${loginState.loggedIn ? '已登录' : '未登录'}`, loginState);
-            pushTrace(executionTrace, 'check_login_state_for_template_publish', loginState.loggedIn ? 'success' : 'pending', loginState);
-
-            if (!loginState.loggedIn) {
-                const loginCredentials = await resolveTemuLoginCredentials(publishInfo);
-                if (loginCredentials?.account && loginCredentials?.password) {
-                    logger.info(`${PLATFORM_NAME}模板直发准备使用账号密码自动登录`, {
-                        credentialSource: loginCredentials.source || 'stored_platform_session'
-                    });
-                    const loginResult = await runTemuLoginSmallFeature({
-                        ...publishInfo,
-                        account: loginCredentials.account,
-                        password: loginCredentials.password,
-                        loginUrl: settings.loginUrl,
-                        keepPageOpen: true,
-                        profileId: publishInfo?.profileId
-                    }, {
-                        page,
-                        pageOperator
-                    });
-                    if (!loginResult.success) {
-                        pushTrace(executionTrace, 'perform_login_for_template_publish', 'failed', {
-                            reason: loginResult.data?.loginState?.reason || loginResult.message,
-                            currentUrl: page.url()
-                        });
-                        const snapshot = await collectTemuFrameworkSnapshot(page);
-                        return {
-                            success: false,
-                            message: loginResult.message || `${PLATFORM_NAME}模板直发自动登录失败`,
-                            data: {
-                                frameworkReady: false,
-                                loginRequired: true,
-                                autoLoginAttempted: true,
-                                autoLoginSuccess: false,
-                                currentUrl: page.url(),
-                                snapshot,
-                                executionTrace
-                            }
-                        };
-                    }
-
-                    loginState = loginResult.data?.loginState || await resolveTemuLoginState(page);
-                    pushTrace(executionTrace, 'perform_login_for_template_publish', 'success', {
-                        currentUrl: page.url()
-                    });
-                } else {
-                    const snapshot = await collectTemuFrameworkSnapshot(page);
-                    return {
-                        success: false,
-                        message: `${PLATFORM_NAME}当前环境未登录，请先登录后再执行模板直发`,
-                        data: {
-                            frameworkReady: false,
-                            loginRequired: true,
-                            autoLoginAttempted: false,
-                            currentUrl: page.url(),
-                            snapshot,
-                            executionTrace
-                        }
-                    };
-                }
-            }
 
             return await publishTemuByProductTemplate(page, publishInfo, {
                 executionTrace,

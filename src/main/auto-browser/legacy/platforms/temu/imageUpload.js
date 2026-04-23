@@ -14,6 +14,7 @@ import {
 import {
   collectTemuSessionBundle,
   getTemuCurrentSessionContext,
+  inspectTemuSessionBundleCompleteness,
   validateTemuSessionBundle,
 } from "./session.js";
 import { clickClickableByText } from "./page.js";
@@ -786,7 +787,7 @@ function buildTemuStoredSessionUpdatePayload(
         updatedAt: collectedAt,
         validation: {
           status: "fresh",
-          message: "发布时实时采集会话已更新",
+          message: "发布时已完成全量会话采集，建议重新校验",
           checkedAt: collectedAt,
         },
         session: {
@@ -915,39 +916,54 @@ export async function resolveTemuValidatedSessionContext(
     });
     const validationResult = await validateTemuSessionBundle(realtimeSession);
     if (validationResult?.success) {
-      logger.info(`${PLATFORM_NAME}实时会话校验通过`, {
+      const validatedSessionContext = {
+        ...realtimeSession,
+        accountId: realtimeSession.accountId || validationResult.accountId || "",
+        accountType:
+          realtimeSession.accountType || validationResult.accountType || "",
+        mallList:
+          Array.isArray(realtimeSession.mallList) && realtimeSession.mallList.length
+            ? realtimeSession.mallList
+            : validationResult.mallList || [],
+      };
+      const completeness = inspectTemuSessionBundleCompleteness(
+        validatedSessionContext,
+        {
+          requireRegionalCookies: collectRegionCookies,
+          requireAntiContent: true,
+          requireIdentity: true,
+        },
+      );
+      if (completeness.success) {
+        logger.info(`${PLATFORM_NAME}实时会话校验通过`, {
+          profileId: profileId || "",
+          source: realtimeSession.source || "stored_platform_session",
+          accountId: validationResult.accountId || "",
+          mallCount: Array.isArray(validationResult.mallList)
+            ? validationResult.mallList.length
+            : 0,
+        });
+        return {
+          success: true,
+          source: realtimeSession.source || "stored_platform_session",
+          sessionContext: validatedSessionContext,
+          validationResult,
+          persisted: false,
+        };
+      }
+
+      logger.warn(`${PLATFORM_NAME}实时会话信息不完整，准备回退现场采集`, {
         profileId: profileId || "",
         source: realtimeSession.source || "stored_platform_session",
-        accountId: validationResult.accountId || "",
-        mallCount: Array.isArray(validationResult.mallList)
-          ? validationResult.mallList.length
-          : 0,
+        missing: completeness.missing,
       });
-      return {
-        success: true,
+    } else {
+      logger.warn(`${PLATFORM_NAME}实时会话校验失败，准备回退现场采集`, {
+        profileId: profileId || "",
         source: realtimeSession.source || "stored_platform_session",
-        sessionContext: {
-          ...realtimeSession,
-          accountId:
-            realtimeSession.accountId || validationResult.accountId || "",
-          accountType:
-            realtimeSession.accountType || validationResult.accountType || "",
-          mallList:
-            Array.isArray(realtimeSession.mallList) &&
-            realtimeSession.mallList.length
-              ? realtimeSession.mallList
-              : validationResult.mallList || [],
-        },
-        validationResult,
-        persisted: false,
-      };
+        message: validationResult?.message || "session_invalid",
+      });
     }
-
-    logger.warn(`${PLATFORM_NAME}实时会话校验失败，准备回退现场采集`, {
-      profileId: profileId || "",
-      source: realtimeSession.source || "stored_platform_session",
-      message: validationResult?.message || "session_invalid",
-    });
   }
 
   if (!page) {

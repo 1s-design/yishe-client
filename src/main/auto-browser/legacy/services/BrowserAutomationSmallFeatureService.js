@@ -13,11 +13,11 @@ const SMALL_FEATURE_REGISTRY = {
         platform: 'temu',
         category: 'session',
         visibility: 'public',
-        description: '统一入口：可直接复用当前环境登录态获取会话，也可先自动登录再同步获取账号、店铺与区域 Cookie。',
+        description: '统一入口：直接执行 Temu 全量会话采集；可复用当前环境登录态，也可先自动登录，再一次性同步账号、店铺、anti-content 与 global/us/eu Cookie。',
         tips: [
             '默认优先直接获取，适合当前环境已经登录的情况。',
-            '切换为“登录并获取”后，会先执行账号密码登录，再继续获取 session 和 mallList。',
-            '成功后会返回核心 cookies、headersTemplate、mallList、mallId、accountId 和 accountType。'
+            '切换为“登录并获取”后，会先执行账号密码登录，再继续执行同一套全量采集流程。',
+            '成功条件已统一：需要拿到核心 cookies、headersTemplate、anti-content、mallList、mallId、accountId，以及 global/us/eu 三套区域 Cookie；缺一项都会判失败。'
         ],
         fields: [
             {
@@ -151,12 +151,13 @@ const SMALL_FEATURE_REGISTRY = {
         platform: 'temu',
         category: 'session',
         visibility: 'internal',
-        description: '只采集当前浏览器环境里已登录的 Temu 会话，返回 cookies、mallList、mallId、anti-content 和请求头模板。',
+        description: '只采集当前浏览器环境里已登录的 Temu 会话，但成功标准按全量采集执行：需要同步拿到账号、店铺、anti-content 与 global/us/eu Cookie。',
         tips: [
             '默认会使用当前活动环境；传 profileId 时会优先作用到指定环境。',
             '这个功能不会自动登录，也不需要输入账号密码。',
             '如需登录，请先单独执行 Temu 登录功能，或者让用户自己手动登录后再采集。',
-            '默认会尽力补抓 global/us/eu 三套 cookies，但区域采集失败不会中断主流程。',
+            '默认会补抓 global/us/eu 三套 cookies，并同步拉取 mallList、mallId、accountId 与 anti-content。',
+            '现在成功条件是“全量采集完成”；区域 Cookie、身份信息或 anti-content 缺失都会直接失败，不再按部分成功处理。',
             '若环境浏览器已经打开，默认会以后台页执行，不主动激活浏览器窗口，尽量减少对当前操作的打断。',
             '若环境浏览器尚未启动，则会正常拉起该环境浏览器后再继续采集。'
         ],
