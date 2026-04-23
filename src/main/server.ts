@@ -1162,13 +1162,29 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     const target = normalizeMaterialUploadTarget(req.body?.target, fallbackTarget);
 
     console.log(`[material-upload:${requestId}] ========== 开始处理请求 ==========`);
+    const requestLogPayload = { ...req.body, target };
+    if (typeof requestLogPayload.imageData === 'string' && requestLogPayload.imageData) {
+      requestLogPayload.imageData = `[data-url omitted, length=${requestLogPayload.imageData.length}]`;
+    }
     console.log(
       `[material-upload:${requestId}] 请求体:`,
-      JSON.stringify({ ...req.body, target }, null, 2),
+      JSON.stringify(requestLogPayload, null, 2),
     );
 
     try {
-      const { url, name, description, keywords } = req.body || {};
+      const {
+        url,
+        name,
+        description,
+        keywords,
+        imageData,
+        fileName,
+        contentType,
+        suffix,
+        width,
+        height,
+        fileSize,
+      } = req.body || {};
 
       if (!url || typeof url !== 'string') {
         console.error(`[material-upload:${requestId}] 参数验证失败: url 参数必填`);
@@ -1190,7 +1206,20 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
           throw new Error('主窗口未找到');
         }
 
-        const payload = { url, name, description, keywords, target };
+      const payload = {
+        url,
+        name,
+        description,
+        keywords,
+        imageData,
+        fileName,
+        contentType,
+        suffix,
+        width,
+        height,
+        fileSize,
+        target,
+      };
         const result = await mainWindow.webContents.executeJavaScript(`
           (async () => {
             const uploadService =
