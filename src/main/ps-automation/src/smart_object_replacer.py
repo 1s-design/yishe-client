@@ -265,18 +265,28 @@ def replace_smart_object_content(
             if hasattr(current_smart_doc, 'layers') and len(current_smart_doc.layers) > 0:
                 layer_count = len(current_smart_doc.layers)
                 print(f"    ✅ 验证: 智能对象文档包含 {layer_count} 个图层")
-                
-                # 确保新放置的图层可见（placeEvent 应该会替换内容，但为了确保显示，检查图层可见性）
+
+                # 参考项目只在 JPG 替换后合并可见图层。
+                # 这里不要删除/隐藏旧图层，也不要强行改可见性，避免影响原本可用的模板。
                 try:
-                    # 检查所有图层的可见性，确保新图层可见
-                    for i, layer in enumerate(current_smart_doc.layers):
-                        if hasattr(layer, 'visible'):
-                            if not layer.visible:
-                                print(f"    ⚠️ 警告: 图层 {i+1} 不可见，设置为可见")
-                                layer.visible = True
-                except Exception as vis_error:
-                    print(f"    ⚠️ 警告: 检查图层可见性时出错: {vis_error}，但继续执行")
-                
+                    merge_layers = current_smart_doc.artLayers
+                    visible_layer_count = 0
+                    for i in range(len(merge_layers)):
+                        try:
+                            layer = merge_layers[i]
+                            if not hasattr(layer, 'visible') or layer.visible:
+                                visible_layer_count += 1
+                        except Exception:
+                            visible_layer_count += 1
+
+                    if visible_layer_count > 1:
+                        current_smart_doc.mergeVisibleLayers()
+                        print(f"    ✅ 已合并智能对象内部可见图层（可见 ArtLayer 数: {visible_layer_count}）")
+                    else:
+                        print(f"    ℹ️ 跳过合并智能对象内部可见图层（可见 ArtLayer 数: {visible_layer_count}）")
+                except Exception as merge_error:
+                    print(f"    ⚠️ 警告: 合并智能对象内部可见图层失败: {merge_error}，继续保存")
+
                 # 更新 smart_doc 引用为当前活动文档
                 smart_doc = current_smart_doc
             else:
@@ -458,4 +468,5 @@ def replace_smart_object_content(
                 # 继续执行，因为替换可能已经成功
     
     gc.collect()
+
 

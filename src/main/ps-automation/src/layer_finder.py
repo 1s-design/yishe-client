@@ -723,12 +723,33 @@ def find_smart_object_layers(doc, layer_name: Optional[str] = None, debug: bool 
         print("=" * 70)
     
     try:
-        top_layers = doc.layers
-        if not top_layers:
+        searched_roots = set()
+        found_root = False
+        for root_attr in ("layerSets", "artLayers", "layers"):
+            try:
+                top_layers = getattr(doc, root_attr)
+                root_count = len(top_layers) if top_layers else 0
+            except Exception as root_error:
+                if debug:
+                    print(f"⚠️ 无法读取文档根集合 {root_attr}: {root_error}")
+                continue
+
+            if root_count <= 0:
+                if debug:
+                    print(f"⚠️ 文档根集合 {root_attr} 为空")
+                continue
+
+            root_key = id(top_layers)
+            if root_key in searched_roots:
+                continue
+            searched_roots.add(root_key)
+            found_root = True
             if debug:
-                print("⚠️ 文档没有顶层图层")
-        else:
+                print(f"📁 从 doc.{root_attr} 开始搜索，数量: {root_count}")
             search_layers(top_layers, "", 0)
+
+        if not found_root and debug:
+            print("⚠️ 文档没有可搜索的顶层图层集合")
     except Exception as e:
         if debug:
             print(f"❌ 开始搜索时出错: {e}")
