@@ -30,7 +30,7 @@ import {
 } from "./googleArt";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import sharp from "sharp";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import {
   startServer,
   stopServer,
@@ -120,6 +120,17 @@ const store = new Store({
     workspaceDirectory: "",
   },
 });
+
+function getOrCreateDeviceKey(): string {
+  const existing = String(store.get("deviceKey", "") || "").trim();
+  if (existing) {
+    return existing;
+  }
+
+  const created = `yd_${randomUUID()}`;
+  store.set("deviceKey", created);
+  return created;
+}
 
 configureImageTool({
   getWorkspaceDirectory: () =>
@@ -751,6 +762,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle("is-token-exist", async () => {
     return isTokenExist();
+  });
+
+  ipcMain.handle("get-device-key", async () => {
+    return getOrCreateDeviceKey();
   });
 
   // 插件/外部进程管理 IPC

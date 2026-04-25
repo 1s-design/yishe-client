@@ -156,6 +156,7 @@ interface WsState {
 interface DeviceIdentity {
   clientId: string;
   machineCode: string;
+  deviceKey?: string;
   createdAt: string;
 }
 
@@ -253,6 +254,7 @@ interface LocalServiceHandler {
 
 interface ClientInfoPayload {
   clientId: string;
+  deviceKey?: string;
   source: string;
   appVersion?: string;
   workspaceDirectory?: string;
@@ -385,6 +387,7 @@ function loadIdentity(): DeviceIdentity {
           clientId: parsed.clientId,
           machineCode:
             parsed.machineCode || generateMachineCode(parsed.clientId),
+          deviceKey: parsed.deviceKey,
           createdAt: parsed.createdAt || now,
         };
         storage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(identityValue));
@@ -409,6 +412,42 @@ function loadIdentity(): DeviceIdentity {
   return newIdentity;
 }
 
+let stableDeviceKeyPromise: Promise<void> | null = null;
+
+async function hydrateStableDeviceKey() {
+  if (stableDeviceKeyPromise) {
+    return stableDeviceKeyPromise;
+  }
+
+  stableDeviceKeyPromise = (async () => {
+    try {
+      const apiBridge = getNativeApi() as any;
+      if (!apiBridge || typeof apiBridge.getDeviceKey !== "function") {
+        return;
+      }
+
+      const deviceKey = String((await apiBridge.getDeviceKey()) || "").trim();
+      if (!deviceKey || identity.deviceKey === deviceKey) {
+        return;
+      }
+
+      identity.deviceKey = deviceKey;
+      clientInfo.deviceKey = deviceKey;
+
+      const storage = getLocalStorage();
+      if (storage) {
+        storage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify({ ...identity }));
+      }
+
+      emitClientInfo();
+    } catch (error) {
+      console.warn("[ws] 读取稳定设备标识失败", error);
+    }
+  })();
+
+  return stableDeviceKeyPromise;
+}
+
 // 初始化 endpoint，使用默认值，实际连接时会从配置动态获取
 const wsState = reactive<WsState>({
   endpoint: DEFAULT_WS_ENDPOINT, // 初始值，实际连接时会从 getWsEndpoint() 动态获取
@@ -425,6 +464,7 @@ const networkProfile = reactive<NetworkProfile>({});
 
 const clientInfo = reactive<ClientInfoPayload>({
   clientId: identity.clientId,
+  deviceKey: identity.deviceKey,
   source: CLIENT_SOURCE,
   platform: typeof navigator !== "undefined" ? navigator.platform : "unknown",
   locale: typeof navigator !== "undefined" ? navigator.language : "unknown",
@@ -1261,6 +1301,7 @@ function buildClientInfoPayloadForWs() {
 
   const payload: Record<string, any> = {
     clientId: clientInfo.clientId,
+    deviceKey: String(clientInfo.deviceKey || "").trim() || undefined,
     source: clientInfo.source,
     appVersion: clientInfo.appVersion,
     workspaceDirectory: String(clientInfo.workspaceDirectory || "").trim() || undefined,
@@ -4196,6 +4237,7 @@ function buildQuery() {
     clientSource: CLIENT_SOURCE,
     clientId: identity.clientId,
     machineCode: identity.machineCode,
+    ...(identity.deviceKey ? { deviceKey: identity.deviceKey } : {}),
   };
 }
 
@@ -6794,6 +6836,8 @@ function emitClientInfo() {
 }
 
 async function connect(endpoint?: string) {
+  await hydrateStableDeviceKey();
+
   let targetEndpoint = endpoint;
   if (!targetEndpoint) {
     try {
@@ -6946,6 +6990,7 @@ function updateServiceStatus(
   return next;
 }
 
+void hydrateStableDeviceKey();
 void fetchNetworkProfile();
 
 // 服务切换方法

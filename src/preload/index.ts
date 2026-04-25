@@ -23,6 +23,7 @@ const api = {
   saveToken: (token: string) => ipcRenderer.invoke('save-token', token),
   getToken: () => ipcRenderer.invoke('get-token'),
   isTokenExist: () => ipcRenderer.invoke('is-token-exist'),
+  getDeviceKey: () => ipcRenderer.invoke('get-device-key'),
   onExtensionConnectionStatus: (callback: (status: any) => void) => {
     ipcRenderer.on('extension-connection-status', (_event, status) => callback(status));
   },
