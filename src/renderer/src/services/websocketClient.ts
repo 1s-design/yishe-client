@@ -4425,6 +4425,11 @@ function normalizeWindowsPath(input: string) {
   return path;
 }
 
+function buildPsdTestExportDir(workspaceDir: string) {
+  const normalizedWorkspaceDir = normalizeWindowsPath(workspaceDir || "").replace(/[\\/]+$/, "");
+  return normalizedWorkspaceDir ? `${normalizedWorkspaceDir}\\psd-test` : "";
+}
+
 /**
  * 处理套图制作流程
  * 1. 查询套图完整信息
@@ -5003,6 +5008,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
 
     // 获取工作目录用于导出
     const workspaceDir = await (window.api as any).getWorkspaceDirectory();
+    const psdTestExportDir = buildPsdTestExportDir(workspaceDir);
 
     // 配置优先级：套图的 stickerPsdSetConfig > PSD模板的 psdTemplateConfig > 默认配置
     const stickerPsdSetConfig = psdSet.stickerPsdSetConfig;
@@ -5081,7 +5087,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         export_dir:
           config.export_dir && config.export_dir.trim()
             ? config.export_dir
-            : workspaceDir,
+            : psdTestExportDir,
         smart_objects: smartObjects,
       };
 
@@ -5118,7 +5124,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         },
         psd_path: psdLocalPath,
         smart_objects: smartObjects,
-        export_dir: workspaceDir,
+        export_dir: psdTestExportDir,
       };
     }
 
@@ -5954,7 +5960,15 @@ function registerBuiltInLocalServices() {
         if (!request) {
           throw new Error("缺少调试请求参数");
         }
-        const data = await photoshopApi.processPsd(request);
+        const workspaceDir = await (window.api as any).getWorkspaceDirectory();
+        const psdTestExportDir = buildPsdTestExportDir(workspaceDir);
+        if (!psdTestExportDir) {
+          throw new Error("工作目录未设置，无法生成 PSD 调试导出目录");
+        }
+        const data = await photoshopApi.processPsd({
+          ...request,
+          export_dir: psdTestExportDir,
+        });
         return {
           success: data.success,
           message: data.message,
