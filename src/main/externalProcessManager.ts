@@ -59,6 +59,8 @@ export interface ProcessConfig {
   stopTimeout?: number
   // 是否在应用启动时自动启动（可选，默认 true）
   autoStart?: boolean
+  // 启动前是否先执行停止钩子清理旧实例（适合固定端口的单实例服务）
+  cleanupBeforeStart?: boolean
 }
 
 /**
@@ -324,6 +326,14 @@ export class ExternalProcessManager {
     }
 
     try {
+      if (config.cleanupBeforeStart) {
+        this.writeProcessLog('INFO', '启动前清理外部进程旧实例', {
+          processId: config.id,
+          processName: config.name
+        })
+        await this.runStopHook(config)
+      }
+
       console.log(`🚀 启动进程: ${config.name} (${executablePath})`)
 
       // 创建工作目录

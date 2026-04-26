@@ -122,6 +122,8 @@ declare global {
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let trayPowerSaveBlockerId: number | null = null;
+let quitCleanupComplete = false;
+let quitCleanupPromise: Promise<void> | null = null;
 
 // 插件/外部进程管理器
 const externalProcessManager = new ExternalProcessManager(pluginProcessConfigs);
@@ -1010,8 +1012,7 @@ app.on("window-all-closed", () => {
   }
 });
 
-// 应用退出时清理资源
-app.on("before-quit", async () => {
+async function cleanupBeforeQuit(): Promise<void> {
   console.log("🔄 应用即将退出，清理资源...");
   writeMainLog("INFO", "应用即将退出，开始清理资源");
 
@@ -1039,6 +1040,30 @@ app.on("before-quit", async () => {
 
   console.log("✅ 资源清理完成");
   writeMainLog("INFO", "应用退出资源清理完成");
+}
+
+// 应用退出时清理资源。Electron 不会等待 async before-quit，需要显式阻塞一次。
+app.on("before-quit", (event) => {
+  (app as any).isQuiting = true;
+
+  if (quitCleanupComplete) {
+    return;
+  }
+
+  event.preventDefault();
+  if (!quitCleanupPromise) {
+    quitCleanupPromise = cleanupBeforeQuit()
+      .catch((error) => {
+        console.error("❌ 应用退出清理异常:", error);
+        writeMainLog("ERROR", "应用退出清理异常", {
+          error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+        });
+      })
+      .finally(() => {
+        quitCleanupComplete = true;
+        app.quit();
+      });
+  }
 });
 
 // 添加托盘相关的IPC监听器
