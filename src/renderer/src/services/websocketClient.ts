@@ -4659,6 +4659,17 @@ function buildPsdTestExportDir(workspaceDir: string) {
   return normalizedWorkspaceDir ? `${normalizedWorkspaceDir}\\psd-test` : "";
 }
 
+function writePsdSetFileLog(
+  level: "info" | "warn" | "error",
+  message: string,
+  context?: Record<string, any>,
+) {
+  logger[level](`[psd-set] ${message}`, {
+    module: "psd-set-production",
+    ...context,
+  });
+}
+
 /**
  * 处理套图制作流程
  * 1. 查询套图完整信息
@@ -4705,6 +4716,10 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] 开始处理套图制作，ID: ${psdSetId}`,
+    });
+    writePsdSetFileLog("info", "开始处理套图制作", {
+      psdSetId,
+      commandId: taskId || null,
     });
     emitter.emit("toast", {
       color: "info",
@@ -4818,6 +4833,22 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] 套图信息: ${psdSet.name}, 贴纸: ${stickerDesc || stickers.length}, PSD(${psdSourceType}): ${psdSourcePath}`,
+    });
+    writePsdSetFileLog("info", "套图信息已加载", {
+      psdSetId,
+      commandId: taskId || null,
+      psdSetName: psdSet.name || null,
+      psdTemplateId: psdTemplate?.id || null,
+      psdTemplateName: psdTemplate?.name || null,
+      psdSourceType,
+      psdSourcePath,
+      stickerCount: stickers.length,
+      stickers: stickers.map((item: any, index: number) => ({
+        index,
+        id: item?.id || null,
+        name: item?.name || null,
+        url: item?.url || null,
+      })),
     });
 
     // 2. 下载贴纸和PSD模板到本地（如果已下载则跳过）
@@ -5195,6 +5226,14 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       level: "info",
       message: `[psd-set] 文件下载完成，贴纸: ${stickerLocalPaths.join(", ")}, PSD: ${psdLocalPath}`,
     });
+    writePsdSetFileLog("info", "资源文件准备完成", {
+      psdSetId,
+      commandId: taskId || null,
+      psdLocalPath,
+      psdSourceType,
+      stickerLocalPaths,
+      stickerCount: stickerLocalPaths.length,
+    });
 
     // 3. 调用PS服务处理PSD
     emitter.emit("psdSetProgress", {
@@ -5357,6 +5396,43 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       };
     }
 
+    const assertProcessFileReady = async (label: string, filePath: string) => {
+      const normalizedPath = String(filePath || "").trim();
+      if (!normalizedPath) {
+        throw new Error(`${label}路径为空，无法调用 Photoshop 服务`);
+      }
+      if (typeof (window.api as any).checkLocalFileExists !== "function") {
+        return;
+      }
+      const checkResult = await (window.api as any).checkLocalFileExists(normalizedPath);
+      if (!checkResult?.exists || !checkResult?.isFile) {
+        throw new Error(
+          `${label}文件不存在或不可读取: ${normalizedPath} (${checkResult?.message || "未知原因"})`,
+        );
+      }
+      emitter.emit("log", {
+        level: "info",
+        message: `[psd-set] ${label}文件预检通过: ${normalizedPath}${checkResult.fileSize ? ` (${checkResult.fileSize} bytes)` : ""}`,
+      });
+      writePsdSetFileLog("info", `${label}文件预检通过`, {
+        psdSetId,
+        commandId: taskId || null,
+        filePath: normalizedPath,
+        fileSize: checkResult.fileSize || null,
+      });
+    };
+
+    if (!Array.isArray(processPayload.smart_objects) || processPayload.smart_objects.length === 0) {
+      throw new Error("PSD处理配置缺少 smart_objects，无法替换智能对象");
+    }
+    await assertProcessFileReady("PSD模板", processPayload.psd_path);
+    for (let i = 0; i < processPayload.smart_objects.length; i++) {
+      await assertProcessFileReady(
+        `智能对象素材[${i + 1}]`,
+        processPayload.smart_objects[i]?.image_path,
+      );
+    }
+
     // 打印即将发送给 Photoshop 服务的参数，便于排查多素材 / smart_objects 问题
     // 简化 smart_objects 输出，避免日志过大
     const logSmartObjects = processPayload.smart_objects.map((so: any) => {
@@ -5388,6 +5464,16 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         2,
       )}`,
     });
+    writePsdSetFileLog("info", "准备调用 Photoshop processPsd", {
+      psdSetId,
+      commandId: taskId || null,
+      psdPath: processPayload.psd_path,
+      exportDir: processPayload.export_dir,
+      smartObjectCount: processPayload.smart_objects.length,
+      smartObjects: logSmartObjects,
+      defaults: processPayload.defaults || null,
+      verbose: processPayload.verbose ?? null,
+    });
 
     const processResult = await photoshopApi.processPsd(processPayload);
 
@@ -5414,6 +5500,12 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] PSD处理完成，生成 ${successfulFiles.length} 个图片文件`,
+    });
+    writePsdSetFileLog("info", "Photoshop 处理完成", {
+      psdSetId,
+      commandId: taskId || null,
+      exportFiles: processResult.data.export_files,
+      successfulCount: successfulFiles.length,
     });
 
     // 4. 上传生成的图片到COS（支持多文件）
@@ -5607,6 +5699,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       level: "info",
       message: `[psd-set] 套图制作完成，已更新images字段，共 ${updatedImages.length} 张图片`,
     });
+    writePsdSetFileLog("info", "套图制作完成", {
+      psdSetId,
+      commandId: taskId || null,
+      imageCount: updatedImages.length,
+      processingTime,
+      uploadedImageUrls,
+    });
 
     // 发送完成事件
     emitter.emit("psdSetProgressEnd", {
@@ -5624,6 +5723,15 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitter.emit("log", {
       level: "error",
       message: `[psd-set] 套图制作失败: ${error.message || String(error)}`,
+    });
+    writePsdSetFileLog("error", "套图制作失败", {
+      psdSetId,
+      commandId: taskId || null,
+      errorMessage: error?.message || String(error),
+      errorName: error?.name || null,
+      errorStack: error?.stack || null,
+      errorDetail: error?.detail || null,
+      errorStatus: error?.status || null,
     });
 
     // 通知服务器与管理后台：已失败

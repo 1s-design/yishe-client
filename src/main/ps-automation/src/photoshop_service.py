@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +11,19 @@ from photoshop.api import ActionDescriptor, ActionReference
 from photoshop.api.enumerations import DialogModes
 
 from .utils import resize_image_in_tiles, validate_job_inputs
+
+
+def _safe_temp_stem(value: str, fallback: str = "image", max_length: int = 90) -> str:
+    text = str(value or "").strip()
+    if not text:
+        text = fallback
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text)
+    text = re.sub(r"\s+", "_", text).strip(" ._")
+    if not text:
+        text = fallback
+    if len(text) > max_length:
+        text = text[:max_length].rstrip(" ._") or fallback
+    return text
 
 
 def pick_layer(doc, artboard_name: Optional[str]):
@@ -47,10 +61,12 @@ def _prepare_resized_image(png_path: Path, smart_doc, export_dir: Path, tile_siz
         resized_img = resize_image_in_tiles(img, (target_width, target_height), tile_size)
 
         # 如果图片有透明通道（RGBA 模式），保存为 PNG 格式以保留透明通道
+        safe_stem = _safe_temp_stem(png_path.stem)
         if resized_img.mode == "RGBA":
-            resized_path = export_dir / f"{png_path.stem}_resized.png"
+            resized_path = export_dir / f"{safe_stem}_resized.png"
         else:
-            resized_path = export_dir / f"{png_path.stem}_resized{png_path.suffix}"
+            suffix = png_path.suffix if png_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"} else ".png"
+            resized_path = export_dir / f"{safe_stem}_resized{suffix}"
         resized_img.save(resized_path, dpi=(int(smart_doc.resolution), int(smart_doc.resolution)))
 
     resized_img.close()
@@ -124,4 +140,3 @@ def replace_and_export(
 
     gc.collect()
     return export_path
-

@@ -4,6 +4,7 @@
 """
 import gc
 import time
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,19 @@ except ImportError:
         from src.utils import resize_image_in_tiles
     except ImportError:
         raise ImportError("无法导入 resize_image_in_tiles")
+
+
+def _safe_temp_stem(value: str, fallback: str = "image", max_length: int = 90) -> str:
+    text = str(value or "").strip()
+    if not text:
+        text = fallback
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text)
+    text = re.sub(r"\s+", "_", text).strip(" ._")
+    if not text:
+        text = fallback
+    if len(text) > max_length:
+        text = text[:max_length].rstrip(" ._") or fallback
+    return text
 
 
 def replace_smart_object_content(
@@ -139,10 +153,12 @@ def replace_smart_object_content(
         
         # 如果图片有透明通道（RGBA 模式），保存为 PNG 格式以保留透明通道
         # 其他模式可以保持原始格式
+        safe_stem = _safe_temp_stem(image_path.stem)
         if resized_img.mode == "RGBA":
-            resized_path = export_dir / f"{image_path.stem}_resized.png"
+            resized_path = export_dir / f"{safe_stem}_resized.png"
         else:
-            resized_path = export_dir / f"{image_path.stem}_resized{image_path.suffix}"
+            suffix = image_path.suffix if image_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"} else ".png"
+            resized_path = export_dir / f"{safe_stem}_resized{suffix}"
         
         resized_img.save(
             resized_path,
@@ -468,5 +484,4 @@ def replace_smart_object_content(
                 # 继续执行，因为替换可能已经成功
     
     gc.collect()
-
 

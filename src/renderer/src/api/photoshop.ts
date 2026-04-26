@@ -22,11 +22,22 @@ psApiClient.interceptors.response.use(
   response => response,
   error => {
     // 统一错误处理
-    const errorMessage = error.response?.data?.detail?.message || 
-                         error.response?.data?.detail?.error || 
-                         error.message || 
-                         '请求失败'
-    return Promise.reject(new Error(errorMessage))
+    const detail = error.response?.data?.detail
+    const rawMessage = detail?.message ||
+                       detail?.error ||
+                       error.message ||
+                       '请求失败'
+    const errorType = detail?.type ? String(detail.type) : ''
+    const errorMessage = errorType && !String(rawMessage).startsWith(`${errorType}:`)
+      ? `${errorType}: ${rawMessage}`
+      : rawMessage
+    if (detail?.traceback) {
+      console.error('Photoshop API error detail:', detail)
+    }
+    const normalizedError = new Error(errorMessage)
+    ;(normalizedError as any).detail = detail
+    ;(normalizedError as any).status = error.response?.status
+    return Promise.reject(normalizedError)
   }
 )
 
@@ -281,4 +292,3 @@ export const photoshopApi = {
 }
 
 export default photoshopApi
-
