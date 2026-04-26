@@ -1,7 +1,7 @@
 import { io, type Socket } from "socket.io-client";
 import { reactive } from "vue";
 import mitt from "mitt";
-import { getTokenFromClient } from "../api/user";
+import { getTokenFromClient, logoutToken } from "../api/user";
 import { stickerPsdSetApi } from "../api/stickerPsdSet";
 import photoshopApi from "../api/photoshop";
 import {
@@ -4477,6 +4477,10 @@ function bindSocketEvents(currentSocket: Socket) {
       status: "error",
       lastError: message,
     });
+    void logoutToken().catch(() => undefined);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("auth:logout"));
+    }
     disconnect();
   });
 
@@ -7201,11 +7205,22 @@ async function connect(endpoint?: string) {
   try {
     token = await getTokenFromClient();
   } catch (error) {
-    // 读取 token 失败不阻塞连接，只记录日志
     emitter.emit("log", {
       level: "warn",
-      message: `[ws] 获取 token 失败，将在未认证状态下连接: ${serializeError(error)}`,
+      message: `[ws] 获取 token 失败，跳过 WebSocket 连接: ${serializeError(error)}`,
     });
+  }
+
+  if (!token) {
+    lastAuthToken = undefined;
+    cleanupSocket();
+    updateState({
+      status: "disconnected",
+      lastError: null,
+      retryCount: 0,
+      connectedAt: null,
+    });
+    return;
   }
 
   if (socket && socket.connected) {
