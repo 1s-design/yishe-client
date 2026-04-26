@@ -79,6 +79,20 @@ import {
   listVideoTemplateRenders,
   warmVideoTemplateService,
 } from "./video-template";
+import { handleClientLogCommand, writeClientLog } from "./clientLogger";
+
+function writeMainLog(
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR",
+  message: string,
+  context?: Record<string, any>,
+) {
+  writeClientLog({
+    level,
+    module: "main-process",
+    message,
+    context,
+  });
+}
 
 function resolveBundledImageMagickDirectory(): string | null {
   const candidates = [
@@ -726,6 +740,12 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on("ping", () => console.log("pong"));
+  ipcMain.handle("client-log:write", async (_event, payload) => {
+    return writeClientLog(payload || {});
+  });
+  ipcMain.handle("client-log:query", async (_event, action: string, payload: Record<string, any>) => {
+    return handleClientLogCommand(action, payload || {});
+  });
 
   // 切换开发者工具（供 header 按钮调用）
   ipcMain.handle("toggle-devtools", async (event) => {
@@ -745,10 +765,15 @@ app.whenReady().then(() => {
   ipcMain.handle("save-token", async (_event, newToken) => {
     // 先保存 token（无论服务是否启动）
     saveToken(newToken);
+    writeMainLog("INFO", "保存登录 token，检查本地服务状态", {
+      hasToken: !!newToken,
+      serverRunning: isServerRunning(),
+    });
 
     // 如果服务未启动，启动服务
     if (!isServerRunning()) {
       console.log("🔐 检测到 token 保存，启动 1519 服务...");
+      writeMainLog("INFO", "token 保存后启动本地 1519 服务");
       startServer(1519);
     }
 
@@ -783,18 +808,56 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("start-external-process", async (_event, id: string) => {
-    return externalProcessManager.startProcess(id);
+    writeMainLog("INFO", "收到启动外部进程 IPC", { processId: id });
+    const success = await externalProcessManager.startProcess(id);
+    writeMainLog(success ? "INFO" : "ERROR", "启动外部进程 IPC 完成", {
+      processId: id,
+      success,
+    });
+    return success;
   });
 
   ipcMain.handle(
     "stop-external-process",
     async (_event, id: string, force = false) => {
-      return externalProcessManager.stopProcess(id, force);
+      writeMainLog("INFO", "收到停止外部进程 IPC", { processId: id, force });
+      const success = await externalProcessManager.stopProcess(id, force);
+      writeMainLog(success ? "INFO" : "ERROR", "停止外部进程 IPC 完成", {
+        processId: id,
+        force,
+        success,
+      });
+      return success;
     },
   );
 
   ipcMain.handle("auto-browser:invoke", async (_event, request) => {
-    return invokeAutoBrowserRoute(request);
+    const startedAt = Date.now();
+    writeMainLog("INFO", "收到 auto-browser IPC 调用", {
+      method: request?.method || "GET",
+      path: request?.path || "",
+      query: request?.query || {},
+      hasBody: !!request?.body,
+    });
+    try {
+      const response = await invokeAutoBrowserRoute(request);
+      writeMainLog(response?.ok ? "INFO" : "WARN", "auto-browser IPC 调用完成", {
+        method: request?.method || "GET",
+        path: request?.path || "",
+        status: response?.status,
+        ok: response?.ok,
+        durationMs: Date.now() - startedAt,
+      });
+      return response;
+    } catch (error) {
+      writeMainLog("ERROR", "auto-browser IPC 调用异常", {
+        method: request?.method || "GET",
+        path: request?.path || "",
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      });
+      throw error;
+    }
   });
 
   // 本地服务管理 IPC
@@ -802,13 +865,19 @@ app.whenReady().then(() => {
     try {
       if (!isServerRunning()) {
         console.log("🚀 启动本地服务 (1519端口)...");
+        writeMainLog("INFO", "准备启动本地 1519 服务");
         startServer(1519);
+        writeMainLog("INFO", "本地 1519 服务启动命令已执行");
         return { success: true, message: "本地服务启动成功" };
       } else {
+        writeMainLog("INFO", "本地 1519 服务已在运行");
         return { success: true, message: "本地服务已在运行" };
       }
     } catch (error: any) {
       console.error("❌ 启动本地服务失败:", error);
+      writeMainLog("ERROR", "启动本地 1519 服务失败", {
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      });
       return { success: false, message: error?.message || "启动本地服务失败" };
     }
   });
@@ -817,13 +886,19 @@ app.whenReady().then(() => {
     try {
       if (isServerRunning()) {
         console.log("🛑 停止本地服务 (1519端口)...");
+        writeMainLog("INFO", "准备停止本地 1519 服务");
         await stopServer();
+        writeMainLog("INFO", "本地 1519 服务已停止");
         return { success: true, message: "本地服务已停止" };
       } else {
+        writeMainLog("INFO", "本地 1519 服务未运行");
         return { success: true, message: "本地服务未运行" };
       }
     } catch (error: any) {
       console.error("❌ 停止本地服务失败:", error);
+      writeMainLog("ERROR", "停止本地 1519 服务失败", {
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      });
       return { success: false, message: error?.message || "停止本地服务失败" };
     }
   });
@@ -906,6 +981,9 @@ app.whenReady().then(() => {
   // 启动外部进程（在创建窗口之前）
   externalProcessManager.startAll().catch((error) => {
     console.error("❌ 启动外部进程失败:", error);
+    writeMainLog("ERROR", "应用启动时批量启动外部进程失败", {
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    });
   });
 
   createWindow();
@@ -935,14 +1013,21 @@ app.on("window-all-closed", () => {
 // 应用退出时清理资源
 app.on("before-quit", async () => {
   console.log("🔄 应用即将退出，清理资源...");
+  writeMainLog("INFO", "应用即将退出，开始清理资源");
 
   await shutdownAutoBrowserService().catch((error) => {
     console.error("❌ 停止 auto-browser 服务失败:", error);
+    writeMainLog("ERROR", "停止 auto-browser 服务失败", {
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    });
   });
 
   // 停止外部进程（优先执行，给进程时间优雅关闭）
   await externalProcessManager.stopAll().catch((error) => {
     console.error("❌ 停止外部进程失败:", error);
+    writeMainLog("ERROR", "停止外部进程失败，准备强制关闭", {
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    });
     // 如果优雅关闭失败，尝试强制关闭
     externalProcessManager.stopAll(true).catch(console.error);
   });
@@ -953,6 +1038,7 @@ app.on("before-quit", async () => {
   }
 
   console.log("✅ 资源清理完成");
+  writeMainLog("INFO", "应用退出资源清理完成");
 });
 
 // 添加托盘相关的IPC监听器
@@ -1020,6 +1106,7 @@ ipcMain.handle("select-workspace-directory", async () => {
   });
 
   if (result.canceled) {
+    writeMainLog("INFO", "用户取消选择工作目录");
     return null;
   }
 
@@ -1027,6 +1114,9 @@ ipcMain.handle("select-workspace-directory", async () => {
   if (selectedPath) {
     // 保存到 electron-store
     store.set("workspaceDirectory", selectedPath);
+    writeMainLog("INFO", "已选择并保存工作目录", {
+      workspaceDirectory: selectedPath,
+    });
     return selectedPath;
   }
 
@@ -1040,8 +1130,12 @@ ipcMain.handle("get-workspace-directory", async () => {
 ipcMain.handle("set-workspace-directory", async (_event, path: string) => {
   if (path && typeof path === "string") {
     store.set("workspaceDirectory", path);
+    writeMainLog("INFO", "已设置工作目录", {
+      workspaceDirectory: path,
+    });
     return true;
   }
+  writeMainLog("WARN", "设置工作目录失败，路径无效", { path });
   return false;
 });
 

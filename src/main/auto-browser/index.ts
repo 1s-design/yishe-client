@@ -44,6 +44,7 @@ import {
   runEcomCollectTask,
 } from "./legacy/ecom-collect/ecomCollectService.js";
 import { getAutoBrowserTempDir } from "./legacy/utils/workspacePaths.js";
+import { writeClientLog } from "../clientLogger";
 
 export interface AutoBrowserInvokeRequest {
   method?: string;
@@ -57,6 +58,34 @@ export interface AutoBrowserInvokeResponse {
   ok: boolean;
   body: any;
   headers?: Record<string, string>;
+}
+
+function writeAutoBrowserLog(
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR",
+  message: string,
+  context?: Record<string, any>,
+) {
+  writeClientLog({
+    level,
+    module: "auto-browser",
+    message,
+    context,
+  });
+}
+
+function summarizeAutoBrowserBody(value: any) {
+  if (!value || typeof value !== "object") {
+    return value === undefined ? undefined : value;
+  }
+  const keys = Object.keys(value);
+  return {
+    keys,
+    hasConfigData: !!value.configData,
+    taskId: value.taskId || value.id || null,
+    runId: value.runId || null,
+    platform: value.platform || null,
+    taskType: value.taskType || null,
+  };
 }
 
 function normalizeRequestMethod(value: unknown) {
@@ -1855,9 +1884,41 @@ const autoBrowserService = new AutoBrowserService();
 export async function invokeAutoBrowserRoute(
   request: AutoBrowserInvokeRequest,
 ) {
-  return autoBrowserService.invoke(request);
+  const startedAt = Date.now();
+  const method = normalizeRequestMethod(request?.method);
+  const reqPath = normalizeRequestPath(request?.path);
+  writeAutoBrowserLog("INFO", "开始处理 auto-browser 路由", {
+    method,
+    path: reqPath,
+    query: request?.query || {},
+    body: summarizeAutoBrowserBody(request?.body),
+  });
+  try {
+    const response = await autoBrowserService.invoke(request);
+    writeAutoBrowserLog(response.ok ? "INFO" : "WARN", "auto-browser 路由处理完成", {
+      method,
+      path: reqPath,
+      status: response.status,
+      ok: response.ok,
+      durationMs: Date.now() - startedAt,
+      responseKeys:
+        response?.body && typeof response.body === "object"
+          ? Object.keys(response.body).slice(0, 20)
+          : [],
+    });
+    return response;
+  } catch (error) {
+    writeAutoBrowserLog("ERROR", "auto-browser 路由处理异常", {
+      method,
+      path: reqPath,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    });
+    throw error;
+  }
 }
 
 export async function shutdownAutoBrowserService() {
+  writeAutoBrowserLog("INFO", "准备关闭 auto-browser 服务");
   return autoBrowserService.shutdown();
 }

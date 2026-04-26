@@ -44,6 +44,7 @@ import {
 } from "./publishTaskDispatch";
 import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
 import { getRemoteApiBase, getWsEndpoint, setServiceMode } from "../config/api";
+import { logger } from "./logger";
 
 type UploaderProfilesResponse = Awaited<ReturnType<typeof getUploaderProfiles>>;
 
@@ -4003,6 +4004,12 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
   };
   const legacyServiceKey = getLegacyServiceKey(pluginKey);
   const handler = localServiceHandlers.get(pluginKey);
+  logger.info("[ws] received service-command", {
+    commandId: normalizedCommand.commandId,
+    pluginKey,
+    action,
+    service: normalizedCommand.service,
+  });
   if (!handler) {
     const result: ServiceCommandResult = {
       commandId: normalizedCommand.commandId,
@@ -4016,6 +4023,7 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
     };
     socket?.emit("service-command-result", result);
     emitter.emit("serviceCommandResult", result);
+    logger.warn("[ws] service-command unsupported", result);
     return;
   }
 
@@ -4034,6 +4042,13 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
       };
       socket?.emit("service-command-result", result);
       emitter.emit("serviceCommandResult", result);
+      logger.info("[ws] service-command runtime refreshed", {
+        commandId: result.commandId,
+        pluginKey,
+        action,
+        success: result.success,
+        message: result.message,
+      });
       return;
     }
 
@@ -4068,6 +4083,23 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
     };
     socket?.emit("service-command-result", result);
     emitter.emit("serviceCommandResult", result);
+    if (result.success) {
+      logger.info("[ws] service-command completed", {
+        commandId: result.commandId,
+        pluginKey,
+        action,
+        message: result.message,
+      });
+    } else {
+      logger.error("[ws] service-command failed", {
+        commandId: result.commandId,
+        pluginKey,
+        action,
+        message: result.message,
+        error: result.error,
+        errorDetail: result.errorDetail,
+      });
+    }
   } catch (error) {
     const result: ServiceCommandResult = {
       commandId: normalizedCommand.commandId,
@@ -4081,6 +4113,7 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
     };
     socket?.emit("service-command-result", result);
     emitter.emit("serviceCommandResult", result);
+    logger.error("[ws] service-command exception", result);
   }
 }
 
@@ -4244,6 +4277,11 @@ function buildQuery() {
 function bindSocketEvents(currentSocket: Socket) {
   currentSocket.on("connect", () => {
     emitter.emit("log", { level: "info", message: "[ws] connected" });
+    logger.info("[ws] connected", {
+      endpoint: wsState.endpoint,
+      clientId: identity.clientId,
+      machineCode: identity.machineCode,
+    });
     updateState({
       status: "connected",
       connectedAt: new Date().toISOString(),
@@ -4268,6 +4306,12 @@ function bindSocketEvents(currentSocket: Socket) {
     emitter.emit("log", {
       level: "warn",
       message: `[ws] disconnected: ${reason}`,
+    });
+    logger.warn("[ws] disconnected", {
+      reason,
+      endpoint: wsState.endpoint,
+      intentionalDisconnect,
+      clientId: identity.clientId,
     });
     if (!intentionalDisconnect) {
       emitTransientWsToast(`disconnect:${reason || "unknown"}`, {
@@ -4302,6 +4346,11 @@ function bindSocketEvents(currentSocket: Socket) {
       level: "error",
       message: `[ws] connect_error: ${message}`,
     });
+    logger.error("[ws] connect_error", {
+      endpoint: wsState.endpoint,
+      message,
+      clientId: identity.clientId,
+    });
     emitTransientWsToast(`connect_error:${message}`, {
       color: "error",
       icon: "mdi-alert-circle-outline",
@@ -4318,6 +4367,11 @@ function bindSocketEvents(currentSocket: Socket) {
       level: "error",
       message: `[ws] error: ${serializeError(error)}`,
     });
+    logger.error("[ws] socket error", {
+      endpoint: wsState.endpoint,
+      message: serializeError(error),
+      clientId: identity.clientId,
+    });
     updateState({
       status: "error",
       lastError: serializeError(error),
@@ -4329,6 +4383,11 @@ function bindSocketEvents(currentSocket: Socket) {
       level: "info",
       message: `[ws] reconnect attempt #${attempt}`,
     });
+    logger.info("[ws] reconnect attempt", {
+      attempt,
+      endpoint: wsState.endpoint,
+      clientId: identity.clientId,
+    });
     updateState({
       status: "reconnecting",
       retryCount: attempt,
@@ -4337,6 +4396,10 @@ function bindSocketEvents(currentSocket: Socket) {
 
   currentSocket.io.on("reconnect_failed", () => {
     emitter.emit("log", { level: "error", message: "[ws] reconnect failed" });
+    logger.error("[ws] reconnect failed", {
+      endpoint: wsState.endpoint,
+      clientId: identity.clientId,
+    });
     emitTransientWsToast("reconnect_failed", {
       color: "error",
       icon: "mdi-alert-circle-outline",
@@ -4352,6 +4415,11 @@ function bindSocketEvents(currentSocket: Socket) {
     emitter.emit("log", {
       level: "error",
       message: `[ws] reconnect_error: ${serializeError(error)}`,
+    });
+    logger.error("[ws] reconnect_error", {
+      endpoint: wsState.endpoint,
+      message: serializeError(error),
+      clientId: identity.clientId,
     });
     updateState({
       status: "error",
@@ -6756,6 +6824,34 @@ function registerBuiltInLocalServices() {
     pluginKey: "local-service",
     label: "本地服务",
     getRuntime: getLocalServiceRuntime,
+  });
+
+  registerLocalService({
+    key: "clientLog",
+    pluginKey: "client-log",
+    label: "客户端日志",
+    getRuntime: async () => ({
+      connected: true,
+      available: !!getNativeApi()?.queryClientLog,
+      status: getNativeApi()?.queryClientLog ? "connected" : "error",
+      state: getNativeApi()?.queryClientLog ? "idle" : "error",
+      message: getNativeApi()?.queryClientLog ? "客户端日志可读取" : "客户端日志能力未注入",
+      supportedCommands: ["list", "tail", "search", "delete"],
+      lastCheckedAt: new Date().toISOString(),
+    }),
+    execute: async (command) => {
+      const nativeApi = getNativeApi();
+      if (!nativeApi?.queryClientLog) {
+        throw new Error("当前环境未注入客户端日志能力");
+      }
+      const action = command.action || "tail";
+      const data = await nativeApi.queryClientLog(action, command.payload || {});
+      return {
+        success: true,
+        message: action === "delete" ? "客户端日志已删除" : "客户端日志已读取",
+        data,
+      };
+    },
   });
 
   registerLocalService({
