@@ -9,6 +9,9 @@ import {
   runDoudianCheckLoginSmallFeature,
   runKuaishouShopCheckLoginSmallFeature,
 } from "../platforms/shopLoginFeatures.js";
+import { logger } from "../utils/logger.js";
+
+const DEFAULT_SMALL_FEATURE_TIMEOUT_MS = 4 * 60 * 1000;
 
 const SMALL_FEATURE_REGISTRY = {
   "temu-session-acquire": {
@@ -83,6 +86,7 @@ const SMALL_FEATURE_REGISTRY = {
         description: "默认保留页面，方便继续观察结果或处理风控。",
       },
     ],
+    timeoutMs: DEFAULT_SMALL_FEATURE_TIMEOUT_MS,
     handler: runTemuSessionAcquireSmallFeature,
   },
   "temu-publish-detail-request-capture": {
@@ -193,6 +197,7 @@ const SMALL_FEATURE_REGISTRY = {
         defaultValue: true,
       },
     ],
+    timeoutMs: DEFAULT_SMALL_FEATURE_TIMEOUT_MS,
     handler: runTemuSessionCollectSmallFeature,
   },
   "temu-session-restore": {
@@ -330,7 +335,47 @@ export async function runBrowserAutomationSmallFeature(
     throw new Error(`不支持的工具: ${featureKey}`);
   }
 
-  return await feature.handler(payload);
+  const timeoutMs = Math.max(
+    30_000,
+    Math.min(
+      10 * 60 * 1000,
+      Number(payload?.timeoutMs || feature.timeoutMs || DEFAULT_SMALL_FEATURE_TIMEOUT_MS) || DEFAULT_SMALL_FEATURE_TIMEOUT_MS,
+    ),
+  );
+  let timeoutId = null;
+  const startedAt = Date.now();
+
+  try {
+    return await Promise.race([
+      feature.handler(payload),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => {
+          resolve({
+            success: false,
+            message: `${feature.name || feature.key || featureKey} 执行超时，请检查浏览器是否卡在页面加载、登录验证或区域 Cookie 采集步骤`,
+            data: {
+              featureKey,
+              timeoutMs,
+              elapsedMs: Date.now() - startedAt,
+              profileId: payload?.profileId || null,
+            },
+          });
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= timeoutMs) {
+      logger.warn(`小工具执行超时: ${featureKey}`, {
+        timeoutMs,
+        elapsedMs,
+        profileId: payload?.profileId || null,
+      });
+    }
+  }
 }
 
 export default {

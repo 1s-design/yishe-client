@@ -54,6 +54,14 @@ const TEMU_CAPTURE_WARMUP_URLS = [
     'https://agentseller.temu.com/newon/product-select'
 ];
 
+function isTemuSessionProbePage(pageUrl = '') {
+    const currentUrl = String(pageUrl || '').trim();
+    if (!currentUrl || currentUrl === 'about:blank') {
+        return false;
+    }
+    return /(^https?:\/\/)?([^/]+\.)?(temu\.com|kuajingmaihuo\.com)\b/i.test(currentUrl);
+}
+
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -877,6 +885,17 @@ export async function collectTemuSessionBundle(page, options = {}) {
             currentUrl: page.url()
         });
 
+        logger.info(`${PLATFORM_NAME}会话采集步骤：采集页打开商家后台`, {
+            currentUrl: page.url(),
+            targetUrl: TEMU_SELLER_HOME_URL,
+            previousUrlWasTemu: isTemuSessionProbePage(page.url())
+        });
+        await page.goto(TEMU_SELLER_HOME_URL, {
+            waitUntil: 'domcontentloaded',
+            timeout: 60_000
+        });
+        await page.waitForTimeout(3_000);
+
         const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
         if (!authorizationResult.success) {
             return {
@@ -981,8 +1000,20 @@ export async function collectTemuSessionBundle(page, options = {}) {
         };
 
         if (options.collectRegionCookies !== false) {
+            logger.info(`${PLATFORM_NAME}会话采集步骤：开始采集美区 Cookie`);
             const usRegion = await collectRegionCookies(context, 'us');
+            logger.info(`${PLATFORM_NAME}会话采集步骤：美区 Cookie 采集完成`, {
+                success: !!usRegion.success,
+                cookieCount: usRegion.cookieCount || 0,
+                warning: usRegion.warning || ''
+            });
+            logger.info(`${PLATFORM_NAME}会话采集步骤：开始采集欧区 Cookie`);
             const euRegion = await collectRegionCookies(context, 'eu');
+            logger.info(`${PLATFORM_NAME}会话采集步骤：欧区 Cookie 采集完成`, {
+                success: !!euRegion.success,
+                cookieCount: euRegion.cookieCount || 0,
+                warning: euRegion.warning || ''
+            });
             regionCollection.us = usRegion;
             regionCollection.eu = euRegion;
 

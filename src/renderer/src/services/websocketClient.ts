@@ -6,6 +6,7 @@ import { stickerPsdSetApi } from "../api/stickerPsdSet";
 import photoshopApi from "../api/photoshop";
 import {
   type BrowserAutomationErrorDetail,
+  checkUploaderBrowserHealth,
   checkUploaderStatus,
   closeUploaderBrowser,
   connectUploaderBrowser,
@@ -59,6 +60,8 @@ type WsStatus =
 const CLIENT_SOURCE = "客户端";
 const HEARTBEAT_INTERVAL = 10_000;
 const HEARTBEAT_TIMEOUT = 35_000;
+const WS_STALE_RECONNECT_MS = 75_000;
+const WS_RECOVERY_DEBOUNCE_MS = 5_000;
 const UPLOADER_RUNTIME_SYNC_INTERVAL = 4_000;
 const PHOTOSHOP_RUNTIME_SYNC_INTERVAL = 8_000;
 const IMAGE_PROCESSING_RUNTIME_SYNC_INTERVAL = 8_000;
@@ -548,6 +551,9 @@ let intentionalDisconnect = false;
 let networkFetchPromise: Promise<void> | null = null;
 let lastClientInfoFingerprint = "";
 let lastClientInfoEmittedAt = 0;
+let lastAuthToken: string | undefined;
+let lastRecoveryAt = 0;
+let recoveryListenersBound = false;
 const transientWsToastCache = new Map<string, number>();
 const lastServiceRuntimeEmitCache = new Map<
   string,
@@ -4169,6 +4175,99 @@ function stopHeartbeat() {
   lastPingTimestamp = null;
 }
 
+function isPageHidden() {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
+async function refreshSocketAuth() {
+  let token: string | undefined;
+  try {
+    token = await getTokenFromClient();
+    lastAuthToken = token;
+  } catch (error) {
+    logger.warn("[ws] refresh socket auth failed", {
+      message: serializeError(error),
+    });
+  }
+  lastAuthToken = token;
+  if (socket) {
+    socket.auth = token ? { token } : {};
+  }
+  return token;
+}
+
+function recoverConnection(reason: string) {
+  if (intentionalDisconnect) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastRecoveryAt < WS_RECOVERY_DEBOUNCE_MS) {
+    return;
+  }
+  lastRecoveryAt = now;
+  logger.warn("[ws] recover connection", {
+    reason,
+    endpoint: wsState.endpoint,
+    clientId: identity.clientId,
+  });
+  reconnect();
+}
+
+async function ensureConnectionFresh(reason: string) {
+  if (intentionalDisconnect) {
+    return;
+  }
+  const previousToken = lastAuthToken;
+  const token = await refreshSocketAuth();
+  if (!token) {
+    disconnect();
+    return;
+  }
+  const lastPongAt = wsState.lastPongAt ? Date.parse(wsState.lastPongAt) : 0;
+  const stale =
+    wsState.status === "connected" &&
+    (!lastPongAt || Date.now() - lastPongAt > WS_STALE_RECONNECT_MS);
+  const tokenChanged = previousToken !== undefined && previousToken !== token;
+  if (!socket || !socket.connected || stale || tokenChanged) {
+    recoverConnection(
+      tokenChanged ? `${reason}:token_changed` : stale ? `${reason}:stale` : reason,
+    );
+    return;
+  }
+  emitClientInfo();
+  emitPsAutomationStatus();
+  void Promise.all(
+    Array.from(localServiceHandlers.keys()).map((key) => syncServiceRuntime(key)),
+  );
+}
+
+function bindConnectionRecoveryListeners() {
+  if (recoveryListenersBound || typeof window === "undefined") {
+    return;
+  }
+  recoveryListenersBound = true;
+
+  window.addEventListener("focus", () => {
+    void ensureConnectionFresh("window_focus");
+  });
+  window.addEventListener("online", () => {
+    void ensureConnectionFresh("browser_online");
+  });
+  window.addEventListener("storage", (event) => {
+    if (!event.key || event.key.includes("yishe.ws") || event.key.includes("token")) {
+      void ensureConnectionFresh("storage_changed");
+    }
+  });
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (!isPageHidden()) {
+        void ensureConnectionFresh("visibility_visible");
+      }
+    });
+  }
+}
+
 function startUploaderRuntimeSyncLoop() {
   clearUploaderRuntimeSyncInterval();
   uploaderRuntimeSyncInterval = setInterval(() => {
@@ -4223,13 +4322,14 @@ function scheduleHeartbeatTimeout() {
         status: "error",
         lastError: "Heartbeat timeout",
       });
-      reconnect();
+      recoverConnection("heartbeat_timeout_disconnected");
       return;
     }
 
     updateState({
       lastError: "Heartbeat timeout",
     });
+    recoverConnection("heartbeat_timeout_no_pong");
   }, HEARTBEAT_TIMEOUT);
 }
 
@@ -4276,6 +4376,7 @@ function buildQuery() {
 
 function bindSocketEvents(currentSocket: Socket) {
   currentSocket.on("connect", () => {
+    void refreshSocketAuth();
     emitter.emit("log", { level: "info", message: "[ws] connected" });
     logger.info("[ws] connected", {
       endpoint: wsState.endpoint,
@@ -4362,6 +4463,23 @@ function bindSocketEvents(currentSocket: Socket) {
     });
   });
 
+  currentSocket.on("auth-error", (data: any) => {
+    const message = data?.message || data?.reason || "登录状态已失效，请重新登录";
+    emitter.emit("log", {
+      level: "error",
+      message: `[ws] auth-error: ${message}`,
+    });
+    logger.error("[ws] auth-error", {
+      message,
+      clientId: identity.clientId,
+    });
+    updateState({
+      status: "error",
+      lastError: message,
+    });
+    disconnect();
+  });
+
   currentSocket.on("error", (error) => {
     emitter.emit("log", {
       level: "error",
@@ -4379,6 +4497,7 @@ function bindSocketEvents(currentSocket: Socket) {
   });
 
   currentSocket.io.on("reconnect_attempt", (attempt) => {
+    void refreshSocketAuth();
     emitter.emit("log", {
       level: "info",
       message: `[ws] reconnect attempt #${attempt}`,
@@ -5794,11 +5913,36 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
 
   const ecomCollectCapability =
     await getCachedUploaderEcomCollectCapabilities();
-  const browser = await getUploaderBrowserStatus();
+  const activeProfileId =
+    profilesResponse?.data?.activeProfileId ||
+    browserAutomationExecutionState.profileId ||
+    null;
+  const health = await checkUploaderBrowserHealth({
+    reconnect: false,
+    profileId: activeProfileId,
+  });
+  let browser = await getUploaderBrowserStatus();
+  if (
+    !browserAutomationExecutionState.running &&
+    (!browser.success || !isUploaderBrowserReady(browser.data))
+  ) {
+    const reconnectHealth = await checkUploaderBrowserHealth({
+      reconnect: true,
+      profileId: activeProfileId,
+    });
+    if (reconnectHealth.success && reconnectHealth.status) {
+      browser = {
+        success: true,
+        data: reconnectHealth.status,
+        message: reconnectHealth.message,
+      };
+    }
+  }
   const available = browser.success && isUploaderBrowserReady(browser.data);
   const browserData = browser.data;
   const browserMessage =
     browser.message ||
+    health.message ||
     browserData?.lastError ||
     browserData?.localBrowser?.message ||
     null;
@@ -6945,19 +7089,6 @@ async function connect(endpoint?: string) {
   wsState.endpoint = targetEndpoint || DEFAULT_WS_ENDPOINT;
   void fetchNetworkProfile();
 
-  if (socket && socket.connected) {
-    return;
-  }
-
-  cleanupSocket();
-  intentionalDisconnect = false;
-
-  updateState({
-    status: "connecting",
-    lastError: null,
-    retryCount: 0,
-  });
-
   let token: string | undefined;
   try {
     token = await getTokenFromClient();
@@ -6968,6 +7099,24 @@ async function connect(endpoint?: string) {
       message: `[ws] 获取 token 失败，将在未认证状态下连接: ${serializeError(error)}`,
     });
   }
+
+  if (socket && socket.connected) {
+    if (lastAuthToken !== token) {
+      lastAuthToken = token;
+      recoverConnection("connect_token_changed");
+    }
+    return;
+  }
+
+  lastAuthToken = token;
+  cleanupSocket();
+  intentionalDisconnect = false;
+
+  updateState({
+    status: "connecting",
+    lastError: null,
+    retryCount: 0,
+  });
 
   socket = io(targetEndpoint, {
     transports: ["websocket"],
@@ -7088,6 +7237,7 @@ function updateServiceStatus(
 
 void hydrateStableDeviceKey();
 void fetchNetworkProfile();
+bindConnectionRecoveryListeners();
 
 // 服务切换方法
 async function switchService(mode: "local" | "remote") {

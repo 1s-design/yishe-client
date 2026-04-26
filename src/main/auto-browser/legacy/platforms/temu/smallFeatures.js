@@ -979,8 +979,9 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
     };
     const pageOperator = runtimeOptions?.pageOperator || new PageOperator();
     const executionTrace = [];
-    const managePage = !runtimeOptions?.page;
-    let page = runtimeOptions?.page || null;
+    const sourcePage = runtimeOptions?.page || null;
+    let page = null;
+    let ownsPage = false;
 
     try {
         logger.info(`${PLATFORM_NAME}工具开始采集会话`, {
@@ -988,43 +989,66 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
             keepPageOpen: settings.keepPageOpen,
             collectRegionCookies: settings.collectRegionCookies,
             includeDebugInfo: settings.includeDebugInfo,
-            reusePage: !managePage
+            useDedicatedPage: true,
+            hasSourcePage: !!sourcePage
         });
         pushTrace(executionTrace, 'start', 'success', {
             profileId: profileId || null,
             keepPageOpen: settings.keepPageOpen,
             collectRegionCookies: settings.collectRegionCookies,
             includeDebugInfo: settings.includeDebugInfo,
-            reusePage: !managePage
+            useDedicatedPage: true,
+            hasSourcePage: !!sourcePage
         });
 
-        if (managePage) {
+        if (sourcePage?.context) {
+            logger.info(`${PLATFORM_NAME}会话采集步骤：基于当前环境创建专用后台采集页`, {
+                profileId: profileId || 'default',
+                sourceUrl: sourcePage.url()
+            });
+            const context = sourcePage.context();
+            page = await context.newPage({ background: true, activate: false })
+                .catch(() => context.newPage());
+            ownsPage = true;
+        } else {
+            logger.info(`${PLATFORM_NAME}会话采集步骤：准备连接浏览器环境`, {
+                profileId: profileId || 'default'
+            });
             const browser = await getOrCreateBrowser({
                 profileId,
                 skipWindowMaximize: true
             });
+            logger.info(`${PLATFORM_NAME}会话采集步骤：浏览器环境已连接，准备创建后台页`, {
+                profileId: profileId || 'default'
+            });
             page = await browser.newPage({ background: true, activate: false });
-            await pageOperator.setupAntiDetection(page);
-            pushTrace(executionTrace, 'open_page', 'success', {
-                reusedCurrentPage: false,
-                currentUrl: page.url(),
-                activated: false
-            });
-        } else {
-            pushTrace(executionTrace, 'open_page', 'success', {
-                reusedCurrentPage: true,
-                currentUrl: page.url(),
-                activated: false
-            });
+            ownsPage = true;
         }
 
-        const loginStateBefore = await resolveTemuLoginState(page);
-        pushTrace(executionTrace, 'check_login_state_before', loginStateBefore.loggedIn ? 'success' : 'pending', loginStateBefore);
+        await pageOperator.setupAntiDetection(page);
+        logger.info(`${PLATFORM_NAME}会话采集步骤：专用后台采集页已创建`, {
+            profileId: profileId || 'default',
+            currentUrl: page.url()
+        });
+        pushTrace(executionTrace, 'open_dedicated_page', 'success', {
+            currentUrl: page.url(),
+            activated: false,
+            sourcePageKeptIntact: !!sourcePage
+        });
 
+        logger.info(`${PLATFORM_NAME}会话采集步骤：开始采集 cookies / anti-content / 店铺信息`, {
+            currentUrl: page.url(),
+            collectRegionCookies: settings.collectRegionCookies
+        });
         const sessionResult = await collectTemuSessionBundle(page, {
             collectRegionCookies: settings.collectRegionCookies
         });
         if (!sessionResult.success) {
+            logger.warn(`${PLATFORM_NAME}会话采集步骤：会话包采集失败`, {
+                reason: sessionResult.reason,
+                message: sessionResult.message || '',
+                currentUrl: page.url()
+            });
             pushTrace(executionTrace, 'collect_session_bundle', 'failed', {
                 reason: sessionResult.reason,
                 currentUrl: page.url()
@@ -1042,7 +1066,7 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
                     profileId: profileId || null,
                     currentUrl: page.url(),
                     pageTitle: snapshot.title,
-                    loginStateBefore,
+                    loginStateBefore: null,
                     loginState: loginStateAfterFailure,
                     bodyPreview: snapshot.bodyPreview,
                     detectedButtons: snapshot.buttons,
@@ -1056,6 +1080,11 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
         const loginStateAfter = await resolveTemuLoginState(page);
         pushTrace(executionTrace, 'check_login_state_after', loginStateAfter.loggedIn ? 'success' : 'pending', loginStateAfter);
 
+        logger.info(`${PLATFORM_NAME}会话采集步骤：会话包采集完成`, {
+            currentUrl: page.url(),
+            mallId: sessionResult.sessionBundle?.mallId || '',
+            mallCount: sessionResult.sessionBundle?.mallList?.length || 0
+        });
         pushTrace(executionTrace, 'collect_session_bundle', 'success', {
             mallId: sessionResult.sessionBundle?.mallId || '',
             mallCount: sessionResult.sessionBundle?.mallList?.length || 0,
@@ -1088,7 +1117,7 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
                 profileId: profileId || null,
                 currentUrl: page.url(),
                 pageTitle: snapshot.title,
-                loginStateBefore,
+                loginStateBefore: null,
                 loginState: loginStateAfter,
                 detectedButtons: snapshot.buttons,
                 detectedInputs: snapshot.inputs,
@@ -1118,18 +1147,18 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
                 profileId: profileId || null,
                 currentUrl: page?.url?.() || '',
                 executionTrace,
-                reusedCurrentPage: !managePage,
+                reusedCurrentPage: false,
                 pageKeptOpen: settings.keepPageOpen
             }
         };
     } finally {
-        if (managePage && page && !settings.keepPageOpen) {
+        if (ownsPage && page && !settings.keepPageOpen) {
             try {
                 await page.close();
             } catch (closeError) {
                 logger.warn(`${PLATFORM_NAME}工具关闭页面失败: ${closeError?.message || closeError}`);
             }
-        } else if (managePage && page && settings.keepPageOpen) {
+        } else if (ownsPage && page && settings.keepPageOpen) {
             logger.info(`${PLATFORM_NAME}工具保留页面，方便继续调试`);
         }
     }
