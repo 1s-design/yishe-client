@@ -1173,10 +1173,30 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     const result = await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      if (status === "completed") {
+        console.warn(
+          `[${this.platform}] 完成状态回写失败，保留业务成功结果并继续完成流程:`,
+          result?.message || `HTTP ${response.status}`,
+        );
+      } else {
+        throw new Error(result?.message || `HTTP ${response.status}`);
+      }
+    } else if (result?.success === false) {
+      if (status === "completed") {
+        console.warn(
+          `[${this.platform}] 完成状态回写被拒绝，保留业务成功结果并继续完成流程:`,
+          result?.message || "任务状态更新失败",
+        );
+      } else {
+        throw new Error(result?.message || "任务状态更新失败");
+      }
+    }
+
+    if (!response.ok && status !== "completed") {
       throw new Error(result?.message || `HTTP ${response.status}`);
     }
 
-    if (result?.success === false) {
+    if (result?.success === false && status !== "completed") {
       throw new Error(result?.message || "任务状态更新失败");
     }
 

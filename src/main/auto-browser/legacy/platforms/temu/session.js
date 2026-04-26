@@ -288,6 +288,18 @@ function buildTemuSessionIncompleteMessage(completeness, extraReasons = []) {
         : `Temu 会话采集不完整，${missingText}`;
 }
 
+function isTemuInvalidLoginStateMessage(value = '') {
+    const message = String(value || '').trim();
+    if (!message) {
+        return false;
+    }
+    return (
+        /Invalid Login State/i.test(message) ||
+        /invalid_login_state/i.test(message) ||
+        /登录态.*失效|登录.*失效|请.*登录|未登录/.test(message)
+    );
+}
+
 async function resolveTemuCurrentUserAgent(page, fallbackValue = '') {
     const fallback = String(fallbackValue || '').trim();
     if (!page) {
@@ -1110,9 +1122,12 @@ export async function collectTemuSessionBundle(page, options = {}) {
         }
 
         if (!completeness.success) {
+            const userInfoMessage = userInfoResult?.message || '';
             return {
                 success: false,
-                reason: 'session_incomplete',
+                reason: isTemuInvalidLoginStateMessage(userInfoMessage)
+                    ? 'login_required'
+                    : 'session_incomplete',
                 message: buildTemuSessionIncompleteMessage(completeness, failureReasons),
                 sessionBundle
             };
