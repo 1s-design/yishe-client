@@ -5,6 +5,7 @@ PSD 智能对象替换 API 服务启动入口
 
 import os
 import sys
+import logging
 import uvicorn
 from pathlib import Path
 import psutil
@@ -38,6 +39,18 @@ sys.path.insert(0, str(project_root))
 
 # 记录 PID 的文件路径，放在 exe 同级目录（或源码目录）
 PID_FILE = persistent_root / "yishe-ps.pid"
+
+
+class HealthAccessLogFilter(logging.Filter):
+    """隐藏 /health 成功访问日志，避免健康检查刷屏。"""
+
+    def filter(self, record):
+        message = record.getMessage()
+        return 'GET /health HTTP/1.1" 200' not in message
+
+
+def configure_access_log_filter():
+    logging.getLogger("uvicorn.access").addFilter(HealthAccessLogFilter())
 
 
 def write_pid():
@@ -189,6 +202,7 @@ def main():
         print("提示: 按 Ctrl+C 可以停止服务")
         print("提示: 关闭此窗口将停止服务\n")
         
+        configure_access_log_filter()
         write_pid()
         
         # 使用 uvicorn.run 启动服务（会阻塞直到服务停止）
@@ -276,4 +290,3 @@ if __name__ == "__main__":
             import time
             time.sleep(5)  # 等待5秒让用户看到错误信息
         sys.exit(1)
-

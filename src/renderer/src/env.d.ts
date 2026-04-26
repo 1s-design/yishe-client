@@ -112,6 +112,8 @@ interface Window {
       filePath?: string
       skipped?: boolean
       fileSize?: number
+      cacheKey?: string
+      downloadedBytes?: number
       error?: string
       statusCode?: number
     }>
@@ -119,6 +121,7 @@ interface Window {
       found: boolean
       filePath?: string | null
       fileSize?: number
+      cacheKey?: string
       message: string
       error?: string
     }>

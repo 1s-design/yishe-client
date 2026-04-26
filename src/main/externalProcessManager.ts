@@ -77,6 +77,20 @@ function trimProcessOutput(value: unknown) {
   return text.length > 2000 ? `${text.slice(0, 2000)}... [truncated ${text.length}]` : text
 }
 
+function isIgnorableProcessStderr(config: ProcessConfig, output: string) {
+  if (config.id !== 'ps-automation') {
+    return false
+  }
+
+  return (
+    output.includes('_ProactorBasePipeTransport._call_connection_lost') ||
+    output.includes('proactor_events.py') ||
+    output.includes('ConnectionResetError: [WinError 10054]') ||
+    output.includes('远程主机强迫关闭了一个现有的连接') ||
+    output.includes('self._sock.shutdown(socket.SHUT_RDWR)')
+  )
+}
+
 /**
  * 进程信息
  */
@@ -369,14 +383,23 @@ export class ExternalProcessManager {
 
       childProcess.stderr?.on('data', (data) => {
         const output = trimProcessOutput(data)
-        console.error(`[${config.name}] ${output}`)
+        const isIgnorable = output ? isIgnorableProcessStderr(config, output) : false
+        if (isIgnorable) {
+          console.debug(`[${config.name}] ${output}`)
+        } else {
+          console.error(`[${config.name}] ${output}`)
+        }
         if (output) {
-          this.writeProcessLog('WARN', '外部进程 stderr', {
-            processId: config.id,
-            processName: config.name,
-            pid: childProcess.pid || null,
-            output
-          })
+          this.writeProcessLog(
+            isIgnorable ? 'DEBUG' : 'WARN',
+            isIgnorable ? '已忽略外部进程 stderr 噪音' : '外部进程 stderr',
+            {
+              processId: config.id,
+              processName: config.name,
+              pid: childProcess.pid || null,
+              output
+            }
+          )
         }
       })
 
@@ -851,19 +874,20 @@ export class ExternalProcessManager {
    * HTTP 健康检查
    */
   private async checkHttpHealth(url: string, timeout: number): Promise<boolean> {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeout)
     try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), timeout)
-
       const response = await fetch(url, {
         signal: controller.signal,
         method: 'GET'
       })
 
-      clearTimeout(timeoutId)
+      await response.arrayBuffer().catch(() => undefined)
       return response.ok
     } catch {
       return false
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
 

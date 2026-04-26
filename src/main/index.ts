@@ -1280,6 +1280,134 @@ function ensureFileExtension(
   return fileName;
 }
 
+type DownloadManifestEntry = {
+  url: string;
+  cacheKey: string;
+  fileName: string;
+  filePath: string;
+  fileSize?: number;
+  contentType?: string | null;
+  downloadedAt?: string;
+  originalFileName?: string;
+};
+
+type DownloadManifest = Record<string, DownloadManifestEntry>;
+
+const downloadInFlight = new Map<string, Promise<any>>();
+
+function normalizeDownloadUrl(url: string): string {
+  return new URL(String(url || "").trim()).toString();
+}
+
+function buildDownloadCacheKey(url: string): string {
+  return createHash("sha256").update(normalizeDownloadUrl(url)).digest("hex");
+}
+
+function getDownloadManifestPath(filesDir: string): string {
+  return pathJoin(filesDir, ".download-manifest.json");
+}
+
+function readDownloadManifest(filesDir: string): DownloadManifest {
+  try {
+    const manifestPath = getDownloadManifestPath(filesDir);
+    if (!fs.existsSync(manifestPath)) {
+      return {};
+    }
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDownloadManifest(filesDir: string, manifest: DownloadManifest): void {
+  const manifestPath = getDownloadManifestPath(filesDir);
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+}
+
+function sanitizeDownloadFileName(fileName: string): string {
+  const safe = String(fileName || "download")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  return safe || "download";
+}
+
+function getFileNameFromUrl(parsedUrl: URL): string {
+  const urlPath = parsedUrl.pathname;
+  let fileName = urlPath.split("/").pop() || "download";
+
+  if (!fileName.includes(".")) {
+    const suggestedName =
+      parsedUrl.searchParams.get("filename") || parsedUrl.searchParams.get("name");
+    fileName = suggestedName || fileName;
+  }
+
+  try {
+    fileName = decodeURIComponent(fileName);
+  } catch {
+    // keep original name
+  }
+  return sanitizeDownloadFileName(fileName);
+}
+
+function getFileNameFromContentDisposition(contentDisposition: string | null): string | null {
+  if (!contentDisposition) {
+    return null;
+  }
+  const utf8Match = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;\n]*)/i);
+  const rawFileName = utf8Match?.[1] ||
+    contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i)?.[1];
+  if (!rawFileName) {
+    return null;
+  }
+  let fileName = rawFileName.replace(/['"]/g, "");
+  try {
+    fileName = decodeURIComponent(fileName);
+  } catch {
+    // keep original name
+  }
+  return sanitizeDownloadFileName(fileName);
+}
+
+function buildCachedDownloadFileName(
+  cacheKey: string,
+  originalFileName: string,
+  url?: string,
+  contentType?: string | null,
+): string {
+  const withExtension = ensureFileExtension(
+    sanitizeDownloadFileName(originalFileName),
+    url,
+    contentType || undefined,
+  );
+  const ext = extname(withExtension);
+  const stem = sanitizeDownloadFileName(basename(withExtension, ext)).slice(0, 96) || "download";
+  return `${cacheKey.slice(0, 16)}_${stem}${ext || ""}`;
+}
+
+function getCachedDownloadByUrl(filesDir: string, url: string) {
+  const normalizedUrl = normalizeDownloadUrl(url);
+  const cacheKey = buildDownloadCacheKey(normalizedUrl);
+  const manifest = readDownloadManifest(filesDir);
+  const entry = manifest[cacheKey];
+  if (entry?.url === normalizedUrl && entry.filePath && fs.existsSync(entry.filePath)) {
+    const stats = fs.statSync(entry.filePath);
+    if (stats.isFile()) {
+      return {
+        found: true,
+        cacheKey,
+        entry: {
+          ...entry,
+          fileSize: stats.size,
+        },
+      };
+    }
+  }
+  return { found: false, cacheKey, entry: null };
+}
+
 // 文件下载相关 IPC 处理器
 /**
  * 从 URL 下载文件到工作目录下的 files 目录
@@ -1287,6 +1415,18 @@ function ensureFileExtension(
  * @returns 下载结果 { success: boolean, message: string, filePath?: string, skipped?: boolean }
  */
 ipcMain.handle("download-file", async (_event, url: string) => {
+  const normalizedUrlForLock = (() => {
+    try {
+      return normalizeDownloadUrl(url);
+    } catch {
+      return String(url || "").trim();
+    }
+  })();
+  if (normalizedUrlForLock && downloadInFlight.has(normalizedUrlForLock)) {
+    return downloadInFlight.get(normalizedUrlForLock);
+  }
+
+  const task = (async () => {
   try {
     // 检查工作目录是否设置
     const workspaceDir = store.get("workspaceDirectory", "") as string;
@@ -1317,6 +1457,8 @@ ipcMain.handle("download-file", async (_event, url: string) => {
         error: "INVALID_URL_FORMAT",
       };
     }
+    const normalizedUrl = normalizeDownloadUrl(url);
+    const cacheKey = buildDownloadCacheKey(normalizedUrl);
 
     // 创建 files 目录
     const filesDir = pathJoin(workspaceDir, "files");
@@ -1324,42 +1466,19 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       fs.mkdirSync(filesDir, { recursive: true });
     }
 
-    // 从 URL 获取文件名
-    const urlPath = parsedUrl.pathname;
-    let fileName = urlPath.split("/").pop() || "download";
-
-    // 如果文件名没有扩展名，尝试从 Content-Disposition 或 URL 中获取
-    if (!fileName.includes(".")) {
-      // 尝试从 URL 查询参数中获取文件名
-      const urlParams = parsedUrl.searchParams;
-      const suggestedName = urlParams.get("filename") || urlParams.get("name");
-      if (suggestedName) {
-        fileName = suggestedName;
-      } else {
-        // 默认使用时间戳作为文件名
-        fileName = `download_${Date.now()}`;
-      }
-    }
-
-    // 清理文件名（移除非法字符）
-    fileName = fileName.replace(/[<>:"/\\|?*]/g, "_");
-
-    // 确保文件名有正确的扩展名（如果还没有扩展名，尝试从 URL 判断）
-    fileName = ensureFileExtension(fileName, url);
-
-    const filePath = pathJoin(filesDir, fileName);
-
-    // 检查文件是否已存在
-    if (fs.existsSync(filePath)) {
-      const stats = fs.statSync(filePath);
+    const cached = getCachedDownloadByUrl(filesDir, normalizedUrl);
+    if (cached.found && cached.entry) {
       return {
         success: true,
-        message: "文件已存在，跳过下载",
-        filePath: filePath,
+        message: "文件链接已缓存，跳过下载",
+        filePath: cached.entry.filePath,
         skipped: true,
-        fileSize: stats.size,
+        fileSize: cached.entry.fileSize,
+        cacheKey,
       };
     }
+
+    let fileName = getFileNameFromUrl(parsedUrl);
 
     // 使用 fetch API 下载文件（参考 yishe-admin 的实现）
     try {
@@ -1397,27 +1516,18 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       // 从响应头获取文件名（如果 Content-Disposition 存在）
       const contentDisposition = response.headers.get("content-disposition");
       if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(
-          /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
-        );
-        if (filenameMatch && filenameMatch[1]) {
-          let suggestedFileName = filenameMatch[1].replace(/['"]/g, "");
-          try {
-            suggestedFileName = decodeURIComponent(suggestedFileName);
-          } catch (e) {
-            // 忽略解码错误
-          }
-          if (suggestedFileName) {
-            fileName = suggestedFileName.replace(/[<>:"/\\|?*]/g, "_");
-          }
+        const suggestedFileName = getFileNameFromContentDisposition(contentDisposition);
+        if (suggestedFileName) {
+          fileName = suggestedFileName;
         }
       }
 
-      // 确保文件名有正确的扩展名
-      fileName = ensureFileExtension(
+      const originalFileName = fileName;
+      fileName = buildCachedDownloadFileName(
+        cacheKey,
         fileName,
         url,
-        response.headers.get("content-type") || undefined,
+        response.headers.get("content-type"),
       );
 
       const finalFilePath = pathJoin(filesDir, fileName);
@@ -1425,12 +1535,25 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       // 如果文件已存在，返回跳过
       if (fs.existsSync(finalFilePath)) {
         const stats = fs.statSync(finalFilePath);
+        const manifest = readDownloadManifest(filesDir);
+        manifest[cacheKey] = {
+          url: normalizedUrl,
+          cacheKey,
+          fileName,
+          filePath: finalFilePath,
+          fileSize: stats.size,
+          contentType: response.headers.get("content-type"),
+          downloadedAt: manifest[cacheKey]?.downloadedAt || new Date().toISOString(),
+          originalFileName,
+        };
+        writeDownloadManifest(filesDir, manifest);
         return {
           success: true,
           message: "文件已存在，跳过下载",
           filePath: finalFilePath,
           skipped: true,
           fileSize: stats.size,
+          cacheKey,
         };
       }
 
@@ -1442,12 +1565,26 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       fs.writeFileSync(finalFilePath, buffer);
 
       const stats = fs.statSync(finalFilePath);
+      const manifest = readDownloadManifest(filesDir);
+      manifest[cacheKey] = {
+        url: normalizedUrl,
+        cacheKey,
+        fileName,
+        filePath: finalFilePath,
+        fileSize: stats.size,
+        contentType: response.headers.get("content-type"),
+        downloadedAt: new Date().toISOString(),
+        originalFileName,
+      };
+      writeDownloadManifest(filesDir, manifest);
+
       return {
         success: true,
         message: "下载完成",
         filePath: finalFilePath,
         fileSize: stats.size,
         downloadedBytes: buffer.length,
+        cacheKey,
       };
     } catch (error: any) {
       // 处理超时错误
@@ -1472,6 +1609,18 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       message: `下载失败: ${error.message || "未知错误"}`,
       error: "UNKNOWN_ERROR",
     };
+  }
+  })();
+
+  if (normalizedUrlForLock) {
+    downloadInFlight.set(normalizedUrlForLock, task);
+  }
+  try {
+    return await task;
+  } finally {
+    if (normalizedUrlForLock) {
+      downloadInFlight.delete(normalizedUrlForLock);
+    }
   }
 });
 
@@ -1502,9 +1651,8 @@ ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
       };
     }
 
-    let parsedUrl: URL;
     try {
-      parsedUrl = new URL(url);
+      normalizeDownloadUrl(url);
     } catch (error) {
       return {
         found: false,
@@ -1512,6 +1660,8 @@ ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
         error: "INVALID_URL_FORMAT",
       };
     }
+    const normalizedUrl = normalizeDownloadUrl(url);
+    const cacheKey = buildDownloadCacheKey(normalizedUrl);
 
     const filesDir = pathJoin(workspaceDir, "files");
 
@@ -1521,63 +1671,19 @@ ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
         found: false,
         message: "文件目录不存在，未找到文件",
         filePath: null,
+        cacheKey,
       };
     }
 
-    // 从 URL 提取可能的文件名
-    const urlPath = parsedUrl.pathname;
-    let possibleFileName = urlPath.split("/").pop() || "download";
-
-    // 清理文件名
-    possibleFileName = possibleFileName.replace(/[<>:"/\\|?*]/g, "_");
-
-    // 检查可能的文件路径
-    const possibleFilePath = pathJoin(filesDir, possibleFileName);
-
-    if (fs.existsSync(possibleFilePath)) {
-      const stats = fs.statSync(possibleFilePath);
-      // 返回绝对路径（跨平台）
-      const absolutePath = resolve(filesDir, possibleFileName);
+    const cached = getCachedDownloadByUrl(filesDir, normalizedUrl);
+    if (cached.found && cached.entry) {
       return {
         found: true,
-        filePath: absolutePath,
-        fileSize: stats.size,
-        message: "文件已找到",
+        filePath: cached.entry.filePath,
+        fileSize: cached.entry.fileSize,
+        message: "文件链接缓存已找到",
+        cacheKey,
       };
-    }
-
-    // 如果直接文件名匹配失败，尝试在 files 目录中搜索
-    // 读取目录中的所有文件
-    try {
-      const files = fs.readdirSync(filesDir);
-
-      // 尝试匹配文件名（不区分大小写，支持部分匹配）
-      const urlFileName = possibleFileName.toLowerCase();
-      for (const file of files) {
-        const filePath = pathJoin(filesDir, file);
-        const fileStats = fs.statSync(filePath);
-
-        // 如果是文件（不是目录）
-        if (fileStats.isFile()) {
-          const fileName = file.toLowerCase();
-          // 精确匹配或部分匹配
-          if (
-            fileName === urlFileName ||
-            fileName.includes(urlFileName) ||
-            urlFileName.includes(fileName)
-          ) {
-            const absolutePath = resolve(filesDir, file);
-            return {
-              found: true,
-              filePath: absolutePath,
-              fileSize: fileStats.size,
-              message: "找到匹配的文件",
-            };
-          }
-        }
-      }
-    } catch (error) {
-      // 忽略读取目录错误
     }
 
     // 如果都找不到，返回未找到
@@ -1585,6 +1691,7 @@ ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
       found: false,
       message: "未找到对应的文件",
       filePath: null,
+      cacheKey,
     };
   } catch (error: any) {
     return {

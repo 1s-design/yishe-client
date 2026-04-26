@@ -97,6 +97,8 @@ declare global {
         filePath?: string
         skipped?: boolean
         fileSize?: number
+        cacheKey?: string
+        downloadedBytes?: number
         error?: string
         statusCode?: number
       }>
@@ -105,6 +107,7 @@ declare global {
         found: boolean
         filePath?: string | null
         fileSize?: number
+        cacheKey?: string
         message: string
         error?: string
       }>

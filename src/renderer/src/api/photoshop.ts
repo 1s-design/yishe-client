@@ -7,6 +7,7 @@ import axios from 'axios'
 
 // yishe-ps 服务默认地址
 const PS_API_BASE = 'http://localhost:1595'
+const PSD_PROCESS_TIMEOUT = 30 * 60 * 1000
 
 // 创建 axios 实例
 const psApiClient = axios.create({
@@ -25,6 +26,9 @@ psApiClient.interceptors.response.use(
     const detail = error.response?.data?.detail
     const rawMessage = detail?.message ||
                        detail?.error ||
+                       (error.code === 'ECONNABORTED'
+                         ? `Photoshop 处理请求超时，请检查 PS 自动化端是否仍在执行（${error.config?.timeout || '未知'}ms）`
+                         : null) ||
                        error.message ||
                        '请求失败'
     const errorType = detail?.type ? String(detail.type) : ''
@@ -286,7 +290,9 @@ export const photoshopApi = {
    */
   async processPsd(request: ProcessRequest): Promise<ProcessResponse> {
     console.log('处理psd参数',request)
-    const response = await psApiClient.post<ProcessResponse>('/processPsd', request)
+    const response = await psApiClient.post<ProcessResponse>('/processPsd', request, {
+      timeout: PSD_PROCESS_TIMEOUT
+    })
     return response.data
   }
 }
