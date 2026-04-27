@@ -310,6 +310,12 @@ function resolveTemuTemplateInfoCandidates(publishInfo = {}) {
         || publishInfo.publishOptions
         || publishInfo.platformSettings?.[PLATFORM_KEY]
         || {};
+    const vendorProductMappings = settings.vendorProductMappings
+        || publishInfo.vendorProductMappings
+        || publishInfo.data?.vendorProductMappings
+        || publishInfo.meta?.vendorProductMappings
+        || publishInfo.metadata?.vendorProductMappings
+        || [];
 
     return {
         settings,
@@ -329,28 +335,22 @@ function resolveTemuTemplateInfoCandidates(publishInfo = {}) {
             || publishInfo.meta?.vendorCode
             || publishInfo.metadata?.vendorCode
         ),
-        explicitProductCode: normalizeText(
-            settings.productCode
-            || publishInfo.productCode
-            || publishInfo.data?.productCode
-            || publishInfo.meta?.productCode
-            || publishInfo.metadata?.productCode
-        )
+        vendorProductMappings: Array.isArray(vendorProductMappings)
+            ? vendorProductMappings
+                .map((item, index) => ({
+                    ...item,
+                    code: normalizeText(item?.code),
+                    sort: Number(item?.sort) || index + 1
+                }))
+                .filter((item) => item.code)
+                .sort((a, b) => a.sort - b.sort)
+            : []
     };
-}
-
-function resolveTemuTemplateProductCode(publishInfo = {}) {
-    const info = resolveTemuTemplateInfoCandidates(publishInfo);
-    if (info.explicitProductCode) {
-        return info.explicitProductCode;
-    }
-
-    return [info.stickerCode, info.vendorCode].filter(Boolean).join('-');
 }
 
 function hasTemuTemplateMagicVariables(value) {
     if (typeof value === 'string') {
-        return /^\$productCode$/.test(value.trim()) || /^\$image\[\d+\]$/.test(value.trim());
+        return /^\$image\[\d+\]$/.test(value.trim());
     }
 
     if (Array.isArray(value)) {
@@ -368,14 +368,6 @@ function replaceTemuTemplateMagicVariables(value, context, state = { warnings: [
     if (typeof value === 'string') {
         const normalized = value.trim();
         if (!normalized) {
-            return value;
-        }
-
-        if (normalized === '$productCode') {
-            if (context.productCode) {
-                return context.productCode;
-            }
-            state.warnings.push('missing_product_code');
             return value;
         }
 
@@ -722,21 +714,36 @@ function normalizeTemuTemplateSkuFields(payload = {}) {
     return nextPayload;
 }
 
-function normalizeTemuTemplateExtCodes(payload = {}, productCode = '') {
+function normalizeTemuTemplateExtCodes(payload = {}, codeInfo = {}) {
     const nextPayload = isPlainObject(payload) ? { ...payload } : {};
-    const baseProductCode = normalizeText(productCode);
-    if (!baseProductCode || !Array.isArray(nextPayload.productSkcReqs)) {
+    const stickerCode = normalizeText(codeInfo.stickerCode);
+    const vendorCode = normalizeText(codeInfo.vendorCode);
+    const vendorProductMappings = Array.isArray(codeInfo.vendorProductMappings)
+        ? codeInfo.vendorProductMappings
+        : [];
+    const skcExtCode = stickerCode && vendorCode ? `${stickerCode}-${vendorCode}` : '';
+
+    if (!Array.isArray(nextPayload.productSkcReqs)) {
         return nextPayload;
     }
 
     nextPayload.productSkcReqs = nextPayload.productSkcReqs.map((skc, skcIndex) => {
         const nextSkc = isPlainObject(skc) ? { ...skc } : {};
-        nextSkc.extCode = `${baseProductCode}-skc-${skcIndex + 1}`;
+        if (skcIndex !== 0) {
+            return nextSkc;
+        }
+
+        if (skcExtCode) {
+            nextSkc.extCode = skcExtCode;
+        }
 
         const skuList = Array.isArray(nextSkc.productSkuReqs) ? nextSkc.productSkuReqs : [];
         nextSkc.productSkuReqs = skuList.map((sku, skuIndex) => {
             const nextSku = isPlainObject(sku) ? { ...sku } : {};
-            nextSku.extCode = `${baseProductCode}-sku-${skcIndex + 1}-${skuIndex + 1}`;
+            const vendorProductCode = normalizeText(vendorProductMappings[skuIndex]?.code);
+            if (stickerCode && vendorProductCode) {
+                nextSku.extCode = `${stickerCode}-${vendorProductCode}`;
+            }
             return nextSku;
         });
 
@@ -764,7 +771,7 @@ function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
     const decorationImageAppliedPayload = assignGoodsLayerDecorationImagesFromCarousel(imageAppliedPayload);
     const extCodeAppliedPayload = normalizeTemuTemplateExtCodes(
         decorationImageAppliedPayload,
-        options.productCode || ''
+        options.codeInfo || {}
     );
     const normalizedSkuPayload = normalizeTemuTemplateSkuFields(extCodeAppliedPayload);
     return {
@@ -1120,12 +1127,12 @@ export async function publishTemuByProductTemplate(
         firstImageUrl: uploadedImageUrls[0] || ''
     });
 
-    const resolvedProductCode = resolveTemuTemplateProductCode(publishInfo);
+    const resolvedCodeInfo = resolveTemuTemplateInfoCandidates(publishInfo);
     const templateImageBindings = resolveTemuTemplateImageBindings(publishInfo);
     const buildPayloadResult = buildTemuTemplatePublishPayload(productTemplate, {
         title: resolvedTitle,
         uploadedImageUrls,
-        productCode: resolvedProductCode,
+        codeInfo: resolvedCodeInfo,
         templateImageBindings
     });
     const finalPayload = buildPayloadResult.payload;
@@ -1145,7 +1152,9 @@ export async function publishTemuByProductTemplate(
     logger.info(`${PLATFORM_NAME}模板直发最终提交价格预览`, payloadPreview);
     logger.info(`${PLATFORM_NAME}模板变量解析结果`, {
         templateUsesMagicVariables: !!buildPayloadResult.templateUsesMagicVariables,
-        productCode: resolvedProductCode,
+        stickerCode: resolvedCodeInfo.stickerCode,
+        vendorCode: resolvedCodeInfo.vendorCode,
+        vendorProductMappingCount: resolvedCodeInfo.vendorProductMappings.length,
         variableWarnings: buildPayloadResult.variableWarnings || [],
         templateImageBindings: templateImageBindings || null
     });

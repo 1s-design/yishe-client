@@ -396,6 +396,7 @@ function buildExplicitPublishFields(
   });
 
   if (platform === "temu") {
+    delete explicitFields.productCode;
     const productTemplate = cloneSerializable(
       publishData?.productTemplate ??
         configData?.productTemplate ??
@@ -410,6 +411,20 @@ function buildExplicitPublishFields(
         publishData?.publishOptions?.templateImageBindings ??
         publishData?.platformSettings?.temu?.templateImageBindings,
     );
+    const vendorProductMappings = cloneSerializable(
+      publishData?.vendorProductMappings ??
+        configData?.vendorProductMappings ??
+        publishData?.platformOptions?.vendorProductMappings ??
+        publishData?.publishOptions?.vendorProductMappings ??
+        publishData?.platformSettings?.temu?.vendorProductMappings,
+    );
+    const vendorCode = [
+      publishData?.vendorCode,
+      configData?.vendorCode,
+      publishData?.platformOptions?.vendorCode,
+      publishData?.publishOptions?.vendorCode,
+      publishData?.platformSettings?.temu?.vendorCode,
+    ].find((item) => typeof item === "string" && item.trim());
 
     if (
       productTemplate &&
@@ -424,6 +439,12 @@ function buildExplicitPublishFields(
       !Array.isArray(templateImageBindings)
     ) {
       explicitFields.templateImageBindings = templateImageBindings;
+    }
+    if (Array.isArray(vendorProductMappings)) {
+      explicitFields.vendorProductMappings = vendorProductMappings;
+    }
+    if (typeof vendorCode === "string" && vendorCode.trim()) {
+      explicitFields.vendorCode = vendorCode.trim();
     }
   }
 
@@ -620,7 +641,9 @@ function normalizeFromFlatPublishData(
         ? publishData.thumbnail.trim()
         : undefined,
     productCode:
-      typeof publishData?.productCode === "string" &&
+      platform === "temu"
+        ? undefined
+        : typeof publishData?.productCode === "string" &&
       publishData.productCode.trim()
         ? publishData.productCode.trim()
         : typeof nestedPlatformOptions?.productCode === "string" &&
@@ -1036,7 +1059,9 @@ function buildPublishRequestBody(
   return compactObject({
     ...task.publishData,
     productCode:
-      typeof task.publishData?.productCode === "string" &&
+      platform === "temu"
+        ? undefined
+        : typeof task.publishData?.productCode === "string" &&
       task.publishData.productCode.trim()
         ? task.publishData.productCode.trim()
         : typeof platformOptions?.productCode === "string" &&

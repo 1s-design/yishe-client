@@ -62,7 +62,7 @@ export function injectBrowserPageRuntime(rawPayload = {}) {
   };
 
   const BADGE_ID = "__yishe_browser_automation_profile_badge";
-  const BADGE_VERSION = "9";
+  const BADGE_VERSION = "10";
   const badgeState =
     (globalThis.__yisheBrowserAutomationProfileBadgeState =
       globalThis.__yisheBrowserAutomationProfileBadgeState || {});
@@ -153,8 +153,159 @@ export function injectBrowserPageRuntime(rawPayload = {}) {
     return next;
   };
 
+  const getBadgeStorageKey = () => {
+    const profileKey = normalizeText((badgeState.payload || payload)?.profileId, "default")
+      .replace(/[^\w.-]+/g, "_")
+      .slice(0, 80);
+    return `__yishe_browser_automation_profile_badge_position:${profileKey}`;
+  };
+
+  const readStoredBadgePosition = () => {
+    try {
+      const raw = window.localStorage?.getItem(getBadgeStorageKey());
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      const left = Number(parsed?.left);
+      const top = Number(parsed?.top);
+      if (!Number.isFinite(left) || !Number.isFinite(top)) {
+        return null;
+      }
+      return { left, top };
+    } catch {
+      return null;
+    }
+  };
+
+  const writeStoredBadgePosition = (position) => {
+    try {
+      window.localStorage?.setItem(
+        getBadgeStorageKey(),
+        JSON.stringify({
+          left: Math.round(Number(position?.left) || 0),
+          top: Math.round(Number(position?.top) || 0),
+        }),
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  const clampBadgePosition = (badge, left, top) => {
+    const rect = badge.getBoundingClientRect();
+    const width = rect.width || badge.offsetWidth || 156;
+    const height = rect.height || badge.offsetHeight || 68;
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || width);
+    const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || height);
+    const margin = 8;
+    return {
+      left: Math.min(Math.max(margin, Number(left) || margin), Math.max(margin, viewportWidth - width - margin)),
+      top: Math.min(Math.max(margin, Number(top) || margin), Math.max(margin, viewportHeight - height - margin)),
+    };
+  };
+
+  const applyBadgePosition = (badge, position = null) => {
+    if (!badge) {
+      return;
+    }
+    if (!position && badge.dataset.dragging === "true") {
+      return;
+    }
+    const nextPosition = position || readStoredBadgePosition();
+    if (!nextPosition) {
+      badge.style.left = "";
+      badge.style.top = "";
+      badge.style.right = "10px";
+      badge.style.bottom = "10px";
+      return;
+    }
+
+    const clamped = clampBadgePosition(badge, nextPosition.left, nextPosition.top);
+    badge.style.left = `${clamped.left}px`;
+    badge.style.top = `${clamped.top}px`;
+    badge.style.right = "auto";
+    badge.style.bottom = "auto";
+  };
+
+  const bindBadgeDrag = (badge) => {
+    if (!badge || badge.dataset.dragBound === "true") {
+      return;
+    }
+    badge.dataset.dragBound = "true";
+
+    let dragState = null;
+    const startDrag = (event) => {
+      if (event.button !== undefined && event.button !== 0) {
+        return;
+      }
+      const rect = badge.getBoundingClientRect();
+      dragState = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+      };
+      badge.style.transition = "none";
+      badge.style.cursor = "grabbing";
+      badge.dataset.dragging = "true";
+      if (typeof badge.setPointerCapture === "function" && event.pointerId !== undefined) {
+        badge.setPointerCapture(event.pointerId);
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const moveDrag = (event) => {
+      if (!dragState) {
+        return;
+      }
+      const nextPosition = clampBadgePosition(
+        badge,
+        event.clientX - dragState.offsetX,
+        event.clientY - dragState.offsetY,
+      );
+      applyBadgePosition(badge, nextPosition);
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const endDrag = (event) => {
+      if (!dragState) {
+        return;
+      }
+      const rect = badge.getBoundingClientRect();
+      const nextPosition = clampBadgePosition(badge, rect.left, rect.top);
+      applyBadgePosition(badge, nextPosition);
+      writeStoredBadgePosition(nextPosition);
+      badge.style.cursor = "grab";
+      badge.dataset.dragging = "false";
+      if (typeof badge.releasePointerCapture === "function" && dragState.pointerId !== undefined) {
+        try {
+          badge.releasePointerCapture(dragState.pointerId);
+        } catch {
+          // ignore
+        }
+      }
+      dragState = null;
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+    };
+
+    badge.addEventListener("pointerdown", startDrag, true);
+    badge.addEventListener("pointermove", moveDrag, true);
+    badge.addEventListener("pointerup", endDrag, true);
+    badge.addEventListener("pointercancel", endDrag, true);
+  };
+
   const ensureBadge = () => {
     if (!document?.documentElement) {
+      return;
+    }
+    try {
+      if (globalThis.self !== globalThis.top) {
+        return;
+      }
+    } catch {
       return;
     }
 
@@ -180,7 +331,7 @@ export function injectBrowserPageRuntime(rawPayload = {}) {
         "right:10px",
         "bottom:10px",
         "z-index:2147483647",
-        "pointer-events:none",
+        "pointer-events:auto",
         "width:156px",
         "padding:0",
         "border-radius:8px",
@@ -188,6 +339,8 @@ export function injectBrowserPageRuntime(rawPayload = {}) {
         "overflow:visible",
         "font-family:'SF Pro Text','Segoe UI',Arial,sans-serif",
         "user-select:none",
+        "touch-action:none",
+        "cursor:grab",
         "box-sizing:border-box",
       ].join(";");
 
@@ -331,6 +484,9 @@ export function injectBrowserPageRuntime(rawPayload = {}) {
       mountTarget.appendChild(badge);
     }
 
+    bindBadgeDrag(badge);
+    applyBadgePosition(badge);
+
     const currentPayload = badgeState.payload || payload;
     badge.dataset.profileId = currentPayload.profileId || "";
     badge.dataset.profileName = currentPayload.profileName || "";
@@ -462,6 +618,16 @@ export function injectBrowserPageRuntime(rawPayload = {}) {
   window.addEventListener("blur", () => safeSync("blur"), true);
   window.addEventListener("pageshow", () => safeSync("pageshow"), true);
   window.addEventListener("load", () => safeSync("load"), true);
+  window.addEventListener(
+    "resize",
+    () => {
+      const badge = document.getElementById(BADGE_ID);
+      if (badge) {
+        applyBadgePosition(badge);
+      }
+    },
+    true,
+  );
   document.addEventListener(
     "visibilitychange",
     () => safeSync(document.visibilityState === "visible" ? "visible" : "hidden"),
