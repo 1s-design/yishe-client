@@ -607,6 +607,7 @@ export const autoPsdBatchState = reactive({
   queueCount: 0,
   currentPsSetId: null as string | null,
   currentPsSetName: null as string | null,
+  currentStep: null as string | null,
   progress: null as number | null,
   lastError: null as string | null,
   lastHeartbeatAt: null as string | null,
@@ -961,6 +962,7 @@ function buildPsAutomationSnapshot() {
     queueCount: autoPsdBatchState.queueCount,
     currentPsSetId: autoPsdBatchState.currentPsSetId,
     currentPsSetName: autoPsdBatchState.currentPsSetName,
+    currentStep: autoPsdBatchState.currentStep,
     progress: autoPsdBatchState.progress,
     lastError: autoPsdBatchState.lastError,
     lastHeartbeatAt: autoPsdBatchState.lastHeartbeatAt,
@@ -1224,6 +1226,7 @@ function sanitizeClientPsAutomationForWs(value: unknown) {
     "queueCount",
     "currentPsSetId",
     "currentPsSetName",
+    "currentStep",
     "progress",
     "lastError",
     "lastHeartbeatAt",
@@ -4691,6 +4694,10 @@ async function syncPsdSetProductionStatus(event: {
         message: statusMessage,
         progress: event.progress,
         total: event.total,
+        clientId: identity.clientId,
+        machineCode: identity.machineCode,
+        assignedClientId: identity.clientId,
+        assignedMachineCode: identity.machineCode,
       });
     }
   } catch (error) {
@@ -4731,6 +4738,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
   emitPsAutomationStatus({
     running: true,
     currentPsSetId: psdSetId,
+    currentStep: "客户端处理中",
     progress: 0,
     lastError: null,
   });
@@ -4741,7 +4749,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
   await syncPsdSetProductionStatus({
     psdSetId,
     status: "processing",
-    message: "客户端已开始制作",
+    message: "客户端处理中",
     progress: 0,
     total: 5,
   });
@@ -4783,6 +4791,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
+      currentStep: "正在获取套图信息",
       progress: 20,
     });
     if (!psdSet.psdTemplate) {
@@ -4926,6 +4935,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
+      currentStep: "正在下载贴纸文件",
       progress: 40,
     });
 
@@ -5259,6 +5269,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
+      currentStep: "正在处理PSD文件",
       progress: 60,
     });
     emitter.emit("log", {
@@ -5523,6 +5534,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
+      currentStep: "正在上传生成的图片",
       progress: 80,
     });
     emitter.emit("log", {
@@ -5662,6 +5674,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       running: false,
       currentPsSetId: null,
       currentPsSetName: null,
+      currentStep: null,
       progress: 100,
       lastError: null,
     });
@@ -5720,6 +5733,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitPsAutomationStatus({
       running: false,
       currentPsSetId: psdSetId,
+      currentStep: error.message || "制作失败",
       progress: null,
       lastError: error.message || "制作失败",
     });
@@ -5742,6 +5756,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       queueCount: 0,
       currentPsSetId: null,
       currentPsSetName: null,
+      currentStep: null,
     });
     void syncServiceRuntime("photoshop");
   }
