@@ -285,17 +285,6 @@ function createWindow(): void {
     // }
   });
 
-  // Windows: 处理最小化到托盘
-  if (process.platform === "win32") {
-    mainWindow!.on("minimize", () => {
-      // 如果启用了托盘模式，最小化时隐藏窗口而不是最小化到任务栏
-      if (shouldForceTrayMode()) {
-        ensureTrayPowerSaveBlocker();
-        mainWindow?.hide();
-      }
-    });
-  }
-
   mainWindow.on("hide", () => {
     ensureTrayPowerSaveBlocker();
   });
