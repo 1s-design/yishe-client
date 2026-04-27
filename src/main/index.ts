@@ -29,57 +29,81 @@ import {
   getGoogleArtStatus,
 } from "./googleArt";
 import { generateCosKey, uploadFileToCos } from "./cos";
-import sharp from "sharp";
 import { createHash, randomUUID } from "crypto";
-import {
-  startServer,
-  stopServer,
-  isServerRunning,
-  saveToken,
-  getTokenValue,
-  isTokenExist,
-} from "./server";
 import ElectronStore from "electron-store";
 import {
   ExternalProcessManager,
   ProcessStatus,
 } from "./externalProcessManager";
 import { pluginProcessConfigs } from "./externalProcessConfig";
-import {
-  invokeAutoBrowserRoute,
-  shutdownAutoBrowserService,
-} from "./auto-browser";
-import {
-  clearImageToolFiles,
-  configureImageTool,
-  deleteImageToolFile,
-  generateImageVariations,
-  getImageInfo,
-  getImageToolCatalog,
-  getImageToolDirectories,
-  getImageToolExampleById,
-  getImageToolExamples,
-  getImageToolOperationDetail,
-  getImageToolOperationSchemas,
-  getImageToolOperations,
-  getImageToolStatus,
-  getImageToolVariationsConfig,
-  listImageToolFiles,
-  processImage,
-  processImageWithPrompt,
-  saveImageToolInput,
-} from "./image-tool";
-import {
-  cancelVideoTemplateRender,
-  configureVideoTemplate,
-  enqueueVideoTemplateRender,
-  getVideoTemplateCatalog,
-  getVideoTemplateRender,
-  getVideoTemplateStatus,
-  listVideoTemplateRenders,
-  warmVideoTemplateService,
-} from "./video-template";
 import { handleClientLogCommand, writeClientLog } from "./clientLogger";
+
+const appLaunchStartedAt = Date.now();
+
+type ImageToolModule = typeof import("./image-tool");
+type VideoTemplateModule = typeof import("./video-template");
+type AutoBrowserModule = typeof import("./auto-browser");
+type ServerModule = typeof import("./server");
+type SharpFactory = typeof import("sharp");
+
+let imageToolModulePromise: Promise<ImageToolModule> | null = null;
+let videoTemplateModulePromise: Promise<VideoTemplateModule> | null = null;
+let autoBrowserModulePromise: Promise<AutoBrowserModule> | null = null;
+let serverModulePromise: Promise<ServerModule> | null = null;
+let sharpModulePromise: Promise<any> | null = null;
+
+async function getImageToolModule() {
+  if (!imageToolModulePromise) {
+    imageToolModulePromise = import("./image-tool").then((module) => {
+      module.configureImageTool({
+        getWorkspaceDirectory: () =>
+          (store.get("workspaceDirectory", "") as string) || "",
+      });
+      return module;
+    });
+  }
+
+  return imageToolModulePromise;
+}
+
+async function getVideoTemplateModule() {
+  if (!videoTemplateModulePromise) {
+    videoTemplateModulePromise = import("./video-template").then((module) => {
+      module.configureVideoTemplate({
+        getWorkspaceDirectory: () =>
+          (store.get("workspaceDirectory", "") as string) || "",
+      });
+      return module;
+    });
+  }
+
+  return videoTemplateModulePromise;
+}
+
+async function getAutoBrowserModule() {
+  if (!autoBrowserModulePromise) {
+    autoBrowserModulePromise = import("./auto-browser");
+  }
+
+  return autoBrowserModulePromise;
+}
+
+async function getServerModule() {
+  if (!serverModulePromise) {
+    serverModulePromise = import("./server");
+  }
+
+  return serverModulePromise;
+}
+
+async function getSharp(): Promise<SharpFactory> {
+  if (!sharpModulePromise) {
+    sharpModulePromise = import("sharp");
+  }
+
+  const sharpModule = await sharpModulePromise;
+  return sharpModule.default || sharpModule;
+}
 
 function writeMainLog(
   level: "DEBUG" | "INFO" | "WARN" | "ERROR",
@@ -96,11 +120,48 @@ function writeMainLog(
 
 function resolveBundledImageMagickDirectory(): string | null {
   const candidates = [
-    join(process.resourcesPath, "resources", "plugin", process.platform, "image-tool", "imagemagick"),
-    join(process.resourcesPath, "app.asar.unpacked", "resources", "plugin", process.platform, "image-tool", "imagemagick"),
-    join(app.getAppPath(), "resources", "plugin", process.platform, "image-tool", "imagemagick"),
-    join(app.getAppPath(), "..", "resources", "plugin", process.platform, "image-tool", "imagemagick"),
-    join(process.cwd(), "resources", "plugin", process.platform, "image-tool", "imagemagick"),
+    join(
+      process.resourcesPath,
+      "resources",
+      "plugin",
+      process.platform,
+      "image-tool",
+      "imagemagick",
+    ),
+    join(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "resources",
+      "plugin",
+      process.platform,
+      "image-tool",
+      "imagemagick",
+    ),
+    join(
+      app.getAppPath(),
+      "resources",
+      "plugin",
+      process.platform,
+      "image-tool",
+      "imagemagick",
+    ),
+    join(
+      app.getAppPath(),
+      "..",
+      "resources",
+      "plugin",
+      process.platform,
+      "image-tool",
+      "imagemagick",
+    ),
+    join(
+      process.cwd(),
+      "resources",
+      "plugin",
+      process.platform,
+      "image-tool",
+      "imagemagick",
+    ),
   ];
 
   return candidates.find((item) => fs.existsSync(item)) || null;
@@ -147,15 +208,6 @@ function getOrCreateDeviceKey(): string {
   store.set("deviceKey", created);
   return created;
 }
-
-configureImageTool({
-  getWorkspaceDirectory: () =>
-    (store.get("workspaceDirectory", "") as string) || "",
-});
-configureVideoTemplate({
-  getWorkspaceDirectory: () =>
-    (store.get("workspaceDirectory", "") as string) || "",
-});
 
 const bundledImageMagickDirectory = resolveBundledImageMagickDirectory();
 if (bundledImageMagickDirectory && !process.env.YISHE_IMAGEMAGICK_DIR) {
@@ -222,6 +274,22 @@ function shouldForceTrayMode(): boolean {
 }
 
 function createWindow(): void {
+  const createdAt = Date.now();
+  let hasShownMainWindow = false;
+  const showMainWindow = (reason: string) => {
+    if (!mainWindow || hasShownMainWindow) {
+      return;
+    }
+
+    hasShownMainWindow = true;
+    mainWindow.show();
+    writeMainLog("INFO", "主窗口已显示", {
+      reason,
+      durationMs: Date.now() - appLaunchStartedAt,
+      createWindowDurationMs: Date.now() - createdAt,
+    });
+  };
+
   // Create the browser window.
   mainWindow = new BrowserWindow({
     width: 820,
@@ -271,7 +339,7 @@ function createWindow(): void {
   };
 
   mainWindow.on("ready-to-show", () => {
-    mainWindow?.show();
+    showMainWindow("ready-to-show");
     releaseTrayPowerSaveBlocker();
     if (isMac) {
       mainWindow?.setFullScreen(false);
@@ -380,12 +448,20 @@ function createWindow(): void {
     },
   );
 
+  mainWindow.webContents.once("did-finish-load", () => {
+    showMainWindow("did-finish-load");
+  });
+
+  setTimeout(() => {
+    showMainWindow("startup-fallback-timeout");
+  }, 1800);
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env["ELECTRON_RENDERER_URL"]) {
-    mainWindow.loadURL(process.env["ELECTRON_RENDERER_URL"]);
+    void mainWindow.loadURL(process.env["ELECTRON_RENDERER_URL"]);
   } else {
-    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+    void mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   }
 }
 
@@ -636,6 +712,42 @@ function createTray(): void {
   });
 }
 
+function schedulePostWindowStartupTasks() {
+  setTimeout(() => {
+    writeMainLog("INFO", "开始后台启动外部进程", {
+      durationMs: Date.now() - appLaunchStartedAt,
+    });
+    externalProcessManager.startAll().catch((error) => {
+      console.error("❌ 启动外部进程失败:", error);
+      writeMainLog("ERROR", "应用启动后批量启动外部进程失败", {
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+    });
+  }, 2500);
+
+  if (app.isPackaged) {
+    setTimeout(() => {
+      writeMainLog("INFO", "开始后台预热 Video Template 服务", {
+        durationMs: Date.now() - appLaunchStartedAt,
+      });
+      void getVideoTemplateModule()
+        .then((module) => module.warmVideoTemplateService())
+        .catch((error) => {
+          console.error("❌ 预热 Video Template 服务失败:", error);
+          writeMainLog("WARN", "后台预热 Video Template 服务失败", {
+            error:
+              error instanceof Error
+                ? { message: error.message, stack: error.stack }
+                : error,
+          });
+        });
+    }, 8000);
+  }
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -711,12 +823,6 @@ app.whenReady().then(() => {
   // 初始化默认工作目录（在创建窗口之前）
   initializeDefaultWorkspaceDirectory();
 
-  if (app.isPackaged) {
-    void warmVideoTemplateService().catch((error) => {
-      console.error("❌ 预热 Video Template 服务失败:", error);
-    });
-  }
-
   // 添加协议注册代码
 
   // Set app user model id for windows
@@ -734,9 +840,12 @@ app.whenReady().then(() => {
   ipcMain.handle("client-log:write", async (_event, payload) => {
     return writeClientLog(payload || {});
   });
-  ipcMain.handle("client-log:query", async (_event, action: string, payload: Record<string, any>) => {
-    return handleClientLogCommand(action, payload || {});
-  });
+  ipcMain.handle(
+    "client-log:query",
+    async (_event, action: string, payload: Record<string, any>) => {
+      return handleClientLogCommand(action, payload || {});
+    },
+  );
 
   // 切换开发者工具（供 header 按钮调用）
   ipcMain.handle("toggle-devtools", async (event) => {
@@ -754,6 +863,8 @@ app.whenReady().then(() => {
   // 注意：server.ts 中也有 save-token 处理器，但它在服务启动后才注册
   // 这里我们在服务启动前拦截，先启动服务并保存 token
   ipcMain.handle("save-token", async (_event, newToken) => {
+    const { saveToken, isServerRunning, startServer } =
+      await getServerModule();
     // 先保存 token（无论服务是否启动）
     saveToken(newToken);
     writeMainLog("INFO", "保存登录 token，检查本地服务状态", {
@@ -773,10 +884,12 @@ app.whenReady().then(() => {
 
   // token 读取相关 IPC 处理器
   ipcMain.handle("get-token", async () => {
+    const { getTokenValue } = await getServerModule();
     return getTokenValue();
   });
 
   ipcMain.handle("is-token-exist", async () => {
+    const { isTokenExist } = await getServerModule();
     return isTokenExist();
   });
 
@@ -831,21 +944,29 @@ app.whenReady().then(() => {
       hasBody: !!request?.body,
     });
     try {
+      const { invokeAutoBrowserRoute } = await getAutoBrowserModule();
       const response = await invokeAutoBrowserRoute(request);
-      writeMainLog(response?.ok ? "INFO" : "WARN", "auto-browser IPC 调用完成", {
-        method: request?.method || "GET",
-        path: request?.path || "",
-        status: response?.status,
-        ok: response?.ok,
-        durationMs: Date.now() - startedAt,
-      });
+      writeMainLog(
+        response?.ok ? "INFO" : "WARN",
+        "auto-browser IPC 调用完成",
+        {
+          method: request?.method || "GET",
+          path: request?.path || "",
+          status: response?.status,
+          ok: response?.ok,
+          durationMs: Date.now() - startedAt,
+        },
+      );
       return response;
     } catch (error) {
       writeMainLog("ERROR", "auto-browser IPC 调用异常", {
         method: request?.method || "GET",
         path: request?.path || "",
         durationMs: Date.now() - startedAt,
-        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
       });
       throw error;
     }
@@ -854,6 +975,7 @@ app.whenReady().then(() => {
   // 本地服务管理 IPC
   ipcMain.handle("start-local-service", async () => {
     try {
+      const { isServerRunning, startServer } = await getServerModule();
       if (!isServerRunning()) {
         console.log("🚀 启动本地服务 (1519端口)...");
         writeMainLog("INFO", "准备启动本地 1519 服务");
@@ -867,7 +989,10 @@ app.whenReady().then(() => {
     } catch (error: any) {
       console.error("❌ 启动本地服务失败:", error);
       writeMainLog("ERROR", "启动本地 1519 服务失败", {
-        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
       });
       return { success: false, message: error?.message || "启动本地服务失败" };
     }
@@ -875,6 +1000,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("stop-local-service", async () => {
     try {
+      const { isServerRunning, stopServer } = await getServerModule();
       if (isServerRunning()) {
         console.log("🛑 停止本地服务 (1519端口)...");
         writeMainLog("INFO", "准备停止本地 1519 服务");
@@ -888,7 +1014,10 @@ app.whenReady().then(() => {
     } catch (error: any) {
       console.error("❌ 停止本地服务失败:", error);
       writeMainLog("ERROR", "停止本地 1519 服务失败", {
-        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
       });
       return { success: false, message: error?.message || "停止本地服务失败" };
     }
@@ -896,6 +1025,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("check-local-service-status", async () => {
     try {
+      const { isServerRunning } = await getServerModule();
       const running = isServerRunning();
       // 尝试访问健康检查接口来确认服务是否真正可用
       let isAvailable = false;
@@ -969,18 +1099,12 @@ app.whenReady().then(() => {
     }
   });
 
-  // 启动外部进程（在创建窗口之前）
-  externalProcessManager.startAll().catch((error) => {
-    console.error("❌ 启动外部进程失败:", error);
-    writeMainLog("ERROR", "应用启动时批量启动外部进程失败", {
-      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
-    });
-  });
-
   createWindow();
 
   // 创建系统托盘
   createTray();
+
+  schedulePostWindowStartupTasks();
 
   // 注意：服务器现在只在用户登录后启动，不再在应用启动时启动
 
@@ -1005,18 +1129,28 @@ async function cleanupBeforeQuit(): Promise<void> {
   console.log("🔄 应用即将退出，清理资源...");
   writeMainLog("INFO", "应用即将退出，开始清理资源");
 
-  await shutdownAutoBrowserService().catch((error) => {
-    console.error("❌ 停止 auto-browser 服务失败:", error);
-    writeMainLog("ERROR", "停止 auto-browser 服务失败", {
-      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
-    });
-  });
+  if (autoBrowserModulePromise) {
+    await getAutoBrowserModule()
+      .then((module) => module.shutdownAutoBrowserService())
+      .catch((error) => {
+        console.error("❌ 停止 auto-browser 服务失败:", error);
+        writeMainLog("ERROR", "停止 auto-browser 服务失败", {
+          error:
+            error instanceof Error
+              ? { message: error.message, stack: error.stack }
+              : error,
+        });
+      });
+  }
 
   // 停止外部进程（优先执行，给进程时间优雅关闭）
   await externalProcessManager.stopAll().catch((error) => {
     console.error("❌ 停止外部进程失败:", error);
     writeMainLog("ERROR", "停止外部进程失败，准备强制关闭", {
-      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
     });
     // 如果优雅关闭失败，尝试强制关闭
     externalProcessManager.stopAll(true).catch(console.error);
@@ -1045,7 +1179,10 @@ app.on("before-quit", (event) => {
       .catch((error) => {
         console.error("❌ 应用退出清理异常:", error);
         writeMainLog("ERROR", "应用退出清理异常", {
-          error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+          error:
+            error instanceof Error
+              ? { message: error.message, stack: error.stack }
+              : error,
         });
       })
       .finally(() => {
@@ -1154,10 +1291,12 @@ ipcMain.handle("set-workspace-directory", async (_event, path: string) => {
 });
 
 ipcMain.handle("image-tool:get-status", async () => {
+  const { getImageToolStatus } = await getImageToolModule();
   return await getImageToolStatus();
 });
 
 ipcMain.handle("image-tool:get-directories", async () => {
+  const { getImageToolDirectories } = await getImageToolModule();
   return {
     success: true,
     directories: getImageToolDirectories(),
@@ -1165,88 +1304,121 @@ ipcMain.handle("image-tool:get-directories", async () => {
 });
 
 ipcMain.handle("image-tool:get-catalog", async () => {
+  const { getImageToolCatalog } = await getImageToolModule();
   return await getImageToolCatalog();
 });
 
 ipcMain.handle("image-tool:get-operations", async () => {
+  const { getImageToolOperations } = await getImageToolModule();
   return await getImageToolOperations();
 });
 
 ipcMain.handle("image-tool:get-operation-schemas", async () => {
+  const { getImageToolOperationSchemas } = await getImageToolModule();
   return await getImageToolOperationSchemas();
 });
 
-ipcMain.handle("image-tool:get-operation-detail", async (_event, type: string) => {
-  return await getImageToolOperationDetail(type);
-});
+ipcMain.handle(
+  "image-tool:get-operation-detail",
+  async (_event, type: string) => {
+    const { getImageToolOperationDetail } = await getImageToolModule();
+    return await getImageToolOperationDetail(type);
+  },
+);
 
 ipcMain.handle("image-tool:get-examples", async () => {
+  const { getImageToolExamples } = await getImageToolModule();
   return await getImageToolExamples();
 });
 
 ipcMain.handle("image-tool:get-example-detail", async (_event, id: string) => {
+  const { getImageToolExampleById } = await getImageToolModule();
   return await getImageToolExampleById(id);
 });
 
 ipcMain.handle("image-tool:get-variations-config", async () => {
+  const { getImageToolVariationsConfig } = await getImageToolModule();
   return await getImageToolVariationsConfig();
 });
 
 ipcMain.handle("image-tool:save-input", async (_event, payload: any) => {
+  const { saveImageToolInput } = await getImageToolModule();
   return await saveImageToolInput(payload || {});
 });
 
 ipcMain.handle("image-tool:get-info", async (_event, payload: any) => {
+  const { getImageInfo } = await getImageToolModule();
   return await getImageInfo(payload || {});
 });
 
 ipcMain.handle("image-tool:process", async (_event, payload: any) => {
+  const { processImage } = await getImageToolModule();
   return await processImage(payload || {});
 });
 
-ipcMain.handle("image-tool:process-with-prompt", async (_event, payload: any) => {
-  return await processImageWithPrompt(payload || {});
-});
+ipcMain.handle(
+  "image-tool:process-with-prompt",
+  async (_event, payload: any) => {
+    const { processImageWithPrompt } = await getImageToolModule();
+    return await processImageWithPrompt(payload || {});
+  },
+);
 
 ipcMain.handle("image-tool:variations", async (_event, payload: any) => {
+  const { generateImageVariations } = await getImageToolModule();
   return await generateImageVariations(payload || {});
 });
 
 ipcMain.handle("image-tool:list-files", async (_event, payload: any) => {
+  const { listImageToolFiles } = await getImageToolModule();
   return await listImageToolFiles(payload || {});
 });
 
 ipcMain.handle("image-tool:delete-file", async (_event, payload: any) => {
+  const { deleteImageToolFile } = await getImageToolModule();
   return await deleteImageToolFile(payload || {});
 });
 
 ipcMain.handle("image-tool:clear-files", async (_event, payload: any) => {
+  const { clearImageToolFiles } = await getImageToolModule();
   return await clearImageToolFiles(payload || {});
 });
 
 ipcMain.handle("video-template:get-status", async () => {
+  const { getVideoTemplateStatus } = await getVideoTemplateModule();
   return await getVideoTemplateStatus();
 });
 
 ipcMain.handle("video-template:get-catalog", async () => {
+  const { getVideoTemplateCatalog } = await getVideoTemplateModule();
   return await getVideoTemplateCatalog();
 });
 
 ipcMain.handle("video-template:list-renders", async () => {
+  const { listVideoTemplateRenders } = await getVideoTemplateModule();
   return await listVideoTemplateRenders();
 });
 
 ipcMain.handle("video-template:get-render", async (_event, jobId: string) => {
+  const { getVideoTemplateRender } = await getVideoTemplateModule();
   return await getVideoTemplateRender(jobId);
 });
 
-ipcMain.handle("video-template:enqueue-render", async (_event, payload: any) => {
-  return await enqueueVideoTemplateRender(payload || {});
-});
+ipcMain.handle(
+  "video-template:enqueue-render",
+  async (_event, payload: any) => {
+    const { enqueueVideoTemplateRender } = await getVideoTemplateModule();
+    return await enqueueVideoTemplateRender(payload || {});
+  },
+);
 
-ipcMain.handle("video-template:cancel-render", async (_event, jobId: string) => {
-  return await cancelVideoTemplateRender(jobId);
-});
+ipcMain.handle(
+  "video-template:cancel-render",
+  async (_event, jobId: string) => {
+    const { cancelVideoTemplateRender } = await getVideoTemplateModule();
+    return await cancelVideoTemplateRender(jobId);
+  },
+);
 
 ipcMain.handle("open-path", async (_event, path: string) => {
   if (!path || typeof path !== "string") {
@@ -1334,7 +1506,10 @@ function readDownloadManifest(filesDir: string): DownloadManifest {
   }
 }
 
-function writeDownloadManifest(filesDir: string, manifest: DownloadManifest): void {
+function writeDownloadManifest(
+  filesDir: string,
+  manifest: DownloadManifest,
+): void {
   const manifestPath = getDownloadManifestPath(filesDir);
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
 }
@@ -1354,7 +1529,8 @@ function getFileNameFromUrl(parsedUrl: URL): string {
 
   if (!fileName.includes(".")) {
     const suggestedName =
-      parsedUrl.searchParams.get("filename") || parsedUrl.searchParams.get("name");
+      parsedUrl.searchParams.get("filename") ||
+      parsedUrl.searchParams.get("name");
     fileName = suggestedName || fileName;
   }
 
@@ -1366,12 +1542,17 @@ function getFileNameFromUrl(parsedUrl: URL): string {
   return sanitizeDownloadFileName(fileName);
 }
 
-function getFileNameFromContentDisposition(contentDisposition: string | null): string | null {
+function getFileNameFromContentDisposition(
+  contentDisposition: string | null,
+): string | null {
   if (!contentDisposition) {
     return null;
   }
-  const utf8Match = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;\n]*)/i);
-  const rawFileName = utf8Match?.[1] ||
+  const utf8Match = contentDisposition.match(
+    /filename\*\s*=\s*UTF-8''([^;\n]*)/i,
+  );
+  const rawFileName =
+    utf8Match?.[1] ||
     contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i)?.[1];
   if (!rawFileName) {
     return null;
@@ -1397,7 +1578,9 @@ function buildCachedDownloadFileName(
     contentType || undefined,
   );
   const ext = extname(withExtension);
-  const stem = sanitizeDownloadFileName(basename(withExtension, ext)).slice(0, 96) || "download";
+  const stem =
+    sanitizeDownloadFileName(basename(withExtension, ext)).slice(0, 96) ||
+    "download";
   return `${cacheKey.slice(0, 16)}_${stem}${ext || ""}`;
 }
 
@@ -1406,7 +1589,11 @@ function getCachedDownloadByUrl(filesDir: string, url: string) {
   const cacheKey = buildDownloadCacheKey(normalizedUrl);
   const manifest = readDownloadManifest(filesDir);
   const entry = manifest[cacheKey];
-  if (entry?.url === normalizedUrl && entry.filePath && fs.existsSync(entry.filePath)) {
+  if (
+    entry?.url === normalizedUrl &&
+    entry.filePath &&
+    fs.existsSync(entry.filePath)
+  ) {
     const stats = fs.statSync(entry.filePath);
     if (stats.isFile()) {
       return {
@@ -1441,113 +1628,148 @@ ipcMain.handle("download-file", async (_event, url: string) => {
   }
 
   const task = (async () => {
-  try {
-    // 检查工作目录是否设置
-    const workspaceDir = store.get("workspaceDirectory", "") as string;
-    if (!workspaceDir || workspaceDir.trim() === "") {
-      return {
-        success: false,
-        message: "请先设置工作目录",
-        error: "WORKSPACE_NOT_SET",
-      };
-    }
-
-    // 验证 URL
-    if (!url || typeof url !== "string" || url.trim() === "") {
-      return {
-        success: false,
-        message: "无效的下载链接",
-        error: "INVALID_URL",
-      };
-    }
-
-    let parsedUrl: URL;
     try {
-      parsedUrl = new URL(url);
-    } catch (error) {
-      return {
-        success: false,
-        message: "无效的 URL 格式",
-        error: "INVALID_URL_FORMAT",
-      };
-    }
-    const normalizedUrl = normalizeDownloadUrl(url);
-    const cacheKey = buildDownloadCacheKey(normalizedUrl);
-
-    // 创建 files 目录
-    const filesDir = pathJoin(workspaceDir, "files");
-    if (!fs.existsSync(filesDir)) {
-      fs.mkdirSync(filesDir, { recursive: true });
-    }
-
-    const cached = getCachedDownloadByUrl(filesDir, normalizedUrl);
-    if (cached.found && cached.entry) {
-      return {
-        success: true,
-        message: "文件链接已缓存，跳过下载",
-        filePath: cached.entry.filePath,
-        skipped: true,
-        fileSize: cached.entry.fileSize,
-        cacheKey,
-      };
-    }
-
-    let fileName = getFileNameFromUrl(parsedUrl);
-
-    // 使用 fetch API 下载文件（参考 yishe-admin 的实现）
-    try {
-      const DOWNLOAD_TIMEOUT = 120000; // 下载超时120秒
-
-      // 创建 AbortController 用于超时控制
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT);
-
-      // 使用 fetch 下载文件，参考 yishe-admin 的实现
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "*/*",
-          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-          Referer: parsedUrl.origin,
-        },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      // 检查响应状态
-      if (!response.ok) {
+      // 检查工作目录是否设置
+      const workspaceDir = store.get("workspaceDirectory", "") as string;
+      if (!workspaceDir || workspaceDir.trim() === "") {
         return {
           success: false,
-          message: `下载失败: HTTP ${response.status} ${response.statusText}`,
-          error: "HTTP_ERROR",
-          statusCode: response.status,
+          message: "请先设置工作目录",
+          error: "WORKSPACE_NOT_SET",
         };
       }
 
-      // 从响应头获取文件名（如果 Content-Disposition 存在）
-      const contentDisposition = response.headers.get("content-disposition");
-      if (contentDisposition) {
-        const suggestedFileName = getFileNameFromContentDisposition(contentDisposition);
-        if (suggestedFileName) {
-          fileName = suggestedFileName;
-        }
+      // 验证 URL
+      if (!url || typeof url !== "string" || url.trim() === "") {
+        return {
+          success: false,
+          message: "无效的下载链接",
+          error: "INVALID_URL",
+        };
       }
 
-      const originalFileName = fileName;
-      fileName = buildCachedDownloadFileName(
-        cacheKey,
-        fileName,
-        url,
-        response.headers.get("content-type"),
-      );
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(url);
+      } catch (error) {
+        return {
+          success: false,
+          message: "无效的 URL 格式",
+          error: "INVALID_URL_FORMAT",
+        };
+      }
+      const normalizedUrl = normalizeDownloadUrl(url);
+      const cacheKey = buildDownloadCacheKey(normalizedUrl);
 
-      const finalFilePath = pathJoin(filesDir, fileName);
+      // 创建 files 目录
+      const filesDir = pathJoin(workspaceDir, "files");
+      if (!fs.existsSync(filesDir)) {
+        fs.mkdirSync(filesDir, { recursive: true });
+      }
 
-      // 如果文件已存在，返回跳过
-      if (fs.existsSync(finalFilePath)) {
+      const cached = getCachedDownloadByUrl(filesDir, normalizedUrl);
+      if (cached.found && cached.entry) {
+        return {
+          success: true,
+          message: "文件链接已缓存，跳过下载",
+          filePath: cached.entry.filePath,
+          skipped: true,
+          fileSize: cached.entry.fileSize,
+          cacheKey,
+        };
+      }
+
+      let fileName = getFileNameFromUrl(parsedUrl);
+
+      // 使用 fetch API 下载文件（参考 yishe-admin 的实现）
+      try {
+        const DOWNLOAD_TIMEOUT = 120000; // 下载超时120秒
+
+        // 创建 AbortController 用于超时控制
+        const controller = new AbortController();
+        const timeoutId = setTimeout(
+          () => controller.abort(),
+          DOWNLOAD_TIMEOUT,
+        );
+
+        // 使用 fetch 下载文件，参考 yishe-admin 的实现
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            Accept: "*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            Referer: parsedUrl.origin,
+          },
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        // 检查响应状态
+        if (!response.ok) {
+          return {
+            success: false,
+            message: `下载失败: HTTP ${response.status} ${response.statusText}`,
+            error: "HTTP_ERROR",
+            statusCode: response.status,
+          };
+        }
+
+        // 从响应头获取文件名（如果 Content-Disposition 存在）
+        const contentDisposition = response.headers.get("content-disposition");
+        if (contentDisposition) {
+          const suggestedFileName =
+            getFileNameFromContentDisposition(contentDisposition);
+          if (suggestedFileName) {
+            fileName = suggestedFileName;
+          }
+        }
+
+        const originalFileName = fileName;
+        fileName = buildCachedDownloadFileName(
+          cacheKey,
+          fileName,
+          url,
+          response.headers.get("content-type"),
+        );
+
+        const finalFilePath = pathJoin(filesDir, fileName);
+
+        // 如果文件已存在，返回跳过
+        if (fs.existsSync(finalFilePath)) {
+          const stats = fs.statSync(finalFilePath);
+          const manifest = readDownloadManifest(filesDir);
+          manifest[cacheKey] = {
+            url: normalizedUrl,
+            cacheKey,
+            fileName,
+            filePath: finalFilePath,
+            fileSize: stats.size,
+            contentType: response.headers.get("content-type"),
+            downloadedAt:
+              manifest[cacheKey]?.downloadedAt || new Date().toISOString(),
+            originalFileName,
+          };
+          writeDownloadManifest(filesDir, manifest);
+          return {
+            success: true,
+            message: "文件已存在，跳过下载",
+            filePath: finalFilePath,
+            skipped: true,
+            fileSize: stats.size,
+            cacheKey,
+          };
+        }
+
+        // 获取响应数据并写入文件
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        // 写入文件
+        fs.writeFileSync(finalFilePath, buffer);
+
         const stats = fs.statSync(finalFilePath);
         const manifest = readDownloadManifest(filesDir);
         manifest[cacheKey] = {
@@ -1557,73 +1779,43 @@ ipcMain.handle("download-file", async (_event, url: string) => {
           filePath: finalFilePath,
           fileSize: stats.size,
           contentType: response.headers.get("content-type"),
-          downloadedAt: manifest[cacheKey]?.downloadedAt || new Date().toISOString(),
+          downloadedAt: new Date().toISOString(),
           originalFileName,
         };
         writeDownloadManifest(filesDir, manifest);
+
         return {
           success: true,
-          message: "文件已存在，跳过下载",
+          message: "下载完成",
           filePath: finalFilePath,
-          skipped: true,
           fileSize: stats.size,
+          downloadedBytes: buffer.length,
           cacheKey,
         };
-      }
+      } catch (error: any) {
+        // 处理超时错误
+        if (error.name === "AbortError") {
+          return {
+            success: false,
+            message: "下载超时",
+            error: "TIMEOUT",
+          };
+        }
 
-      // 获取响应数据并写入文件
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      // 写入文件
-      fs.writeFileSync(finalFilePath, buffer);
-
-      const stats = fs.statSync(finalFilePath);
-      const manifest = readDownloadManifest(filesDir);
-      manifest[cacheKey] = {
-        url: normalizedUrl,
-        cacheKey,
-        fileName,
-        filePath: finalFilePath,
-        fileSize: stats.size,
-        contentType: response.headers.get("content-type"),
-        downloadedAt: new Date().toISOString(),
-        originalFileName,
-      };
-      writeDownloadManifest(filesDir, manifest);
-
-      return {
-        success: true,
-        message: "下载完成",
-        filePath: finalFilePath,
-        fileSize: stats.size,
-        downloadedBytes: buffer.length,
-        cacheKey,
-      };
-    } catch (error: any) {
-      // 处理超时错误
-      if (error.name === "AbortError") {
+        // 处理其他错误
         return {
           success: false,
-          message: "下载超时",
-          error: "TIMEOUT",
+          message: `下载失败: ${error.message || "未知错误"}`,
+          error: "DOWNLOAD_ERROR",
         };
       }
-
-      // 处理其他错误
+    } catch (error: any) {
       return {
         success: false,
         message: `下载失败: ${error.message || "未知错误"}`,
-        error: "DOWNLOAD_ERROR",
+        error: "UNKNOWN_ERROR",
       };
     }
-  } catch (error: any) {
-    return {
-      success: false,
-      message: `下载失败: ${error.message || "未知错误"}`,
-      error: "UNKNOWN_ERROR",
-    };
-  }
   })();
 
   if (normalizedUrlForLock) {
@@ -1779,6 +1971,8 @@ ipcMain.handle(
       if (!fs.existsSync(inputPath)) {
         throw new Error(`文件不存在: ${inputPath}`);
       }
+
+      const sharp = await getSharp();
 
       // 获取文件信息
       const imageInfo = await sharp(inputPath).metadata();
@@ -1943,15 +2137,13 @@ ipcMain.handle(
   },
 );
 
-async function handleRendererMaterialUpload(
-  params: {
-    url: string;
-    name?: string;
-    description?: string;
-    keywords?: string;
-    target?: "sticker" | "crawler-material";
-  },
-) {
+async function handleRendererMaterialUpload(params: {
+  url: string;
+  name?: string;
+  description?: string;
+  keywords?: string;
+  target?: "sticker" | "crawler-material";
+}) {
   if (!mainWindow) {
     return { ok: false, message: "主窗口未初始化" };
   }
@@ -1981,19 +2173,15 @@ async function handleRendererMaterialUpload(
 // 通用素材上传 - 在 renderer 端执行
 ipcMain.handle(
   "material:download-and-upload",
-  async (
-    _event,
-    params: Parameters<typeof handleRendererMaterialUpload>[0],
-  ) => handleRendererMaterialUpload(params),
+  async (_event, params: Parameters<typeof handleRendererMaterialUpload>[0]) =>
+    handleRendererMaterialUpload(params),
 );
 
 // 兼容旧命名
 ipcMain.handle(
   "crawler-material:download-and-upload",
-  async (
-    _event,
-    params: Parameters<typeof handleRendererMaterialUpload>[0],
-  ) => handleRendererMaterialUpload(params),
+  async (_event, params: Parameters<typeof handleRendererMaterialUpload>[0]) =>
+    handleRendererMaterialUpload(params),
 );
 
 ipcMain.handle(
@@ -2060,6 +2248,7 @@ ipcMain.handle(
       const absoluteDestPath = resolve(destPath);
 
       try {
+        const sharp = await getSharp();
         let sharpInstance = sharp(sourcePath);
 
         if (targetFormat === "png") {
@@ -2243,6 +2432,7 @@ async function processImageWithLimits(payload: ImageLimitPayload) {
     buildDefaultOutputPath(sourcePath, targetFormat);
   const targetDir = dirname(targetPath);
   ensureDirectory(targetDir);
+  const sharp = await getSharp();
 
   if (fs.existsSync(targetPath)) {
     const cachedStats = fs.statSync(targetPath);

@@ -9,7 +9,18 @@ import path from 'path'
 import fs from 'fs'
 import https from 'https'
 import { generateCosKey, uploadFileToCos } from './cos'
-import { invokeAutoBrowserRoute } from './auto-browser'
+
+type AutoBrowserModule = typeof import('./auto-browser')
+
+let autoBrowserModulePromise: Promise<AutoBrowserModule> | null = null
+
+function getAutoBrowserModule() {
+  if (!autoBrowserModulePromise) {
+    autoBrowserModulePromise = import('./auto-browser')
+  }
+
+  return autoBrowserModulePromise
+}
 
 type CrawlerSite = 'sora' | 'pinterest'
 
@@ -266,6 +277,7 @@ class CrawlerCollectorService {
     try {
       // 1. 调用爬虫接口
       console.log(`📡 [CrawlerCollector] 调用爬虫接口: ${config.site}`)
+      const { invokeAutoBrowserRoute } = await getAutoBrowserModule()
       const crawlerResponse = await invokeAutoBrowserRoute({
         method: 'POST',
         path: '/api/crawler/run',

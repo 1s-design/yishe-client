@@ -5,8 +5,19 @@ import { join, resolve } from 'path'
 import { uploadFileToCos, generateCosKey } from './cos'
 import https from 'https'
 import { URL } from 'url'
-import { getTokenValue } from './server'
 import { checkSiteAvailability } from './siteAvailability'
+
+type ServerModule = typeof import('./server')
+
+let serverModulePromise: Promise<ServerModule> | null = null
+
+function getServerModule() {
+  if (!serverModulePromise) {
+    serverModulePromise = import('./server')
+  }
+
+  return serverModulePromise
+}
 
 interface ZoomLevel {
   idx: number
@@ -192,6 +203,8 @@ async function uploadToMaterialLibrary(
   // 2. 调用素材库 API（改为直接入库到贴纸素材库）
   try {
     const apiUrl = new URL(`${apiBase}/sticker/create`)
+    const { getTokenValue } = await getServerModule()
+    const token = getTokenValue()
     
     const postData = JSON.stringify({
       // 贴纸基础字段
@@ -218,7 +231,7 @@ async function uploadToMaterialLibrary(
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(postData),
         // 贴纸创建接口需要登录态，这里复用主进程中保存的 Token
-        ...(getTokenValue() ? { Authorization: `Bearer ${getTokenValue()}` } : {})
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
       rejectUnauthorized: false
     }
@@ -324,4 +337,3 @@ export async function syncGoogleArtToMaterialLibrary(options: {
     })
   })
 }
-
