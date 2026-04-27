@@ -4674,6 +4674,45 @@ function writePsdSetFileLog(
   });
 }
 
+async function syncPsdSetProductionStatus(event: {
+  psdSetId: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  message?: string;
+  progress?: number;
+  total?: number;
+}) {
+  const statusMessage = String(event.message || "").trim();
+
+  try {
+    if (socket && socket.connected) {
+      socket.emit("production-status", {
+        psdSetId: event.psdSetId,
+        status: event.status,
+        message: statusMessage,
+        progress: event.progress,
+        total: event.total,
+      });
+    }
+  } catch (error) {
+    emitter.emit("log", {
+      level: "warn",
+      message: `[ws] 发送 production-status 失败: ${serializeError(error)}`,
+    });
+  }
+
+  try {
+    await stickerPsdSetApi.updateStatus(event.psdSetId, {
+      status: event.status,
+      statusMessage: statusMessage || undefined,
+    });
+  } catch (error) {
+    emitter.emit("log", {
+      level: "warn",
+      message: `[psd-set] 同步套图状态到服务器失败: ${serializeError(error)}`,
+    });
+  }
+}
+
 /**
  * 处理套图制作流程
  * 1. 查询套图完整信息
@@ -4699,22 +4738,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
 
   // 发送开始事件，触发全局loading
   emitter.emit("psdSetProgressStart", { psdSetId });
-  // 向服务器发送制作开始状态，便于管理后台收到实时更新
-  try {
-    if (socket && socket.connected) {
-      socket.emit("production-status", {
-        psdSetId,
-        status: "processing",
-        message: "客户端已开始制作",
-        progress: 0,
-      });
-    }
-  } catch (e) {
-    emitter.emit("log", {
-      level: "warn",
-      message: `[ws] 发送 production-status（开始）失败: ${serializeError(e)}`,
-    });
-  }
+  await syncPsdSetProductionStatus({
+    psdSetId,
+    status: "processing",
+    message: "客户端已开始制作",
+    progress: 0,
+    total: 5,
+  });
 
   try {
     emitter.emit("log", {
@@ -4792,23 +4822,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       total: 5,
     });
 
-    // 把进度发送到服务器（供管理后台实时订阅）
-    try {
-      if (socket && socket.connected) {
-        socket.emit("production-status", {
-          psdSetId,
-          status: "processing",
-          message: `已获取套图信息：${psdSet.name || "未命名套图"}`,
-          progress: 1,
-          total: 5,
-        });
-      }
-    } catch (e) {
-      emitter.emit("log", {
-        level: "warn",
-        message: `[ws] 发送 production-status（查询信息）失败: ${serializeError(e)}`,
-      });
-    }
+    await syncPsdSetProductionStatus({
+      psdSetId,
+      status: "processing",
+      message: `已获取套图信息：${psdSet.name || "未命名套图"}`,
+      progress: 1,
+      total: 5,
+    });
 
     const localPsdPathRaw =
       (psdSet.psdTemplate.windowsLocalPath || "").trim?.() ?? "";
@@ -4896,22 +4916,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       progress: 2,
       total: 5,
     });
-    try {
-      if (socket && socket.connected) {
-        socket.emit("production-status", {
-          psdSetId,
-          status: "processing",
-          message: "正在下载贴纸文件",
-          progress: 2,
-          total: 5,
-        });
-      }
-    } catch (e) {
-      emitter.emit("log", {
-        level: "warn",
-        message: `[ws] 发送 production-status（下载贴纸）失败: ${serializeError(e)}`,
-      });
-    }
+    await syncPsdSetProductionStatus({
+      psdSetId,
+      status: "processing",
+      message: "正在下载贴纸文件",
+      progress: 2,
+      total: 5,
+    });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
@@ -5064,22 +5075,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         progress: 2,
         total: 5,
       });
-      try {
-        if (socket && socket.connected) {
-          socket.emit("production-status", {
-            psdSetId,
-            status: "processing",
-            message: "正在下载PSD模板文件",
-            progress: 2,
-            total: 5,
-          });
-        }
-      } catch (e) {
-        emitter.emit("log", {
-          level: "warn",
-          message: `[ws] 发送 production-status（下载PSD）失败: ${serializeError(e)}`,
-        });
-      }
+      await syncPsdSetProductionStatus({
+        psdSetId,
+        status: "processing",
+        message: "正在下载PSD模板文件",
+        progress: 2,
+        total: 5,
+      });
       emitter.emit("log", {
         level: "info",
         message: `[psd-set] 正在下载PSD模板到工作目录...`,
@@ -5247,22 +5249,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       progress: 3,
       total: 5,
     });
-    try {
-      if (socket && socket.connected) {
-        socket.emit("production-status", {
-          psdSetId,
-          status: "processing",
-          message: "正在处理PSD文件",
-          progress: 3,
-          total: 5,
-        });
-      }
-    } catch (e) {
-      emitter.emit("log", {
-        level: "warn",
-        message: `[ws] 发送 production-status（处理PSD）失败: ${serializeError(e)}`,
-      });
-    }
+    await syncPsdSetProductionStatus({
+      psdSetId,
+      status: "processing",
+      message: "正在处理PSD文件",
+      progress: 3,
+      total: 5,
+    });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
@@ -5520,22 +5513,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       progress: 4,
       total: 5,
     });
-    try {
-      if (socket && socket.connected) {
-        socket.emit("production-status", {
-          psdSetId,
-          status: "processing",
-          message: "正在上传生成的图片",
-          progress: 4,
-          total: 5,
-        });
-      }
-    } catch (e) {
-      emitter.emit("log", {
-        level: "warn",
-        message: `[ws] 发送 production-status（上传图片）失败: ${serializeError(e)}`,
-      });
-    }
+    await syncPsdSetProductionStatus({
+      psdSetId,
+      status: "processing",
+      message: "正在上传生成的图片",
+      progress: 4,
+      total: 5,
+    });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
@@ -5667,23 +5651,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       processingTime: processingTime,
     });
 
-    // 通知服务器与管理后台：已完成
-    try {
-      if (socket && socket.connected) {
-        socket.emit("production-status", {
-          psdSetId,
-          status: "completed",
-          message: "制作完成",
-          progress: 5,
-          total: 5,
-        });
-      }
-    } catch (e) {
-      emitter.emit("log", {
-        level: "warn",
-        message: `[ws] 发送 production-status（完成）失败: ${serializeError(e)}`,
-      });
-    }
+    await syncPsdSetProductionStatus({
+      psdSetId,
+      status: "completed",
+      message: "制作完成",
+      progress: 5,
+      total: 5,
+    });
     emitPsAutomationStatus({
       running: false,
       currentPsSetId: null,
@@ -5738,21 +5712,11 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       errorStatus: error?.status || null,
     });
 
-    // 通知服务器与管理后台：已失败
-    try {
-      if (socket && socket.connected) {
-        socket.emit("production-status", {
-          psdSetId,
-          status: "failed",
-          message: error.message || "制作失败",
-        });
-      }
-    } catch (e) {
-      emitter.emit("log", {
-        level: "warn",
-        message: `[ws] 发送 production-status（失败）失败: ${serializeError(e)}`,
-      });
-    }
+    await syncPsdSetProductionStatus({
+      psdSetId,
+      status: "failed",
+      message: error.message || "制作失败",
+    });
     emitPsAutomationStatus({
       running: false,
       currentPsSetId: psdSetId,
