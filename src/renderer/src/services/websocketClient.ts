@@ -1,11 +1,12 @@
 import { io, type Socket } from "socket.io-client";
 import { reactive } from "vue";
 import mitt from "mitt";
-import { getTokenFromClient } from "../api/user";
+import { getTokenFromClient, logoutToken } from "../api/user";
 import { stickerPsdSetApi } from "../api/stickerPsdSet";
 import photoshopApi from "../api/photoshop";
 import {
   type BrowserAutomationErrorDetail,
+  checkUploaderBrowserHealth,
   checkUploaderStatus,
   closeUploaderBrowser,
   connectUploaderBrowser,
@@ -44,6 +45,7 @@ import {
 } from "./publishTaskDispatch";
 import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
 import { getRemoteApiBase, getWsEndpoint, setServiceMode } from "../config/api";
+import { logger } from "./logger";
 
 type UploaderProfilesResponse = Awaited<ReturnType<typeof getUploaderProfiles>>;
 
@@ -58,6 +60,8 @@ type WsStatus =
 const CLIENT_SOURCE = "客户端";
 const HEARTBEAT_INTERVAL = 10_000;
 const HEARTBEAT_TIMEOUT = 35_000;
+const WS_STALE_RECONNECT_MS = 75_000;
+const WS_RECOVERY_DEBOUNCE_MS = 5_000;
 const UPLOADER_RUNTIME_SYNC_INTERVAL = 4_000;
 const PHOTOSHOP_RUNTIME_SYNC_INTERVAL = 8_000;
 const IMAGE_PROCESSING_RUNTIME_SYNC_INTERVAL = 8_000;
@@ -547,6 +551,9 @@ let intentionalDisconnect = false;
 let networkFetchPromise: Promise<void> | null = null;
 let lastClientInfoFingerprint = "";
 let lastClientInfoEmittedAt = 0;
+let lastAuthToken: string | undefined;
+let lastRecoveryAt = 0;
+let recoveryListenersBound = false;
 const transientWsToastCache = new Map<string, number>();
 const lastServiceRuntimeEmitCache = new Map<
   string,
@@ -4003,6 +4010,12 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
   };
   const legacyServiceKey = getLegacyServiceKey(pluginKey);
   const handler = localServiceHandlers.get(pluginKey);
+  logger.info("[ws] received service-command", {
+    commandId: normalizedCommand.commandId,
+    pluginKey,
+    action,
+    service: normalizedCommand.service,
+  });
   if (!handler) {
     const result: ServiceCommandResult = {
       commandId: normalizedCommand.commandId,
@@ -4016,6 +4029,7 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
     };
     socket?.emit("service-command-result", result);
     emitter.emit("serviceCommandResult", result);
+    logger.warn("[ws] service-command unsupported", result);
     return;
   }
 
@@ -4034,6 +4048,13 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
       };
       socket?.emit("service-command-result", result);
       emitter.emit("serviceCommandResult", result);
+      logger.info("[ws] service-command runtime refreshed", {
+        commandId: result.commandId,
+        pluginKey,
+        action,
+        success: result.success,
+        message: result.message,
+      });
       return;
     }
 
@@ -4068,6 +4089,23 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
     };
     socket?.emit("service-command-result", result);
     emitter.emit("serviceCommandResult", result);
+    if (result.success) {
+      logger.info("[ws] service-command completed", {
+        commandId: result.commandId,
+        pluginKey,
+        action,
+        message: result.message,
+      });
+    } else {
+      logger.error("[ws] service-command failed", {
+        commandId: result.commandId,
+        pluginKey,
+        action,
+        message: result.message,
+        error: result.error,
+        errorDetail: result.errorDetail,
+      });
+    }
   } catch (error) {
     const result: ServiceCommandResult = {
       commandId: normalizedCommand.commandId,
@@ -4081,6 +4119,7 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
     };
     socket?.emit("service-command-result", result);
     emitter.emit("serviceCommandResult", result);
+    logger.error("[ws] service-command exception", result);
   }
 }
 
@@ -4134,6 +4173,99 @@ function stopHeartbeat() {
   clearImageProcessingRuntimeSyncInterval();
   clearVideoTemplateRuntimeSyncInterval();
   lastPingTimestamp = null;
+}
+
+function isPageHidden() {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
+async function refreshSocketAuth() {
+  let token: string | undefined;
+  try {
+    token = await getTokenFromClient();
+    lastAuthToken = token;
+  } catch (error) {
+    logger.warn("[ws] refresh socket auth failed", {
+      message: serializeError(error),
+    });
+  }
+  lastAuthToken = token;
+  if (socket) {
+    socket.auth = token ? { token } : {};
+  }
+  return token;
+}
+
+function recoverConnection(reason: string) {
+  if (intentionalDisconnect) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastRecoveryAt < WS_RECOVERY_DEBOUNCE_MS) {
+    return;
+  }
+  lastRecoveryAt = now;
+  logger.warn("[ws] recover connection", {
+    reason,
+    endpoint: wsState.endpoint,
+    clientId: identity.clientId,
+  });
+  reconnect();
+}
+
+async function ensureConnectionFresh(reason: string) {
+  if (intentionalDisconnect) {
+    return;
+  }
+  const previousToken = lastAuthToken;
+  const token = await refreshSocketAuth();
+  if (!token) {
+    disconnect();
+    return;
+  }
+  const lastPongAt = wsState.lastPongAt ? Date.parse(wsState.lastPongAt) : 0;
+  const stale =
+    wsState.status === "connected" &&
+    (!lastPongAt || Date.now() - lastPongAt > WS_STALE_RECONNECT_MS);
+  const tokenChanged = previousToken !== undefined && previousToken !== token;
+  if (!socket || !socket.connected || stale || tokenChanged) {
+    recoverConnection(
+      tokenChanged ? `${reason}:token_changed` : stale ? `${reason}:stale` : reason,
+    );
+    return;
+  }
+  emitClientInfo();
+  emitPsAutomationStatus();
+  void Promise.all(
+    Array.from(localServiceHandlers.keys()).map((key) => syncServiceRuntime(key)),
+  );
+}
+
+function bindConnectionRecoveryListeners() {
+  if (recoveryListenersBound || typeof window === "undefined") {
+    return;
+  }
+  recoveryListenersBound = true;
+
+  window.addEventListener("focus", () => {
+    void ensureConnectionFresh("window_focus");
+  });
+  window.addEventListener("online", () => {
+    void ensureConnectionFresh("browser_online");
+  });
+  window.addEventListener("storage", (event) => {
+    if (!event.key || event.key.includes("yishe.ws") || event.key.includes("token")) {
+      void ensureConnectionFresh("storage_changed");
+    }
+  });
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (!isPageHidden()) {
+        void ensureConnectionFresh("visibility_visible");
+      }
+    });
+  }
 }
 
 function startUploaderRuntimeSyncLoop() {
@@ -4190,13 +4322,14 @@ function scheduleHeartbeatTimeout() {
         status: "error",
         lastError: "Heartbeat timeout",
       });
-      reconnect();
+      recoverConnection("heartbeat_timeout_disconnected");
       return;
     }
 
     updateState({
       lastError: "Heartbeat timeout",
     });
+    recoverConnection("heartbeat_timeout_no_pong");
   }, HEARTBEAT_TIMEOUT);
 }
 
@@ -4243,7 +4376,13 @@ function buildQuery() {
 
 function bindSocketEvents(currentSocket: Socket) {
   currentSocket.on("connect", () => {
+    void refreshSocketAuth();
     emitter.emit("log", { level: "info", message: "[ws] connected" });
+    logger.info("[ws] connected", {
+      endpoint: wsState.endpoint,
+      clientId: identity.clientId,
+      machineCode: identity.machineCode,
+    });
     updateState({
       status: "connected",
       connectedAt: new Date().toISOString(),
@@ -4268,6 +4407,12 @@ function bindSocketEvents(currentSocket: Socket) {
     emitter.emit("log", {
       level: "warn",
       message: `[ws] disconnected: ${reason}`,
+    });
+    logger.warn("[ws] disconnected", {
+      reason,
+      endpoint: wsState.endpoint,
+      intentionalDisconnect,
+      clientId: identity.clientId,
     });
     if (!intentionalDisconnect) {
       emitTransientWsToast(`disconnect:${reason || "unknown"}`, {
@@ -4302,6 +4447,11 @@ function bindSocketEvents(currentSocket: Socket) {
       level: "error",
       message: `[ws] connect_error: ${message}`,
     });
+    logger.error("[ws] connect_error", {
+      endpoint: wsState.endpoint,
+      message,
+      clientId: identity.clientId,
+    });
     emitTransientWsToast(`connect_error:${message}`, {
       color: "error",
       icon: "mdi-alert-circle-outline",
@@ -4313,10 +4463,36 @@ function bindSocketEvents(currentSocket: Socket) {
     });
   });
 
+  currentSocket.on("auth-error", (data: any) => {
+    const message = data?.message || data?.reason || "登录状态已失效，请重新登录";
+    emitter.emit("log", {
+      level: "error",
+      message: `[ws] auth-error: ${message}`,
+    });
+    logger.error("[ws] auth-error", {
+      message,
+      clientId: identity.clientId,
+    });
+    updateState({
+      status: "error",
+      lastError: message,
+    });
+    void logoutToken().catch(() => undefined);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("auth:logout"));
+    }
+    disconnect();
+  });
+
   currentSocket.on("error", (error) => {
     emitter.emit("log", {
       level: "error",
       message: `[ws] error: ${serializeError(error)}`,
+    });
+    logger.error("[ws] socket error", {
+      endpoint: wsState.endpoint,
+      message: serializeError(error),
+      clientId: identity.clientId,
     });
     updateState({
       status: "error",
@@ -4325,9 +4501,15 @@ function bindSocketEvents(currentSocket: Socket) {
   });
 
   currentSocket.io.on("reconnect_attempt", (attempt) => {
+    void refreshSocketAuth();
     emitter.emit("log", {
       level: "info",
       message: `[ws] reconnect attempt #${attempt}`,
+    });
+    logger.info("[ws] reconnect attempt", {
+      attempt,
+      endpoint: wsState.endpoint,
+      clientId: identity.clientId,
     });
     updateState({
       status: "reconnecting",
@@ -4337,6 +4519,10 @@ function bindSocketEvents(currentSocket: Socket) {
 
   currentSocket.io.on("reconnect_failed", () => {
     emitter.emit("log", { level: "error", message: "[ws] reconnect failed" });
+    logger.error("[ws] reconnect failed", {
+      endpoint: wsState.endpoint,
+      clientId: identity.clientId,
+    });
     emitTransientWsToast("reconnect_failed", {
       color: "error",
       icon: "mdi-alert-circle-outline",
@@ -4352,6 +4538,11 @@ function bindSocketEvents(currentSocket: Socket) {
     emitter.emit("log", {
       level: "error",
       message: `[ws] reconnect_error: ${serializeError(error)}`,
+    });
+    logger.error("[ws] reconnect_error", {
+      endpoint: wsState.endpoint,
+      message: serializeError(error),
+      clientId: identity.clientId,
     });
     updateState({
       status: "error",
@@ -4472,6 +4663,17 @@ function buildPsdTestExportDir(workspaceDir: string) {
   return normalizedWorkspaceDir ? `${normalizedWorkspaceDir}\\psd-test` : "";
 }
 
+function writePsdSetFileLog(
+  level: "info" | "warn" | "error",
+  message: string,
+  context?: Record<string, any>,
+) {
+  logger[level](`[psd-set] ${message}`, {
+    module: "psd-set-production",
+    ...context,
+  });
+}
+
 /**
  * 处理套图制作流程
  * 1. 查询套图完整信息
@@ -4518,6 +4720,10 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] 开始处理套图制作，ID: ${psdSetId}`,
+    });
+    writePsdSetFileLog("info", "开始处理套图制作", {
+      psdSetId,
+      commandId: taskId || null,
     });
     emitter.emit("toast", {
       color: "info",
@@ -4631,6 +4837,22 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] 套图信息: ${psdSet.name}, 贴纸: ${stickerDesc || stickers.length}, PSD(${psdSourceType}): ${psdSourcePath}`,
+    });
+    writePsdSetFileLog("info", "套图信息已加载", {
+      psdSetId,
+      commandId: taskId || null,
+      psdSetName: psdSet.name || null,
+      psdTemplateId: psdTemplate?.id || null,
+      psdTemplateName: psdTemplate?.name || null,
+      psdSourceType,
+      psdSourcePath,
+      stickerCount: stickers.length,
+      stickers: stickers.map((item: any, index: number) => ({
+        index,
+        id: item?.id || null,
+        name: item?.name || null,
+        url: item?.url || null,
+      })),
     });
 
     // 2. 下载贴纸和PSD模板到本地（如果已下载则跳过）
@@ -5008,6 +5230,14 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       level: "info",
       message: `[psd-set] 文件下载完成，贴纸: ${stickerLocalPaths.join(", ")}, PSD: ${psdLocalPath}`,
     });
+    writePsdSetFileLog("info", "资源文件准备完成", {
+      psdSetId,
+      commandId: taskId || null,
+      psdLocalPath,
+      psdSourceType,
+      stickerLocalPaths,
+      stickerCount: stickerLocalPaths.length,
+    });
 
     // 3. 调用PS服务处理PSD
     emitter.emit("psdSetProgress", {
@@ -5170,6 +5400,43 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       };
     }
 
+    const assertProcessFileReady = async (label: string, filePath: string) => {
+      const normalizedPath = String(filePath || "").trim();
+      if (!normalizedPath) {
+        throw new Error(`${label}路径为空，无法调用 Photoshop 服务`);
+      }
+      if (typeof (window.api as any).checkLocalFileExists !== "function") {
+        return;
+      }
+      const checkResult = await (window.api as any).checkLocalFileExists(normalizedPath);
+      if (!checkResult?.exists || !checkResult?.isFile) {
+        throw new Error(
+          `${label}文件不存在或不可读取: ${normalizedPath} (${checkResult?.message || "未知原因"})`,
+        );
+      }
+      emitter.emit("log", {
+        level: "info",
+        message: `[psd-set] ${label}文件预检通过: ${normalizedPath}${checkResult.fileSize ? ` (${checkResult.fileSize} bytes)` : ""}`,
+      });
+      writePsdSetFileLog("info", `${label}文件预检通过`, {
+        psdSetId,
+        commandId: taskId || null,
+        filePath: normalizedPath,
+        fileSize: checkResult.fileSize || null,
+      });
+    };
+
+    if (!Array.isArray(processPayload.smart_objects) || processPayload.smart_objects.length === 0) {
+      throw new Error("PSD处理配置缺少 smart_objects，无法替换智能对象");
+    }
+    await assertProcessFileReady("PSD模板", processPayload.psd_path);
+    for (let i = 0; i < processPayload.smart_objects.length; i++) {
+      await assertProcessFileReady(
+        `智能对象素材[${i + 1}]`,
+        processPayload.smart_objects[i]?.image_path,
+      );
+    }
+
     // 打印即将发送给 Photoshop 服务的参数，便于排查多素材 / smart_objects 问题
     // 简化 smart_objects 输出，避免日志过大
     const logSmartObjects = processPayload.smart_objects.map((so: any) => {
@@ -5201,6 +5468,16 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         2,
       )}`,
     });
+    writePsdSetFileLog("info", "准备调用 Photoshop processPsd", {
+      psdSetId,
+      commandId: taskId || null,
+      psdPath: processPayload.psd_path,
+      exportDir: processPayload.export_dir,
+      smartObjectCount: processPayload.smart_objects.length,
+      smartObjects: logSmartObjects,
+      defaults: processPayload.defaults || null,
+      verbose: processPayload.verbose ?? null,
+    });
 
     const processResult = await photoshopApi.processPsd(processPayload);
 
@@ -5227,6 +5504,12 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] PSD处理完成，生成 ${successfulFiles.length} 个图片文件`,
+    });
+    writePsdSetFileLog("info", "Photoshop 处理完成", {
+      psdSetId,
+      commandId: taskId || null,
+      exportFiles: processResult.data.export_files,
+      successfulCount: successfulFiles.length,
     });
 
     // 4. 上传生成的图片到COS（支持多文件）
@@ -5420,6 +5703,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       level: "info",
       message: `[psd-set] 套图制作完成，已更新images字段，共 ${updatedImages.length} 张图片`,
     });
+    writePsdSetFileLog("info", "套图制作完成", {
+      psdSetId,
+      commandId: taskId || null,
+      imageCount: updatedImages.length,
+      processingTime,
+      uploadedImageUrls,
+    });
 
     // 发送完成事件
     emitter.emit("psdSetProgressEnd", {
@@ -5437,6 +5727,15 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitter.emit("log", {
       level: "error",
       message: `[psd-set] 套图制作失败: ${error.message || String(error)}`,
+    });
+    writePsdSetFileLog("error", "套图制作失败", {
+      psdSetId,
+      commandId: taskId || null,
+      errorMessage: error?.message || String(error),
+      errorName: error?.name || null,
+      errorStack: error?.stack || null,
+      errorDetail: error?.detail || null,
+      errorStatus: error?.status || null,
     });
 
     // 通知服务器与管理后台：已失败
@@ -5726,11 +6025,36 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
 
   const ecomCollectCapability =
     await getCachedUploaderEcomCollectCapabilities();
-  const browser = await getUploaderBrowserStatus();
+  const activeProfileId =
+    profilesResponse?.data?.activeProfileId ||
+    browserAutomationExecutionState.profileId ||
+    null;
+  const health = await checkUploaderBrowserHealth({
+    reconnect: false,
+    profileId: activeProfileId,
+  });
+  let browser = await getUploaderBrowserStatus();
+  if (
+    !browserAutomationExecutionState.running &&
+    (!browser.success || !isUploaderBrowserReady(browser.data))
+  ) {
+    const reconnectHealth = await checkUploaderBrowserHealth({
+      reconnect: true,
+      profileId: activeProfileId,
+    });
+    if (reconnectHealth.success && reconnectHealth.status) {
+      browser = {
+        success: true,
+        data: reconnectHealth.status,
+        message: reconnectHealth.message,
+      };
+    }
+  }
   const available = browser.success && isUploaderBrowserReady(browser.data);
   const browserData = browser.data;
   const browserMessage =
     browser.message ||
+    health.message ||
     browserData?.lastError ||
     browserData?.localBrowser?.message ||
     null;
@@ -6828,6 +7152,34 @@ function registerBuiltInLocalServices() {
   });
 
   registerLocalService({
+    key: "clientLog",
+    pluginKey: "client-log",
+    label: "客户端日志",
+    getRuntime: async () => ({
+      connected: true,
+      available: !!getNativeApi()?.queryClientLog,
+      status: getNativeApi()?.queryClientLog ? "connected" : "error",
+      state: getNativeApi()?.queryClientLog ? "idle" : "error",
+      message: getNativeApi()?.queryClientLog ? "客户端日志可读取" : "客户端日志能力未注入",
+      supportedCommands: ["list", "tail", "search", "delete"],
+      lastCheckedAt: new Date().toISOString(),
+    }),
+    execute: async (command) => {
+      const nativeApi = getNativeApi();
+      if (!nativeApi?.queryClientLog) {
+        throw new Error("当前环境未注入客户端日志能力");
+      }
+      const action = command.action || "tail";
+      const data = await nativeApi.queryClientLog(action, command.payload || {});
+      return {
+        success: true,
+        message: action === "delete" ? "客户端日志已删除" : "客户端日志已读取",
+        data,
+      };
+    },
+  });
+
+  registerLocalService({
     key: "googleArt",
     pluginKey: "google-art",
     label: "Google Art",
@@ -6918,10 +7270,37 @@ async function connect(endpoint?: string) {
   wsState.endpoint = targetEndpoint || DEFAULT_WS_ENDPOINT;
   void fetchNetworkProfile();
 
-  if (socket && socket.connected) {
+  let token: string | undefined;
+  try {
+    token = await getTokenFromClient();
+  } catch (error) {
+    emitter.emit("log", {
+      level: "warn",
+      message: `[ws] 获取 token 失败，跳过 WebSocket 连接: ${serializeError(error)}`,
+    });
+  }
+
+  if (!token) {
+    lastAuthToken = undefined;
+    cleanupSocket();
+    updateState({
+      status: "disconnected",
+      lastError: null,
+      retryCount: 0,
+      connectedAt: null,
+    });
     return;
   }
 
+  if (socket && socket.connected) {
+    if (lastAuthToken !== token) {
+      lastAuthToken = token;
+      recoverConnection("connect_token_changed");
+    }
+    return;
+  }
+
+  lastAuthToken = token;
   cleanupSocket();
   intentionalDisconnect = false;
 
@@ -6930,17 +7309,6 @@ async function connect(endpoint?: string) {
     lastError: null,
     retryCount: 0,
   });
-
-  let token: string | undefined;
-  try {
-    token = await getTokenFromClient();
-  } catch (error) {
-    // 读取 token 失败不阻塞连接，只记录日志
-    emitter.emit("log", {
-      level: "warn",
-      message: `[ws] 获取 token 失败，将在未认证状态下连接: ${serializeError(error)}`,
-    });
-  }
 
   socket = io(targetEndpoint, {
     transports: ["websocket"],
@@ -7061,6 +7429,7 @@ function updateServiceStatus(
 
 void hydrateStableDeviceKey();
 void fetchNetworkProfile();
+bindConnectionRecoveryListeners();
 
 // 服务切换方法
 async function switchService(mode: "local" | "remote") {

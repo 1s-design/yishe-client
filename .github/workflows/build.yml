@@ -9,9 +9,12 @@ on:
       - electron-builder.yml
       - electron.vite.config.ts
       - src/main/externalProcessConfig.ts
+      - src/main/ps-automation/**
       - src/main/image-tool/**
       - src/main/video-template/**
       - scripts/download-latest-plugins.mjs
+      - scripts/prepare-ps-env.mjs
+      - scripts/prepare-ps-binary.mjs
       - .github/workflows/build.yml
   workflow_dispatch:
 
@@ -90,6 +93,14 @@ jobs:
           node-version: 20
           cache: "npm"
 
+      - name: Install Python for PS automation
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: src/main/ps-automation/requirements.txt
+
       - name: Install dependencies
         run: npm ci --legacy-peer-deps || (echo "Retry 1..." && sleep 10 && npm ci --legacy-peer-deps) || (echo "Retry 2..." && sleep 10 && npm ci --legacy-peer-deps)
 
@@ -98,6 +109,25 @@ jobs:
 
       - name: Download managed plugins for current platform build
         run: ${{ matrix.prepare_plugins_cmd }}
+
+      - name: Build PS automation executable
+        if: runner.os == 'Windows'
+        run: npm run prepare:ps:env && npm run prepare:ps:win
+
+      - name: Verify PS automation executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $paths = @(
+            "resources/plugin/win32/yishe-ps-windows.exe",
+            "resources/plugin/win32/ps-automation/yishe-ps-windows.exe"
+          )
+          foreach ($path in $paths) {
+            if (-not (Test-Path $path)) {
+              throw "PS automation executable not found: $path"
+            }
+            Write-Host "Found $path"
+          }
 
       - name: Build app
         run: npm run build

@@ -260,6 +260,9 @@ function buildPsAutomationConfig(): ProcessConfig | null {
       autoStart: true,
       autoRestart: true,
       restartDelay: 3000,
+      cleanupBeforeStart: true,
+      stopTimeout: 15000,
+      killTimeout: 8000,
       healthCheck: {
         type: "http",
         url: `http://127.0.0.1:${PS_AUTOMATION_PORT}/health`,
@@ -278,6 +281,7 @@ function buildPsAutomationConfig(): ProcessConfig | null {
     id: "ps-automation",
     name: "PS 自动化端",
     executable: psAutomationExecutable,
+    stopArgs: ["--stop"],
     env: {
       PORT: PS_AUTOMATION_PORT,
     },
@@ -285,6 +289,9 @@ function buildPsAutomationConfig(): ProcessConfig | null {
     autoStart: true,
     autoRestart: true,
     restartDelay: 3000,
+    cleanupBeforeStart: true,
+    stopTimeout: 15000,
+    killTimeout: 8000,
     healthCheck: {
       type: "http",
       url: `http://127.0.0.1:${PS_AUTOMATION_PORT}/health`,

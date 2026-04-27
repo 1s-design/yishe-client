@@ -42,6 +42,8 @@ type ExecutePublishTaskOptions = {
   dispatchToken?: string | null;
 };
 
+const PUBLISH_TASK_HEARTBEAT_INTERVAL_MS = 10_000;
+
 class PublishTaskRetryableError extends Error {
   constructor(message: string) {
     super(message);
@@ -243,6 +245,25 @@ async function emitRuntime(
   }
 }
 
+function startPublishTaskHeartbeat(
+  options: ExecutePublishTaskOptions | undefined,
+  buildSnapshot: () => PublishTaskRuntimeSnapshot | null,
+) {
+  if (!options?.onRuntime) {
+    return () => undefined;
+  }
+
+  const timer = window.setInterval(() => {
+    const snapshot = buildSnapshot();
+    if (!snapshot) {
+      return;
+    }
+    void emitRuntime(options, snapshot);
+  }, PUBLISH_TASK_HEARTBEAT_INTERVAL_MS);
+
+  return () => window.clearInterval(timer);
+}
+
 class PublishTaskStoppedError extends Error {
   constructor(message: string) {
     super(message);
@@ -305,6 +326,27 @@ export async function executePublishQueueTask(
     progress: 0,
   });
   let detail: QueueMessage | null = null;
+  let lastRuntimeSnapshot: PublishTaskRuntimeSnapshot | null = null;
+  const stopHeartbeat = startPublishTaskHeartbeat(options, () => {
+    if (!lastRuntimeSnapshot) {
+      return null;
+    }
+
+    if (
+      lastRuntimeSnapshot.status === "completed" ||
+      lastRuntimeSnapshot.status === "failed" ||
+      lastRuntimeSnapshot.status === "pending"
+    ) {
+      return null;
+    }
+
+    return {
+      ...lastRuntimeSnapshot,
+      status: "running",
+      message: lastRuntimeSnapshot.message || "任务执行中",
+      currentStep: lastRuntimeSnapshot.currentStep || "任务执行中",
+    };
+  });
   try {
     await ensureExecutionActive(executionControl);
     const response = await getTaskDetail(normalizedQueue, normalizedTaskId);
@@ -364,7 +406,7 @@ export async function executePublishQueueTask(
         await ensureExecutionActive(executionControl);
       },
       onTaskStatusUpdate: async ({ status, error }) => {
-        await emitRuntime(options, {
+        lastRuntimeSnapshot = {
           taskId: detail!.id,
           taskType: detail!.type,
           queue: resolveQueueName(detail, normalizedQueue),
@@ -393,10 +435,11 @@ export async function executePublishQueueTask(
                 : "任务处理中",
           progress: status === "completed" ? 100 : undefined,
           error: error || null,
-        });
+        };
+        await emitRuntime(options, lastRuntimeSnapshot);
       },
       onRuntimeUpdate: async ({ runtime, mappedStatus, task }) => {
-        await emitRuntime(options, {
+        lastRuntimeSnapshot = {
           taskId: detail!.id,
           taskType: detail!.type,
           queue: resolveQueueName(detail, normalizedQueue),
@@ -432,11 +475,12 @@ export async function executePublishQueueTask(
             mappedStatus === "failed"
               ? task?.error?.message || runtime?.error || null
               : null,
-        });
+        };
+        await emitRuntime(options, lastRuntimeSnapshot);
       },
     };
 
-    await emitRuntime(options, {
+    lastRuntimeSnapshot = {
       taskId: detail.id,
       taskType: detail.type,
       queue: resolveQueueName(detail, normalizedQueue),
@@ -449,11 +493,12 @@ export async function executePublishQueueTask(
       message: `开始执行 ${getTaskLabel(detail.type)}`,
       currentStep: "开始执行",
       progress: 0,
-    });
+    };
+    await emitRuntime(options, lastRuntimeSnapshot);
 
     await executor(detail, executionContext);
 
-    await emitRuntime(options, {
+    lastRuntimeSnapshot = {
       taskId: detail.id,
       taskType: detail.type,
       queue: resolveQueueName(detail, normalizedQueue),
@@ -466,7 +511,8 @@ export async function executePublishQueueTask(
       message: `执行完成：${getTaskLabel(detail.type)}`,
       currentStep: "执行完成",
       progress: 100,
-    });
+    };
+    await emitRuntime(options, lastRuntimeSnapshot);
 
     return detail;
   } catch (error: any) {
@@ -492,7 +538,7 @@ export async function executePublishQueueTask(
       // 忽略兜底状态回写异常，主流程错误优先向上抛出
     }
 
-    await emitRuntime(options, {
+    lastRuntimeSnapshot = {
       taskId: detail?.id || normalizedTaskId,
       taskType: detail?.type || normalizedTaskType,
       queue: resolveQueueName(detail, normalizedQueue),
@@ -505,9 +551,11 @@ export async function executePublishQueueTask(
       message: errorMessage,
       currentStep: fallbackStatus === "pending" ? "等待重新调度" : "执行失败",
       error: errorMessage,
-    });
+    };
+    await emitRuntime(options, lastRuntimeSnapshot);
     throw error;
   } finally {
+    stopHeartbeat();
     publishTaskExecutionControls.delete(normalizedTaskId);
   }
 }

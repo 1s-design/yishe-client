@@ -19,6 +19,10 @@ const api = {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   toggleDevTools: () => ipcRenderer.invoke('toggle-devtools'),
+  writeClientLog: (payload: { level?: string; module?: string; message?: string; context?: Record<string, any> }) =>
+    ipcRenderer.invoke('client-log:write', payload),
+  queryClientLog: (action: string, payload?: Record<string, any>) =>
+    ipcRenderer.invoke('client-log:query', action, payload || {}),
   // 新增 token 相关方法
   saveToken: (token: string) => ipcRenderer.invoke('save-token', token),
   getToken: () => ipcRenderer.invoke('get-token'),

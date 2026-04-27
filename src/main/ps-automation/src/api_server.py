@@ -5,6 +5,7 @@ PSD 智能对象替换 API 服务
 
 import os
 import sys
+import re
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -45,6 +46,37 @@ sys.path.insert(0, str(project_root))
 DEFAULT_EXPORT_DIR = project_root / "output"
 
 
+def sanitize_filename_component(value: Optional[str], fallback: str = "output", max_length: int = 120) -> str:
+    """生成 Windows/Photoshop 友好的文件名片段。"""
+    text = str(value or "").strip()
+    if not text:
+        text = fallback
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text)
+    text = re.sub(r"\s+", "_", text).strip(" ._")
+    if not text:
+        text = fallback
+    reserved_names = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    }
+    if text.upper() in reserved_names:
+        text = f"{text}_file"
+    if len(text) > max_length:
+        text = text[:max_length].rstrip(" ._") or fallback
+    return text
+
+
+def sanitize_output_filename(filename: str, fallback_stem: str = "output") -> str:
+    """清洗完整导出文件名，并保留 png 后缀。"""
+    filename_path = Path(str(filename or "").strip())
+    stem = sanitize_filename_component(filename_path.stem, fallback=fallback_stem)
+    suffix = filename_path.suffix.lower() if filename_path.suffix else ".png"
+    if suffix != ".png":
+        suffix = ".png"
+    return f"{stem}{suffix}"
+
+
 def generate_unique_filename(original_filename: Optional[str], psd_path: Path) -> str:
     """
     生成带时间戳的唯一文件名，防止文件被覆盖
@@ -64,13 +96,13 @@ def generate_unique_filename(original_filename: Optional[str], psd_path: Path) -
         # 如果指定了文件名，在文件名和扩展名之间插入时间戳
         # 例如：result.png -> result_20241201_123456.png
         filename_path = Path(original_filename)
-        stem = filename_path.stem
+        stem = sanitize_filename_component(filename_path.stem, fallback="result")
         suffix = filename_path.suffix or ".png"
-        return f"{stem}_{timestamp}{suffix}"
+        return sanitize_output_filename(f"{stem}_{timestamp}{suffix}", fallback_stem="result")
     else:
         # 如果未指定文件名，使用 PSD 文件名 + 时间戳
-        psd_stem = psd_path.stem
-        return f"{psd_stem}_export_{timestamp}.png"
+        psd_stem = sanitize_filename_component(psd_path.stem, fallback="psd")
+        return sanitize_output_filename(f"{psd_stem}_export_{timestamp}.png", fallback_stem="psd")
 
 def format_time(seconds: float) -> str:
     """
@@ -824,6 +856,8 @@ class ProcessRequest(BaseModel):
     @validator('image_path')
     def validate_image(cls, v):
         """验证图片文件"""
+        if v is None:
+            return v
         path = Path(v)
         valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
         if path.suffix.lower() not in valid_extensions:
@@ -1839,4 +1873,3 @@ async def analyze_psd_runtime_file(request: PSDAnalysisRequest):
 
 # 注意：启动服务的入口文件已移动到项目根目录的 start_api_server.py
 # 这里不再包含启动逻辑，只保留 API 定义
-

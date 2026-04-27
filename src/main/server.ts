@@ -18,6 +18,7 @@ import path from 'path';
 import ElectronStore from 'electron-store';
 import { uploadFileToCos, generateCosKey, getCurrentUserIdentity } from './cos';
 import { crawlerCollectorService } from './crawlerCollector';
+import { writeClientLog } from './clientLogger';
 
 // 为了兼容部分证书配置不规范的站点，在 Node/Electron 端放宽 HTTPS 校验，
 // 行为与之前 axios + https.Agent({ rejectUnauthorized: false }) 保持一致，
@@ -29,9 +30,23 @@ if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === undefined) {
 // 用内存变量存储 token
 let token: string | null = null;
 
+function writeLocalServerLog(
+  level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
+  message: string,
+  context?: Record<string, any>,
+) {
+  writeClientLog({
+    level,
+    module: 'local-server',
+    message,
+    context,
+  });
+}
+
 // 导出保存 token 的函数和读取函数，供主进程使用
 export function saveToken(newToken: string): void {
   token = newToken;
+  writeLocalServerLog('INFO', '本地服务 token 已保存', { hasToken: !!newToken });
 }
 
 export function getTokenValue(): string | null {
@@ -102,11 +117,14 @@ function normalizeExtensionClientInfo(data: any): ExtensionClientInfoSnapshot {
 }
 
 export function startServer(port: number = 1519): (() => Promise<void>) {
+  writeLocalServerLog('INFO', '请求启动本地服务', { port, alreadyRunning: !!stopServerFn });
   // 如果服务器已经在运行，先停止它
   if (stopServerFn) {
     console.log('⚠️ 服务器已在运行，先停止旧实例');
+    writeLocalServerLog('WARN', '本地服务已在运行，准备重启旧实例', { port });
     return stopServerFn().then(() => {
       console.log('✅ 旧服务器实例已停止');
+      writeLocalServerLog('INFO', '旧本地服务实例已停止，准备重新启动', { port });
       const stopFn = _startServer(port);
       stopServerFn = stopFn;
       return stopFn;
@@ -122,8 +140,10 @@ export function stopServer(): Promise<void> {
   if (stopServerFn) {
     const fn = stopServerFn;
     stopServerFn = null;
+    writeLocalServerLog('INFO', '请求停止本地服务');
     return fn();
   }
+  writeLocalServerLog('INFO', '本地服务未运行，跳过停止');
   return Promise.resolve();
 }
 
@@ -312,6 +332,7 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
    */
   app.post('/api/logoutToken', async (_req, res) => {
     token = null;
+    writeLocalServerLog('INFO', '本地服务 token 已清空，准备停止服务');
     // 登出时停止服务
     if (stopServerFn) {
       console.log('🔐 检测到 token 清除，停止 1519 服务...');
@@ -340,6 +361,12 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     const clientSource = socket.handshake.query.clientSource as string || 'unknown';
     
     console.log(`[WS] 插件连接: ${clientId} (${clientSource})`);
+    writeLocalServerLog('INFO', '本地插件 WebSocket 已连接', {
+      clientId,
+      clientSource,
+      socketId: socket.id,
+      totalConnections: extensionConnections.size + 1,
+    });
     
     extensionConnections.set(clientId, {
       socketId: socket.id,
@@ -379,6 +406,14 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
         clientInfo: normalizeExtensionClientInfo(data),
       };
       extensionConnections.set(clientId, nextInfo);
+      writeLocalServerLog('INFO', '收到本地插件客户端信息', {
+        clientId,
+        clientSource,
+        workspaceDirectory: nextInfo.clientInfo?.workspaceDirectory || '',
+        user: nextInfo.clientInfo?.user || null,
+        machine: nextInfo.clientInfo?.machine || null,
+        appVersion: nextInfo.clientInfo?.appVersion || '',
+      });
 
       const mainWindow = BrowserWindow.getAllWindows()[0];
       if (mainWindow) {
@@ -400,6 +435,12 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     socket.on('disconnect', (reason) => {
       console.log(`[WS] 插件断开: ${clientId}, 原因: ${reason}`);
       extensionConnections.delete(clientId);
+      writeLocalServerLog('WARN', '本地插件 WebSocket 已断开', {
+        clientId,
+        clientSource,
+        reason,
+        totalConnections: extensionConnections.size,
+      });
       
       // 通知主窗口插件断开
       const mainWindow = BrowserWindow.getAllWindows()[0];
@@ -417,6 +458,11 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     // 处理错误
     socket.on('error', (error) => {
       console.error(`[WS] Socket 错误: ${clientId}`, error);
+      writeLocalServerLog('ERROR', '本地插件 WebSocket 错误', {
+        clientId,
+        clientSource,
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      });
     });
   });
 
@@ -442,8 +488,16 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
     console.log('📚 API 文档:');
     console.log(`   GET  /api-docs                      - Swagger API 文档`);
     console.log('─'.repeat(50));
+    writeLocalServerLog('INFO', '本地 HTTP/Socket.IO 服务启动成功', {
+      port,
+      endpoint: `ws://localhost:${port}/ws`,
+    });
   }).on('error', (err) => {
     console.error('❌ HTTP 服务器启动失败:', err);
+    writeLocalServerLog('ERROR', '本地 HTTP 服务启动失败', {
+      port,
+      error: err instanceof Error ? { message: err.message, stack: err.stack } : err,
+    });
   });
 
   // 添加获取插件连接状态的 API
@@ -1326,10 +1380,14 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
   // 返回停止服务器的函数
   return () => {
     return new Promise<void>((resolve) => {
+      writeLocalServerLog('INFO', '开始停止本地 HTTP/Socket.IO 服务', {
+        activeConnections: extensionConnections.size,
+      });
       // 关闭所有 Socket.IO 连接
       if (ioServer) {
         ioServer.close(() => {
           console.log('✅ Socket.IO 服务器已停止');
+          writeLocalServerLog('INFO', '本地 Socket.IO 服务已停止');
         });
         ioServer = null;
       }
@@ -1341,14 +1399,13 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
       if (httpServer) {
         httpServer.close(() => {
           console.log('✅ Express 服务器已停止');
+          writeLocalServerLog('INFO', '本地 Express 服务已停止');
           resolve();
         });
       } else {
+        writeLocalServerLog('INFO', '本地 Express 服务不存在，停止完成');
         resolve();
       }
     });
   };
 }
-
-
-

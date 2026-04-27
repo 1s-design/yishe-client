@@ -9,6 +9,13 @@ const rootDir = path.resolve(__dirname, "..");
 const psRootDir = path.resolve(rootDir, "src", "main", "ps-automation");
 const outputDir = path.resolve(rootDir, "resources", "plugin", "win32", "ps-automation");
 const outputFile = path.join(outputDir, "yishe-ps-windows.exe");
+const legacyOutputFile = path.resolve(
+  rootDir,
+  "resources",
+  "plugin",
+  "win32",
+  "yishe-ps-windows.exe",
+);
 const venvPython = process.platform === "win32"
   ? path.join(psRootDir, ".venv", "Scripts", "python.exe")
   : path.join(psRootDir, ".venv", "bin", "python");
@@ -90,9 +97,11 @@ async function main() {
   }
 
   await fs.mkdir(outputDir, { recursive: true });
+  await fs.mkdir(path.dirname(legacyOutputFile), { recursive: true });
   for (let attempt = 1; attempt <= 10; attempt += 1) {
     try {
       await fs.copyFile(builtFile, outputFile);
+      await fs.copyFile(builtFile, legacyOutputFile);
       break;
     } catch (error) {
       if (attempt === 10) {
@@ -102,6 +111,7 @@ async function main() {
     }
   }
   console.log(`[prepare:ps] copied ${builtFile} -> ${outputFile}`);
+  console.log(`[prepare:ps] copied ${builtFile} -> ${legacyOutputFile}`);
 }
 
 main().catch((error) => {

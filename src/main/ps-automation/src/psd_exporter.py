@@ -34,6 +34,32 @@ except ImportError:
 COLOR_LAYER_PROCESSING_ENABLED = False
 
 
+def _safe_filename_part(value: Optional[str], fallback: str = "item", max_length: int = 80) -> str:
+    text = str(value or "").strip()
+    if not text:
+        text = fallback
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text)
+    text = re.sub(r"\s+", "_", text).strip(" ._")
+    if not text:
+        text = fallback
+    reserved_names = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    }
+    if text.upper() in reserved_names:
+        text = f"{text}_file"
+    if len(text) > max_length:
+        text = text[:max_length].rstrip(" ._") or fallback
+    return text
+
+
+def _safe_png_filename(filename: Optional[str], fallback_stem: str = "export") -> str:
+    path = Path(str(filename or "").strip())
+    stem = _safe_filename_part(path.stem, fallback=fallback_stem, max_length=140)
+    return f"{stem}.png"
+
+
 def _safe_get_active_layer_name(doc) -> str:
     """Photoshop 2025 下读取 activeLayer 有时会直接触发 COM 异常。"""
     try:
@@ -399,17 +425,14 @@ def replace_and_export_psd_multi(
                 try:
                     # 生成导出文件名（确保唯一性）
                     if output_filename is None:
-                        base_name = psd_path.stem
-                        # 清理图层组名称，移除特殊字符，避免文件名问题
-                        safe_artboard_name = "".join(c for c in artboard_name if c.isalnum() or c in (' ', '-', '_')).strip()
-                        safe_artboard_name = safe_artboard_name.replace(' ', '_')
+                        base_name = _safe_filename_part(psd_path.stem, fallback="psd", max_length=80)
+                        safe_artboard_name = _safe_filename_part(artboard_name, fallback=f"artboard{i}", max_length=60)
                         # 使用索引确保文件名唯一，即使图层组名称相同
                         artboard_export_filename = f"{base_name}_artboard{i}_{safe_artboard_name}_export.png"
                     else:
                         # 如果指定了文件名，在文件名和扩展名之间插入图层组索引和名称
-                        output_path = Path(output_filename)
-                        safe_artboard_name = "".join(c for c in artboard_name if c.isalnum() or c in (' ', '-', '_')).strip()
-                        safe_artboard_name = safe_artboard_name.replace(' ', '_')
+                        output_path = Path(_safe_png_filename(output_filename))
+                        safe_artboard_name = _safe_filename_part(artboard_name, fallback=f"artboard{i}", max_length=60)
                         # 使用索引确保唯一性
                         artboard_export_filename = f"{output_path.stem}_artboard{i}_{safe_artboard_name}{output_path.suffix}"
                     
@@ -707,7 +730,9 @@ def replace_and_export_psd_multi(
             print("=" * 70)
             
             if output_filename is None:
-                output_filename = f"{psd_path.stem}_export.png"
+                output_filename = f"{_safe_filename_part(psd_path.stem, fallback='psd', max_length=120)}_export.png"
+            else:
+                output_filename = _safe_png_filename(output_filename)
             
             export_path = export_dir / output_filename
             
@@ -790,4 +815,3 @@ def replace_and_export_psd_multi(
     
     # 统一返回列表格式和处理时间
     return (export_paths if export_paths else [], processing_time)
-

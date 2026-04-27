@@ -79,6 +79,20 @@ import {
   listVideoTemplateRenders,
   warmVideoTemplateService,
 } from "./video-template";
+import { handleClientLogCommand, writeClientLog } from "./clientLogger";
+
+function writeMainLog(
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR",
+  message: string,
+  context?: Record<string, any>,
+) {
+  writeClientLog({
+    level,
+    module: "main-process",
+    message,
+    context,
+  });
+}
 
 function resolveBundledImageMagickDirectory(): string | null {
   const candidates = [
@@ -108,6 +122,8 @@ declare global {
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let trayPowerSaveBlockerId: number | null = null;
+let quitCleanupComplete = false;
+let quitCleanupPromise: Promise<void> | null = null;
 
 // 插件/外部进程管理器
 const externalProcessManager = new ExternalProcessManager(pluginProcessConfigs);
@@ -726,6 +742,12 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on("ping", () => console.log("pong"));
+  ipcMain.handle("client-log:write", async (_event, payload) => {
+    return writeClientLog(payload || {});
+  });
+  ipcMain.handle("client-log:query", async (_event, action: string, payload: Record<string, any>) => {
+    return handleClientLogCommand(action, payload || {});
+  });
 
   // 切换开发者工具（供 header 按钮调用）
   ipcMain.handle("toggle-devtools", async (event) => {
@@ -745,10 +767,15 @@ app.whenReady().then(() => {
   ipcMain.handle("save-token", async (_event, newToken) => {
     // 先保存 token（无论服务是否启动）
     saveToken(newToken);
+    writeMainLog("INFO", "保存登录 token，检查本地服务状态", {
+      hasToken: !!newToken,
+      serverRunning: isServerRunning(),
+    });
 
     // 如果服务未启动，启动服务
     if (!isServerRunning()) {
       console.log("🔐 检测到 token 保存，启动 1519 服务...");
+      writeMainLog("INFO", "token 保存后启动本地 1519 服务");
       startServer(1519);
     }
 
@@ -783,18 +810,56 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("start-external-process", async (_event, id: string) => {
-    return externalProcessManager.startProcess(id);
+    writeMainLog("INFO", "收到启动外部进程 IPC", { processId: id });
+    const success = await externalProcessManager.startProcess(id);
+    writeMainLog(success ? "INFO" : "ERROR", "启动外部进程 IPC 完成", {
+      processId: id,
+      success,
+    });
+    return success;
   });
 
   ipcMain.handle(
     "stop-external-process",
     async (_event, id: string, force = false) => {
-      return externalProcessManager.stopProcess(id, force);
+      writeMainLog("INFO", "收到停止外部进程 IPC", { processId: id, force });
+      const success = await externalProcessManager.stopProcess(id, force);
+      writeMainLog(success ? "INFO" : "ERROR", "停止外部进程 IPC 完成", {
+        processId: id,
+        force,
+        success,
+      });
+      return success;
     },
   );
 
   ipcMain.handle("auto-browser:invoke", async (_event, request) => {
-    return invokeAutoBrowserRoute(request);
+    const startedAt = Date.now();
+    writeMainLog("INFO", "收到 auto-browser IPC 调用", {
+      method: request?.method || "GET",
+      path: request?.path || "",
+      query: request?.query || {},
+      hasBody: !!request?.body,
+    });
+    try {
+      const response = await invokeAutoBrowserRoute(request);
+      writeMainLog(response?.ok ? "INFO" : "WARN", "auto-browser IPC 调用完成", {
+        method: request?.method || "GET",
+        path: request?.path || "",
+        status: response?.status,
+        ok: response?.ok,
+        durationMs: Date.now() - startedAt,
+      });
+      return response;
+    } catch (error) {
+      writeMainLog("ERROR", "auto-browser IPC 调用异常", {
+        method: request?.method || "GET",
+        path: request?.path || "",
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      });
+      throw error;
+    }
   });
 
   // 本地服务管理 IPC
@@ -802,13 +867,19 @@ app.whenReady().then(() => {
     try {
       if (!isServerRunning()) {
         console.log("🚀 启动本地服务 (1519端口)...");
+        writeMainLog("INFO", "准备启动本地 1519 服务");
         startServer(1519);
+        writeMainLog("INFO", "本地 1519 服务启动命令已执行");
         return { success: true, message: "本地服务启动成功" };
       } else {
+        writeMainLog("INFO", "本地 1519 服务已在运行");
         return { success: true, message: "本地服务已在运行" };
       }
     } catch (error: any) {
       console.error("❌ 启动本地服务失败:", error);
+      writeMainLog("ERROR", "启动本地 1519 服务失败", {
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      });
       return { success: false, message: error?.message || "启动本地服务失败" };
     }
   });
@@ -817,13 +888,19 @@ app.whenReady().then(() => {
     try {
       if (isServerRunning()) {
         console.log("🛑 停止本地服务 (1519端口)...");
+        writeMainLog("INFO", "准备停止本地 1519 服务");
         await stopServer();
+        writeMainLog("INFO", "本地 1519 服务已停止");
         return { success: true, message: "本地服务已停止" };
       } else {
+        writeMainLog("INFO", "本地 1519 服务未运行");
         return { success: true, message: "本地服务未运行" };
       }
     } catch (error: any) {
       console.error("❌ 停止本地服务失败:", error);
+      writeMainLog("ERROR", "停止本地 1519 服务失败", {
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+      });
       return { success: false, message: error?.message || "停止本地服务失败" };
     }
   });
@@ -906,6 +983,9 @@ app.whenReady().then(() => {
   // 启动外部进程（在创建窗口之前）
   externalProcessManager.startAll().catch((error) => {
     console.error("❌ 启动外部进程失败:", error);
+    writeMainLog("ERROR", "应用启动时批量启动外部进程失败", {
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    });
   });
 
   createWindow();
@@ -932,17 +1012,23 @@ app.on("window-all-closed", () => {
   }
 });
 
-// 应用退出时清理资源
-app.on("before-quit", async () => {
+async function cleanupBeforeQuit(): Promise<void> {
   console.log("🔄 应用即将退出，清理资源...");
+  writeMainLog("INFO", "应用即将退出，开始清理资源");
 
   await shutdownAutoBrowserService().catch((error) => {
     console.error("❌ 停止 auto-browser 服务失败:", error);
+    writeMainLog("ERROR", "停止 auto-browser 服务失败", {
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    });
   });
 
   // 停止外部进程（优先执行，给进程时间优雅关闭）
   await externalProcessManager.stopAll().catch((error) => {
     console.error("❌ 停止外部进程失败:", error);
+    writeMainLog("ERROR", "停止外部进程失败，准备强制关闭", {
+      error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    });
     // 如果优雅关闭失败，尝试强制关闭
     externalProcessManager.stopAll(true).catch(console.error);
   });
@@ -953,6 +1039,31 @@ app.on("before-quit", async () => {
   }
 
   console.log("✅ 资源清理完成");
+  writeMainLog("INFO", "应用退出资源清理完成");
+}
+
+// 应用退出时清理资源。Electron 不会等待 async before-quit，需要显式阻塞一次。
+app.on("before-quit", (event) => {
+  (app as any).isQuiting = true;
+
+  if (quitCleanupComplete) {
+    return;
+  }
+
+  event.preventDefault();
+  if (!quitCleanupPromise) {
+    quitCleanupPromise = cleanupBeforeQuit()
+      .catch((error) => {
+        console.error("❌ 应用退出清理异常:", error);
+        writeMainLog("ERROR", "应用退出清理异常", {
+          error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+        });
+      })
+      .finally(() => {
+        quitCleanupComplete = true;
+        app.quit();
+      });
+  }
 });
 
 // 添加托盘相关的IPC监听器
@@ -1020,6 +1131,7 @@ ipcMain.handle("select-workspace-directory", async () => {
   });
 
   if (result.canceled) {
+    writeMainLog("INFO", "用户取消选择工作目录");
     return null;
   }
 
@@ -1027,6 +1139,9 @@ ipcMain.handle("select-workspace-directory", async () => {
   if (selectedPath) {
     // 保存到 electron-store
     store.set("workspaceDirectory", selectedPath);
+    writeMainLog("INFO", "已选择并保存工作目录", {
+      workspaceDirectory: selectedPath,
+    });
     return selectedPath;
   }
 
@@ -1040,8 +1155,12 @@ ipcMain.handle("get-workspace-directory", async () => {
 ipcMain.handle("set-workspace-directory", async (_event, path: string) => {
   if (path && typeof path === "string") {
     store.set("workspaceDirectory", path);
+    writeMainLog("INFO", "已设置工作目录", {
+      workspaceDirectory: path,
+    });
     return true;
   }
+  writeMainLog("WARN", "设置工作目录失败，路径无效", { path });
   return false;
 });
 
@@ -1186,6 +1305,134 @@ function ensureFileExtension(
   return fileName;
 }
 
+type DownloadManifestEntry = {
+  url: string;
+  cacheKey: string;
+  fileName: string;
+  filePath: string;
+  fileSize?: number;
+  contentType?: string | null;
+  downloadedAt?: string;
+  originalFileName?: string;
+};
+
+type DownloadManifest = Record<string, DownloadManifestEntry>;
+
+const downloadInFlight = new Map<string, Promise<any>>();
+
+function normalizeDownloadUrl(url: string): string {
+  return new URL(String(url || "").trim()).toString();
+}
+
+function buildDownloadCacheKey(url: string): string {
+  return createHash("sha256").update(normalizeDownloadUrl(url)).digest("hex");
+}
+
+function getDownloadManifestPath(filesDir: string): string {
+  return pathJoin(filesDir, ".download-manifest.json");
+}
+
+function readDownloadManifest(filesDir: string): DownloadManifest {
+  try {
+    const manifestPath = getDownloadManifestPath(filesDir);
+    if (!fs.existsSync(manifestPath)) {
+      return {};
+    }
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDownloadManifest(filesDir: string, manifest: DownloadManifest): void {
+  const manifestPath = getDownloadManifestPath(filesDir);
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+}
+
+function sanitizeDownloadFileName(fileName: string): string {
+  const safe = String(fileName || "download")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  return safe || "download";
+}
+
+function getFileNameFromUrl(parsedUrl: URL): string {
+  const urlPath = parsedUrl.pathname;
+  let fileName = urlPath.split("/").pop() || "download";
+
+  if (!fileName.includes(".")) {
+    const suggestedName =
+      parsedUrl.searchParams.get("filename") || parsedUrl.searchParams.get("name");
+    fileName = suggestedName || fileName;
+  }
+
+  try {
+    fileName = decodeURIComponent(fileName);
+  } catch {
+    // keep original name
+  }
+  return sanitizeDownloadFileName(fileName);
+}
+
+function getFileNameFromContentDisposition(contentDisposition: string | null): string | null {
+  if (!contentDisposition) {
+    return null;
+  }
+  const utf8Match = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;\n]*)/i);
+  const rawFileName = utf8Match?.[1] ||
+    contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i)?.[1];
+  if (!rawFileName) {
+    return null;
+  }
+  let fileName = rawFileName.replace(/['"]/g, "");
+  try {
+    fileName = decodeURIComponent(fileName);
+  } catch {
+    // keep original name
+  }
+  return sanitizeDownloadFileName(fileName);
+}
+
+function buildCachedDownloadFileName(
+  cacheKey: string,
+  originalFileName: string,
+  url?: string,
+  contentType?: string | null,
+): string {
+  const withExtension = ensureFileExtension(
+    sanitizeDownloadFileName(originalFileName),
+    url,
+    contentType || undefined,
+  );
+  const ext = extname(withExtension);
+  const stem = sanitizeDownloadFileName(basename(withExtension, ext)).slice(0, 96) || "download";
+  return `${cacheKey.slice(0, 16)}_${stem}${ext || ""}`;
+}
+
+function getCachedDownloadByUrl(filesDir: string, url: string) {
+  const normalizedUrl = normalizeDownloadUrl(url);
+  const cacheKey = buildDownloadCacheKey(normalizedUrl);
+  const manifest = readDownloadManifest(filesDir);
+  const entry = manifest[cacheKey];
+  if (entry?.url === normalizedUrl && entry.filePath && fs.existsSync(entry.filePath)) {
+    const stats = fs.statSync(entry.filePath);
+    if (stats.isFile()) {
+      return {
+        found: true,
+        cacheKey,
+        entry: {
+          ...entry,
+          fileSize: stats.size,
+        },
+      };
+    }
+  }
+  return { found: false, cacheKey, entry: null };
+}
+
 // 文件下载相关 IPC 处理器
 /**
  * 从 URL 下载文件到工作目录下的 files 目录
@@ -1193,6 +1440,18 @@ function ensureFileExtension(
  * @returns 下载结果 { success: boolean, message: string, filePath?: string, skipped?: boolean }
  */
 ipcMain.handle("download-file", async (_event, url: string) => {
+  const normalizedUrlForLock = (() => {
+    try {
+      return normalizeDownloadUrl(url);
+    } catch {
+      return String(url || "").trim();
+    }
+  })();
+  if (normalizedUrlForLock && downloadInFlight.has(normalizedUrlForLock)) {
+    return downloadInFlight.get(normalizedUrlForLock);
+  }
+
+  const task = (async () => {
   try {
     // 检查工作目录是否设置
     const workspaceDir = store.get("workspaceDirectory", "") as string;
@@ -1223,6 +1482,8 @@ ipcMain.handle("download-file", async (_event, url: string) => {
         error: "INVALID_URL_FORMAT",
       };
     }
+    const normalizedUrl = normalizeDownloadUrl(url);
+    const cacheKey = buildDownloadCacheKey(normalizedUrl);
 
     // 创建 files 目录
     const filesDir = pathJoin(workspaceDir, "files");
@@ -1230,42 +1491,19 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       fs.mkdirSync(filesDir, { recursive: true });
     }
 
-    // 从 URL 获取文件名
-    const urlPath = parsedUrl.pathname;
-    let fileName = urlPath.split("/").pop() || "download";
-
-    // 如果文件名没有扩展名，尝试从 Content-Disposition 或 URL 中获取
-    if (!fileName.includes(".")) {
-      // 尝试从 URL 查询参数中获取文件名
-      const urlParams = parsedUrl.searchParams;
-      const suggestedName = urlParams.get("filename") || urlParams.get("name");
-      if (suggestedName) {
-        fileName = suggestedName;
-      } else {
-        // 默认使用时间戳作为文件名
-        fileName = `download_${Date.now()}`;
-      }
-    }
-
-    // 清理文件名（移除非法字符）
-    fileName = fileName.replace(/[<>:"/\\|?*]/g, "_");
-
-    // 确保文件名有正确的扩展名（如果还没有扩展名，尝试从 URL 判断）
-    fileName = ensureFileExtension(fileName, url);
-
-    const filePath = pathJoin(filesDir, fileName);
-
-    // 检查文件是否已存在
-    if (fs.existsSync(filePath)) {
-      const stats = fs.statSync(filePath);
+    const cached = getCachedDownloadByUrl(filesDir, normalizedUrl);
+    if (cached.found && cached.entry) {
       return {
         success: true,
-        message: "文件已存在，跳过下载",
-        filePath: filePath,
+        message: "文件链接已缓存，跳过下载",
+        filePath: cached.entry.filePath,
         skipped: true,
-        fileSize: stats.size,
+        fileSize: cached.entry.fileSize,
+        cacheKey,
       };
     }
+
+    let fileName = getFileNameFromUrl(parsedUrl);
 
     // 使用 fetch API 下载文件（参考 yishe-admin 的实现）
     try {
@@ -1303,27 +1541,18 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       // 从响应头获取文件名（如果 Content-Disposition 存在）
       const contentDisposition = response.headers.get("content-disposition");
       if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(
-          /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
-        );
-        if (filenameMatch && filenameMatch[1]) {
-          let suggestedFileName = filenameMatch[1].replace(/['"]/g, "");
-          try {
-            suggestedFileName = decodeURIComponent(suggestedFileName);
-          } catch (e) {
-            // 忽略解码错误
-          }
-          if (suggestedFileName) {
-            fileName = suggestedFileName.replace(/[<>:"/\\|?*]/g, "_");
-          }
+        const suggestedFileName = getFileNameFromContentDisposition(contentDisposition);
+        if (suggestedFileName) {
+          fileName = suggestedFileName;
         }
       }
 
-      // 确保文件名有正确的扩展名
-      fileName = ensureFileExtension(
+      const originalFileName = fileName;
+      fileName = buildCachedDownloadFileName(
+        cacheKey,
         fileName,
         url,
-        response.headers.get("content-type") || undefined,
+        response.headers.get("content-type"),
       );
 
       const finalFilePath = pathJoin(filesDir, fileName);
@@ -1331,12 +1560,25 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       // 如果文件已存在，返回跳过
       if (fs.existsSync(finalFilePath)) {
         const stats = fs.statSync(finalFilePath);
+        const manifest = readDownloadManifest(filesDir);
+        manifest[cacheKey] = {
+          url: normalizedUrl,
+          cacheKey,
+          fileName,
+          filePath: finalFilePath,
+          fileSize: stats.size,
+          contentType: response.headers.get("content-type"),
+          downloadedAt: manifest[cacheKey]?.downloadedAt || new Date().toISOString(),
+          originalFileName,
+        };
+        writeDownloadManifest(filesDir, manifest);
         return {
           success: true,
           message: "文件已存在，跳过下载",
           filePath: finalFilePath,
           skipped: true,
           fileSize: stats.size,
+          cacheKey,
         };
       }
 
@@ -1348,12 +1590,26 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       fs.writeFileSync(finalFilePath, buffer);
 
       const stats = fs.statSync(finalFilePath);
+      const manifest = readDownloadManifest(filesDir);
+      manifest[cacheKey] = {
+        url: normalizedUrl,
+        cacheKey,
+        fileName,
+        filePath: finalFilePath,
+        fileSize: stats.size,
+        contentType: response.headers.get("content-type"),
+        downloadedAt: new Date().toISOString(),
+        originalFileName,
+      };
+      writeDownloadManifest(filesDir, manifest);
+
       return {
         success: true,
         message: "下载完成",
         filePath: finalFilePath,
         fileSize: stats.size,
         downloadedBytes: buffer.length,
+        cacheKey,
       };
     } catch (error: any) {
       // 处理超时错误
@@ -1378,6 +1634,18 @@ ipcMain.handle("download-file", async (_event, url: string) => {
       message: `下载失败: ${error.message || "未知错误"}`,
       error: "UNKNOWN_ERROR",
     };
+  }
+  })();
+
+  if (normalizedUrlForLock) {
+    downloadInFlight.set(normalizedUrlForLock, task);
+  }
+  try {
+    return await task;
+  } finally {
+    if (normalizedUrlForLock) {
+      downloadInFlight.delete(normalizedUrlForLock);
+    }
   }
 });
 
@@ -1408,9 +1676,8 @@ ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
       };
     }
 
-    let parsedUrl: URL;
     try {
-      parsedUrl = new URL(url);
+      normalizeDownloadUrl(url);
     } catch (error) {
       return {
         found: false,
@@ -1418,6 +1685,8 @@ ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
         error: "INVALID_URL_FORMAT",
       };
     }
+    const normalizedUrl = normalizeDownloadUrl(url);
+    const cacheKey = buildDownloadCacheKey(normalizedUrl);
 
     const filesDir = pathJoin(workspaceDir, "files");
 
@@ -1427,63 +1696,19 @@ ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
         found: false,
         message: "文件目录不存在，未找到文件",
         filePath: null,
+        cacheKey,
       };
     }
 
-    // 从 URL 提取可能的文件名
-    const urlPath = parsedUrl.pathname;
-    let possibleFileName = urlPath.split("/").pop() || "download";
-
-    // 清理文件名
-    possibleFileName = possibleFileName.replace(/[<>:"/\\|?*]/g, "_");
-
-    // 检查可能的文件路径
-    const possibleFilePath = pathJoin(filesDir, possibleFileName);
-
-    if (fs.existsSync(possibleFilePath)) {
-      const stats = fs.statSync(possibleFilePath);
-      // 返回绝对路径（跨平台）
-      const absolutePath = resolve(filesDir, possibleFileName);
+    const cached = getCachedDownloadByUrl(filesDir, normalizedUrl);
+    if (cached.found && cached.entry) {
       return {
         found: true,
-        filePath: absolutePath,
-        fileSize: stats.size,
-        message: "文件已找到",
+        filePath: cached.entry.filePath,
+        fileSize: cached.entry.fileSize,
+        message: "文件链接缓存已找到",
+        cacheKey,
       };
-    }
-
-    // 如果直接文件名匹配失败，尝试在 files 目录中搜索
-    // 读取目录中的所有文件
-    try {
-      const files = fs.readdirSync(filesDir);
-
-      // 尝试匹配文件名（不区分大小写，支持部分匹配）
-      const urlFileName = possibleFileName.toLowerCase();
-      for (const file of files) {
-        const filePath = pathJoin(filesDir, file);
-        const fileStats = fs.statSync(filePath);
-
-        // 如果是文件（不是目录）
-        if (fileStats.isFile()) {
-          const fileName = file.toLowerCase();
-          // 精确匹配或部分匹配
-          if (
-            fileName === urlFileName ||
-            fileName.includes(urlFileName) ||
-            urlFileName.includes(fileName)
-          ) {
-            const absolutePath = resolve(filesDir, file);
-            return {
-              found: true,
-              filePath: absolutePath,
-              fileSize: fileStats.size,
-              message: "找到匹配的文件",
-            };
-          }
-        }
-      }
-    } catch (error) {
-      // 忽略读取目录错误
     }
 
     // 如果都找不到，返回未找到
@@ -1491,6 +1716,7 @@ ipcMain.handle("check-file-downloaded", async (_event, url: string) => {
       found: false,
       message: "未找到对应的文件",
       filePath: null,
+      cacheKey,
     };
   } catch (error: any) {
     return {

@@ -466,6 +466,63 @@ function assignTemplateImages(payload = {}, uploadedImageUrls = []) {
     return nextPayload;
 }
 
+function assignGoodsLayerDecorationImagesFromCarousel(payload = {}) {
+    const nextPayload = isPlainObject(payload) ? { ...payload } : {};
+    const carouselImageUrls = Array.isArray(nextPayload.carouselImageUrls)
+        ? nextPayload.carouselImageUrls.map((item) => normalizeText(item)).filter(Boolean)
+        : [];
+    if (!carouselImageUrls.length || !Array.isArray(nextPayload.goodsLayerDecorationReqs)) {
+        return nextPayload;
+    }
+
+    let carouselImageIndex = 0;
+    let replacedCount = 0;
+
+    nextPayload.goodsLayerDecorationReqs = nextPayload.goodsLayerDecorationReqs.map((decoration) => {
+        const nextDecoration = isPlainObject(decoration) ? { ...decoration } : decoration;
+        if (
+            !isPlainObject(nextDecoration) ||
+            normalizeText(nextDecoration.type).toLowerCase() !== 'image' ||
+            !Array.isArray(nextDecoration.contentList)
+        ) {
+            return nextDecoration;
+        }
+
+        nextDecoration.contentList = nextDecoration.contentList.map((contentItem) => {
+            const nextContentItem = isPlainObject(contentItem) ? { ...contentItem } : contentItem;
+            if (!isPlainObject(nextContentItem)) {
+                return nextContentItem;
+            }
+
+            const carouselImageUrl = carouselImageUrls[carouselImageIndex];
+            if (!carouselImageUrl) {
+                return nextContentItem;
+            }
+
+            carouselImageIndex += 1;
+            replacedCount += 1;
+            const hasImageUrl = Object.prototype.hasOwnProperty.call(nextContentItem, 'imageUrl');
+            const hasImgUrl = Object.prototype.hasOwnProperty.call(nextContentItem, 'imgUrl');
+            return {
+                ...nextContentItem,
+                ...(hasImageUrl ? { imageUrl: carouselImageUrl } : {}),
+                ...(hasImgUrl || !hasImageUrl ? { imgUrl: carouselImageUrl } : {})
+            };
+        });
+
+        return nextDecoration;
+    });
+
+    if (replacedCount > 0) {
+        logger.info(`${PLATFORM_NAME}模板详情图片已按轮播图替换`, {
+            replacedCount,
+            carouselImageCount: carouselImageUrls.length
+        });
+    }
+
+    return nextPayload;
+}
+
 function normalizeImageBindingIndexes(value) {
     if (value === undefined || value === null || value === '') {
         return [];
@@ -704,8 +761,9 @@ function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
         options.uploadedImageUrls || [],
         options.templateImageBindings || null
     );
+    const decorationImageAppliedPayload = assignGoodsLayerDecorationImagesFromCarousel(imageAppliedPayload);
     const extCodeAppliedPayload = normalizeTemuTemplateExtCodes(
-        imageAppliedPayload,
+        decorationImageAppliedPayload,
         options.productCode || ''
     );
     const normalizedSkuPayload = normalizeTemuTemplateSkuFields(extCodeAppliedPayload);

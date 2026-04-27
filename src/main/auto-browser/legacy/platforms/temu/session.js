@@ -54,6 +54,14 @@ const TEMU_CAPTURE_WARMUP_URLS = [
     'https://agentseller.temu.com/newon/product-select'
 ];
 
+function isTemuSessionProbePage(pageUrl = '') {
+    const currentUrl = String(pageUrl || '').trim();
+    if (!currentUrl || currentUrl === 'about:blank') {
+        return false;
+    }
+    return /(^https?:\/\/)?([^/]+\.)?(temu\.com|kuajingmaihuo\.com)\b/i.test(currentUrl);
+}
+
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -278,6 +286,18 @@ function buildTemuSessionIncompleteMessage(completeness, extraReasons = []) {
     return normalizedReasons.length
         ? `Temu 会话采集不完整，${missingText}；${normalizedReasons.join('；')}`
         : `Temu 会话采集不完整，${missingText}`;
+}
+
+function isTemuInvalidLoginStateMessage(value = '') {
+    const message = String(value || '').trim();
+    if (!message) {
+        return false;
+    }
+    return (
+        /Invalid Login State/i.test(message) ||
+        /invalid_login_state/i.test(message) ||
+        /登录态.*失效|登录.*失效|请.*登录|未登录/.test(message)
+    );
 }
 
 async function resolveTemuCurrentUserAgent(page, fallbackValue = '') {
@@ -877,6 +897,17 @@ export async function collectTemuSessionBundle(page, options = {}) {
             currentUrl: page.url()
         });
 
+        logger.info(`${PLATFORM_NAME}会话采集步骤：采集页打开商家后台`, {
+            currentUrl: page.url(),
+            targetUrl: TEMU_SELLER_HOME_URL,
+            previousUrlWasTemu: isTemuSessionProbePage(page.url())
+        });
+        await page.goto(TEMU_SELLER_HOME_URL, {
+            waitUntil: 'domcontentloaded',
+            timeout: 60_000
+        });
+        await page.waitForTimeout(3_000);
+
         const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
         if (!authorizationResult.success) {
             return {
@@ -981,8 +1012,20 @@ export async function collectTemuSessionBundle(page, options = {}) {
         };
 
         if (options.collectRegionCookies !== false) {
+            logger.info(`${PLATFORM_NAME}会话采集步骤：开始采集美区 Cookie`);
             const usRegion = await collectRegionCookies(context, 'us');
+            logger.info(`${PLATFORM_NAME}会话采集步骤：美区 Cookie 采集完成`, {
+                success: !!usRegion.success,
+                cookieCount: usRegion.cookieCount || 0,
+                warning: usRegion.warning || ''
+            });
+            logger.info(`${PLATFORM_NAME}会话采集步骤：开始采集欧区 Cookie`);
             const euRegion = await collectRegionCookies(context, 'eu');
+            logger.info(`${PLATFORM_NAME}会话采集步骤：欧区 Cookie 采集完成`, {
+                success: !!euRegion.success,
+                cookieCount: euRegion.cookieCount || 0,
+                warning: euRegion.warning || ''
+            });
             regionCollection.us = usRegion;
             regionCollection.eu = euRegion;
 
@@ -1079,9 +1122,12 @@ export async function collectTemuSessionBundle(page, options = {}) {
         }
 
         if (!completeness.success) {
+            const userInfoMessage = userInfoResult?.message || '';
             return {
                 success: false,
-                reason: 'session_incomplete',
+                reason: isTemuInvalidLoginStateMessage(userInfoMessage)
+                    ? 'login_required'
+                    : 'session_incomplete',
                 message: buildTemuSessionIncompleteMessage(completeness, failureReasons),
                 sessionBundle
             };

@@ -1056,6 +1056,49 @@ export async function getUploaderBrowserStatus(): Promise<{
   }
 }
 
+export async function checkUploaderBrowserHealth(options?: {
+  reconnect?: boolean;
+  profileId?: string | null;
+}): Promise<{
+  success: boolean;
+  available?: boolean;
+  reconnected?: boolean;
+  status?: UploaderBrowserStatus;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/browser/check-and-reconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reconnect: options?.reconnect === true,
+        ...(options?.profileId ? { profileId: options.profileId } : {}),
+      }),
+      signal: AbortSignal.timeout(options?.reconnect ? 60_000 : 10_000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      return {
+        success: false,
+        message: json?.message ?? json?.error ?? `请求失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      available: json?.available === true,
+      reconnected: json?.reconnected === true,
+      status: json?.status ? normalizeUploaderBrowserStatus(json.status) : undefined,
+      message: json?.message,
+    };
+  } catch (e: unknown) {
+    const err = e as Error;
+    return {
+      success: false,
+      message: err?.message ?? "浏览器健康检查失败",
+    };
+  }
+}
+
 /**
  * 请求浏览器自动化服务连接/启动浏览器实例（获取或创建浏览器，方便随时执行自动化任务）
  */

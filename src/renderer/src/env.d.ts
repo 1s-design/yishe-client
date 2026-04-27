@@ -32,6 +32,13 @@ interface Window {
     onExtensionConnectionStatus(callback: (status: any) => void): void
     openExternal(url: string): Promise<void>
     toggleDevTools(): Promise<{ opened: boolean }>
+    writeClientLog(payload: {
+      level?: string
+      module?: string
+      message?: string
+      context?: Record<string, any>
+    }): Promise<{ success: boolean; filePath?: string; message?: string }>
+    queryClientLog(action: string, payload?: Record<string, any>): Promise<any>
     // 工作目录
     selectWorkspaceDirectory(): Promise<string | null>
     getWorkspaceDirectory(): Promise<string>
@@ -105,6 +112,8 @@ interface Window {
       filePath?: string
       skipped?: boolean
       fileSize?: number
+      cacheKey?: string
+      downloadedBytes?: number
       error?: string
       statusCode?: number
     }>
@@ -112,6 +121,7 @@ interface Window {
       found: boolean
       filePath?: string | null
       fileSize?: number
+      cacheKey?: string
       message: string
       error?: string
     }>

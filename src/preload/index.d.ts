@@ -17,6 +17,13 @@ declare global {
       onExtensionConnectionStatus(callback: (status: any) => void): void
       openExternal(url: string): Promise<void>
       toggleDevTools(): Promise<{ opened: boolean }>
+      writeClientLog(payload: {
+        level?: string
+        module?: string
+        message?: string
+        context?: Record<string, any>
+      }): Promise<{ success: boolean; filePath?: string; message?: string }>
+      queryClientLog(action: string, payload?: Record<string, any>): Promise<any>
       // 工作目录相关方法
       selectWorkspaceDirectory(): Promise<string | null>
       getWorkspaceDirectory(): Promise<string>
@@ -90,6 +97,8 @@ declare global {
         filePath?: string
         skipped?: boolean
         fileSize?: number
+        cacheKey?: string
+        downloadedBytes?: number
         error?: string
         statusCode?: number
       }>
@@ -98,6 +107,7 @@ declare global {
         found: boolean
         filePath?: string | null
         fileSize?: number
+        cacheKey?: string
         message: string
         error?: string
       }>
