@@ -34,6 +34,7 @@ const TEMU_PUBLISH_DETAIL_PAGE_URL = 'https://agentseller.temu.com/goods/edit?fr
 const TEMU_PUBLISH_DETAIL_REQUEST_URL = 'https://agentseller.temu.com/visage-agent-seller/product/edit';
 const TEMU_PUBLISH_DETAIL_TRIGGER_BUTTON_TEXT = '提交';
 const TEMU_REQUEST_CAPTURE_CLICK_TIMEOUT = 15_000;
+const TEMU_SESSION_COLLECT_TIMEOUT_MS = 80_000;
 const TEMU_REQUEST_CAPTURE_RESOURCE_TYPES = ['xhr', 'fetch'];
 const TEMU_SESSION_RESTORE_REGION_TARGETS = {
     global: {
@@ -73,6 +74,63 @@ const TEMU_SESSION_HTTP_ONLY_PATTERNS = [
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTemuOperationTimeout(operation, timeoutMs, label, onTimeout) {
+    let timer = null;
+    const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            Promise.resolve()
+                .then(() => (typeof onTimeout === 'function' ? onTimeout() : undefined))
+                .catch((error) => {
+                    logger.warn(`${label}超时清理失败: ${error?.message || error}`);
+                })
+                .finally(() => {
+                    reject(new Error(`${label}超时（${timeoutMs}ms）`));
+                });
+        }, timeoutMs);
+    });
+
+    return Promise.race([operation, timeoutPromise]).finally(() => {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    });
+}
+
+async function ensureTemuSessionCollectPageReady(page, timeoutMs, executionTrace) {
+    const currentUrl = String(page?.url?.() || '');
+    const shouldNavigate = !currentUrl || currentUrl === 'about:blank' || !/agentseller(?:-[a-z]+)?\.temu\.com|seller\.kuajingmaihuo\.com/i.test(currentUrl);
+    if (!shouldNavigate) {
+        return {
+            navigated: false,
+            currentUrl
+        };
+    }
+
+    pushTrace(executionTrace, 'open_seller_home', 'pending', {
+        fromUrl: currentUrl,
+        targetUrl: TEMU_SELLER_HOME_URL
+    });
+    await withTemuOperationTimeout(
+        page.goto(TEMU_SELLER_HOME_URL, {
+            waitUntil: 'domcontentloaded',
+            timeout: Math.min(timeoutMs, 60_000)
+        }),
+        Math.min(timeoutMs, 60_000),
+        `${PLATFORM_NAME}卖家后台打开`
+    );
+    await page.waitForTimeout(2500);
+
+    const nextUrl = String(page?.url?.() || '');
+    pushTrace(executionTrace, 'open_seller_home', 'success', {
+        fromUrl: currentUrl,
+        currentUrl: nextUrl
+    });
+    return {
+        navigated: true,
+        currentUrl: nextUrl
+    };
 }
 
 function isPlainObject(value) {
@@ -975,7 +1033,11 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
     const settings = {
         keepPageOpen: normalizeKeepPageOpen(input?.keepPageOpen),
         collectRegionCookies: normalizeCollectRegionCookies(input?.collectRegionCookies),
-        includeDebugInfo: normalizeIncludeDebugInfo(input?.includeDebugInfo)
+        includeDebugInfo: normalizeIncludeDebugInfo(input?.includeDebugInfo),
+        timeoutMs: normalizePositiveInteger(input?.timeoutMs, TEMU_SESSION_COLLECT_TIMEOUT_MS, {
+            min: 30_000,
+            max: 10 * 60_000
+        })
     };
     const pageOperator = runtimeOptions?.pageOperator || new PageOperator();
     const executionTrace = [];
@@ -988,6 +1050,7 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
             keepPageOpen: settings.keepPageOpen,
             collectRegionCookies: settings.collectRegionCookies,
             includeDebugInfo: settings.includeDebugInfo,
+            timeoutMs: settings.timeoutMs,
             reusePage: !managePage
         });
         pushTrace(executionTrace, 'start', 'success', {
@@ -995,20 +1058,29 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
             keepPageOpen: settings.keepPageOpen,
             collectRegionCookies: settings.collectRegionCookies,
             includeDebugInfo: settings.includeDebugInfo,
+            timeoutMs: settings.timeoutMs,
             reusePage: !managePage
         });
 
         if (managePage) {
-            const browser = await getOrCreateBrowser({
-                profileId,
-                skipWindowMaximize: true
-            });
-            page = await browser.newPage({ background: true, activate: false });
+            const browser = await withTemuOperationTimeout(
+                getOrCreateBrowser({
+                    profileId,
+                    skipWindowMaximize: false
+                }),
+                settings.timeoutMs,
+                `${PLATFORM_NAME}浏览器环境连接`
+            );
+            page = await withTemuOperationTimeout(
+                browser.newPage({ background: false, activate: true }),
+                15_000,
+                `${PLATFORM_NAME}采集页面打开`
+            );
             await pageOperator.setupAntiDetection(page);
             pushTrace(executionTrace, 'open_page', 'success', {
                 reusedCurrentPage: false,
                 currentUrl: page.url(),
-                activated: false
+                activated: true
             });
         } else {
             pushTrace(executionTrace, 'open_page', 'success', {
@@ -1018,12 +1090,23 @@ export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptio
             });
         }
 
+        await ensureTemuSessionCollectPageReady(page, settings.timeoutMs, executionTrace);
+
         const loginStateBefore = await resolveTemuLoginState(page);
         pushTrace(executionTrace, 'check_login_state_before', loginStateBefore.loggedIn ? 'success' : 'pending', loginStateBefore);
 
-        const sessionResult = await collectTemuSessionBundle(page, {
-            collectRegionCookies: settings.collectRegionCookies
-        });
+        const sessionResult = await withTemuOperationTimeout(
+            collectTemuSessionBundle(page, {
+                collectRegionCookies: settings.collectRegionCookies
+            }),
+            settings.timeoutMs,
+            `${PLATFORM_NAME}会话采集`,
+            async () => {
+                if (managePage && page && !page.isClosed?.()) {
+                    await page.close().catch(() => undefined);
+                }
+            }
+        );
         if (!sessionResult.success) {
             pushTrace(executionTrace, 'collect_session_bundle', 'failed', {
                 reason: sessionResult.reason,

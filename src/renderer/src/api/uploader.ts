@@ -1824,7 +1824,7 @@ export async function runUploaderBrowserSmallFeature(
 
     const timeoutMs =
       typeof data?.timeoutMs === "number" && Number.isFinite(data.timeoutMs)
-        ? Math.max(60_000, Number(data.timeoutMs) + 60_000)
+        ? Math.max(30_000, Number(data.timeoutMs))
         : 10 * 60 * 1000;
     const res = await fetch(
       `${UPLOADER_API_BASE}/api/browser/small-features/run`,

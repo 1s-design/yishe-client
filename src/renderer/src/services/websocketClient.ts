@@ -6353,10 +6353,78 @@ function registerBuiltInLocalServices() {
         if (!featureKey) {
           throw new Error("缺少 featureKey");
         }
-        const response = await runUploaderBrowserSmallFeature(
+        const profileId =
+          String(command.payload?.profileId || "").trim() || undefined;
+        if (isBrowserAutomationExecutionSlotRunning(profileId, featureKey)) {
+          return {
+            success: false,
+            message: "浏览器自动化环境正在执行工具，请稍后再试",
+            data: {
+              featureKey,
+              profileId: profileId || null,
+              status: "busy",
+            },
+          };
+        }
+
+        const now = new Date().toISOString();
+        const slotKey = resolveBrowserAutomationExecutionSlotKey(
+          profileId,
           featureKey,
-          (command.payload || {}) as Record<string, unknown>,
         );
+        upsertBrowserAutomationExecutionSlot(slotKey, {
+          slotKey,
+          running: true,
+          taskId: command.commandId || `small-feature:${featureKey}`,
+          taskType: featureKey,
+          queue: "toolkit",
+          profileId: profileId || null,
+          currentStep: "工具执行中",
+          progress: null,
+          lastError: null,
+          runtime: null,
+          startedAt: now,
+          finishedAt: null,
+          updatedAt: now,
+        });
+        await syncUploaderRuntimeFromLocalState({
+          busy: true,
+          state: "busy",
+          currentTaskId: command.commandId || `small-feature:${featureKey}`,
+          lastError: null,
+        });
+
+        let response: Awaited<ReturnType<typeof runUploaderBrowserSmallFeature>>;
+        try {
+          response = await runUploaderBrowserSmallFeature(
+            featureKey,
+            (command.payload || {}) as Record<string, unknown>,
+          );
+        } finally {
+          const finishedAt = new Date().toISOString();
+          upsertBrowserAutomationExecutionSlot(slotKey, {
+            slotKey,
+            running: false,
+            taskId: command.commandId || `small-feature:${featureKey}`,
+            taskType: featureKey,
+            queue: "toolkit",
+            profileId: profileId || null,
+            currentStep: "工具执行结束",
+            progress: null,
+            lastError: null,
+            runtime: null,
+            finishedAt,
+            updatedAt: finishedAt,
+          });
+          await syncUploaderRuntimeFromLocalState({
+            busy: browserAutomationExecutionState.running,
+            state: browserAutomationExecutionState.running ? "busy" : undefined,
+            currentTaskId: browserAutomationExecutionState.running
+              ? browserAutomationExecutionState.taskId
+              : null,
+            lastError: browserAutomationExecutionState.lastError,
+          });
+        }
         await syncServiceRuntime("uploader");
         return {
           success: response.success,
@@ -6365,6 +6433,7 @@ function registerBuiltInLocalServices() {
             (response.success ? "工具执行完成" : "工具执行失败"),
           data: {
             featureKey,
+            profileId: profileId || null,
             result: response.data || null,
           },
         };
