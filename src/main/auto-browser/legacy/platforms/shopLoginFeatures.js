@@ -4,14 +4,35 @@ import { PageOperator } from "../services/PageOperator.js";
 import { PLATFORM_CONFIGS } from "../config/platforms.js";
 import { logger } from "../utils/logger.js";
 
+const DEFAULT_LOGIN_URL_MARKERS = [
+  "login",
+  "auth",
+  "signin",
+  "passport",
+  "signup",
+  "sso",
+];
+
 const SHOP_PLATFORM_LOGIN_CONFIG = {
   doudian: {
     platformKey: "doudian",
     platformName: "抖店",
+    checkMode: "redirect_url",
+    loginUrlMarkers: [
+      ...DEFAULT_LOGIN_URL_MARKERS,
+      "login.jinritemai.com",
+      "sso.jinritemai.com",
+    ],
   },
   kuaishou_shop: {
     platformKey: "kuaishou_shop",
     platformName: "快手小店",
+    checkMode: "redirect_url",
+    loginUrlMarkers: [
+      ...DEFAULT_LOGIN_URL_MARKERS,
+      "login.kwaixiaodian.com",
+      "sso.kwaixiaodian.com",
+    ],
   },
 };
 
@@ -31,20 +52,78 @@ function normalizeKeepPageOpen(value, defaultValue = false) {
   return defaultValue;
 }
 
+function collectLoginUrlMarkers(currentUrl, markers = DEFAULT_LOGIN_URL_MARKERS) {
+  const rawUrl = String(currentUrl || "").trim();
+  let normalizedUrl = rawUrl.toLowerCase();
+  try {
+    const parsedUrl = new URL(rawUrl);
+    normalizedUrl = `${parsedUrl.host}${parsedUrl.pathname}`.toLowerCase();
+  } catch {
+    // Keep the raw URL fallback for browser-internal URLs or unexpected values.
+  }
+
+  if (!normalizedUrl) {
+    return [];
+  }
+  return markers
+    .map((marker) => String(marker || "").trim().toLowerCase())
+    .filter((marker) => marker && normalizedUrl.includes(marker));
+}
+
 function buildLoginChecker(platformKey) {
-  const baseConfig =
-    SHOP_PLATFORM_LOGIN_CONFIG[String(platformKey || "").trim()];
-  const platformConfig = PLATFORM_CONFIGS?.[platformKey];
-  if (!baseConfig || !platformConfig?.loginSelectors) {
+  const normalizedPlatformKey = String(platformKey || "").trim();
+  const platformMeta = SHOP_PLATFORM_LOGIN_CONFIG[normalizedPlatformKey];
+  const platformConfig = PLATFORM_CONFIGS?.[normalizedPlatformKey];
+  if (!platformMeta || !platformConfig?.loginSelectors) {
     throw new Error(`暂不支持 ${platformKey} 平台登录检测`);
   }
 
-  return new GenericLoginChecker(baseConfig.platformName, {
+  return new GenericLoginChecker(platformMeta.platformName, {
     selectors: platformConfig.loginSelectors,
   });
 }
 
+async function inspectShopPlatformLoginByRedirectUrl(page, platformKey) {
+  const normalizedPlatformKey = String(platformKey || "").trim();
+  const platformMeta = SHOP_PLATFORM_LOGIN_CONFIG[normalizedPlatformKey];
+  if (!platformMeta) {
+    throw new Error(`暂不支持 ${platformKey} 平台登录检测`);
+  }
+
+  const currentUrl = page.url();
+  const pageTitle = await page.title().catch(() => "");
+  const matchedLoginUrlMarkers = collectLoginUrlMarkers(
+    currentUrl,
+    platformMeta.loginUrlMarkers,
+  );
+  const redirectedToLoginPage = matchedLoginUrlMarkers.length > 0;
+  const isLoggedIn = !redirectedToLoginPage;
+
+  return {
+    isLoggedIn,
+    description: redirectedToLoginPage
+      ? `${platformMeta.platformName}: 未登录 (跳转到登录页)`
+      : `${platformMeta.platformName}: 已登录 (未跳转到登录页)`,
+    details: {
+      checkMode: "redirect_url",
+      reason: redirectedToLoginPage
+        ? "redirected_to_login_page"
+        : "not_redirected_to_login_page",
+      currentUrl,
+      pageTitle,
+      redirectedToLoginPage,
+      matchedLoginUrlMarkers,
+    },
+  };
+}
+
 export async function inspectShopPlatformLogin(page, platformKey) {
+  const normalizedPlatformKey = String(platformKey || "").trim();
+  const platformMeta = SHOP_PLATFORM_LOGIN_CONFIG[normalizedPlatformKey];
+  if (platformMeta?.checkMode === "redirect_url") {
+    return await inspectShopPlatformLoginByRedirectUrl(page, platformKey);
+  }
+
   const checker = buildLoginChecker(platformKey);
   const loginResult = await checker.checkLoginStatus(page);
   return {
@@ -73,6 +152,7 @@ export async function runShopPlatformCheckLoginSmallFeature(
 
   const profileId = String(input?.profileId || "").trim() || undefined;
   const keepPageOpen = normalizeKeepPageOpen(input?.keepPageOpen, false);
+  const targetUrl = platformConfig.loginCheckUrl || platformConfig.uploadUrl;
   const pageOperator = runtimeOptions?.pageOperator || new PageOperator();
   const executionTrace = [];
   const checkedAt = new Date().toISOString();
@@ -91,14 +171,14 @@ export async function runShopPlatformCheckLoginSmallFeature(
   try {
     logger.info(`${platformMeta.platformName}工具开始检测登录状态`, {
       profileId: profileId || "default",
-      uploadUrl: platformConfig.uploadUrl,
+      targetUrl,
       keepPageOpen,
       reusePage: !managePage,
     });
     pushTrace("start", "success", {
       profileId: profileId || null,
       keepPageOpen,
-      uploadUrl: platformConfig.uploadUrl,
+      targetUrl,
       reusePage: !managePage,
     });
 
@@ -117,7 +197,7 @@ export async function runShopPlatformCheckLoginSmallFeature(
       });
     }
 
-    await page.goto(platformConfig.uploadUrl, {
+    await page.goto(targetUrl, {
       waitUntil: platformConfig.waitUntil || "domcontentloaded",
       timeout: platformConfig.timeout || 45000,
     });

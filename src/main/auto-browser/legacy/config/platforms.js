@@ -190,6 +190,7 @@ export const PLATFORM_CONFIGS = {
     doudian: {
         name: '抖店',
         uploadUrl: 'https://fxg.jinritemai.com/ffa/g/create',
+        loginCheckUrl: 'https://fxg.jinritemai.com/ffa/mshop/homepage',
         waitUntil: 'domcontentloaded',
         timeout: 45000,
         antiDetection: true,
@@ -235,6 +236,7 @@ export const PLATFORM_CONFIGS = {
     kuaishou_shop: {
         name: '快手小店',
         uploadUrl: 'https://s.kwaixiaodian.com/zone/goods/nexus/self/release/add',
+        loginCheckUrl: 'https://s.kwaixiaodian.com/zone/home',
         waitUntil: 'domcontentloaded',
         timeout: 45000,
         antiDetection: true,

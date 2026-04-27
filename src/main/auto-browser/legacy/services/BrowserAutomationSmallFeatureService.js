@@ -259,7 +259,7 @@ const SMALL_FEATURE_REGISTRY = {
     platform: "doudian",
     category: "session",
     visibility: "public",
-    description: "打开当前环境的抖店商品发布页，检测该环境是否处于已登录状态。",
+    description: "打开当前环境的抖店店铺首页，检测该环境是否处于已登录状态。",
     tips: [
       "默认使用当前活动环境；传 profileId 时优先检测指定环境。",
       "该能力是原子化登录检测，后续页面、服务端转发和 AI 调用都可以复用同一个 featureKey。",
@@ -290,7 +290,7 @@ const SMALL_FEATURE_REGISTRY = {
     category: "session",
     visibility: "public",
     description:
-      "打开当前环境的快手小店商品发布页，检测该环境是否处于已登录状态。",
+      "打开当前环境的快手小店首页，检测该环境是否处于已登录状态。",
     tips: [
       "默认使用当前活动环境；传 profileId 时优先检测指定环境。",
       "该能力是原子化登录检测，后续页面、服务端转发和 AI 调用都可以复用同一个 featureKey。",
