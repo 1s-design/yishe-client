@@ -16,16 +16,34 @@ from src.api_server import app
 import uvicorn
 
 
-class HealthAccessLogFilter(logging.Filter):
-    """隐藏 /health 成功访问日志，避免健康检查刷屏。"""
+class NoisyAccessLogFilter(logging.Filter):
+    """隐藏高频状态探测成功访问日志，避免控制台刷屏。"""
+
+    quiet_paths = ("/health", "/photoshopStatus")
 
     def filter(self, record):
-        message = record.getMessage()
-        return 'GET /health HTTP/1.1" 200' not in message
+        try:
+            args = record.args if isinstance(record.args, tuple) else ()
+            if len(args) >= 5:
+                path = str(args[2] or "").split("?", 1)[0]
+                status_code = str(args[4] or "")
+                if path in self.quiet_paths and status_code.startswith("2"):
+                    return False
+
+            message = record.getMessage()
+        except Exception:
+            return True
+
+        if not ('" 2' in message and " HTTP/" in message):
+            return True
+
+        return not any(f" {path}" in message for path in self.quiet_paths)
 
 
 def configure_access_log_filter():
-    logging.getLogger("uvicorn.access").addFilter(HealthAccessLogFilter())
+    logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, NoisyAccessLogFilter) for item in logger.filters):
+        logger.addFilter(NoisyAccessLogFilter())
 
 
 if __name__ == "__main__":
@@ -35,9 +53,10 @@ if __name__ == "__main__":
     
     # 启动服务
     configure_access_log_filter()
+    print(f"PS 自动化端启动中: http://{host}:{port}", flush=True)
     uvicorn.run(
         app,
         host=host,
         port=port,
-        log_level="info"
+        log_level="warning"
     )

@@ -41,16 +41,34 @@ sys.path.insert(0, str(project_root))
 PID_FILE = persistent_root / "yishe-ps.pid"
 
 
-class HealthAccessLogFilter(logging.Filter):
-    """隐藏 /health 成功访问日志，避免健康检查刷屏。"""
+class NoisyAccessLogFilter(logging.Filter):
+    """隐藏高频状态探测成功访问日志，避免控制台刷屏。"""
+
+    quiet_paths = ("/health", "/photoshopStatus")
 
     def filter(self, record):
-        message = record.getMessage()
-        return 'GET /health HTTP/1.1" 200' not in message
+        try:
+            args = record.args if isinstance(record.args, tuple) else ()
+            if len(args) >= 5:
+                path = str(args[2] or "").split("?", 1)[0]
+                status_code = str(args[4] or "")
+                if path in self.quiet_paths and status_code.startswith("2"):
+                    return False
+
+            message = record.getMessage()
+        except Exception:
+            return True
+
+        if not ('" 2' in message and " HTTP/" in message):
+            return True
+
+        return not any(f" {path}" in message for path in self.quiet_paths)
 
 
 def configure_access_log_filter():
-    logging.getLogger("uvicorn.access").addFilter(HealthAccessLogFilter())
+    logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, NoisyAccessLogFilter) for item in logger.filters):
+        logger.addFilter(NoisyAccessLogFilter())
 
 
 def write_pid():
@@ -169,23 +187,6 @@ def main():
         stop_running_instance()
         return
     
-    # 显示启动信息
-    print("=" * 70)
-    print("PSD 智能对象替换 API 服务")
-    print("=" * 70)
-    print(f"服务地址: http://{args.host}:{args.port}")
-    print(f"API 文档: http://{args.host}:{args.port}/docs")
-    print(f"健康检查: http://{args.host}:{args.port}/health")
-    print(f"自动重载: {'启用' if args.reload else '禁用'}")
-    print(f"工作进程: {args.workers}")
-    print("=" * 70)
-    print("\n注意事项:")
-    print("   - 确保 Photoshop 已安装并可访问")
-    print("   - 由于 Photoshop 限制，建议使用单进程模式（workers=1）")
-    print("   - 建议以管理员权限运行，避免权限问题")
-    print("=" * 70)
-    print()
-    
     # 警告：多个工作进程可能导致 Photoshop 连接问题
     if args.workers > 1:
         print("警告: 多个工作进程可能导致 Photoshop 连接问题")
@@ -196,11 +197,7 @@ def main():
     
     # 启动服务
     try:
-        print("\n正在启动服务...\n")
-        print(f"PID 文件: {PID_FILE}")
-        print("提示: 服务运行中，此窗口将保持打开")
-        print("提示: 按 Ctrl+C 可以停止服务")
-        print("提示: 关闭此窗口将停止服务\n")
+        print(f"PS 自动化端启动中: http://{args.host}:{args.port}", flush=True)
         
         configure_access_log_filter()
         write_pid()
@@ -237,7 +234,7 @@ def main():
                 port=args.port,
                 reload=False,  # 打包后不支持 reload
                 workers=args.workers,
-                log_level="info",
+                log_level="warning",
                 access_log=True
             )
         else:
@@ -248,7 +245,7 @@ def main():
                 port=args.port,
                 reload=args.reload,
                 workers=args.workers if not args.reload else 1,
-                log_level="info",
+                log_level="warning",
                 access_log=True
             )
     except KeyboardInterrupt:

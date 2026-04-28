@@ -79,6 +79,34 @@ function trimProcessOutput(value: unknown) {
   return text.length > 2000 ? `${text.slice(0, 2000)}... [truncated ${text.length}]` : text
 }
 
+function splitProcessOutputLines(value: unknown) {
+  const text = String(value ?? '').replace(/\r\n/g, '\n').trim()
+  if (!text) {
+    return []
+  }
+  return text
+    .split('\n')
+    .map(line => trimProcessOutput(line))
+    .filter(Boolean)
+}
+
+function isNoisyProcessOutput(config: ProcessConfig, output: string) {
+  if (config.id !== 'ps-automation') {
+    return false
+  }
+
+  return (
+    /"\w+\s+\/(?:health|photoshopStatus)(?:\?[^"\s]*)?\s+HTTP\/[\d.]+"\s+2\d\d\b/.test(output) ||
+    /^=+$/.test(output) ||
+    /^PSD 智能对象替换 API 服务/.test(output) ||
+    /^(服务地址|API 文档|健康检查|自动重载|工作进程|注意事项|PID 文件|提示):/.test(output) ||
+    /^-\s/.test(output) ||
+    /^PS 自动化端启动中:/.test(output) ||
+    /^正在启动服务/.test(output) ||
+    /^INFO:\s+(Started server process|Waiting for application startup|Application startup complete|Uvicorn running on)/.test(output)
+  )
+}
+
 function isIgnorableProcessStderr(config: ProcessConfig, output: string) {
   if (config.id !== 'ps-automation') {
     return false
@@ -213,7 +241,6 @@ export class ExternalProcessManager {
 
       for (const path of possiblePaths) {
         if (existsSync(path)) {
-          console.log(`✅ 找到可执行文件: ${path}`)
           this.writeProcessLog('INFO', '已解析外部进程可执行文件', {
             processId: config.id,
             processName: config.name,
@@ -265,7 +292,6 @@ export class ExternalProcessManager {
 
     // 检查平台支持
     if (!this.isPlatformSupported(config)) {
-      console.log(`⏭️  跳过进程 ${config.name}（平台不支持）`)
       this.writeProcessLog('WARN', '当前平台不支持外部进程', {
         processId: config.id,
         processName: config.name,
@@ -278,7 +304,6 @@ export class ExternalProcessManager {
     // 检查是否已在运行
     const existingInfo = this.processes.get(id)
     if (existingInfo && existingInfo.status === ProcessStatus.RUNNING) {
-      console.log(`⚠️  进程 ${config.name} 已在运行`)
       this.writeProcessLog('INFO', '外部进程已在运行，跳过重复启动', {
         processId: config.id,
         processName: config.name,
@@ -289,7 +314,7 @@ export class ExternalProcessManager {
     }
 
     if (existingInfo?.process && existingInfo.status === ProcessStatus.ERROR) {
-      console.log(`⚠️  进程 ${config.name} 当前处于异常状态，先停止旧进程后再重启`)
+      console.warn(`[服务] ${config.name} 状态异常，正在重启`)
       await this.stopProcess(id, true).catch(() => false)
     }
 
@@ -334,8 +359,6 @@ export class ExternalProcessManager {
         await this.runStopHook(config)
       }
 
-      console.log(`🚀 启动进程: ${config.name} (${executablePath})`)
-
       // 创建工作目录
       const cwd = config.cwd || (isAbsolute(config.executable) 
         ? resolve(config.executable, '..') 
@@ -379,9 +402,9 @@ export class ExternalProcessManager {
 
       // 监听进程输出
       childProcess.stdout?.on('data', (data) => {
-        const output = trimProcessOutput(data)
-        console.log(`[${config.name}] ${output}`)
-        if (output) {
+        const outputs = splitProcessOutputLines(data).filter(output => !isNoisyProcessOutput(config, output))
+        for (const output of outputs) {
+          console.log(`[${config.name}] ${output}`)
           this.writeProcessLog('DEBUG', '外部进程 stdout', {
             processId: config.id,
             processName: config.name,
@@ -392,24 +415,26 @@ export class ExternalProcessManager {
       })
 
       childProcess.stderr?.on('data', (data) => {
-        const output = trimProcessOutput(data)
-        const isIgnorable = output ? isIgnorableProcessStderr(config, output) : false
-        if (isIgnorable) {
-          console.debug(`[${config.name}] ${output}`)
-        } else {
-          console.error(`[${config.name}] ${output}`)
-        }
-        if (output) {
-          this.writeProcessLog(
-            isIgnorable ? 'DEBUG' : 'WARN',
-            isIgnorable ? '已忽略外部进程 stderr 噪音' : '外部进程 stderr',
-            {
-              processId: config.id,
-              processName: config.name,
-              pid: childProcess.pid || null,
-              output
-            }
-          )
+        const outputs = splitProcessOutputLines(data).filter(output => !isNoisyProcessOutput(config, output))
+        for (const output of outputs) {
+          const isIgnorable = output ? isIgnorableProcessStderr(config, output) : false
+          if (isIgnorable) {
+            console.debug(`[${config.name}] ${output}`)
+          } else {
+            console.error(`[${config.name}] ${output}`)
+          }
+          if (output) {
+            this.writeProcessLog(
+              isIgnorable ? 'DEBUG' : 'WARN',
+              isIgnorable ? '已忽略外部进程 stderr 噪音' : '外部进程 stderr',
+              {
+                processId: config.id,
+                processName: config.name,
+                pid: childProcess.pid || null,
+                output
+              }
+            )
+          }
         }
       })
 
@@ -428,7 +453,9 @@ export class ExternalProcessManager {
 
       // 监听进程退出
       childProcess.on('exit', (code, signal) => {
-        console.log(`⚠️  进程 ${config.name} 退出，代码: ${code}, 信号: ${signal}`)
+        if (!this.isShuttingDown && code !== 0) {
+          console.warn(`[服务] ${config.name} 异常退出: code=${code}, signal=${signal}`)
+        }
         this.writeProcessLog(code === 0 ? 'INFO' : 'WARN', '外部进程退出', {
           processId: config.id,
           processName: config.name,
@@ -449,7 +476,7 @@ export class ExternalProcessManager {
           clearTimeout(timeout)
           info.status = ProcessStatus.RUNNING
           info.healthCheckFailureCount = 0
-          console.log(`✅ 进程 ${config.name} 启动成功 (PID: ${childProcess.pid})`)
+          console.info(`[服务] ${config.name} 已启动`)
           this.writeProcessLog('INFO', '外部进程启动成功', {
             processId: config.id,
             processName: config.name,
@@ -493,7 +520,6 @@ export class ExternalProcessManager {
   async stopProcess(id: string, force = false): Promise<boolean> {
     const info = this.processes.get(id)
     if (!info || !info.process) {
-      console.log(`⚠️  进程 ${id} 未运行`)
       this.writeProcessLog('INFO', '外部进程未运行，跳过停止', {
         processId: id,
         force
@@ -504,7 +530,6 @@ export class ExternalProcessManager {
     const { config, process } = info
 
     if (info.status === ProcessStatus.STOPPING) {
-      console.log(`⚠️  进程 ${config.name} 正在关闭中...`)
       this.writeProcessLog('WARN', '外部进程正在关闭中', {
         processId: config.id,
         processName: config.name,
@@ -515,7 +540,6 @@ export class ExternalProcessManager {
     }
 
     try {
-      console.log(`🛑 停止进程: ${config.name}`)
       this.writeProcessLog('INFO', '准备停止外部进程', {
         processId: config.id,
         processName: config.name,
@@ -541,7 +565,6 @@ export class ExternalProcessManager {
         if (killed) {
           info.status = ProcessStatus.STOPPED
           info.process = null
-          console.log(`✅ 进程 ${config.name} 已停止`)
           this.writeProcessLog('INFO', '外部进程已停止', {
             processId: config.id,
             processName: config.name,
@@ -579,7 +602,6 @@ export class ExternalProcessManager {
 
       info.status = ProcessStatus.STOPPED
       info.process = null
-      console.log(`✅ 进程 ${config.name} 已强制停止`)
       this.writeProcessLog('INFO', '外部进程已强制停止', {
         processId: config.id,
         processName: config.name,
@@ -617,7 +639,6 @@ export class ExternalProcessManager {
 
     return new Promise((resolve) => {
       try {
-        console.log(`⏹️  执行停止钩子: ${config.name} (${stopExecPath} ${config.stopArgs.join(' ')})`)
         this.writeProcessLog('INFO', '执行外部进程停止钩子', {
           processId: config.id,
           processName: config.name,
@@ -644,7 +665,6 @@ export class ExternalProcessManager {
 
         child.once('exit', () => {
           clearTimeout(timer)
-          console.log(`✅ 停止钩子完成 (${config.name})`)
           this.writeProcessLog('INFO', '外部进程停止钩子完成', {
             processId: config.id,
             processName: config.name
@@ -750,7 +770,7 @@ export class ExternalProcessManager {
     if (info.config.autoRestart && reason === 'error') {
       const delay = info.config.restartDelay || 3000
       info.restartCount++
-      console.log(`🔄 ${delay}ms 后重启进程 ${info.config.name} (第 ${info.restartCount} 次)`)
+      console.warn(`[服务] ${info.config.name} 异常退出，${delay}ms 后自动重启`)
       this.writeProcessLog('WARN', '外部进程异常退出，准备自动重启', {
         processId: id,
         processName: info.config.name,
@@ -822,7 +842,7 @@ export class ExternalProcessManager {
             info.process &&
             !info.process.killed
           ) {
-            console.log(`✅ 进程 ${info.config.name} 健康检查恢复`)
+            console.info(`[服务] ${info.config.name} 已恢复`)
             this.writeProcessLog('INFO', '外部进程健康检查恢复', {
               processId: id,
               processName: info.config.name,
@@ -837,10 +857,7 @@ export class ExternalProcessManager {
         info.healthCheckFailureCount += 1
 
         if (info.healthCheckFailureCount < failureThreshold) {
-          console.warn(
-            `⚠️  进程 ${info.config.name} 健康检查失败 (${info.healthCheckFailureCount}/${failureThreshold})`
-          )
-          this.writeProcessLog('WARN', '外部进程健康检查失败', {
+          this.writeProcessLog('DEBUG', '外部进程健康检查暂未通过', {
             processId: id,
             processName: info.config.name,
             healthCheck,
@@ -943,7 +960,6 @@ export class ExternalProcessManager {
    * 启动所有进程
    */
   async startAll(): Promise<void> {
-    console.log('🚀 开始启动外部进程...')
     this.writeProcessLog('INFO', '开始批量启动外部进程', {
       processIds: this.configs.filter(config => config.autoStart !== false).map(config => config.id)
     })
@@ -952,7 +968,6 @@ export class ExternalProcessManager {
       .filter(config => config.autoStart !== false)
       .map(config => this.startProcess(config.id))
     await Promise.allSettled(promises)
-    console.log('✅ 外部进程启动完成')
     this.writeProcessLog('INFO', '批量启动外部进程完成')
   }
 
@@ -961,7 +976,6 @@ export class ExternalProcessManager {
    */
   async stopAll(force = false): Promise<void> {
     this.isShuttingDown = true
-    console.log('🛑 开始停止外部进程...')
     this.writeProcessLog('INFO', '开始批量停止外部进程', {
       force,
       processIds: Array.from(this.processes.keys())
@@ -970,7 +984,6 @@ export class ExternalProcessManager {
       this.stopProcess(id, force)
     )
     await Promise.allSettled(promises)
-    console.log('✅ 外部进程停止完成')
     this.writeProcessLog('INFO', '批量停止外部进程完成', { force })
   }
 

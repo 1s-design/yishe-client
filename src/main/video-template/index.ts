@@ -299,11 +299,6 @@ async function bundleVideoTemplateFromEntry(entryPoint: string, outputDirectory:
     ? ensureVideoTemplateDirectories().bundlerRoot
     : undefined;
 
-  console.info(`[video-template] bundling from entry: ${entryPoint}`);
-  if (bundlerRoot) {
-    console.info(`[video-template] using packaged bundler root: ${bundlerRoot}`);
-  }
-
   return bundle({
     entryPoint,
     rootDir: bundlerRoot,
@@ -312,9 +307,6 @@ async function bundleVideoTemplateFromEntry(entryPoint: string, outputDirectory:
       config.output = config.output || {};
       config.output.path = outputDirectory;
       return config;
-    },
-    onProgress(progress) {
-      console.info(`[video-template] bundling: ${progress}%`);
     },
   });
 }
@@ -440,7 +432,6 @@ function formatJob(jobId: string, job: VideoTemplateJobState | undefined | null)
 async function ensureVideoTemplateServeUrl() {
   const prebuiltBundle = resolvePrebuiltVideoTemplateBundle();
   if (prebuiltBundle) {
-    console.info(`[video-template] using prebuilt bundle: ${prebuiltBundle}`);
     return prebuiltBundle;
   }
 
@@ -486,21 +477,13 @@ async function warmVideoTemplateService() {
       const binariesDirectory = resolveRemotionBinariesDirectory();
       const browser = resolveRemotionBrowser();
 
-      if (binariesDirectory) {
-        console.info(
-          `[video-template] using remotion binaries: ${binariesDirectory}`,
-        );
-      } else if (app.isPackaged) {
+      if (!binariesDirectory && app.isPackaged) {
         console.warn(
           "[video-template] packaged build could not resolve remotion binaries directory; falling back to renderer defaults",
         );
       }
 
-      if (browser.executablePath) {
-        console.info(
-          `[video-template] using ${browser.source} browser (${browser.chromeMode}): ${browser.executablePath}`,
-        );
-      } else {
+      if (!browser.executablePath) {
         console.warn(
           `[video-template] using Remotion managed browser download (${browser.chromeMode})`,
         );
@@ -515,6 +498,7 @@ async function warmVideoTemplateService() {
       });
 
       queueInstance = queue;
+      console.info("[服务] Video Template 已就绪");
       return queue;
     })().catch((error) => {
       queueWarmupPromise = null;

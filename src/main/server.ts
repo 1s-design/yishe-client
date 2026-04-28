@@ -161,12 +161,6 @@ export function getExtensionConnections() {
 function _startServer(port: number = 1519): (() => Promise<void>) {
   const app = express();
   
-  console.log('🚀 启动 Express 服务器...');
-  console.log(`📡 服务端口: ${port}`);
-  console.log(`📚 API 文档: http://localhost:${port}/api-docs`);
-  console.log(`🏥 健康检查: http://localhost:${port}/api/health`);
-  console.log('─'.repeat(50));
-  
   // 配置 CORS 选项
   const corsOptions = {
     origin: '*', // 允许所有来源访问
@@ -468,26 +462,7 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
 
   // 启动 HTTP 服务器（绑定到 0.0.0.0 以允许所有网络接口访问）
   httpServer.listen(port, '0.0.0.0', () => {
-    console.log('✅ Express 服务器启动成功！');
-    console.log('✅ Socket.IO 服务器启动成功！');
-    console.log(`📡 WebSocket 端点: ws://localhost:${port}/ws`);
-    console.log('─'.repeat(50));
-    console.log('📋 可用接口:');
-    console.log('🔧 系统监控:');
-    console.log(`   GET  /api/health                    - 健康检查`);
-    console.log('🔐 认证管理:');
-    console.log(`   POST /api/saveToken                 - 保存 Token`);
-    console.log(`   POST /api/logoutToken               - 退出授权`);
-    console.log('📦 商品管理:');
-    console.log('🖼️  爬图库:');
-    console.log(`   POST /api/material-upload                      - 上传图片到素材库/爬图素材`);
-    console.log(`   POST /api/crawler-material-upload              - 兼容旧上传接口`);
-    console.log('📋 任务队列:');
-    console.log(`   GET  /api/queue/tasks                          - 根据任务类型查询任务列表`);
-    console.log(`   POST /api/queue/task/status                    - 更新任务状态`);
-    console.log('📚 API 文档:');
-    console.log(`   GET  /api-docs                      - Swagger API 文档`);
-    console.log('─'.repeat(50));
+    console.info(`[服务] 本地接口已启动: http://localhost:${port}`);
     writeLocalServerLog('INFO', '本地 HTTP/Socket.IO 服务启动成功', {
       port,
       endpoint: `ws://localhost:${port}/ws`,

@@ -245,10 +245,6 @@ class ImageProcessor {
           console.warn(
             `警告: 检测到 ImageMagick 6 (使用 ${this.magickExecutable})，建议升级到 ImageMagick 7+ 的 magick 命令`,
           );
-        } else {
-          console.log(
-            `ImageMagick ${this.version || 'unknown'} 已检测到，使用 ${this.magickExecutable}`,
-          );
         }
         return;
       } catch (error) {

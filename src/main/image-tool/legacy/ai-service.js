@@ -224,14 +224,9 @@ class AIService {
       temperature,
     };
 
-    console.log('AI服务已初始化:', {
-      baseURL: baseURL || '默认OpenAI',
-      model: this.config.model,
-      maxTokens: this.config.maxTokens,
-      temperature: this.config.temperature,
-      configSource: process.env.OPENAI_API_KEY || process.env.AI_API_KEY ? '环境变量' : '代码配置',
-      planningMode: 'function-calling',
-    });
+    console.info(
+      `[服务] AI 已就绪: ${this.config.model} (${baseURL ? '自定义接口' : '默认OpenAI'})`,
+    );
   }
 
   isAvailable() {
