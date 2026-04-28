@@ -14,7 +14,8 @@ import {
     TEMU_SELLER_HOST_KEYWORDS,
     TEMU_GLOBAL_SETTLE_LOGIN_URL,
     TEMU_GLOBAL_AUTH_LABEL_CONTAINER_SELECTOR,
-    TEMU_GLOBAL_AUTH_ENTER_SELECTOR
+    TEMU_GLOBAL_AUTH_ENTER_SELECTOR,
+    TEMU_AUTHENTICATION_CONTINUE_LABELS
 } from './constants.js';
 import {
     getBodyPreviewText,
@@ -39,8 +40,16 @@ function isTemuSellerPage(pageUrl) {
     return TEMU_SELLER_HOST_KEYWORDS.some((keyword) => currentUrl.includes(keyword));
 }
 
+function isTemuAuthenticationPage(pageUrl) {
+    const currentUrl = String(pageUrl || '').toLowerCase();
+    return isTemuSellerPage(currentUrl) && /\/auth\/authentication/i.test(currentUrl);
+}
+
 function hasTemuLoginUrlKeyword(pageUrl) {
     const currentUrl = String(pageUrl || '').toLowerCase();
+    if (isTemuAuthenticationPage(currentUrl)) {
+        return false;
+    }
     return TEMU_LOGIN_URL_KEYWORDS.some((keyword) =>
         currentUrl.includes(String(keyword || '').toLowerCase())
     );
@@ -60,7 +69,10 @@ export async function resolveTemuLoginState(page) {
         return {
             loggedIn: true,
             currentUrl,
-            reason: 'seller_page_detected'
+            reason: isTemuAuthenticationPage(currentUrl)
+                ? 'seller_authentication_page_detected'
+                : 'seller_page_detected',
+            requiresAuthentication: isTemuAuthenticationPage(currentUrl)
         };
     }
 
@@ -345,6 +357,63 @@ async function clickTemuAuthorizationConfirmButton(page, timeoutMs = 15_000) {
     };
 }
 
+export async function handleTemuAuthenticationPage(page, timeoutMs = 25_000) {
+    const deadline = Date.now() + timeoutMs;
+    let lastUrl = String(page?.url?.() || '');
+    let lastBodyPreview = '';
+    let clicked = null;
+
+    while (Date.now() < deadline) {
+        lastUrl = String(page?.url?.() || '');
+        if (!isTemuAuthenticationPage(lastUrl)) {
+            const loginState = await resolveTemuLoginState(page);
+            return {
+                success: loginState.loggedIn,
+                reason: loginState.loggedIn ? 'authentication_page_passed' : 'authentication_left_not_logged_in',
+                currentUrl: lastUrl,
+                loginState,
+                clicked
+            };
+        }
+
+        lastBodyPreview = await getBodyPreviewText(page, 1000);
+        if (TEMU_LOGIN_RISK_KEYWORDS.some((keyword) => lastBodyPreview.includes(keyword))) {
+            return {
+                success: false,
+                reason: 'manual_verification_required',
+                message: `${PLATFORM_NAME}认证页需要人工验证，请在浏览器内完成认证后重试`,
+                currentUrl: lastUrl,
+                bodyPreview: lastBodyPreview,
+                clicked
+            };
+        }
+
+        clicked = await clickClickableByText(page, TEMU_AUTHENTICATION_CONTINUE_LABELS, {
+            selector: TEMU_TEXT_CLICK_SELECTOR,
+            exact: false
+        });
+        if (clicked) {
+            logger.info(`${PLATFORM_NAME}认证中间页已尝试点击继续/授权`, {
+                currentUrl: lastUrl,
+                clickedText: clicked.text
+            });
+            await page.waitForTimeout(2000);
+            continue;
+        }
+
+        await page.waitForTimeout(1000);
+    }
+
+    return {
+        success: false,
+        reason: 'authentication_page_timeout',
+        message: `${PLATFORM_NAME}停留在认证中间页，无法自动完成认证，请在浏览器内完成后重试`,
+        currentUrl: lastUrl,
+        bodyPreview: lastBodyPreview,
+        clicked
+    };
+}
+
 async function createTemuTemporaryAuthorizationPage(page) {
     const context = page?.context?.();
     if (!context?.newPage) {
@@ -418,6 +487,13 @@ export async function ensureTemuGlobalRegionAuthorization(page) {
         await authorizationPage.waitForTimeout(2500);
 
         let currentUrl = String(authorizationPage.url() || '');
+        if (isTemuAuthenticationPage(currentUrl)) {
+            const authenticationResult = await handleTemuAuthenticationPage(authorizationPage, 25_000);
+            if (!authenticationResult.success) {
+                return authenticationResult;
+            }
+            currentUrl = String(authorizationPage.url() || '');
+        }
         let currentState = await resolveTemuLoginState(authorizationPage);
 
         if (!currentState.loggedIn) {
@@ -457,6 +533,13 @@ export async function ensureTemuGlobalRegionAuthorization(page) {
         }
 
         await authorizationPage.waitForTimeout(1500);
+
+        if (isTemuAuthenticationPage(authorizationPage.url())) {
+            const authenticationResult = await handleTemuAuthenticationPage(authorizationPage, 25_000);
+            if (!authenticationResult.success) {
+                return authenticationResult;
+            }
+        }
 
         const finalState = await waitForTemuLoginSuccess(authorizationPage, 20_000);
         if (!finalState.success) {

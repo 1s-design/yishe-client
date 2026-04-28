@@ -84,6 +84,21 @@ export const TEMU_LOGIN_SUBMIT_LABELS = ['登录', '立即登录', 'Log in', 'Si
 export const TEMU_LOGIN_CONFIRM_LABELS = ['同意并登录'];
 export const TEMU_GLOBAL_AUTH_LABEL_CONTAINER_SELECTOR = '[class^="site-main_authContent__"]';
 export const TEMU_GLOBAL_AUTH_ENTER_SELECTOR = '[class^="site-main_enter__"]';
+export const TEMU_AUTHENTICATION_CONTINUE_LABELS = [
+    '确认',
+    '确定',
+    '同意',
+    '授权',
+    '继续',
+    '进入',
+    '立即认证',
+    '开始认证',
+    '去认证',
+    'Continue',
+    'Confirm',
+    'Authorize',
+    'Enter'
+];
 export const TEMU_LOGIN_RISK_KEYWORDS = ['验证码', '安全验证', '二次验证', '风控', '校验', '滑块', '验证'];
 export const TEMU_LOGIN_FAILURE_KEYWORDS = ['密码错误', '账号或密码错误', '登录失败', 'incorrect', 'invalid'];
 export const TEMU_EDIT_HINT_SELECTORS = [

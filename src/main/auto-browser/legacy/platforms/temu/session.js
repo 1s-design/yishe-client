@@ -4,7 +4,8 @@ import {
     TEMU_USERINFO_API_URL
 } from './constants.js';
 import {
-    ensureTemuGlobalRegionAuthorization
+    ensureTemuGlobalRegionAuthorization,
+    handleTemuAuthenticationPage
 } from './login.js';
 import {
     logger
@@ -925,8 +926,20 @@ export async function collectTemuSessionBundle(page, options = {}) {
         });
         await page.waitForTimeout(4_000);
 
-        const currentUrl = String(page.url() || '');
-        if (/login|passport|authentication/i.test(currentUrl)) {
+        let currentUrl = String(page.url() || '');
+        if (/\/auth\/authentication/i.test(currentUrl)) {
+            const authenticationResult = await handleTemuAuthenticationPage(page, 25_000);
+            if (!authenticationResult.success) {
+                return {
+                    success: false,
+                    reason: authenticationResult.reason || 'authentication_required',
+                    message: authenticationResult.message || '当前环境停留在 Temu 认证页，请完成认证后重新采集会话',
+                    currentUrl: authenticationResult.currentUrl || currentUrl
+                };
+            }
+            currentUrl = String(page.url() || '');
+        }
+        if (/login|passport/i.test(currentUrl)) {
             return {
                 success: false,
                 reason: 'login_required',

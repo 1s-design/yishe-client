@@ -30,6 +30,9 @@ import http from "http";
 import https from "https";
 
 const sessions = new Map();
+const CONNECT_PROMISE_WAIT_TIMEOUT_MS = 45_000;
+const CONNECT_TOTAL_TIMEOUT_MS = 75_000;
+const POST_CONNECT_STEP_TIMEOUT_MS = 10_000;
 
 function getHeadlessMode() {
   const headlessEnv = process.env.HEADLESS || process.env.BROWSER_HEADLESS;
@@ -162,6 +165,8 @@ function getSession(profileId, create = false) {
       browserInstance: null,
       contextInstance: null,
       connectPromise: null,
+      connectStartedAt: null,
+      connectGeneration: 0,
       lastConnectError: null,
       browserVersion: null,
       currentBrowserOptions: {},
@@ -747,10 +752,12 @@ async function focusSessionWindow(session) {
 function resetSession(session, { preserveError = false } = {}) {
   if (!session) return;
 
+  session.connectGeneration = Number(session.connectGeneration || 0) + 1;
   session.browserInstance = null;
   session.contextInstance = null;
   session.chromePid = null;
   session.connectPromise = null;
+  session.connectStartedAt = null;
   session.browserStatus = createEmptyStatus();
   session.browserVersion = null;
   if (!preserveError) {
@@ -826,8 +833,23 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
   session.cdpEndpoint = cdpEndpoint;
 
   if (session.connectPromise) {
-    await session.connectPromise;
-    return wrapBrowserHandle(profile.id);
+    try {
+      await withTimeout(
+        session.connectPromise,
+        CONNECT_PROMISE_WAIT_TIMEOUT_MS,
+        `等待环境 ${profile.id} 旧浏览器连接`,
+      );
+      return wrapBrowserHandle(profile.id);
+    } catch (error) {
+      session.lastConnectError = error?.message || String(error);
+      logger.warn(
+        `环境 ${profile.id} 存在卡住的浏览器连接，已丢弃旧连接并重新建立: ${session.lastConnectError}`,
+      );
+      await closeSession(session, {
+        preserveError: true,
+        killProcess: false,
+      }).catch(() => {});
+    }
   }
 
   if ((session.browserInstance || session.contextInstance || session.connectPromise) && shouldReconnectSession(session, nextOptions)) {
@@ -853,7 +875,11 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
   }
 
   session.lastConnectError = null;
-  session.connectPromise = (async () => {
+  session.connectStartedAt = new Date().toISOString();
+  const connectGeneration = Number(session.connectGeneration || 0) + 1;
+  session.connectGeneration = connectGeneration;
+  const isCurrentConnect = () => session.connectGeneration === connectGeneration;
+  const connectTask = (async () => {
     initBundledPlaywrightEnv();
     const chromium = await getPlaywrightChromium();
     let launchedNewBrowser = false;
@@ -931,6 +957,14 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
             15000,
             "connectOverCDP",
           );
+          if (!isCurrentConnect()) {
+            try {
+              await session.browserInstance?.close?.();
+            } catch {
+              session.browserInstance?.disconnect?.();
+            }
+            throw new Error(`环境 ${profile.id} 连接已被新的重连流程替换`);
+          }
           break;
         } catch (error) {
           lastError = error;
@@ -957,16 +991,40 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
         headless,
       });
       if (!skipWindowMaximize) {
-        await setBrowserWindowMaximized(session.contextInstance, headless);
+        await withTimeout(
+          setBrowserWindowMaximized(session.contextInstance, headless),
+          POST_CONNECT_STEP_TIMEOUT_MS,
+          "setBrowserWindowMaximized",
+        ).catch((error) => {
+          logger.warn(`环境 ${profile.id} 设置窗口最大化超时/失败（已忽略）:`, error?.message || error);
+        });
       }
-      await installBrowserPageRuntime(session.contextInstance, () => buildProfileRuntimePayload(getBrowserProfile(profile.id) || profile), {
-        logger,
-        logLabel: "安装浏览器页面运行时失败:",
+      await withTimeout(
+        installBrowserPageRuntime(
+          session.contextInstance,
+          () => buildProfileRuntimePayload(getBrowserProfile(profile.id) || profile),
+          {
+            logger,
+            logLabel: "安装浏览器页面运行时失败:",
+          },
+        ),
+        POST_CONNECT_STEP_TIMEOUT_MS,
+        "installBrowserPageRuntime",
+      ).catch((error) => {
+        logger.warn(`环境 ${profile.id} 安装页面运行时超时/失败（后续新页面会重试）:`, error?.message || error);
       });
       session.browserStatus.isInitialized = true;
       session.browserStatus.isConnected = true;
       session.browserStatus.lastActivity = Date.now();
-      session.browserStatus.pageCount = (await getSessionPages(session)).length;
+      const pages = await withTimeout(
+        getSessionPages(session),
+        POST_CONNECT_STEP_TIMEOUT_MS,
+        "getSessionPages",
+      ).catch((error) => {
+        logger.warn(`环境 ${profile.id} 页面探活超时/失败（按 0 页面继续）:`, error?.message || error);
+        return [];
+      });
+      session.browserStatus.pageCount = pages.length;
       session.browserVersion = resolveSessionBrowserVersion(session);
       session.updatedAt = new Date().toISOString();
       markBrowserProfileUsed(profile.id, {
@@ -987,8 +1045,24 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
       );
     } finally {
       session.connectPromise = null;
+      session.connectStartedAt = null;
     }
   })();
+
+  session.connectPromise = withTimeout(
+    connectTask,
+    CONNECT_TOTAL_TIMEOUT_MS,
+    `连接环境 ${profile.id} 浏览器`,
+  ).catch(async (error) => {
+    session.lastConnectError = error?.message || String(error);
+    if (isCurrentConnect()) {
+      await closeSession(session, {
+        preserveError: true,
+        killProcess: false,
+      }).catch(() => {});
+    }
+    throw error;
+  });
 
   await session.connectPromise;
   return wrapBrowserHandle(profile.id);
