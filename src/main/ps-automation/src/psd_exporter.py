@@ -245,6 +245,8 @@ def replace_and_export_psd_multi(
                 print(f"      图层路径: {so['path']}")
                 print(f"      图片路径: {so_config['image_path']}")
                 print(f"      缩放模式: {so_config.get('resize_mode', 'contain')}")
+                if so_config.get('background_image_path'):
+                    print(f"      背景图: {so_config.get('background_image_path')}")
                 print(f"      分块尺寸: {so_config.get('tile_size', 512)}")
             print("=" * 70)
         
@@ -263,6 +265,7 @@ def replace_and_export_psd_multi(
                     resize_mode = so_config.get('resize_mode', 'contain')
                     tile_size = so_config.get('tile_size', 512)
                     custom_options = so_config.get('custom_options')
+                    background_image_path = so_config.get('background_image_path')
 
                     replace_smart_object_content(
                         session,
@@ -272,7 +275,8 @@ def replace_and_export_psd_multi(
                         export_dir,
                         tile_size,
                         resize_mode,
-                        custom_options
+                        custom_options,
+                        Path(background_image_path) if background_image_path else None
                     )
                     print(f"✅ [{i}/{len(matched_pairs)}] 智能对象 '{so['name']}' 已替换")
                     processed_count += 1

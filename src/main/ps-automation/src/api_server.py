@@ -353,6 +353,14 @@ class SmartObjectConfig(BaseModel):
         description="素材图片路径（支持 JPG/PNG/BMP/TIFF 格式）",
         example=r"D:\images\image.jpg"
     )
+    background_image_path: Optional[str] = Field(
+        None,
+        description=(
+            "contain 模式下可选背景图路径。处理时背景图会先按 cover 铺满智能对象画布，"
+            "再将素材图按 contain 居中叠放，适合满印产品避免透明留白。"
+        ),
+        example=r"D:\images\background.jpg"
+    )
     resize_mode: Optional[str] = Field(
         None,
         description="图片缩放模式（可选，未指定则使用 defaults.resize_mode）",
@@ -380,6 +388,17 @@ class SmartObjectConfig(BaseModel):
             raise ValueError(f"不支持的图片格式: {v}，支持的格式: {', '.join(valid_extensions)}")
         # 只验证格式，不检查文件是否存在
         # 返回原始路径字符串，让实际处理函数来处理路径解析
+        return v
+
+    @validator('background_image_path')
+    def validate_background_image(cls, v):
+        """验证背景图片文件路径格式（可选，不检查文件是否存在，实际处理时检查）。"""
+        if v is None:
+            return v
+        path = Path(v)
+        valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        if path.suffix.lower() not in valid_extensions:
+            raise ValueError(f"不支持的背景图片格式: {v}，支持的格式: {', '.join(valid_extensions)}")
         return v
     
     @validator('resize_mode')
@@ -448,6 +467,11 @@ class DefaultOptions(BaseModel):
         description="默认自定义模式配置（仅当 resize_mode='custom' 时有效）",
         example=None
     )
+    background_image_path: Optional[str] = Field(
+        None,
+        description="默认背景图路径。smart_objects 未单独指定时使用，仅在最终 resize_mode 为 contain 时生效。",
+        example=r"D:\images\background.jpg"
+    )
     tile_size: int = Field(
         512,
         ge=64,
@@ -462,6 +486,16 @@ class DefaultOptions(BaseModel):
         valid_modes = {'stretch', 'contain', 'cover', 'custom'}
         if v not in valid_modes:
             raise ValueError(f"不支持的缩放模式: {v}，支持的模式: {', '.join(valid_modes)}")
+        return v
+
+    @validator('background_image_path')
+    def validate_background_image(cls, v):
+        if v is None:
+            return v
+        path = Path(v)
+        valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        if path.suffix.lower() not in valid_extensions:
+            raise ValueError(f"不支持的背景图片格式: {v}，支持的格式: {', '.join(valid_extensions)}")
         return v
 
 
@@ -574,6 +608,11 @@ class ProcessRequest(BaseModel):
         如果未提供 smart_objects，则使用此字段（旧格式）
         """,
         example=r"D:\images\image.jpg"
+    )
+    background_image_path: Optional[str] = Field(
+        None,
+        description="背景图片路径（旧格式，向后兼容）。仅在 resize_mode='contain' 时生效。",
+        example=r"D:\images\background.jpg"
     )
     export_dir: Optional[str] = Field(
         None,
@@ -816,6 +855,16 @@ class ProcessRequest(BaseModel):
         if not path.exists():
             raise ValueError(f"图片文件路径不存在: {v}")
         return str(path.absolute())
+
+    @validator('background_image_path')
+    def validate_background_image_path(cls, v):
+        """验证旧格式背景图片文件路径（可选）。"""
+        if v is None:
+            return v
+        path = Path(v)
+        if not path.exists():
+            raise ValueError(f"背景图片文件路径不存在: {v}")
+        return str(path.absolute())
     
     @validator('export_dir')
     def validate_export_dir(cls, v):
@@ -862,6 +911,17 @@ class ProcessRequest(BaseModel):
         valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
         if path.suffix.lower() not in valid_extensions:
             raise ValueError(f"不支持的图片格式: {v}，支持的格式: {', '.join(valid_extensions)}")
+        return v
+
+    @validator('background_image_path')
+    def validate_background_image(cls, v):
+        """验证旧格式背景图片文件格式。"""
+        if v is None:
+            return v
+        path = Path(v)
+        valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        if path.suffix.lower() not in valid_extensions:
+            raise ValueError(f"不支持的背景图片格式: {v}，支持的格式: {', '.join(valid_extensions)}")
         return v
     
     @validator('resize_mode')
@@ -1292,10 +1352,12 @@ async def process_psd(request: ProcessRequest, response: Response):
             default_resize_mode = "contain"
             default_tile_size = 512
             default_custom_options = None
+            default_background_image_path = None
             
             if request.defaults:
                 default_resize_mode = request.defaults.resize_mode
                 default_tile_size = request.defaults.tile_size
+                default_background_image_path = request.defaults.background_image_path
                 if request.defaults.custom_options:
                     default_custom_options = request.defaults.custom_options.dict()
             
@@ -1308,6 +1370,9 @@ async def process_psd(request: ProcessRequest, response: Response):
                     'resize_mode': so_config.resize_mode or default_resize_mode,
                     'tile_size': so_config.tile_size or default_tile_size,
                 }
+                background_image_path = so_config.background_image_path or default_background_image_path
+                if background_image_path:
+                    so_dict['background_image_path'] = background_image_path
                 # 处理 custom_options
                 if so_config.resize_mode == 'custom' and so_config.custom_options:
                     so_dict['custom_options'] = so_config.custom_options.dict()
@@ -1343,6 +1408,8 @@ async def process_psd(request: ProcessRequest, response: Response):
                     'resize_mode': request.resize_mode,
                     'tile_size': request.tile_size,
                 }
+                if request.background_image_path:
+                    smart_object_config['background_image_path'] = request.background_image_path
 
                 # 如果使用自定义模式，添加 custom_options
                 if request.resize_mode == 'custom' and request.custom_options:

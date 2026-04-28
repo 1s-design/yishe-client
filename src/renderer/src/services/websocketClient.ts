@@ -4892,6 +4892,8 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       progress: 2,
       total: 5,
     });
+    const isHttpUrl = (value: string) => /^https?:\/\//i.test(String(value || "").trim());
+
     const downloadSticker = async (url: string) => {
       emitter.emit("log", {
         level: "info",
@@ -4916,6 +4918,57 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         message: `[psd-set] 贴纸下载完成: ${downloadResult.filePath}`,
       });
       return downloadResult.filePath as string;
+    };
+
+    const resolvedProcessImageCache = new Map<string, string>();
+    const resolveImagePathForProcess = async (
+      sourcePathOrUrl: string,
+      label: string,
+    ): Promise<string> => {
+      const source = String(sourcePathOrUrl || "").trim();
+      if (!source) {
+        return "";
+      }
+      const cacheKey = source;
+      const cachedPath = resolvedProcessImageCache.get(cacheKey);
+      if (cachedPath) {
+        return cachedPath;
+      }
+
+      if (isHttpUrl(source)) {
+        emitter.emit("log", {
+          level: "info",
+          message: `[psd-set] 检查${label}是否已下载: ${source}`,
+        });
+        const checkResult = await (window.api as any).checkFileDownloaded(source);
+        if (checkResult.found && checkResult.filePath) {
+          const filePath = checkResult.filePath as string;
+          emitter.emit("log", {
+            level: "info",
+            message: `[psd-set] ${label}已存在，跳过下载: ${filePath}`,
+          });
+          resolvedProcessImageCache.set(cacheKey, filePath);
+          return filePath;
+        }
+
+        const downloadResult = await (window.api as any).downloadFile(source);
+        if (!downloadResult.success || !downloadResult.filePath) {
+          throw new Error(
+            `下载${label}失败: ${downloadResult.message || "未知错误"}`,
+          );
+        }
+        const filePath = downloadResult.filePath as string;
+        emitter.emit("log", {
+          level: "info",
+          message: `[psd-set] ${label}下载完成: ${filePath}`,
+        });
+        resolvedProcessImageCache.set(cacheKey, filePath);
+        return filePath;
+      }
+
+      const normalizedPath = normalizeWindowsPath(source);
+      resolvedProcessImageCache.set(cacheKey, normalizedPath);
+      return normalizedPath;
     };
 
     emitter.emit("psdSetProgress", {
@@ -5433,12 +5486,49 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     if (!Array.isArray(processPayload.smart_objects) || processPayload.smart_objects.length === 0) {
       throw new Error("PSD处理配置缺少 smart_objects，无法替换智能对象");
     }
+    let defaultBackgroundImagePath = String(
+      processPayload.defaults?.background_image_path || "",
+    ).trim();
+    if (defaultBackgroundImagePath) {
+      defaultBackgroundImagePath = await resolveImagePathForProcess(
+        defaultBackgroundImagePath,
+        "默认智能对象背景",
+      );
+      defaultBackgroundImagePath =
+        await processImageToPngIfNeeded(defaultBackgroundImagePath);
+      processPayload.defaults = {
+        ...(processPayload.defaults || {}),
+        background_image_path: defaultBackgroundImagePath,
+      };
+    }
+
+    for (let i = 0; i < processPayload.smart_objects.length; i++) {
+      const backgroundImagePath = String(
+        processPayload.smart_objects[i]?.background_image_path ||
+          defaultBackgroundImagePath ||
+          "",
+      ).trim();
+      if (backgroundImagePath) {
+        const resolvedBackgroundImagePath = await resolveImagePathForProcess(
+          backgroundImagePath,
+          `智能对象背景[${i + 1}]`,
+        );
+        processPayload.smart_objects[i].background_image_path =
+          await processImageToPngIfNeeded(resolvedBackgroundImagePath);
+      }
+    }
     await assertProcessFileReady("PSD模板", processPayload.psd_path);
     for (let i = 0; i < processPayload.smart_objects.length; i++) {
       await assertProcessFileReady(
         `智能对象素材[${i + 1}]`,
         processPayload.smart_objects[i]?.image_path,
       );
+      if (processPayload.smart_objects[i]?.background_image_path) {
+        await assertProcessFileReady(
+          `智能对象背景[${i + 1}]`,
+          processPayload.smart_objects[i]?.background_image_path,
+        );
+      }
     }
 
     // 打印即将发送给 Photoshop 服务的参数，便于排查多素材 / smart_objects 问题
@@ -5446,6 +5536,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     const logSmartObjects = processPayload.smart_objects.map((so: any) => {
       const logSo: any = {
         image_path: so.image_path,
+        background_image_path: so.background_image_path || undefined,
         resize_mode: so.resize_mode,
       };
       // 如果有 custom_options，也显示关键信息

@@ -56,7 +56,8 @@ def replace_and_export_psd(
     output_filename: Optional[str] = None,
     tile_size: int = 512,
     resize_mode: str = "contain",
-    custom_options: Optional[dict] = None
+    custom_options: Optional[dict] = None,
+    background_image_path: Optional[Path] = None
 ) -> Path:
     """
     替换 PSD 中的智能对象并导出图片
@@ -74,6 +75,7 @@ def replace_and_export_psd(
             - "cover": 保持宽高比，填充目标区域（可能裁剪）
             - "custom": 自定义模式，精确控制位置和尺寸（需要 custom_options）
         custom_options: 自定义模式配置（仅当 resize_mode="custom" 时使用）
+        background_image_path: contain 模式下可选背景图。背景图 cover 铺满后再叠放 contain 后的素材图。
     
     Returns:
         导出的图片文件路径
@@ -319,7 +321,8 @@ def replace_and_export_psd(
                     export_dir, 
                     tile_size,
                     resize_mode,
-                    custom_options
+                    custom_options,
+                    background_image_path
                 )
                 print(f"✅ [{i}/{len(smart_objects)}] 智能对象 '{so['name']}' 已替换")
                 processed_count += 1
@@ -487,6 +490,7 @@ def process_psd_with_image(
         'tile_size': 512,
         'resize_mode': 'contain',
         'custom_options': None,
+        'background_image_path': None,
         'auto_start_photoshop': True,
         'verbose': True
     }
@@ -516,7 +520,8 @@ def process_psd_with_image(
                 output_filename=final_config['output_filename'],
                 tile_size=final_config['tile_size'],
                 resize_mode=final_config['resize_mode'],
-                custom_options=final_config.get('custom_options')
+                custom_options=final_config.get('custom_options'),
+                background_image_path=Path(final_config['background_image_path']) if final_config.get('background_image_path') else None
             )
     else:
         return replace_and_export_psd(
@@ -527,7 +532,8 @@ def process_psd_with_image(
             output_filename=final_config['output_filename'],
             tile_size=final_config['tile_size'],
             resize_mode=final_config['resize_mode'],
-            custom_options=final_config.get('custom_options')
+            custom_options=final_config.get('custom_options'),
+            background_image_path=Path(final_config['background_image_path']) if final_config.get('background_image_path') else None
         )
 
 

@@ -14,12 +14,12 @@ from photoshop.api.enumerations import DialogModes, LayerKind
 
 # 支持相对导入和绝对导入
 try:
-    from .utils import resize_image_in_tiles
+    from .utils import compose_contain_with_cover_background, resize_image_in_tiles
 except ImportError:
     try:
-        from src.utils import resize_image_in_tiles
+        from src.utils import compose_contain_with_cover_background, resize_image_in_tiles
     except ImportError:
-        raise ImportError("无法导入 resize_image_in_tiles")
+        raise ImportError("无法导入图像处理工具")
 
 
 def _safe_temp_stem(value: str, fallback: str = "image", max_length: int = 90) -> str:
@@ -43,7 +43,8 @@ def replace_smart_object_content(
     export_dir: Path,
     tile_size: int = 512,
     resize_mode: str = "contain",
-    custom_options: Optional[dict] = None
+    custom_options: Optional[dict] = None,
+    background_image_path: Optional[Path] = None
 ) -> None:
     """
     替换智能对象图层的内容
@@ -61,6 +62,7 @@ def replace_smart_object_content(
             - "cover": 保持宽高比，填充目标区域（可能裁剪）
             - "custom": 自定义模式，精确控制位置和尺寸（需要 custom_options）
         custom_options: 自定义模式配置（仅当 resize_mode="custom" 时使用）
+        background_image_path: contain 模式下可选背景图。背景图会先 cover 铺满，再叠放 contain 后的素材图。
     """
     # 设置当前活动图层
     doc.activeLayer = layer
@@ -143,13 +145,44 @@ def replace_smart_object_content(
             elif resize_mode == "cover":
                 print(f"      使用 cover 模式: 保持宽高比，填充区域（可能裁剪）")
         
-        resized_img = resize_image_in_tiles(
-            img, 
-            (target_width, target_height), 
-            tile_size,
-            mode=resize_mode,
-            custom_options=custom_options
-        )
+        if resize_mode == "contain" and background_image_path:
+            background_path = Path(background_image_path)
+            if not background_path.exists():
+                raise FileNotFoundError(f"背景图文件不存在: {background_path}")
+
+            print(f"    🖼️ contain 背景合成:")
+            print(f"       背景图: {background_path}")
+            with Image.open(background_path) as background_img:
+                background_orig_width, background_orig_height = background_img.size
+                print(f"       背景尺寸: {background_orig_width} x {background_orig_height}")
+                resized_img, compose_debug = compose_contain_with_cover_background(
+                    img,
+                    background_img,
+                    (target_width, target_height)
+                )
+                bg_debug = compose_debug.get("background", {})
+                design_debug = compose_debug.get("design", {})
+                print(
+                    "       背景 cover: "
+                    f"{bg_debug.get('scaled_width')} x {bg_debug.get('scaled_height')}, "
+                    f"裁剪偏移=({bg_debug.get('crop_offset_x')}, {bg_debug.get('crop_offset_y')})"
+                )
+                print(
+                    "       设计 contain: "
+                    f"{design_debug.get('width')} x {design_debug.get('height')}, "
+                    f"粘贴偏移=({design_debug.get('offset_x')}, {design_debug.get('offset_y')})"
+                )
+        else:
+            if background_image_path and resize_mode != "contain":
+                print(f"    ℹ️ 已传背景图，但当前缩放模式为 {resize_mode}，背景合成仅在 contain 模式启用，已忽略")
+
+            resized_img = resize_image_in_tiles(
+                img,
+                (target_width, target_height),
+                tile_size,
+                mode=resize_mode,
+                custom_options=custom_options
+            )
         
         # 如果图片有透明通道（RGBA 模式），保存为 PNG 格式以保留透明通道
         # 其他模式可以保持原始格式

@@ -205,3 +205,94 @@ def resize_image_in_tiles(
     else:
         raise ValueError(f"不支持的缩放模式: {mode}，支持的模式: stretch, contain, cover, custom")
 
+
+def _resize_cover(img: Image.Image, target_size: tuple[int, int]) -> Image.Image:
+    """保持宽高比铺满目标尺寸，并居中裁剪。"""
+    orig_width, orig_height = img.size
+    target_width, target_height = target_size
+    scale = max(target_width / orig_width, target_height / orig_height)
+    new_width = max(1, int(round(orig_width * scale)))
+    new_height = max(1, int(round(orig_height * scale)))
+    scaled_img = img.resize((new_width, new_height), Image.LANCZOS)
+    offset_x = max(0, (new_width - target_width) // 2)
+    offset_y = max(0, (new_height - target_height) // 2)
+    result = scaled_img.crop((offset_x, offset_y, offset_x + target_width, offset_y + target_height))
+    scaled_img.close()
+    return result
+
+
+def _resize_contain_on_canvas(img: Image.Image, target_size: tuple[int, int]) -> tuple[Image.Image, dict]:
+    """保持宽高比完整显示到透明目标画布，并返回调试信息。"""
+    orig_width, orig_height = img.size
+    target_width, target_height = target_size
+    scale = min(target_width / orig_width, target_height / orig_height)
+    new_width = max(1, int(round(orig_width * scale)))
+    new_height = max(1, int(round(orig_height * scale)))
+    scaled_img = img.resize((new_width, new_height), Image.LANCZOS)
+
+    if scaled_img.mode != "RGBA":
+        scaled_img = scaled_img.convert("RGBA")
+
+    canvas = Image.new("RGBA", (target_width, target_height), (0, 0, 0, 0))
+    offset_x = (target_width - new_width) // 2
+    offset_y = (target_height - new_height) // 2
+    canvas.paste(scaled_img, (offset_x, offset_y), scaled_img)
+    scaled_img.close()
+
+    return canvas, {
+        "scale": scale,
+        "width": new_width,
+        "height": new_height,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+    }
+
+
+def compose_contain_with_cover_background(
+    design_img: Image.Image,
+    background_img: Image.Image,
+    target_size: tuple[int, int],
+) -> tuple[Image.Image, dict]:
+    """
+    将背景图按 cover 铺满目标尺寸，再将设计图按 contain 居中叠放。
+
+    返回合成后的 RGBA 图片和调试信息。调用方负责关闭返回图片。
+    """
+    target_width, target_height = target_size
+    background_original_size = background_img.size
+    design_original_size = design_img.size
+
+    background = _resize_cover(background_img, target_size)
+    if background.mode != "RGBA":
+        background = background.convert("RGBA")
+
+    design_layer, design_debug = _resize_contain_on_canvas(design_img, target_size)
+    background.alpha_composite(design_layer)
+    design_layer.close()
+
+    bg_orig_width, bg_orig_height = background_original_size
+    bg_scale = max(target_width / bg_orig_width, target_height / bg_orig_height)
+    bg_scaled_width = max(1, int(round(bg_orig_width * bg_scale)))
+    bg_scaled_height = max(1, int(round(bg_orig_height * bg_scale)))
+
+    return background, {
+        "background": {
+            "original_width": bg_orig_width,
+            "original_height": bg_orig_height,
+            "scale": bg_scale,
+            "scaled_width": bg_scaled_width,
+            "scaled_height": bg_scaled_height,
+            "crop_offset_x": max(0, (bg_scaled_width - target_width) // 2),
+            "crop_offset_y": max(0, (bg_scaled_height - target_height) // 2),
+        },
+        "design": {
+            "original_width": design_original_size[0],
+            "original_height": design_original_size[1],
+            **design_debug,
+        },
+        "target": {
+            "width": target_width,
+            "height": target_height,
+        },
+    }
+

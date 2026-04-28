@@ -147,6 +147,7 @@ export interface CustomOptions {
 export interface SmartObjectConfig {
   smart_object_name?: string
   image_path: string
+  background_image_path?: string
   resize_mode?: 'stretch' | 'contain' | 'cover' | 'custom'
   custom_options?: CustomOptions
   tile_size?: number
@@ -162,6 +163,7 @@ export interface ColorLayerConfig {
 export interface DefaultOptions {
   resize_mode?: 'stretch' | 'contain' | 'cover' | 'custom'
   custom_options?: CustomOptions
+  background_image_path?: string
   tile_size?: number
 }
 
@@ -173,6 +175,7 @@ export interface ProcessRequest {
   defaults?: DefaultOptions
   // ========== 旧格式：向后兼容（单个智能对象） ==========
   image_path?: string
+  background_image_path?: string
   export_dir?: string
   smart_object_name?: string
   output_filename?: string
