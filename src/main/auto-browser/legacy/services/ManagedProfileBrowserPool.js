@@ -31,8 +31,10 @@ import https from "https";
 
 const sessions = new Map();
 const CONNECT_PROMISE_WAIT_TIMEOUT_MS = 45_000;
-const CONNECT_TOTAL_TIMEOUT_MS = 75_000;
+const CONNECT_TOTAL_TIMEOUT_MS = 120_000;
 const POST_CONNECT_STEP_TIMEOUT_MS = 10_000;
+const CDP_ENDPOINT_READY_TIMEOUT_MS = 45_000;
+const CDP_CONNECT_RETRY_TIMEOUT_MS = 65_000;
 
 function getHeadlessMode() {
   const headlessEnv = process.env.HEADLESS || process.env.BROWSER_HEADLESS;
@@ -113,7 +115,10 @@ async function setBrowserWindowMaximized(context, headless = false) {
       bounds: { windowState: "maximized" },
     });
   } catch (error) {
-    logger.warn("设置窗口最大化失败（可忽略）:", error?.message || error);
+    const message = error?.message || String(error || "");
+    if (!/Browser window not found/i.test(message)) {
+      logger.warn("设置窗口最大化失败（可忽略）:", message);
+    }
   } finally {
     if (createdPage && page) {
       await page.close().catch(() => {});
@@ -265,6 +270,31 @@ async function checkCdpEndpointAvailable(endpoint) {
       error: error?.message || "检测 CDP 端点失败",
     };
   }
+}
+
+async function waitForCdpEndpointAvailable(endpoint, timeoutMs = CDP_ENDPOINT_READY_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  let lastStatus = { ok: false, endpoint, error: "尚未检测" };
+  let attempt = 0;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    attempt += 1;
+    lastStatus = await checkCdpEndpointAvailable(endpoint);
+    if (lastStatus.ok) {
+      return lastStatus;
+    }
+
+    if (attempt === 1 || attempt % 5 === 0) {
+      logger.info(
+        `等待 Chrome CDP 端口就绪: ${endpoint} (${Math.round((Date.now() - startedAt) / 1000)}s/${Math.round(
+          timeoutMs / 1000,
+        )}s, ${lastStatus.error || "未就绪"})`,
+      );
+    }
+    await sleep(1000);
+  }
+
+  return lastStatus;
 }
 
 async function getListeningPids(port) {
@@ -920,18 +950,9 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
         });
         session.chromePid = launched.pid || null;
 
-        const maxChecks = 15;
-        let ready = false;
-        for (let index = 0; index < maxChecks; index += 1) {
-          const status = await checkCdpEndpointAvailable(cdpEndpoint);
-          if (status.ok) {
-            ready = true;
-            break;
-          }
-          await sleep(1000);
-        }
+        const readyStatus = await waitForCdpEndpointAvailable(cdpEndpoint);
 
-        if (!ready) {
+        if (!readyStatus.ok) {
           const legacyProcesses = await getChromeProcessesByUserDataDir(profile.userDataDir).catch(() => []);
           const legacyPorts = Array.from(
             new Set(
@@ -941,20 +962,22 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
             ),
           );
           throw new Error(
-            `Chrome 调试端口未就绪: ${cdpEndpoint}${
+            `Chrome 调试端口未就绪: ${cdpEndpoint}${readyStatus.error ? ` (${readyStatus.error})` : ""}${
               legacyPorts.length ? `，检测到同环境目录进程端口: ${legacyPorts.join(",")}` : ""
             }`,
           );
         }
       }
 
-      const maxRetries = 10;
+      const connectDeadline = Date.now() + CDP_CONNECT_RETRY_TIMEOUT_MS;
+      let connectAttempt = 0;
       let lastError = null;
-      for (let index = 0; index < maxRetries; index += 1) {
+      while (!session.browserInstance && Date.now() < connectDeadline) {
+        connectAttempt += 1;
         try {
           session.browserInstance = await withTimeout(
             chromium.connectOverCDP(cdpEndpoint),
-            15000,
+            10000,
             "connectOverCDP",
           );
           if (!isCurrentConnect()) {
@@ -968,9 +991,14 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
           break;
         } catch (error) {
           lastError = error;
-          if (index < maxRetries - 1) {
-            await sleep(1200);
-          }
+          logger.info(
+            `连接 Chrome CDP 失败，准备重试 (${connectAttempt}, ${Math.max(
+              0,
+              Math.ceil((connectDeadline - Date.now()) / 1000),
+            )}s remaining): ${error?.message || error}`,
+          );
+          await waitForCdpEndpointAvailable(cdpEndpoint, 5000);
+          await sleep(1000);
         }
       }
 
