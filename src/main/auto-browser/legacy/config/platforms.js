@@ -233,6 +233,37 @@ export const PLATFORM_CONFIGS = {
         preProcess: null,
         postProcess: null
     },
+    taobao: {
+        name: '淘宝',
+        uploadUrl: 'https://item.upload.taobao.com/sell/v2/publish.htm',
+        loginCheckUrl: 'https://item.upload.taobao.com/sell/v2/publish.htm',
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+        antiDetection: true,
+        checkLogin: true,
+        selectors: {
+            titleInput: [
+                'input[placeholder*="标题"]',
+                'textarea[placeholder*="标题"]',
+                'input[placeholder*="宝贝"]',
+                'textarea[placeholder*="宝贝"]',
+                'input[name*="title"]',
+                'textarea[name*="title"]'
+            ],
+            fileInput: 'input[type="file"]',
+            submitButton: [
+                'button:has-text("发布")',
+                'button:has-text("提交")',
+                'button:has-text("保存")'
+            ]
+        },
+        loginSelectors: {
+            userElements: ['.site-nav-user', '.user-info', '.account-info', '.avatar', '[class*="seller"]'],
+            loginElements: ['.login-btn', '.login-button', '.auth-btn', 'text=登录', 'text=扫码登录']
+        },
+        preProcess: null,
+        postProcess: null
+    },
     kuaishou_shop: {
         name: '快手小店',
         uploadUrl: 'https://s.kwaixiaodian.com/zone/goods/nexus/self/release/add',
@@ -451,24 +482,6 @@ export const PLATFORM_CONFIGS = {
                 'form input[type="tel"]',
                 'form input[name="password"]'
             ]
-        }
-    },
-    taobao: {
-        name: '淘宝',
-        uploadUrl: 'https://upload.taobao.com/auction/publish/publish.htm',
-        waitUntil: 'domcontentloaded',
-        timeout: 30000,
-        antiDetection: true,
-        checkLogin: true,
-        selectors: {
-            titleInput: '#title',
-            contentInput: '#description',
-            fileInput: 'input[type="file"]',
-            submitButton: '#J_BtnPublish'
-        },
-        loginSelectors: {
-            userElements: ['.avatar'],
-            loginElements: ['.login']
         }
     },
     wechat_channels: {

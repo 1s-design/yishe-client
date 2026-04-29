@@ -34,6 +34,18 @@ const SHOP_PLATFORM_LOGIN_CONFIG = {
       "sso.kwaixiaodian.com",
     ],
   },
+  taobao: {
+    platformKey: "taobao",
+    platformName: "淘宝",
+    checkMode: "redirect_url",
+    loginUrlMarkers: [
+      ...DEFAULT_LOGIN_URL_MARKERS,
+      "login.taobao.com",
+      "login.tmall.com",
+      "passport.taobao.com",
+      "passport.alibaba.com",
+    ],
+  },
 };
 
 function normalizeKeepPageOpen(value, defaultValue = false) {

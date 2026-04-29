@@ -106,6 +106,15 @@ export const PLATFORM_REGISTRY = {
         capabilities: [
             createCapability('publish', '发布商品', '发布 Temu 商品', resolveCapabilityHandler({ platform: 'temu', action: 'publish' }))
         ]
+    },
+    taobao: {
+        id: 'taobao',
+        name: '淘宝',
+        category: 'commerce',
+        defaultAction: 'publish',
+        capabilities: [
+            createCapability('publish', '发布商品', '发布淘宝商品', resolveCapabilityHandler({ platform: 'taobao', action: 'publish' }))
+        ]
     }
 };
 

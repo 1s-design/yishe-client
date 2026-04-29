@@ -1289,7 +1289,7 @@ class AutoBrowserService {
     if (!platform) {
       return this.fail(
         400,
-        "请传 platform（如 douyin、xiaohongshu、weibo、kuaishou、doudian、kuaishou_shop、temu）",
+        "请传 platform（如 douyin、xiaohongshu、weibo、kuaishou、doudian、kuaishou_shop、temu、taobao）",
       );
     }
 

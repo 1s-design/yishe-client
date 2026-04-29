@@ -8,6 +8,7 @@ import executeTiktokPublishTask, { TIKTOK_PUBLISH_TASK_KEY } from './publish/tik
 import executeDoudianPublishTask, { DOUDIAN_PUBLISH_TASK_KEY } from './publish/doudian.publish.js';
 import executeKuaishouShopPublishTask, { KUAISHOU_SHOP_PUBLISH_TASK_KEY } from './publish/kuaishou-shop.publish.js';
 import executeTemuPublishTask, { TEMU_PUBLISH_TASK_KEY } from './publish/temu.publish.js';
+import executeTaobaoPublishTask, { TAOBAO_PUBLISH_TASK_KEY } from './publish/taobao.publish.js';
 
 export const TASK_REGISTRY = {
     [DOUYIN_PUBLISH_TASK_KEY]: {
@@ -89,6 +90,14 @@ export const TASK_REGISTRY = {
         name: 'Temu 发布商品',
         description: '执行 Temu 商品发布任务',
         handler: executeTemuPublishTask
+    },
+    [TAOBAO_PUBLISH_TASK_KEY]: {
+        key: TAOBAO_PUBLISH_TASK_KEY,
+        platform: 'taobao',
+        action: 'publish',
+        name: '淘宝发布商品',
+        description: '执行淘宝商品发布任务',
+        handler: executeTaobaoPublishTask
     }
 };
 

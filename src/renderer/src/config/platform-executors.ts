@@ -64,6 +64,12 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
     label: "发布商品-Temu",
     executionBackend: "uploader_api",
   },
+  taobao: {
+    id: "taobao",
+    taskType: "publish-product-taobao",
+    label: "发布商品-淘宝",
+    executionBackend: "uploader_api",
+  },
   tiktok: {
     id: "tiktok",
     taskType: "publish-product-tiktok",
@@ -103,6 +109,7 @@ const PLATFORM_IMAGE_PROCESS_RULES: Record<
   default: DEFAULT_IMAGE_PROCESS_RULE,
   doudian: DEFAULT_IMAGE_PROCESS_RULE,
   kuaishou_shop: DEFAULT_IMAGE_PROCESS_RULE,
+  taobao: DEFAULT_IMAGE_PROCESS_RULE,
 };
 
 export interface PlatformExecutor {
@@ -135,8 +142,18 @@ export interface PlatformTaskExecutionContext {
 const UPLOADER_POLL_INTERVAL_MS = 2000;
 const UPLOADER_POLL_TIMEOUT_MS = 30 * 60 * 1000;
 
-function getPlatformCapability(platform: string): PlatformCapability | null {
+export function getPlatformCapability(platform: string): PlatformCapability | null {
   return PLATFORM_CAPABILITIES[platform] || null;
+}
+
+export function getPlatformCapabilityByTaskType(taskType: string): PlatformCapability | null {
+  const normalizedTaskType = String(taskType || "").trim();
+  if (!normalizedTaskType) return null;
+  return (
+    Object.values(PLATFORM_CAPABILITIES).find(
+      (capability) => capability.taskType === normalizedTaskType,
+    ) || null
+  );
 }
 
 type ResourceProcessing = {
