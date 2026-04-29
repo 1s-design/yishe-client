@@ -5515,6 +5515,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         );
         processPayload.smart_objects[i].background_image_path =
           await processImageToPngIfNeeded(resolvedBackgroundImagePath);
+      } else if (
+        Object.prototype.hasOwnProperty.call(
+          processPayload.smart_objects[i] || {},
+          "background_image_path",
+        )
+      ) {
+        delete processPayload.smart_objects[i].background_image_path;
       }
     }
     await assertProcessFileReady("PSD模板", processPayload.psd_path);
