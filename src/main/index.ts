@@ -9,6 +9,7 @@ import {
   dialog,
   session,
   powerSaveBlocker,
+  powerMonitor,
 } from "electron";
 import { join } from "path";
 import { resolve, dirname, extname, basename } from "path";
@@ -37,6 +38,10 @@ import {
 } from "./externalProcessManager";
 import { pluginProcessConfigs } from "./externalProcessConfig";
 import { handleClientLogCommand, writeClientLog } from "./clientLogger";
+
+app.commandLine.appendSwitch("disable-background-timer-throttling");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
 const appLaunchStartedAt = Date.now();
 
@@ -183,11 +188,24 @@ declare global {
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
 let trayPowerSaveBlockerId: number | null = null;
+let displayPowerSaveBlockerId: number | null = null;
 let quitCleanupComplete = false;
 let quitCleanupPromise: Promise<void> | null = null;
 
 // 插件/外部进程管理器
 const externalProcessManager = new ExternalProcessManager(pluginProcessConfigs);
+
+function sendAppRuntimeEvent(type: string, payload: Record<string, any> = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send("app-runtime-event", {
+    type,
+    at: new Date().toISOString(),
+    ...payload,
+  });
+}
 
 // 初始化 electron-store
 // 处理 electron-store 在 CommonJS 环境下的导入问题
@@ -321,10 +339,27 @@ function createWindow(): void {
       trayPowerSaveBlockerId !== null &&
       powerSaveBlocker.isStarted(trayPowerSaveBlockerId)
     ) {
-      return;
+      if (
+        displayPowerSaveBlockerId !== null &&
+        powerSaveBlocker.isStarted(displayPowerSaveBlockerId)
+      ) {
+        return;
+      }
     }
 
-    trayPowerSaveBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+    if (
+      trayPowerSaveBlockerId === null ||
+      !powerSaveBlocker.isStarted(trayPowerSaveBlockerId)
+    ) {
+      trayPowerSaveBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+    }
+
+    if (
+      displayPowerSaveBlockerId === null ||
+      !powerSaveBlocker.isStarted(displayPowerSaveBlockerId)
+    ) {
+      displayPowerSaveBlockerId = powerSaveBlocker.start("prevent-display-sleep");
+    }
   };
 
   const releaseTrayPowerSaveBlocker = () => {
@@ -336,6 +371,15 @@ function createWindow(): void {
     }
 
     trayPowerSaveBlockerId = null;
+
+    if (
+      displayPowerSaveBlockerId !== null &&
+      powerSaveBlocker.isStarted(displayPowerSaveBlockerId)
+    ) {
+      powerSaveBlocker.stop(displayPowerSaveBlockerId);
+    }
+
+    displayPowerSaveBlockerId = null;
   };
 
   mainWindow.on("ready-to-show", () => {
@@ -355,14 +399,22 @@ function createWindow(): void {
 
   mainWindow.on("hide", () => {
     ensureTrayPowerSaveBlocker();
+    sendAppRuntimeEvent("window-hidden");
+  });
+
+  mainWindow.on("minimize", () => {
+    ensureTrayPowerSaveBlocker();
+    sendAppRuntimeEvent("window-minimized");
   });
 
   mainWindow.on("show", () => {
     releaseTrayPowerSaveBlocker();
+    sendAppRuntimeEvent("window-visible");
   });
 
   mainWindow.on("restore", () => {
     releaseTrayPowerSaveBlocker();
+    sendAppRuntimeEvent("window-restored");
   });
 
   mainWindow.on("closed", () => {
@@ -1112,6 +1164,20 @@ app.whenReady().then(() => {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+
+  powerMonitor.on("suspend", () => {
+    writeMainLog("WARN", "系统进入休眠/挂起，客户端连接可能短暂中断");
+    sendAppRuntimeEvent("system-suspend");
+  });
+
+  powerMonitor.on("resume", () => {
+    writeMainLog("INFO", "系统已从休眠/挂起恢复，通知渲染层刷新连接");
+    sendAppRuntimeEvent("system-resume");
+  });
+
+  powerMonitor.on("unlock-screen", () => {
+    sendAppRuntimeEvent("screen-unlocked");
   });
 });
 

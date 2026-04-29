@@ -60,6 +60,7 @@ type WsStatus =
 const CLIENT_SOURCE = "客户端";
 const HEARTBEAT_INTERVAL = 10_000;
 const HEARTBEAT_TIMEOUT = 35_000;
+const HIDDEN_HEARTBEAT_TIMEOUT = 120_000;
 const WS_STALE_RECONNECT_MS = 75_000;
 const WS_RECOVERY_DEBOUNCE_MS = 5_000;
 const UPLOADER_RUNTIME_SYNC_INTERVAL = 4_000;
@@ -4266,6 +4267,23 @@ function bindConnectionRecoveryListeners() {
     document.addEventListener("visibilitychange", () => {
       if (!isPageHidden()) {
         void ensureConnectionFresh("visibility_visible");
+      } else {
+        void ensureConnectionFresh("visibility_hidden");
+      }
+    });
+  }
+
+  const appRuntimeListener = window.api?.onAppRuntimeEvent;
+  if (typeof appRuntimeListener === "function") {
+    appRuntimeListener((event: any) => {
+      const type = String(event?.type || "app-runtime-event");
+      if (
+        type === "window-hidden" ||
+        type === "window-minimized" ||
+        type === "system-resume" ||
+        type === "screen-unlocked"
+      ) {
+        void ensureConnectionFresh(type);
       }
     });
   }
@@ -4317,6 +4335,7 @@ function scheduleHeartbeatTimeout() {
     });
 
     if (isHidden) {
+      void ensureConnectionFresh("heartbeat_timeout_hidden");
       return;
     }
 
@@ -4333,7 +4352,7 @@ function scheduleHeartbeatTimeout() {
       lastError: "Heartbeat timeout",
     });
     recoverConnection("heartbeat_timeout_no_pong");
-  }, HEARTBEAT_TIMEOUT);
+  }, isPageHidden() ? HIDDEN_HEARTBEAT_TIMEOUT : HEARTBEAT_TIMEOUT);
 }
 
 function emitHeartbeat() {

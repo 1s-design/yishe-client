@@ -29,6 +29,7 @@ interface Window {
     saveToken(token: string): Promise<boolean>
     getToken(): Promise<string | undefined>
     isTokenExist(): Promise<boolean>
+    onAppRuntimeEvent(callback: (event: any) => void): void
     onExtensionConnectionStatus(callback: (status: any) => void): void
     openExternal(url: string): Promise<void>
     toggleDevTools(): Promise<{ opened: boolean }>
