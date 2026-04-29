@@ -523,7 +523,20 @@ function normalizeImageBindingIndexes(value) {
     const list = Array.isArray(value) ? value : [value];
     return list
         .map((item) => Number(item))
-        .filter((item) => Number.isInteger(item) && item >= 0);
+        .filter((item) => Number.isInteger(item) && item > 0)
+        .map((item) => item - 1);
+}
+
+function hasExplicitImageBindingValue(value) {
+    if (value === undefined || value === null || value === '') {
+        return false;
+    }
+
+    if (Array.isArray(value)) {
+        return value.length > 0;
+    }
+
+    return true;
 }
 
 function buildImageBindingDebugInfo(imageUrls = [], bindings = null) {
@@ -567,7 +580,11 @@ function pickImageUrlsByIndexes(imageUrls = [], bindingValue, { fallbackToAll = 
         return matchedUrls;
     }
 
-    return fallbackToAll ? imageUrls.map((item) => normalizeText(item)).filter(Boolean) : [];
+    if (fallbackToAll && !hasExplicitImageBindingValue(bindingValue)) {
+        return imageUrls.map((item) => normalizeText(item)).filter(Boolean);
+    }
+
+    return [];
 }
 
 function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bindings = null) {
@@ -596,7 +613,8 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
         nextPayload.carouselImageUrls = carouselUrls;
     }
 
-    const materialUrl = pickImageUrlsByIndexes(imageUrls, bindings.materialImgUrl)[0] || imageUrls[0];
+    const materialUrl = pickImageUrlsByIndexes(imageUrls, bindings.materialImgUrl)[0]
+        || (!hasExplicitImageBindingValue(bindings.materialImgUrl) ? imageUrls[0] : '');
     if (materialUrl) {
         nextPayload.materialImgUrl = materialUrl;
     }
@@ -608,7 +626,9 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
     const skuThumbIndexes = normalizeImageBindingIndexes(
         bindings['productSkcReqs[].productSkuReqs[].thumbUrl']
     );
-    const hasSkuThumbBinding = skuThumbIndexes.length > 0;
+    const hasSkuThumbBinding = hasExplicitImageBindingValue(
+        bindings['productSkcReqs[].productSkuReqs[].thumbUrl']
+    );
     let skuImageIndex = 0;
 
     nextPayload.productSkcReqs = nextPayload.productSkcReqs.map((skc) => {
@@ -621,8 +641,8 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
             const bindingIndex = hasSkuThumbBinding ? skuThumbIndexes[skuImageIndex] : skuImageIndex;
             const assignedThumbUrl = normalizeText(
                 imageUrls[bindingIndex]
-                || (hasSkuThumbBinding ? imageUrls[skuThumbIndexes[0]] : '')
-                || imageUrls[0]
+                || (hasSkuThumbBinding && skuThumbIndexes.length ? imageUrls[skuThumbIndexes[0]] : '')
+                || (!hasSkuThumbBinding ? imageUrls[0] : '')
             );
             skuImageIndex += 1;
 
