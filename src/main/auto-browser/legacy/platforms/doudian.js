@@ -68,6 +68,50 @@ function normalizeHoverMode(value) {
     : "native";
 }
 
+async function fillInputsBySelectorList(page, selectors, value, logPrefix) {
+  const normalizedValue = String(value ?? "").trim();
+  if (!normalizedValue) {
+    logger.info(`抖店${logPrefix}：值为空，跳过填写`);
+    return 0;
+  }
+
+  for (const selector of selectors) {
+    try {
+      const inputs = page.locator(selector);
+      const inputCount = await inputs.count();
+      logger.info(
+        `抖店${logPrefix}：准备填写，selector=${selector}, inputCount=${inputCount}, value=${normalizedValue}`,
+      );
+
+      if (inputCount <= 0) {
+        continue;
+      }
+
+      let filledCount = 0;
+      for (let index = 0; index < inputCount; index += 1) {
+        const input = inputs.nth(index);
+        await input.waitFor({ timeout: 5000, state: "visible" });
+        await input.scrollIntoViewIfNeeded().catch(() => undefined);
+        await input.click({ clickCount: 3 }).catch(() => undefined);
+        await input.fill("").catch(() => undefined);
+        await input.fill(normalizedValue);
+        filledCount += 1;
+        logger.info(`抖店${logPrefix}：已填写 input[${index}]`);
+      }
+
+      if (filledCount > 0) {
+        return filledCount;
+      }
+    } catch (error) {
+      logger.warn(
+        `抖店${logPrefix}：selector=${selector} 填写失败: ${error?.message || error}`,
+      );
+    }
+  }
+
+  return 0;
+}
+
 function isLikelyPreviewImageMeta(src, width, height) {
   const normalizedSrc = String(src || "").trim();
   const normalizedWidth = Number(width || 0);
@@ -2052,6 +2096,9 @@ export async function publishToDoudian(publishInfo = {}) {
         publishInfo.data?.productCode ??
         "",
     ).trim();
+    const stockValue = String(
+      settings.stock ?? publishInfo.stock ?? publishInfo.data?.stock ?? "",
+    ).trim();
     const hoverMode = normalizeHoverMode(
       settings.materialHoverMode ??
         settings.hoverMode ??
@@ -2069,6 +2116,7 @@ export async function publishToDoudian(publishInfo = {}) {
       imageCount: targetImages.length,
       title,
       productCode,
+      stockValue,
       fileInputStartIndex,
       materialHoverMode: hoverMode,
     });
@@ -2509,6 +2557,33 @@ export async function publishToDoudian(publishInfo = {}) {
 
     const productCodeFilled = !productCode || productCodeFilledCount > 0;
 
+    let stockFilledCount = 0;
+    if (!stockValue) {
+      logger.info("抖店库存逻辑：stock 为空，跳过填写");
+    } else {
+      stockFilledCount = await fillInputsBySelectorList(
+        page,
+        [
+          'input[placeholder="请输入库存"]',
+          'input[type="text"][placeholder="请输入库存"]',
+          'input[type="number"][placeholder="请输入库存"]',
+          'td.attr-column-field_stock input[type="text"]',
+          'td.attr-column-field_stock input[type="number"]',
+          'td.attr-column-field_stock input:not([type])',
+          'td[class*="attr-column-field_stock"] input',
+          'td[class*="attr-column-field_inventory"] input',
+          'td[class*="attr-column-field_num"] input',
+        ],
+        stockValue,
+        "库存逻辑",
+      );
+      if (stockFilledCount <= 0) {
+        logger.warn("抖店库存逻辑：未成功填写任何库存输入框");
+      }
+    }
+
+    const stockFilled = !stockValue || stockFilledCount > 0;
+
     let publishSubmitted = false;
     let publishSuccessConfirmed = false;
     let publishSuccessSignal = "";
@@ -2566,6 +2641,7 @@ export async function publishToDoudian(publishInfo = {}) {
       uploaded > 0 &&
       !!detailSectionReady &&
       !!productCodeFilled &&
+      !!stockFilled &&
       !!publishSubmitted &&
       !!publishSuccessConfirmed;
     if (page && success) {
@@ -2580,6 +2656,7 @@ export async function publishToDoudian(publishInfo = {}) {
     if (uploaded <= 0) failureReasons.push("主图未上传成功");
     if (!detailSectionReady) failureReasons.push("商品详情未处理成功");
     if (!productCodeFilled) failureReasons.push("商家编码未填写成功");
+    if (!stockFilled) failureReasons.push("库存未填写成功");
     if (!publishSubmitted) failureReasons.push("未点击发布商品");
     if (!publishSuccessConfirmed) failureReasons.push("未确认商品提交成功");
 
@@ -2604,6 +2681,9 @@ export async function publishToDoudian(publishInfo = {}) {
         productCode,
         productCodeFilledCount,
         productCodeFilled,
+        stockValue,
+        stockFilledCount,
+        stockFilled,
         publishSubmitted,
         publishSuccessConfirmed,
         publishSuccessSignal,

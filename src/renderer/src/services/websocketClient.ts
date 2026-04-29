@@ -595,6 +595,7 @@ const remotionRecordRuntimeCache = new Map<
 // 跟踪是否正在制作中
 let isProductionInProgress = false;
 let currentProductionTaskId: string | null = null;
+let currentProductionPsdSetId: string | null = null;
 const psAutomationControlState = reactive({
   enabled: null as boolean | null,
   autoDispatchEnabled: null as boolean | null,
@@ -4754,6 +4755,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
   // 设置制作状态为进行中
   isProductionInProgress = true;
   currentProductionTaskId = taskId || psdSetId;
+  currentProductionPsdSetId = psdSetId;
   emitPsAutomationStatus({
     running: true,
     currentPsSetId: psdSetId,
@@ -5867,6 +5869,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     // 清除制作状态
     isProductionInProgress = false;
     currentProductionTaskId = null;
+    currentProductionPsdSetId = null;
     emitPsAutomationStatus({
       running: false,
       progress: null,
@@ -6367,20 +6370,53 @@ function registerBuiltInLocalServices() {
           throw new Error("缺少 psdSetId");
         }
         if (isProductionInProgress) {
+          const incomingCommandId = String(command.commandId || "").trim();
+          const currentTaskId = String(currentProductionTaskId || "").trim();
+          const currentPsdSetId = String(currentProductionPsdSetId || "").trim();
+          const isSameProduction = !!(
+            (currentPsdSetId && currentPsdSetId === psdSetId) ||
+            (incomingCommandId && currentTaskId && incomingCommandId === currentTaskId)
+          );
+
+          if (isSameProduction) {
+            writePsdSetFileLog("info", "忽略重复套图制作指令", {
+              psdSetId,
+              commandId: incomingCommandId || null,
+              currentTaskId: currentTaskId || null,
+            });
+            return {
+              success: true,
+              message: "该套图正在制作中，已忽略重复指令",
+              data: {
+                psdSetId,
+                duplicate: true,
+                currentPsdSetId: currentPsdSetId || psdSetId,
+              },
+            };
+          }
+
           if (socket?.connected) {
             socket.emit("production-status", {
               psdSetId,
               status: "pending",
-              message: "正在处理中，请稍后重试",
-              progress: 0,
-              total: 0,
+              message: "客户端正在制作其他套图，等待重新调度",
+              clientId: identity.clientId,
+              machineCode: identity.machineCode,
+              assignedClientId: identity.clientId,
+              assignedMachineCode: identity.machineCode,
+              busyPsdSetId: currentPsdSetId || null,
+              busyTaskId: currentTaskId || null,
             });
           }
 
           return {
             success: false,
-            message: "正在制作中，请稍后重试",
-            data: { psdSetId },
+            message: "客户端正在制作其他套图，请稍后重试",
+            data: {
+              psdSetId,
+              busyPsdSetId: currentPsdSetId || null,
+              busyTaskId: currentTaskId || null,
+            },
           };
         }
         await handlePsdSetProduction(psdSetId, command.commandId);
