@@ -57,6 +57,15 @@ function hasTemuLoginUrlKeyword(pageUrl) {
 
 export async function resolveTemuLoginState(page) {
     const currentUrl = String(page?.url?.() || '');
+    if (isTemuGlobalSettlePage(currentUrl)) {
+        return {
+            loggedIn: true,
+            currentUrl,
+            reason: 'global_settle_authorization_page_detected',
+            requiresAuthorization: true
+        };
+    }
+
     if (hasTemuLoginUrlKeyword(currentUrl)) {
         return {
             loggedIn: false,
@@ -444,6 +453,31 @@ async function createTemuTemporaryAuthorizationPage(page) {
     }
 }
 
+async function resolveTemuAuthorizationFallbackState(sourcePage, authorizationResult = {}) {
+    if (!sourcePage || typeof sourcePage.isClosed === 'function' && sourcePage.isClosed()) {
+        return null;
+    }
+
+    const sourceState = await resolveTemuLoginState(sourcePage).catch(() => null);
+    if (!sourceState?.loggedIn || sourceState?.requiresAuthentication || sourceState?.requiresAuthorization) {
+        return null;
+    }
+
+    logger.warn(`${PLATFORM_NAME}授权页处理未完成，但主页面已处于登录系统页，继续采集`, {
+        authorizationReason: authorizationResult?.reason || '',
+        authorizationUrl: authorizationResult?.currentUrl || '',
+        sourceUrl: sourceState.currentUrl || ''
+    });
+
+    return {
+        success: true,
+        reason: 'source_page_already_logged_in',
+        currentUrl: sourceState.currentUrl || '',
+        loginState: sourceState,
+        authorizationResult
+    };
+}
+
 export async function ensureTemuGlobalRegionAuthorization(page) {
     const initialUrl = String(page?.url?.() || '');
     const initialState = await resolveTemuLoginState(page);
@@ -490,7 +524,8 @@ export async function ensureTemuGlobalRegionAuthorization(page) {
         if (isTemuAuthenticationPage(currentUrl)) {
             const authenticationResult = await handleTemuAuthenticationPage(authorizationPage, 25_000);
             if (!authenticationResult.success) {
-                return authenticationResult;
+                return await resolveTemuAuthorizationFallbackState(page, authenticationResult)
+                    || authenticationResult;
             }
             currentUrl = String(authorizationPage.url() || '');
         }
@@ -537,7 +572,8 @@ export async function ensureTemuGlobalRegionAuthorization(page) {
         if (isTemuAuthenticationPage(authorizationPage.url())) {
             const authenticationResult = await handleTemuAuthenticationPage(authorizationPage, 25_000);
             if (!authenticationResult.success) {
-                return authenticationResult;
+                return await resolveTemuAuthorizationFallbackState(page, authenticationResult)
+                    || authenticationResult;
             }
         }
 

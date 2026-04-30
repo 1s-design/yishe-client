@@ -21,11 +21,10 @@ import {
     waitForVisibleSelector
 } from './page.js';
 import {
-    collectTemuSessionBundle
+    collectTemuSessionBundle,
+    inspectTemuSessionBundleCompleteness
 } from './session.js';
 
-const TEMU_SESSION_ACQUIRE_MODE_DIRECT = 'direct';
-const TEMU_SESSION_ACQUIRE_MODE_LOGIN = 'login';
 const TEMU_PUBLISH_DETAIL_TRIGGER_MODE_PAGE_LOAD = 'pageLoad';
 const TEMU_PUBLISH_DETAIL_TRIGGER_MODE_MANUAL = 'manual';
 const TEMU_PUBLISH_DETAIL_TRIGGER_MODE_BUTTON_TEXT = 'buttonText';
@@ -34,7 +33,6 @@ const TEMU_PUBLISH_DETAIL_PAGE_URL = 'https://agentseller.temu.com/goods/edit?fr
 const TEMU_PUBLISH_DETAIL_REQUEST_URL = 'https://agentseller.temu.com/visage-agent-seller/product/edit';
 const TEMU_PUBLISH_DETAIL_TRIGGER_BUTTON_TEXT = '提交';
 const TEMU_REQUEST_CAPTURE_CLICK_TIMEOUT = 15_000;
-const TEMU_SESSION_COLLECT_TIMEOUT_MS = 80_000;
 const TEMU_REQUEST_CAPTURE_RESOURCE_TYPES = ['xhr', 'fetch'];
 const TEMU_SESSION_RESTORE_REGION_TARGETS = {
     global: {
@@ -96,41 +94,6 @@ function withTemuOperationTimeout(operation, timeoutMs, label, onTimeout) {
             clearTimeout(timer);
         }
     });
-}
-
-async function ensureTemuSessionCollectPageReady(page, timeoutMs, executionTrace) {
-    const currentUrl = String(page?.url?.() || '');
-    const shouldNavigate = !currentUrl || currentUrl === 'about:blank' || !/agentseller(?:-[a-z]+)?\.temu\.com|seller\.kuajingmaihuo\.com/i.test(currentUrl);
-    if (!shouldNavigate) {
-        return {
-            navigated: false,
-            currentUrl
-        };
-    }
-
-    pushTrace(executionTrace, 'open_seller_home', 'pending', {
-        fromUrl: currentUrl,
-        targetUrl: TEMU_SELLER_HOME_URL
-    });
-    await withTemuOperationTimeout(
-        page.goto(TEMU_SELLER_HOME_URL, {
-            waitUntil: 'domcontentloaded',
-            timeout: Math.min(timeoutMs, 60_000)
-        }),
-        Math.min(timeoutMs, 60_000),
-        `${PLATFORM_NAME}卖家后台打开`
-    );
-    await page.waitForTimeout(2500);
-
-    const nextUrl = String(page?.url?.() || '');
-    pushTrace(executionTrace, 'open_seller_home', 'success', {
-        fromUrl: currentUrl,
-        currentUrl: nextUrl
-    });
-    return {
-        navigated: true,
-        currentUrl: nextUrl
-    };
 }
 
 function isPlainObject(value) {
@@ -235,14 +198,6 @@ function buildTemuSessionRestoreCookiePlan(settings) {
         regionStats,
         totalCookieCount: cookies.length
     };
-}
-
-function normalizeTemuSessionAcquireMode(value) {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized === TEMU_SESSION_ACQUIRE_MODE_LOGIN) {
-        return TEMU_SESSION_ACQUIRE_MODE_LOGIN;
-    }
-    return TEMU_SESSION_ACQUIRE_MODE_DIRECT;
 }
 
 function normalizePositiveInteger(value, fallback, options = {}) {
@@ -836,14 +791,52 @@ function buildCompactTemuSessionBundle(sessionBundle = {}) {
     };
 }
 
+function buildTemuSessionFailureDebug(sessionResult = {}, options = {}) {
+    const sessionBundle = sessionResult?.sessionBundle || null;
+    if (!sessionBundle) {
+        return {};
+    }
+
+    const completeness = inspectTemuSessionBundleCompleteness(sessionBundle, {
+        requireRegionalCookies: options.collectRegionCookies !== false,
+        requireAntiContent: true,
+        requireIdentity: true
+    });
+
+    return {
+        sessionCompleteness: completeness,
+        sessionWarnings: Array.isArray(sessionBundle?.warnings) ? sessionBundle.warnings : [],
+        requestCapture: sessionBundle?.requestCapture || {},
+        regionCollection: sessionBundle?.regionCollection || {},
+        partialSessionBundle: buildCompactTemuSessionBundle(sessionBundle)
+    };
+}
+
+function buildTemuSessionAcquireFailureMessage(sessionResult = {}, loginState = {}) {
+    if (sessionResult.reason !== 'login_required') {
+        return sessionResult.message || `${PLATFORM_NAME}会话获取失败`;
+    }
+
+    if (loginState?.requiresAuthentication) {
+        return `请先处理${PLATFORM_NAME}登录验证后再重新获取会话`;
+    }
+
+    return sessionResult.message
+        ? `${PLATFORM_NAME}已完成登录跳转，但会话校验仍失败：${sessionResult.message}`
+        : `${PLATFORM_NAME}已完成登录跳转，但会话校验仍失败，请查看缺失项后重新获取会话`;
+}
+
 function buildTemuSessionAcquireSettings(input = {}) {
     return {
         ...normalizeTemuSettings(input),
-        acquireMode: normalizeTemuSessionAcquireMode(input?.acquireMode),
         keepPageOpen: normalizeKeepPageOpen(input?.keepPageOpen),
         collectRegionCookies: normalizeCollectRegionCookies(input?.collectRegionCookies),
         includeDebugInfo: normalizeIncludeDebugInfo(input?.includeDebugInfo)
     };
+}
+
+function hasTemuLoginCredentials(settings = {}) {
+    return !!String(settings?.account || '').trim() && !!String(settings?.password || '').trim();
 }
 
 function buildTemuSessionAcquireResult({
@@ -853,7 +846,6 @@ function buildTemuSessionAcquireResult({
     loginState,
     sessionBundle,
     pageKeptOpen,
-    acquireMode,
     includeDebugInfo,
     loginStateBefore,
     executionTrace,
@@ -866,7 +858,6 @@ function buildTemuSessionAcquireResult({
             profileId: profileId || null,
             currentUrl,
             loginState,
-            acquireMode,
             sessionBundle: compactSessionBundle,
             pageKeptOpen
         };
@@ -882,7 +873,6 @@ function buildTemuSessionAcquireResult({
         detectedButtons: snapshot?.buttons || [],
         detectedInputs: snapshot?.inputs || [],
         bodyPreview: snapshot?.bodyPreview || '',
-        acquireMode,
         sessionBundle: {
             ...compactSessionBundle,
             cookieDomains: sessionBundle?.cookieDomains || [],
@@ -1028,233 +1018,6 @@ export async function runTemuLoginSmallFeature(input = {}, runtimeOptions = {}) 
     }
 }
 
-export async function runTemuSessionCollectSmallFeature(input = {}, runtimeOptions = {}) {
-    const profileId = String(input?.profileId || '').trim() || undefined;
-    const settings = {
-        keepPageOpen: normalizeKeepPageOpen(input?.keepPageOpen),
-        collectRegionCookies: normalizeCollectRegionCookies(input?.collectRegionCookies),
-        includeDebugInfo: normalizeIncludeDebugInfo(input?.includeDebugInfo),
-        timeoutMs: normalizePositiveInteger(input?.timeoutMs, TEMU_SESSION_COLLECT_TIMEOUT_MS, {
-            min: 30_000,
-            max: 10 * 60_000
-        })
-    };
-    const pageOperator = runtimeOptions?.pageOperator || new PageOperator();
-    const executionTrace = [];
-    const sourcePage = runtimeOptions?.page || null;
-    let page = null;
-    let ownsPage = false;
-    let loginStateBefore = null;
-
-    try {
-        logger.info(`${PLATFORM_NAME}工具开始采集会话`, {
-            profileId: profileId || 'default',
-            keepPageOpen: settings.keepPageOpen,
-            collectRegionCookies: settings.collectRegionCookies,
-            includeDebugInfo: settings.includeDebugInfo,
-            timeoutMs: settings.timeoutMs,
-            useDedicatedPage: true,
-            hasSourcePage: !!sourcePage
-        });
-        pushTrace(executionTrace, 'start', 'success', {
-            profileId: profileId || null,
-            keepPageOpen: settings.keepPageOpen,
-            collectRegionCookies: settings.collectRegionCookies,
-            includeDebugInfo: settings.includeDebugInfo,
-            timeoutMs: settings.timeoutMs,
-            useDedicatedPage: true,
-            hasSourcePage: !!sourcePage
-        });
-
-        if (sourcePage?.context) {
-            logger.info(`${PLATFORM_NAME}会话采集步骤：基于当前环境创建专用后台采集页`, {
-                profileId: profileId || 'default',
-                sourceUrl: sourcePage.url()
-            });
-            const context = sourcePage.context();
-            page = await withTemuOperationTimeout(
-                context.newPage({ background: false, activate: true }),
-                15_000,
-                `${PLATFORM_NAME}采集页面打开`
-            )
-                .catch(() => context.newPage());
-            ownsPage = true;
-        } else {
-            logger.info(`${PLATFORM_NAME}会话采集步骤：准备连接浏览器环境`, {
-                profileId: profileId || 'default'
-            });
-            const browser = await withTemuOperationTimeout(
-                getOrCreateBrowser({
-                    profileId,
-                    skipWindowMaximize: false
-                }),
-                settings.timeoutMs,
-                `${PLATFORM_NAME}浏览器环境连接`
-            );
-            logger.info(`${PLATFORM_NAME}会话采集步骤：浏览器环境已连接，准备创建后台页`, {
-                profileId: profileId || 'default'
-            });
-            page = await withTemuOperationTimeout(
-                browser.newPage({ background: false, activate: true }),
-                15_000,
-                `${PLATFORM_NAME}采集页面打开`
-            );
-            ownsPage = true;
-        }
-
-        await pageOperator.setupAntiDetection(page);
-        logger.info(`${PLATFORM_NAME}会话采集步骤：专用后台采集页已创建`, {
-            profileId: profileId || 'default',
-            currentUrl: page.url()
-        });
-        pushTrace(executionTrace, 'open_dedicated_page', 'success', {
-            currentUrl: page.url(),
-            activated: true,
-            sourcePageKeptIntact: !!sourcePage
-        });
-
-        await ensureTemuSessionCollectPageReady(page, settings.timeoutMs, executionTrace);
-
-        loginStateBefore = await resolveTemuLoginState(page);
-        pushTrace(executionTrace, 'check_login_state_before', loginStateBefore.loggedIn ? 'success' : 'pending', loginStateBefore);
-
-        logger.info(`${PLATFORM_NAME}会话采集步骤：开始采集 cookies / anti-content / 店铺信息`, {
-            currentUrl: page.url(),
-            collectRegionCookies: settings.collectRegionCookies
-        });
-        const sessionResult = await withTemuOperationTimeout(
-            collectTemuSessionBundle(page, {
-                collectRegionCookies: settings.collectRegionCookies
-            }),
-            settings.timeoutMs,
-            `${PLATFORM_NAME}会话采集`,
-            async () => {
-                if (ownsPage && page && !page.isClosed?.()) {
-                    await page.close().catch(() => undefined);
-                }
-            }
-        );
-        if (!sessionResult.success) {
-            logger.warn(`${PLATFORM_NAME}会话采集步骤：会话包采集失败`, {
-                reason: sessionResult.reason,
-                message: sessionResult.message || '',
-                currentUrl: page.url()
-            });
-            pushTrace(executionTrace, 'collect_session_bundle', 'failed', {
-                reason: sessionResult.reason,
-                currentUrl: page.url()
-            });
-
-            const snapshot = await collectTemuFrameworkSnapshot(page);
-            const loginStateAfterFailure = await resolveTemuLoginState(page);
-            return {
-                success: false,
-                message: sessionResult.reason === 'login_required'
-                    ? `请先登录${PLATFORM_NAME}后再执行会话采集`
-                    : sessionResult.message || `${PLATFORM_NAME}会话采集失败`,
-                data: {
-                    featureKey: 'temu-session-collect',
-                    profileId: profileId || null,
-                    currentUrl: page.url(),
-                    pageTitle: snapshot.title,
-                    loginStateBefore,
-                    loginState: loginStateAfterFailure,
-                    bodyPreview: snapshot.bodyPreview,
-                    detectedButtons: snapshot.buttons,
-                    detectedInputs: snapshot.inputs,
-                    executionTrace,
-                    pageKeptOpen: settings.keepPageOpen
-                }
-            };
-        }
-
-        const loginStateAfter = await resolveTemuLoginState(page);
-        pushTrace(executionTrace, 'check_login_state_after', loginStateAfter.loggedIn ? 'success' : 'pending', loginStateAfter);
-
-        logger.info(`${PLATFORM_NAME}会话采集步骤：会话包采集完成`, {
-            currentUrl: page.url(),
-            mallId: sessionResult.sessionBundle?.mallId || '',
-            mallCount: sessionResult.sessionBundle?.mallList?.length || 0
-        });
-        pushTrace(executionTrace, 'collect_session_bundle', 'success', {
-            mallId: sessionResult.sessionBundle?.mallId || '',
-            mallCount: sessionResult.sessionBundle?.mallList?.length || 0,
-            currentUrl: page.url()
-        });
-
-        const snapshot = await collectTemuFrameworkSnapshot(page);
-        const compactSessionBundle = buildCompactTemuSessionBundle(sessionResult.sessionBundle);
-
-        if (!settings.includeDebugInfo) {
-            return {
-                success: true,
-                message: `${PLATFORM_NAME}会话采集完成`,
-                data: {
-                    featureKey: 'temu-session-collect',
-                    profileId: profileId || null,
-                    currentUrl: page.url(),
-                    loginState: loginStateAfter,
-                    sessionBundle: compactSessionBundle,
-                    pageKeptOpen: settings.keepPageOpen
-                }
-            };
-        }
-
-        return {
-            success: true,
-            message: `${PLATFORM_NAME}会话采集完成`,
-            data: {
-                featureKey: 'temu-session-collect',
-                profileId: profileId || null,
-                currentUrl: page.url(),
-                pageTitle: snapshot.title,
-                loginStateBefore,
-                loginState: loginStateAfter,
-                detectedButtons: snapshot.buttons,
-                detectedInputs: snapshot.inputs,
-                bodyPreview: snapshot.bodyPreview,
-                sessionBundle: {
-                    ...compactSessionBundle,
-                    cookieDomains: sessionResult.sessionBundle?.cookieDomains || [],
-                    requestCapture: sessionResult.sessionBundle?.requestCapture || {},
-                    regionCollection: sessionResult.sessionBundle?.regionCollection || {},
-                    warnings: sessionResult.sessionBundle?.warnings || []
-                },
-                executionTrace,
-                pageKeptOpen: settings.keepPageOpen
-            }
-        };
-    } catch (error) {
-        logger.error(`${PLATFORM_NAME}会话采集工具执行失败:`, error);
-        pushTrace(executionTrace, 'fatal_error', 'failed', {
-            message: error?.message || String(error)
-        });
-
-        return {
-            success: false,
-            message: error?.message || `${PLATFORM_NAME}会话采集工具执行失败`,
-            data: {
-                featureKey: 'temu-session-collect',
-                profileId: profileId || null,
-                currentUrl: page?.url?.() || '',
-                executionTrace,
-                reusedCurrentPage: false,
-                pageKeptOpen: settings.keepPageOpen
-            }
-        };
-    } finally {
-        if (ownsPage && page && !settings.keepPageOpen) {
-            try {
-                await page.close();
-            } catch (closeError) {
-                logger.warn(`${PLATFORM_NAME}工具关闭页面失败: ${closeError?.message || closeError}`);
-            }
-        } else if (ownsPage && page && settings.keepPageOpen) {
-            logger.info(`${PLATFORM_NAME}工具保留页面，方便继续调试`);
-        }
-    }
-}
-
 export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptions = {}) {
     const profileId = String(input?.profileId || '').trim() || undefined;
     const settings = buildTemuSessionAcquireSettings(input);
@@ -1266,7 +1029,6 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
     try {
         logger.info(`${PLATFORM_NAME}工具开始获取会话`, {
             profileId: profileId || 'default',
-            acquireMode: settings.acquireMode,
             keepPageOpen: settings.keepPageOpen,
             collectRegionCookies: settings.collectRegionCookies,
             includeDebugInfo: settings.includeDebugInfo,
@@ -1276,7 +1038,6 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
         });
         pushTrace(executionTrace, 'start', 'success', {
             profileId: profileId || null,
-            acquireMode: settings.acquireMode,
             keepPageOpen: settings.keepPageOpen,
             collectRegionCookies: settings.collectRegionCookies,
             includeDebugInfo: settings.includeDebugInfo,
@@ -1302,7 +1063,62 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
         pushTrace(executionTrace, 'check_login_state_before', loginStateBefore.loggedIn ? 'success' : 'pending', loginStateBefore);
 
         let acquireMessage = `${PLATFORM_NAME}会话获取完成`;
-        if (settings.acquireMode === TEMU_SESSION_ACQUIRE_MODE_LOGIN) {
+        let loginPerformed = false;
+        let sessionResult = null;
+        const credentialsReady = hasTemuLoginCredentials(settings);
+
+        if (loginStateBefore.loggedIn || !credentialsReady) {
+            logger.info(`${PLATFORM_NAME}会话获取步骤：尝试复用当前环境登录态采集会话`, {
+                currentUrl: page.url(),
+                loggedIn: !!loginStateBefore.loggedIn
+            });
+            sessionResult = await collectTemuSessionBundle(page, {
+                collectRegionCookies: settings.collectRegionCookies
+            });
+        } else {
+            logger.info(`${PLATFORM_NAME}会话获取步骤：当前环境未登录，已提供账号密码，直接执行登录`, {
+                currentUrl: page.url(),
+                loginReason: loginStateBefore.reason || ''
+            });
+        }
+
+        const shouldLoginThenCollect =
+            !loginStateBefore.loggedIn &&
+            credentialsReady &&
+            (!sessionResult || sessionResult.reason === 'login_required');
+
+        if (
+            !sessionResult?.success &&
+            sessionResult?.reason === 'login_required' &&
+            !shouldLoginThenCollect
+        ) {
+            pushTrace(executionTrace, 'require_login_credentials', 'failed', {
+                reason: sessionResult?.reason || '',
+                currentUrl: page.url()
+            });
+            const snapshot = await collectTemuFrameworkSnapshot(page);
+            const loginStateAfterFailure = await resolveTemuLoginState(page);
+            return {
+                success: false,
+                message: `当前环境未登录${PLATFORM_NAME}，请录入账号密码后重新采集，或者先在浏览器环境中手动登录`,
+                data: {
+                    featureKey: 'temu-session-acquire',
+                    profileId: profileId || null,
+                    currentUrl: page.url(),
+                    pageTitle: snapshot.title,
+                    loginStateBefore,
+                    loginState: loginStateAfterFailure,
+                    bodyPreview: snapshot.bodyPreview,
+                    detectedButtons: snapshot.buttons,
+                    detectedInputs: snapshot.inputs,
+                    ...buildTemuSessionFailureDebug(sessionResult, settings),
+                    executionTrace,
+                    pageKeptOpen: settings.keepPageOpen
+                }
+            };
+        }
+
+        if (shouldLoginThenCollect) {
             const loginResult = await performTemuLogin(page, settings, pageOperator);
             if (!loginResult.success) {
                 pushTrace(executionTrace, 'perform_login', 'failed', {
@@ -1321,7 +1137,6 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
                         pageTitle: snapshot.title,
                         loginStateBefore,
                         loginState: loginResult.loginState || null,
-                        acquireMode: settings.acquireMode,
                         bodyPreview: loginResult.bodyPreview || snapshot.bodyPreview,
                         detectedButtons: snapshot.buttons,
                         detectedInputs: snapshot.inputs,
@@ -1335,14 +1150,16 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
                 reason: loginResult.reason,
                 currentUrl: page.url()
             });
+            loginPerformed = true;
             acquireMessage = loginResult.reason === 'already_logged_in'
                 ? `${PLATFORM_NAME}当前已登录，会话获取完成`
-                : `${PLATFORM_NAME}登录并获取会话完成`;
+                : `${PLATFORM_NAME}登录后会话获取完成`;
+
+            sessionResult = await collectTemuSessionBundle(page, {
+                collectRegionCookies: settings.collectRegionCookies
+            });
         }
 
-        const sessionResult = await collectTemuSessionBundle(page, {
-            collectRegionCookies: settings.collectRegionCookies
-        });
         if (!sessionResult.success) {
             pushTrace(executionTrace, 'collect_session_bundle', 'failed', {
                 reason: sessionResult.reason,
@@ -1351,11 +1168,10 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
 
             const snapshot = await collectTemuFrameworkSnapshot(page);
             const loginStateAfterFailure = await resolveTemuLoginState(page);
-            const failureMessage = sessionResult.reason === 'login_required'
-                ? settings.acquireMode === TEMU_SESSION_ACQUIRE_MODE_LOGIN
-                    ? `请先处理${PLATFORM_NAME}登录验证后再重新获取会话`
-                    : `当前环境未登录${PLATFORM_NAME}，请切换为“登录并获取”或先手动登录`
-                : sessionResult.message || `${PLATFORM_NAME}会话获取失败`;
+            const failureMessage = buildTemuSessionAcquireFailureMessage(
+                sessionResult,
+                loginStateAfterFailure
+            );
             return {
                 success: false,
                 message: failureMessage,
@@ -1366,10 +1182,10 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
                     pageTitle: snapshot.title,
                     loginStateBefore,
                     loginState: loginStateAfterFailure,
-                    acquireMode: settings.acquireMode,
                     bodyPreview: snapshot.bodyPreview,
                     detectedButtons: snapshot.buttons,
                     detectedInputs: snapshot.inputs,
+                    ...buildTemuSessionFailureDebug(sessionResult, settings),
                     executionTrace,
                     pageKeptOpen: settings.keepPageOpen
                 }
@@ -1381,7 +1197,8 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
         pushTrace(executionTrace, 'collect_session_bundle', 'success', {
             mallId: sessionResult.sessionBundle?.mallId || '',
             mallCount: sessionResult.sessionBundle?.mallList?.length || 0,
-            currentUrl: page.url()
+            currentUrl: page.url(),
+            loginPerformed
         });
 
         const snapshot = await collectTemuFrameworkSnapshot(page);
@@ -1395,7 +1212,6 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
                 loginState: loginStateAfter,
                 sessionBundle: sessionResult.sessionBundle,
                 pageKeptOpen: settings.keepPageOpen,
-                acquireMode: settings.acquireMode,
                 includeDebugInfo: settings.includeDebugInfo,
                 loginStateBefore,
                 executionTrace,
@@ -1415,7 +1231,6 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
                 featureKey: 'temu-session-acquire',
                 profileId: profileId || null,
                 currentUrl: page?.url?.() || '',
-                acquireMode: settings.acquireMode,
                 executionTrace,
                 reusedCurrentPage: !managePage,
                 pageKeptOpen: settings.keepPageOpen
@@ -1922,7 +1737,6 @@ export async function runTemuPublishDetailRequestCaptureSmallFeature(input = {},
 
 export default {
     runTemuLoginSmallFeature,
-    runTemuSessionCollectSmallFeature,
     runTemuSessionAcquireSmallFeature,
     runTemuPublishDetailRequestCaptureSmallFeature
 };

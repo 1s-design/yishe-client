@@ -837,9 +837,8 @@ class ApiServer {
                                         type: 'object',
                                         required: ['featureKey'],
                                         properties: {
-                                            featureKey: { type: 'string', description: '工具标识，如 temu-session-acquire / temu-login / temu-session-collect' },
+                                            featureKey: { type: 'string', description: '工具标识，如 temu-session-acquire / temu-login' },
                                             profileId: { type: 'string', description: '可选，指定执行环境' },
-                                            acquireMode: { type: 'string', description: 'Temu 会话获取方式，可选 direct / login' },
                                             keepPageOpen: { type: 'boolean', description: '执行后是否保留页面，默认 true' },
                                             collectRegionCookies: { type: 'boolean', description: 'Temu 会话采集时是否补抓 global/us/eu 区域 cookies，默认 true' },
                                             account: { type: 'string', description: '账号类工具需要的账号' },

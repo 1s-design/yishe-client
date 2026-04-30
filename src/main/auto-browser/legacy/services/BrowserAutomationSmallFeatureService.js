@@ -1,7 +1,6 @@
 import {
   runTemuSessionAcquireSmallFeature,
   runTemuLoginSmallFeature,
-  runTemuSessionCollectSmallFeature,
   runTemuSessionRestoreSmallFeature,
   runTemuPublishDetailRequestCaptureSmallFeature,
 } from "../platforms/temu/smallFeatures.js";
@@ -21,39 +20,20 @@ const SMALL_FEATURE_REGISTRY = {
     category: "session",
     visibility: "public",
     description:
-      "统一入口：直接执行 Temu 全量会话采集；可复用当前环境登录态，也可先自动登录，再一次性同步账号、店铺、anti-content 与 global/us/eu Cookie。",
+      "统一入口：自动判断当前环境是否已登录；已登录则直接采集，未登录且已提供账号密码则先登录再采集。",
     tips: [
-      "默认优先直接获取，适合当前环境已经登录的情况。",
-      "切换为“登录并获取”后，会先执行账号密码登录，再继续执行同一套全量采集流程。",
+      "只需要执行这一个动作：工具会先检查当前浏览器环境登录态。",
+      "如果当前环境未登录且没有填写账号密码，会提示录入账号密码，或者让用户先在浏览器环境中手动登录。",
       "成功条件已统一：需要拿到核心 cookies、headersTemplate、anti-content、mallList、mallId、accountId，以及 global/us/eu 三套区域 Cookie；缺一项都会判失败。",
     ],
     fields: [
-      {
-        key: "acquireMode",
-        label: "获取方式",
-        type: "select",
-        required: true,
-        defaultValue: "direct",
-        options: [
-          { label: "直接获取", value: "direct" },
-          { label: "登录并获取", value: "login" },
-        ],
-        description:
-          "直接获取会复用当前环境登录态；登录并获取会先执行账号密码登录。",
-      },
       {
         key: "account",
         label: "账号",
         type: "text",
         required: false,
         placeholder: "请输入 Temu 账号",
-        description: "仅在“登录并获取”时需要填写。",
-        requiredWhen: {
-          acquireMode: "login",
-        },
-        visibleWhen: {
-          acquireMode: "login",
-        },
+        description: "当前环境未登录时用于自动登录；已登录时不会强制使用。",
       },
       {
         key: "password",
@@ -61,13 +41,7 @@ const SMALL_FEATURE_REGISTRY = {
         type: "password",
         required: false,
         placeholder: "请输入 Temu 密码",
-        description: "仅在“登录并获取”时需要填写。",
-        requiredWhen: {
-          acquireMode: "login",
-        },
-        visibleWhen: {
-          acquireMode: "login",
-        },
+        description: "当前环境未登录时用于自动登录；已登录时不会强制使用。",
       },
       {
         key: "collectRegionCookies",
@@ -156,49 +130,6 @@ const SMALL_FEATURE_REGISTRY = {
       },
     ],
     handler: runTemuLoginSmallFeature,
-  },
-  "temu-session-collect": {
-    key: "temu-session-collect",
-    name: "Temu 会话采集",
-    platform: "temu",
-    category: "session",
-    visibility: "internal",
-    description:
-      "只采集当前浏览器环境里已登录的 Temu 会话，但成功标准按全量采集执行：需要同步拿到账号、店铺、anti-content 与 global/us/eu Cookie。",
-    tips: [
-      "默认会使用当前活动环境；传 profileId 时会优先作用到指定环境。",
-      "这个功能不会自动登录，也不需要输入账号密码。",
-      "如需登录，请先单独执行 Temu 登录功能，或者让用户自己手动登录后再采集。",
-      "默认会补抓 global/us/eu 三套 cookies，并同步拉取 mallList、mallId、accountId 与 anti-content。",
-      "现在成功条件是“全量采集完成”；区域 Cookie、身份信息或 anti-content 缺失都会直接失败，不再按部分成功处理。",
-      "若环境浏览器已经打开，默认会以后台页执行，不主动激活浏览器窗口，尽量减少对当前操作的打断。",
-      "若环境浏览器尚未启动，则会正常拉起该环境浏览器后再继续采集。",
-    ],
-    fields: [
-      {
-        key: "profileId",
-        label: "环境编号",
-        type: "text",
-        required: false,
-        placeholder: "可选，留空时使用当前活动环境",
-      },
-      {
-        key: "collectRegionCookies",
-        label: "采集区域 Cookie",
-        type: "boolean",
-        required: false,
-        defaultValue: true,
-      },
-      {
-        key: "keepPageOpen",
-        label: "保留页面",
-        type: "boolean",
-        required: false,
-        defaultValue: true,
-      },
-    ],
-    timeoutMs: DEFAULT_SMALL_FEATURE_TIMEOUT_MS,
-    handler: runTemuSessionCollectSmallFeature,
   },
   "temu-session-restore": {
     key: "temu-session-restore",

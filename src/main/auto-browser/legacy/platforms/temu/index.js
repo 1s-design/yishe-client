@@ -6,5 +6,5 @@ export {
 
 export {
     runTemuLoginSmallFeature,
-    runTemuSessionCollectSmallFeature
+    runTemuSessionAcquireSmallFeature
 } from './smallFeatures.js';
