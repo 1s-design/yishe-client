@@ -867,6 +867,27 @@ async function waitTaobaoSubmitSuccess(page) {
   }
 }
 
+async function closeTaobaoPublishPage(page, reason = "finished") {
+  if (!page) {
+    return false;
+  }
+
+  try {
+    if (typeof page.isClosed === "function" && page.isClosed()) {
+      return true;
+    }
+    await page.close({ runBeforeUnload: false });
+    logger.info("淘宝发布页面已关闭", { reason });
+    return true;
+  } catch (error) {
+    logger.warn("淘宝发布页面关闭失败", {
+      reason,
+      error: error?.message || String(error),
+    });
+    return false;
+  }
+}
+
 async function countTaobaoMainImageEmptySlots(page) {
   return await page
     .locator(".image-list")
@@ -1240,6 +1261,7 @@ export async function publishToTaobao(publishInfo = {}) {
       uploadResult.requested <= 0 ||
       (uploadResult.selectionCompleted && uploadResult.selectorClosed !== false);
     if (!mainImagesReady) {
+      const pageClosed = await closeTaobaoPublishPage(page, "main_images_not_ready");
       return {
         success: false,
         message: "淘宝主图未全部上传并选择完成，已停止后续操作",
@@ -1255,7 +1277,8 @@ export async function publishToTaobao(publishInfo = {}) {
           uploadedNames: uploadResult.uploadedPaths.map(getPathFileName),
           mainImagesSelectionCompleted: uploadResult.selectionCompleted,
           mainImagesSelectorClosed: uploadResult.selectorClosed,
-          pageKeptOpen: true,
+          pageKeptOpen: !pageClosed,
+          pageClosed,
         },
       };
     }
@@ -1276,6 +1299,11 @@ export async function publishToTaobao(publishInfo = {}) {
     const submitSuccess = submitClicked
       ? await waitTaobaoSubmitSuccess(page)
       : false;
+    const finalUrl = page.url();
+    const pageClosed = await closeTaobaoPublishPage(
+      page,
+      submitSuccess ? "submit_success" : "publish_finished_without_success",
+    );
 
     return {
       success: submitSuccess,
@@ -1287,7 +1315,7 @@ export async function publishToTaobao(publishInfo = {}) {
       data: {
         itemId,
         targetUrl,
-        finalUrl: page.url(),
+        finalUrl,
         titleFilled,
         titleValue: titleFilled ? title : "",
         productCode,
@@ -1318,11 +1346,13 @@ export async function publishToTaobao(publishInfo = {}) {
         uploadedNames: uploadResult.uploadedPaths.map(getPathFileName),
         mainImagesSelectionCompleted: uploadResult.selectionCompleted,
         mainImagesSelectorClosed: uploadResult.selectorClosed,
-        pageKeptOpen: true,
+        pageKeptOpen: !pageClosed,
+        pageClosed,
       },
     };
   } catch (error) {
     logger.error("淘宝发布基础流程失败:", error);
+    await closeTaobaoPublishPage(page, "publish_error");
     return {
       success: false,
       message: error?.message || "淘宝发布基础流程失败",
