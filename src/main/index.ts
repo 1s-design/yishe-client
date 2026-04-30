@@ -23,7 +23,9 @@ import { homedir, platform } from "os";
 import { join as pathJoin } from "path";
 import fs from "fs";
 import http from "http";
+import https from "https";
 import { URL } from "url";
+import axios from "axios";
 import {
   getGoogleArtZooms,
   syncGoogleArtToMaterialLibrary,
@@ -1582,6 +1584,8 @@ type DownloadManifestEntry = {
 type DownloadManifest = Record<string, DownloadManifestEntry>;
 
 const downloadInFlight = new Map<string, Promise<any>>();
+const DOWNLOAD_TIMEOUT_MS = 120000;
+const DOWNLOAD_RETRY_DELAYS_MS = [0, 800, 1600];
 
 function normalizeDownloadUrl(url: string): string {
   return new URL(String(url || "").trim()).toString();
@@ -1711,6 +1715,184 @@ function getCachedDownloadByUrl(filesDir: string, url: string) {
   return { found: false, cacheKey, entry: null };
 }
 
+type DownloadPayload = {
+  buffer: Buffer;
+  contentType: string | null;
+  contentDisposition: string | null;
+  downloadedBytes: number;
+  method: "fetch" | "axios";
+};
+
+function buildDownloadHeaders(parsedUrl: URL) {
+  return {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    Accept: "*/*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    Referer: parsedUrl.origin,
+  };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getDownloadErrorStatus(error: any) {
+  const value = error?.statusCode ?? error?.response?.status;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function getDownloadErrorMessage(error: any) {
+  const status = getDownloadErrorStatus(error);
+  const message = String(
+    error?.response?.statusText ||
+      error?.message ||
+      error?.code ||
+      "未知错误",
+  );
+  return status ? `HTTP ${status} ${message}` : message;
+}
+
+function isRetryableDownloadError(error: any) {
+  const status = getDownloadErrorStatus(error);
+  if (status) {
+    return status === 408 || status === 429 || status >= 500;
+  }
+  return true;
+}
+
+async function downloadByFetch(
+  url: string,
+  parsedUrl: URL,
+): Promise<DownloadPayload> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: buildDownloadHeaders(parsedUrl),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const error = new Error(
+        `HTTP ${response.status} ${response.statusText}`,
+      ) as Error & { statusCode?: number };
+      error.statusCode = response.status;
+      throw error;
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    return {
+      buffer,
+      contentType: response.headers.get("content-type"),
+      contentDisposition: response.headers.get("content-disposition"),
+      downloadedBytes: buffer.length,
+      method: "fetch",
+    };
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error("下载超时") as Error & { code?: string };
+      timeoutError.code = "TIMEOUT";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function downloadByAxios(
+  url: string,
+  parsedUrl: URL,
+): Promise<DownloadPayload> {
+  const response = await axios.get(url, {
+    responseType: "arraybuffer",
+    timeout: DOWNLOAD_TIMEOUT_MS,
+    maxRedirects: 5,
+    headers: buildDownloadHeaders(parsedUrl),
+    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    const error = new Error(
+      `HTTP ${response.status} ${response.statusText}`,
+    ) as Error & { statusCode?: number };
+    error.statusCode = response.status;
+    throw error;
+  }
+
+  const buffer = Buffer.isBuffer(response.data)
+    ? response.data
+    : Buffer.from(response.data);
+  return {
+    buffer,
+    contentType: response.headers?.["content-type"] || null,
+    contentDisposition: response.headers?.["content-disposition"] || null,
+    downloadedBytes: buffer.length,
+    method: "axios",
+  };
+}
+
+async function downloadUrlToBuffer(
+  url: string,
+  parsedUrl: URL,
+): Promise<DownloadPayload> {
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt < DOWNLOAD_RETRY_DELAYS_MS.length; attempt++) {
+    const delay = DOWNLOAD_RETRY_DELAYS_MS[attempt];
+    if (delay > 0) {
+      await sleep(delay);
+    }
+
+    const errors: any[] = [];
+    for (const method of [downloadByFetch, downloadByAxios]) {
+      try {
+        const result = await method(url, parsedUrl);
+        if (attempt > 0 || result.method === "axios") {
+          writeClientLog({
+            level: "info",
+            module: "download-file",
+            message: "下载成功",
+            context: {
+              urlHost: parsedUrl.host,
+              attempt: attempt + 1,
+              method: result.method,
+            },
+          });
+        }
+        return result;
+      } catch (error: any) {
+        errors.push(error);
+        lastError = error;
+      }
+    }
+
+    const retryable = errors.some((error) => isRetryableDownloadError(error));
+    if (!retryable) {
+      break;
+    }
+
+    writeClientLog({
+      level: "warn",
+      module: "download-file",
+      message: "下载失败，准备重试",
+      context: {
+        urlHost: parsedUrl.host,
+        attempt: attempt + 1,
+        errors: errors.map((error) => getDownloadErrorMessage(error)),
+      },
+    });
+  }
+
+  throw lastError || new Error("下载失败");
+}
+
 // 文件下载相关 IPC 处理器
 /**
  * 从 URL 下载文件到工作目录下的 files 目录
@@ -1783,44 +1965,15 @@ ipcMain.handle("download-file", async (_event, url: string) => {
 
       let fileName = getFileNameFromUrl(parsedUrl);
 
-      // 使用 fetch API 下载文件（参考 yishe-admin 的实现）
+      // 下载文件：fetch 优先，失败时自动重试并使用 axios 兜底。
       try {
-        const DOWNLOAD_TIMEOUT = 120000; // 下载超时120秒
-
-        // 创建 AbortController 用于超时控制
-        const controller = new AbortController();
-        const timeoutId = setTimeout(
-          () => controller.abort(),
-          DOWNLOAD_TIMEOUT,
+        const downloadPayload = await downloadUrlToBuffer(
+          normalizedUrl,
+          parsedUrl,
         );
 
-        // 使用 fetch 下载文件，参考 yishe-admin 的实现
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            Accept: "*/*",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            Referer: parsedUrl.origin,
-          },
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        // 检查响应状态
-        if (!response.ok) {
-          return {
-            success: false,
-            message: `下载失败: HTTP ${response.status} ${response.statusText}`,
-            error: "HTTP_ERROR",
-            statusCode: response.status,
-          };
-        }
-
         // 从响应头获取文件名（如果 Content-Disposition 存在）
-        const contentDisposition = response.headers.get("content-disposition");
+        const contentDisposition = downloadPayload.contentDisposition;
         if (contentDisposition) {
           const suggestedFileName =
             getFileNameFromContentDisposition(contentDisposition);
@@ -1833,8 +1986,8 @@ ipcMain.handle("download-file", async (_event, url: string) => {
         fileName = buildCachedDownloadFileName(
           cacheKey,
           fileName,
-          url,
-          response.headers.get("content-type"),
+          normalizedUrl,
+          downloadPayload.contentType,
         );
 
         const finalFilePath = pathJoin(filesDir, fileName);
@@ -1849,7 +2002,7 @@ ipcMain.handle("download-file", async (_event, url: string) => {
             fileName,
             filePath: finalFilePath,
             fileSize: stats.size,
-            contentType: response.headers.get("content-type"),
+            contentType: downloadPayload.contentType,
             downloadedAt:
               manifest[cacheKey]?.downloadedAt || new Date().toISOString(),
             originalFileName,
@@ -1865,9 +2018,7 @@ ipcMain.handle("download-file", async (_event, url: string) => {
           };
         }
 
-        // 获取响应数据并写入文件
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
+        const buffer = downloadPayload.buffer;
 
         // 写入文件
         fs.writeFileSync(finalFilePath, buffer);
@@ -1880,7 +2031,7 @@ ipcMain.handle("download-file", async (_event, url: string) => {
           fileName,
           filePath: finalFilePath,
           fileSize: stats.size,
-          contentType: response.headers.get("content-type"),
+          contentType: downloadPayload.contentType,
           downloadedAt: new Date().toISOString(),
           originalFileName,
         };
@@ -1891,7 +2042,7 @@ ipcMain.handle("download-file", async (_event, url: string) => {
           message: "下载完成",
           filePath: finalFilePath,
           fileSize: stats.size,
-          downloadedBytes: buffer.length,
+          downloadedBytes: downloadPayload.downloadedBytes,
           cacheKey,
         };
       } catch (error: any) {
@@ -1907,8 +2058,9 @@ ipcMain.handle("download-file", async (_event, url: string) => {
         // 处理其他错误
         return {
           success: false,
-          message: `下载失败: ${error.message || "未知错误"}`,
+          message: `下载失败: ${getDownloadErrorMessage(error)}`,
           error: "DOWNLOAD_ERROR",
+          statusCode: getDownloadErrorStatus(error) || undefined,
         };
       }
     } catch (error: any) {

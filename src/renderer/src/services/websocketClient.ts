@@ -65,6 +65,7 @@ const WS_STALE_RECONNECT_MS = 75_000;
 const WS_RECOVERY_DEBOUNCE_MS = 5_000;
 const UPLOADER_RUNTIME_SYNC_INTERVAL = 4_000;
 const PHOTOSHOP_RUNTIME_SYNC_INTERVAL = 8_000;
+const PS_AUTOMATION_PRODUCTION_STATUS_INTERVAL = 5_000;
 const IMAGE_PROCESSING_RUNTIME_SYNC_INTERVAL = 8_000;
 const VIDEO_TEMPLATE_RUNTIME_SYNC_INTERVAL = 5_000;
 const IMAGE_PROCESSING_REQUEST_TIMEOUT_MS = 20_000;
@@ -543,6 +544,7 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
 let uploaderRuntimeSyncInterval: ReturnType<typeof setInterval> | null = null;
 let photoshopRuntimeSyncInterval: ReturnType<typeof setInterval> | null = null;
+let psAutomationProductionStatusInterval: ReturnType<typeof setInterval> | null = null;
 let imageProcessingRuntimeSyncInterval: ReturnType<typeof setInterval> | null =
   null;
 let videoTemplateRuntimeSyncInterval: ReturnType<typeof setInterval> | null =
@@ -995,6 +997,51 @@ function emitPsAutomationStatus(patch?: Partial<typeof autoPsdBatchState>) {
   }
 
   socket.emit("ps-automation-status", buildPsAutomationSnapshot());
+}
+
+function stopPsAutomationProductionStatusSync() {
+  if (psAutomationProductionStatusInterval) {
+    clearInterval(psAutomationProductionStatusInterval);
+    psAutomationProductionStatusInterval = null;
+  }
+}
+
+function syncCurrentPsdSetProductionHeartbeat(reason = "heartbeat") {
+  if (!isProductionInProgress || !currentProductionPsdSetId) {
+    return;
+  }
+
+  emitPsAutomationStatus();
+  void syncPsdSetProductionStatus({
+    psdSetId: currentProductionPsdSetId,
+    status: "processing",
+    message:
+      String(autoPsdBatchState.currentStep || "").trim() ||
+      "制作中",
+    progress:
+      typeof autoPsdBatchState.progress === "number"
+        ? autoPsdBatchState.progress
+        : undefined,
+    total: 100,
+    taskId: currentProductionTaskId,
+  });
+  if (reason !== "interval") {
+    logger.info("[psd-set] production heartbeat synced", {
+      reason,
+      psdSetId: currentProductionPsdSetId,
+      taskId: currentProductionTaskId,
+      currentStep: autoPsdBatchState.currentStep,
+      progress: autoPsdBatchState.progress,
+    });
+  }
+}
+
+function startPsAutomationProductionStatusSync() {
+  stopPsAutomationProductionStatusSync();
+  syncCurrentPsdSetProductionHeartbeat("start");
+  psAutomationProductionStatusInterval = setInterval(() => {
+    syncCurrentPsdSetProductionHeartbeat("interval");
+  }, PS_AUTOMATION_PRODUCTION_STATUS_INTERVAL);
 }
 
 function buildBrowserAutomationExecutionSnapshot() {
@@ -4703,13 +4750,19 @@ async function syncPsdSetProductionStatus(event: {
   message?: string;
   progress?: number;
   total?: number;
+  taskId?: string | null;
 }) {
   const statusMessage = String(event.message || "").trim();
+  const taskId =
+    String(event.taskId || currentProductionTaskId || "").trim() || null;
+  let emittedBySocket = false;
 
   try {
     if (socket && socket.connected) {
       socket.emit("production-status", {
         psdSetId: event.psdSetId,
+        taskId,
+        commandId: taskId,
         status: event.status,
         message: statusMessage,
         progress: event.progress,
@@ -4719,12 +4772,17 @@ async function syncPsdSetProductionStatus(event: {
         assignedClientId: identity.clientId,
         assignedMachineCode: identity.machineCode,
       });
+      emittedBySocket = true;
     }
   } catch (error) {
     emitter.emit("log", {
       level: "warn",
       message: `[ws] 发送 production-status 失败: ${serializeError(error)}`,
     });
+  }
+
+  if (emittedBySocket) {
+    return;
   }
 
   try {
@@ -4763,6 +4821,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     progress: 0,
     lastError: null,
   });
+  startPsAutomationProductionStatusSync();
   void syncServiceRuntime("photoshop");
 
   // 发送开始事件，触发全局loading
@@ -5866,6 +5925,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
 
     throw error;
   } finally {
+    stopPsAutomationProductionStatusSync();
     // 清除制作状态
     isProductionInProgress = false;
     currentProductionTaskId = null;
