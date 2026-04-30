@@ -95,7 +95,16 @@ async function getAutoBrowserModule() {
 
 async function getServerModule() {
   if (!serverModulePromise) {
-    serverModulePromise = import("./server");
+    serverModulePromise = import("./server").then((module) => {
+      if (typeof module.setTokenPersistenceHandlers === "function") {
+        module.setTokenPersistenceHandlers({
+          saveToken: saveCachedAuthToken,
+          clearToken: clearCachedAuthToken,
+          getToken: getCachedAuthToken,
+        });
+      }
+      return module;
+    });
   }
 
   return serverModulePromise;
@@ -215,6 +224,33 @@ const store = new Store({
     workspaceDirectory: "",
   },
 });
+const AUTH_TOKEN_STORE_KEY = "auth.token";
+
+function normalizeAuthToken(token: unknown): string {
+  return String(token || "").trim();
+}
+
+function saveCachedAuthToken(token: string): void {
+  const normalizedToken = normalizeAuthToken(token);
+  if (!normalizedToken) {
+    clearCachedAuthToken();
+    return;
+  }
+  store.set(AUTH_TOKEN_STORE_KEY, normalizedToken);
+  writeMainLog("INFO", "登录 token 已写入本地缓存", {
+    hasToken: true,
+  });
+}
+
+function getCachedAuthToken(): string | null {
+  const token = normalizeAuthToken(store.get(AUTH_TOKEN_STORE_KEY, ""));
+  return token || null;
+}
+
+function clearCachedAuthToken(): void {
+  store.delete(AUTH_TOKEN_STORE_KEY);
+  writeMainLog("INFO", "登录 token 本地缓存已清除");
+}
 
 function getOrCreateDeviceKey(): string {
   const existing = String(store.get("deviceKey", "") || "").trim();

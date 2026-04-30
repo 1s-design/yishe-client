@@ -27,8 +27,14 @@ if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === undefined) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
 
-// 用内存变量存储 token
+// 用内存变量存储 token；主进程可注入持久化回调，把 token 跨重启保存到 electron-store。
 let token: string | null = null;
+type TokenPersistenceHandlers = {
+  saveToken?: (token: string) => void;
+  clearToken?: () => void;
+  getToken?: () => string | null;
+};
+let tokenPersistenceHandlers: TokenPersistenceHandlers | null = null;
 
 function writeLocalServerLog(
   level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
@@ -43,9 +49,24 @@ function writeLocalServerLog(
   });
 }
 
+export function setTokenPersistenceHandlers(handlers: TokenPersistenceHandlers): void {
+  tokenPersistenceHandlers = handlers || null;
+  const cachedToken = tokenPersistenceHandlers?.getToken?.();
+  if (cachedToken && !token) {
+    token = cachedToken;
+    writeLocalServerLog('INFO', '已从本地缓存恢复 token', { hasToken: true });
+  }
+}
+
+function clearToken(): void {
+  token = null;
+  tokenPersistenceHandlers?.clearToken?.();
+}
+
 // 导出保存 token 的函数和读取函数，供主进程使用
 export function saveToken(newToken: string): void {
   token = newToken;
+  tokenPersistenceHandlers?.saveToken?.(newToken);
   writeLocalServerLog('INFO', '本地服务 token 已保存', { hasToken: !!newToken });
 }
 
@@ -301,7 +322,7 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
       res.status(400).json({ success: false, message: 'token 不能为空' });
       return;
     }
-    token = newToken;
+    saveToken(newToken);
     res.json({ success: true });
   });
 
@@ -325,7 +346,7 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
    *                   example: true
    */
   app.post('/api/logoutToken', async (_req, res) => {
-    token = null;
+    clearToken();
     writeLocalServerLog('INFO', '本地服务 token 已清空，准备停止服务');
     // 登出时停止服务
     if (stopServerFn) {

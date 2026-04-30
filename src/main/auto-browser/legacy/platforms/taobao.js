@@ -86,6 +86,18 @@ async function checkLogin(page) {
   return await isShopPlatformLoggedIn(page, PLATFORM_KEY);
 }
 
+async function fillTextLocator(locator, value) {
+  if ((await locator.count()) <= 0) {
+    return false;
+  }
+  await locator.waitFor({ timeout: 3000, state: "visible" });
+  await locator.scrollIntoViewIfNeeded().catch(() => undefined);
+  await locator.click({ clickCount: 3 }).catch(() => undefined);
+  await locator.fill("").catch(() => undefined);
+  await locator.fill(value);
+  return true;
+}
+
 async function fillTaobaoTitle(page, title) {
   const normalizedTitle = normalizeTitle(title);
   if (!normalizedTitle) {
@@ -94,6 +106,10 @@ async function fillTaobaoTitle(page, title) {
   }
 
   const selectors = [
+    '#sell-field-title input',
+    '#sell-field-title textarea',
+    'xpath=//*[@id="sell-field-title"]//following::input[1]',
+    'xpath=//*[@id="sell-field-title"]//following::textarea[1]',
     'input[placeholder*="标题"]',
     'textarea[placeholder*="标题"]',
     'input[placeholder*="宝贝"]',
@@ -105,14 +121,10 @@ async function fillTaobaoTitle(page, title) {
   for (const selector of selectors) {
     try {
       const locator = page.locator(selector).first();
-      if ((await locator.count()) <= 0) continue;
-      await locator.waitFor({ timeout: 3000, state: "visible" });
-      await locator.scrollIntoViewIfNeeded().catch(() => undefined);
-      await locator.click({ clickCount: 3 }).catch(() => undefined);
-      await locator.fill("").catch(() => undefined);
-      await locator.fill(normalizedTitle);
-      logger.info(`淘宝标题已填写: selector=${selector}, title=${normalizedTitle}`);
-      return true;
+      if (await fillTextLocator(locator, normalizedTitle)) {
+        logger.info(`淘宝标题已填写: selector=${selector}, title=${normalizedTitle}`);
+        return true;
+      }
     } catch (error) {
       logger.warn(`淘宝标题填写尝试失败: selector=${selector}, error=${error?.message || error}`);
     }
@@ -122,62 +134,207 @@ async function fillTaobaoTitle(page, title) {
   return false;
 }
 
-async function fillTaobaoProductCode(page, productCode) {
+async function fillTaobaoSkuOuterIds(page, productCode) {
   const normalizedProductCode = normalizeProductCode(productCode);
+  const result = {
+    fieldCount: 0,
+    filledCount: 0,
+  };
+
   if (!normalizedProductCode) {
-    logger.info("淘宝商家编码为空，跳过填写");
-    return 0;
+    logger.info("淘宝 productCode 为空，跳过 skuOuterId 填写");
+    return result;
   }
 
-  const selectors = [
-    'input[placeholder*="商家编码"]',
-    'textarea[placeholder*="商家编码"]',
-    'input[placeholder*="商品编码"]',
-    'textarea[placeholder*="商品编码"]',
-    'input[placeholder*="货号"]',
-    'textarea[placeholder*="货号"]',
-    'input[placeholder*="SKU"]',
-    'textarea[placeholder*="SKU"]',
-    'input[name*="outer"]',
-    'input[name*="code"]',
-  ];
+  const fieldLocator = page.locator('[id$="-skuOuterId"]');
+  const fieldCount = await fieldLocator.count().catch(() => 0);
+  result.fieldCount = fieldCount;
 
-  let filledCount = 0;
-  for (const selector of selectors) {
-    try {
-      const locator = page.locator(selector);
-      const count = await locator.count();
-      if (count <= 0) continue;
+  if (fieldCount <= 0) {
+    logger.warn("淘宝未找到 skuOuterId 字段区域");
+    return result;
+  }
 
-      for (let index = 0; index < count; index += 1) {
-        const input = locator.nth(index);
-        if (!(await input.isVisible().catch(() => false))) continue;
-        await input.scrollIntoViewIfNeeded().catch(() => undefined);
-        await input.click({ clickCount: 3 }).catch(() => undefined);
-        await input.fill("").catch(() => undefined);
-        await input.fill(normalizedProductCode);
-        filledCount += 1;
+  for (let index = 0; index < fieldCount; index += 1) {
+    const field = fieldLocator.nth(index);
+    const fieldId = await field.getAttribute("id").catch(() => "");
+    const inputCandidates = [
+      field.locator("input, textarea").first(),
+      field.locator(
+        'xpath=following::*[(self::input or self::textarea) and not(@disabled)][1]',
+      ),
+    ];
+
+    let filled = false;
+    for (const input of inputCandidates) {
+      try {
+        if (await fillTextLocator(input, normalizedProductCode)) {
+          filled = true;
+          result.filledCount += 1;
+          logger.info("淘宝 skuOuterId 已填写", {
+            index,
+            fieldId,
+            productCode: normalizedProductCode,
+          });
+          break;
+        }
+      } catch (error) {
+        logger.warn("淘宝 skuOuterId 填写尝试失败", {
+          index,
+          fieldId,
+          error: error?.message || String(error),
+        });
       }
+    }
 
-      if (filledCount > 0) {
-        logger.info(
-          `淘宝商家编码已填写: selector=${selector}, count=${filledCount}, value=${normalizedProductCode}`,
-        );
-        return filledCount;
-      }
-    } catch (error) {
-      logger.warn(
-        `淘宝商家编码填写尝试失败: selector=${selector}, error=${error?.message || error}`,
-      );
+    if (!filled) {
+      logger.warn("淘宝 skuOuterId 未找到可填写输入框", {
+        index,
+        fieldId,
+      });
     }
   }
 
-  logger.warn("淘宝未找到可填写的商家编码输入框");
-  return filledCount;
+  logger.info("淘宝 skuOuterId 填写流程结束", {
+    fieldCount: result.fieldCount,
+    filledCount: result.filledCount,
+  });
+  return result;
+}
+
+async function clickTextButtonInLocator(rootLocator, text, timeout = 5000) {
+  const candidates = [
+    rootLocator.locator("button").filter({ hasText: new RegExp(`^\\s*${text}\\s*$`) }).first(),
+    rootLocator.locator('[role="button"]').filter({ hasText: new RegExp(`^\\s*${text}\\s*$`) }).first(),
+    rootLocator.locator(`text="${text}"`).first(),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if ((await candidate.count().catch(() => 0)) <= 0) {
+        continue;
+      }
+      await candidate.waitFor({ timeout, state: "visible" });
+      await candidate.scrollIntoViewIfNeeded().catch(() => undefined);
+      await candidate.click({ timeout });
+      return true;
+    } catch {
+      // Try the next candidate. Taobao often wraps button text in nested spans.
+    }
+  }
+
+  return false;
+}
+
+async function clickTextButtonByPatternInLocator(rootLocator, pattern, timeout = 5000) {
+  const candidates = [
+    rootLocator.locator("button").filter({ hasText: pattern }).first(),
+    rootLocator.locator('[role="button"]').filter({ hasText: pattern }).first(),
+    rootLocator.locator("*").filter({ hasText: pattern }).first(),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if ((await candidate.count().catch(() => 0)) <= 0) {
+        continue;
+      }
+      await candidate.waitFor({ timeout, state: "visible" });
+      await candidate.scrollIntoViewIfNeeded().catch(() => undefined);
+      await candidate.click({ timeout });
+      return true;
+    } catch {
+      // Try the next candidate. Some dialogs render buttons as nested text nodes.
+    }
+  }
+
+  return false;
+}
+
+async function clearTaobaoDetailImages(page) {
+  const result = {
+    containerFound: false,
+    clearClicked: false,
+    confirmClicked: false,
+  };
+  const container = page.locator("#struct-descRepublicOfSell").first();
+
+  try {
+    await container.waitFor({ timeout: 10000, state: "visible" });
+    await container.scrollIntoViewIfNeeded().catch(() => undefined);
+    result.containerFound = true;
+  } catch (error) {
+    logger.warn("淘宝未找到详情图容器 #struct-descRepublicOfSell", {
+      error: error?.message || String(error),
+    });
+    return result;
+  }
+
+  result.clearClicked = await clickTextButtonInLocator(container, "清空");
+  if (!result.clearClicked) {
+    logger.warn("淘宝详情图容器内未找到清空按钮");
+    return result;
+  }
+  logger.info("淘宝详情图已点击清空按钮");
+  await page.waitForTimeout(300);
+
+  result.confirmClicked = await clickTextButtonInLocator(page, "确定", 8000);
+  if (!result.confirmClicked) {
+    logger.warn("淘宝详情图清空弹窗未找到确定按钮");
+    return result;
+  }
+
+  logger.info("淘宝详情图清空已确认");
+  return result;
+}
+
+async function openTaobaoDetailImagePanel(page) {
+  const result = {
+    containerFound: false,
+    panelFound: false,
+    imageButtonClicked: false,
+  };
+  const container = page.locator("#struct-descRepublicOfSell").first();
+
+  try {
+    await container.waitFor({ timeout: 10000, state: "visible" });
+    await container.scrollIntoViewIfNeeded().catch(() => undefined);
+    result.containerFound = true;
+  } catch (error) {
+    logger.warn("淘宝未找到详情图容器，无法打开图片选择面板", {
+      error: error?.message || String(error),
+    });
+    return result;
+  }
+
+  const panel = container.locator("#panel_edit").first();
+  try {
+    await panel.waitFor({ timeout: 8000, state: "visible" });
+    result.panelFound = true;
+  } catch (error) {
+    logger.warn("淘宝详情图容器内未找到 #panel_edit", {
+      error: error?.message || String(error),
+    });
+    return result;
+  }
+
+  result.imageButtonClicked = await clickTextButtonInLocator(panel, "图片", 8000);
+  if (!result.imageButtonClicked) {
+    logger.warn("淘宝详情图 #panel_edit 内未找到图片按钮");
+    return result;
+  }
+
+  logger.info("淘宝详情图图片选择面板已打开");
+  return result;
 }
 
 async function getTaobaoMainImagesFrame(page) {
   const frameElement = page.locator('iframe#mainImagesGroup');
+  await frameElement.waitFor({ timeout: 10000, state: "attached" });
+  return await frameElement.contentFrame();
+}
+
+async function getTaobaoDetailImagesFrame(page) {
+  const frameElement = page.locator(".media-img-plug iframe").first();
   await frameElement.waitFor({ timeout: 10000, state: "attached" });
   return await frameElement.contentFrame();
 }
@@ -266,10 +423,9 @@ async function waitTaobaoBatchUploadCompleted(page, filePaths) {
   return result;
 }
 
-async function searchTaobaoUploadedImageName(page, searchName, index) {
-  const frame = await getTaobaoMainImagesFrame(page);
+async function searchTaobaoImageNameInFrame(frame, searchName, index, contextName) {
   if (!frame) {
-    logger.warn("淘宝未找到主图上传 iframe，无法搜索图片名称", { index });
+    logger.warn(`淘宝未找到${contextName} iframe，无法搜索图片名称`, { index });
     return false;
   }
 
@@ -281,17 +437,16 @@ async function searchTaobaoUploadedImageName(page, searchName, index) {
   await input.fill("");
   await input.fill(searchName);
   await input.press("Enter");
-  logger.info("淘宝已搜索上传图片名称", {
+  logger.info(`淘宝${contextName}已搜索图片名称`, {
     index,
     imageName: searchName,
   });
   return true;
 }
 
-async function clickTaobaoFirstSearchedImage(page, index) {
-  const frame = await getTaobaoMainImagesFrame(page);
+async function clickTaobaoFirstSearchedImageInFrame(frame, index, contextName) {
   if (!frame) {
-    logger.warn("淘宝未找到主图上传 iframe，无法选择搜索图片", { index });
+    logger.warn(`淘宝未找到${contextName} iframe，无法选择搜索图片`, { index });
     return false;
   }
 
@@ -324,11 +479,160 @@ async function clickTaobaoFirstSearchedImage(page, index) {
   }).catch(() => null);
 
   await firstItem.click({ timeout: 5000 });
-  logger.info("淘宝已点击搜索结果第一张图片", {
+  logger.info(`淘宝${contextName}已点击搜索结果第一张图片`, {
     index,
     item: itemDebug,
   });
   return true;
+}
+
+async function searchTaobaoUploadedImageName(page, searchName, index) {
+  const frame = await getTaobaoMainImagesFrame(page);
+  return searchTaobaoImageNameInFrame(frame, searchName, index, "主图");
+}
+
+async function clickTaobaoFirstSearchedImage(page, index) {
+  const frame = await getTaobaoMainImagesFrame(page);
+  return clickTaobaoFirstSearchedImageInFrame(frame, index, "主图");
+}
+
+async function selectTaobaoDetailImagesFromLibrary(page, imagePaths) {
+  const targetImagePaths = (imagePaths || []).filter(Boolean);
+  const result = {
+    requested: targetImagePaths.length,
+    selectedPaths: [],
+    failedPaths: [],
+    confirmClicked: false,
+  };
+
+  if (!targetImagePaths.length) {
+    logger.info("淘宝无已上传主图可用于详情图选择，跳过详情图选择");
+    return result;
+  }
+
+  for (let index = 0; index < targetImagePaths.length; index += 1) {
+    const imagePath = targetImagePaths[index];
+    const searchNames = getUploadedLocalFileSearchNames(imagePath);
+    let selected = false;
+
+    for (const searchName of searchNames) {
+      try {
+        const frame = await getTaobaoDetailImagesFrame(page);
+        const searched = await searchTaobaoImageNameInFrame(
+          frame,
+          searchName,
+          index,
+          "详情图",
+        );
+        if (!searched) {
+          continue;
+        }
+
+        await page.waitForTimeout(500);
+        const clicked = await clickTaobaoFirstSearchedImageInFrame(
+          frame,
+          index,
+          "详情图",
+        );
+        if (!clicked) {
+          continue;
+        }
+
+        selected = true;
+        result.selectedPaths.push(imagePath);
+        logger.info("淘宝详情图已从素材库选中图片", {
+          index,
+          imageName: searchName,
+          file: toUserFriendlyPath(imagePath),
+        });
+        await page.waitForTimeout(500);
+        break;
+      } catch (error) {
+        logger.warn("淘宝详情图搜索选择图片失败", {
+          index,
+          imageName: searchName,
+          file: toUserFriendlyPath(imagePath),
+          error: error?.message || String(error),
+        });
+      }
+    }
+
+    if (!selected) {
+      result.failedPaths.push(imagePath);
+      logger.warn("淘宝详情图未能选中图片", {
+        index,
+        names: searchNames.join(", "),
+        file: toUserFriendlyPath(imagePath),
+      });
+    }
+  }
+
+  logger.info("淘宝详情图素材库选择流程结束", {
+    requested: result.requested,
+    selected: result.selectedPaths.length,
+    failed: result.failedPaths.length,
+  });
+
+  if (result.selectedPaths.length > 0) {
+    const confirmPattern = /^\s*确定\s*(?:[（(]\s*\d+\s*[）)])?\s*$/;
+    try {
+      const frame = await getTaobaoDetailImagesFrame(page);
+      result.confirmClicked = await clickTextButtonByPatternInLocator(
+        frame,
+        confirmPattern,
+        8000,
+      );
+    } catch (error) {
+      logger.warn("淘宝详情图 iframe 内确认按钮点击失败，准备全页面兜底", {
+        error: error?.message || String(error),
+      });
+    }
+
+    if (!result.confirmClicked) {
+      result.confirmClicked = await clickTextButtonByPatternInLocator(
+        page,
+        confirmPattern,
+        8000,
+      );
+    }
+
+    if (result.confirmClicked) {
+      logger.info("淘宝详情图图片选择已点击确定按钮", {
+        selected: result.selectedPaths.length,
+      });
+    } else {
+      logger.warn("淘宝详情图图片选择未找到确定按钮", {
+        selected: result.selectedPaths.length,
+      });
+    }
+  }
+
+  return result;
+}
+
+async function submitTaobaoProductInfo(page) {
+  const clicked = await clickTextButtonInLocator(page, "提交宝贝信息", 10000);
+  if (clicked) {
+    logger.info("淘宝已点击提交宝贝信息按钮");
+    return true;
+  }
+
+  logger.warn("淘宝未找到提交宝贝信息按钮");
+  return false;
+}
+
+async function waitTaobaoSubmitSuccess(page) {
+  try {
+    const successText = page.locator("text=商品提交成功").first();
+    await successText.waitFor({ timeout: 60000, state: "visible" });
+    logger.info("淘宝商品提交成功提示已出现");
+    return true;
+  } catch (error) {
+    logger.warn("淘宝提交后未等待到商品提交成功提示", {
+      error: error?.message || String(error),
+    });
+    return false;
+  }
 }
 
 async function countTaobaoMainImageEmptySlots(page) {
@@ -532,6 +836,7 @@ async function uploadTaobaoImagesFromSingleDialog(page, emptySlot, filePaths) {
   }
 
   await blurTaobaoPageAfterImageSelection(page, selectedFiles.length);
+  await waitTaobaoMainImagesFrameClosed(page, selectedFiles.length);
   return selectedFiles;
 }
 
@@ -542,10 +847,16 @@ async function uploadTaobaoImages(page, images, imageManager) {
     availableInputs: 0,
     availableSlots: 0,
     uploadedPaths: [],
+    selectionCompleted: false,
+    selectorClosed: null,
   };
   if (!targetImages.length) {
     logger.info("淘宝未提供主图，跳过图片上传");
-    return result;
+    return {
+      ...result,
+      selectionCompleted: true,
+      selectorClosed: true,
+    };
   }
 
   const preparedImages = await prepareImages(targetImages, imageManager);
@@ -555,6 +866,8 @@ async function uploadTaobaoImages(page, images, imageManager) {
   if (!preparedImages.filePaths.length) {
     return {
       ...result,
+      selectionCompleted: true,
+      selectorClosed: true,
       tempFiles: preparedImages.tempFiles,
     };
   }
@@ -575,6 +888,8 @@ async function uploadTaobaoImages(page, images, imageManager) {
     logger.warn("淘宝未找到主图空位，暂不上传图片");
     return {
       ...result,
+      selectionCompleted: false,
+      selectorClosed: true,
       tempFiles: preparedImages.tempFiles,
     };
   }
@@ -597,8 +912,16 @@ async function uploadTaobaoImages(page, images, imageManager) {
     }
   }
 
+  result.selectionCompleted = result.uploadedPaths.length >= result.requested;
+  if (result.selectionCompleted) {
+    result.selectorClosed = await waitTaobaoMainImagesFrameClosed(
+      page,
+      result.uploadedPaths.length,
+    );
+  }
+
   logger.info(
-    `淘宝主图上传流程结束: uploaded=${result.uploadedPaths.length}/${result.requested}, files=${result.uploadedPaths.map(getPathFileName).join(", ")}`,
+    `淘宝主图上传流程结束: uploaded=${result.uploadedPaths.length}/${result.requested}, selectionCompleted=${result.selectionCompleted}, selectorClosed=${result.selectorClosed}, files=${result.uploadedPaths.map(getPathFileName).join(", ")}`,
   );
 
   return {
@@ -665,18 +988,60 @@ export async function publishToTaobao(publishInfo = {}) {
       };
     }
 
-    const titleFilled = await fillTaobaoTitle(page, title);
-    const productCodeFilledCount = await fillTaobaoProductCode(page, productCode);
     const uploadResult = await uploadTaobaoImages(
       page,
       sourceImages,
       imageManager,
     );
     tempFiles.push(...(uploadResult.tempFiles || []));
+    const mainImagesReady =
+      uploadResult.requested <= 0 ||
+      (uploadResult.selectionCompleted && uploadResult.selectorClosed !== false);
+    if (!mainImagesReady) {
+      return {
+        success: false,
+        message: "淘宝主图未全部上传并选择完成，已停止后续操作",
+        data: {
+          itemId,
+          targetUrl,
+          finalUrl: page.url(),
+          requested: uploadResult.requested,
+          availableInputs: uploadResult.availableInputs,
+          availableSlots: uploadResult.availableSlots,
+          uploaded: uploadResult.uploadedPaths.length,
+          uploadedPaths: uploadResult.uploadedPaths.map(toUserFriendlyPath),
+          uploadedNames: uploadResult.uploadedPaths.map(getPathFileName),
+          mainImagesSelectionCompleted: uploadResult.selectionCompleted,
+          mainImagesSelectorClosed: uploadResult.selectorClosed,
+          pageKeptOpen: true,
+        },
+      };
+    }
+
+    const titleFilled = await fillTaobaoTitle(page, title);
+    const skuOuterIdFillResult = await fillTaobaoSkuOuterIds(page, productCode);
+    const detailImagesClearResult = await clearTaobaoDetailImages(page);
+    const detailImagePanelResult = await openTaobaoDetailImagePanel(page);
+    const detailImagesSelectResult = detailImagePanelResult.imageButtonClicked
+      ? await selectTaobaoDetailImagesFromLibrary(page, uploadResult.uploadedPaths)
+      : {
+          requested: uploadResult.uploadedPaths.length,
+          selectedPaths: [],
+          failedPaths: uploadResult.uploadedPaths,
+          confirmClicked: false,
+        };
+    const submitClicked = await submitTaobaoProductInfo(page);
+    const submitSuccess = submitClicked
+      ? await waitTaobaoSubmitSuccess(page)
+      : false;
 
     return {
-      success: true,
-      message: "淘宝发布基础流程已打开并写入基础数据，后续页面调整逻辑待补充",
+      success: submitSuccess,
+      message: submitSuccess
+        ? "淘宝商品提交成功"
+        : submitClicked
+          ? "淘宝已点击提交宝贝信息，但未等待到商品提交成功提示"
+          : "淘宝发布信息已填写，但未找到提交宝贝信息按钮",
       data: {
         itemId,
         targetUrl,
@@ -684,13 +1049,33 @@ export async function publishToTaobao(publishInfo = {}) {
         titleFilled,
         titleValue: titleFilled ? title : "",
         productCode,
-        productCodeFilledCount,
+        skuOuterIdFieldCount: skuOuterIdFillResult.fieldCount,
+        skuOuterIdFilledCount: skuOuterIdFillResult.filledCount,
+        detailImagesContainerFound: detailImagesClearResult.containerFound,
+        detailImagesClearClicked: detailImagesClearResult.clearClicked,
+        detailImagesClearConfirmed: detailImagesClearResult.confirmClicked,
+        detailImagePanelFound: detailImagePanelResult.panelFound,
+        detailImagePanelOpened: detailImagePanelResult.imageButtonClicked,
+        detailImagesRequested: detailImagesSelectResult.requested,
+        detailImagesSelected: detailImagesSelectResult.selectedPaths.length,
+        detailImagesFailed: detailImagesSelectResult.failedPaths.length,
+        detailImagesConfirmClicked: detailImagesSelectResult.confirmClicked,
+        detailImagesSelectedPaths:
+          detailImagesSelectResult.selectedPaths.map(toUserFriendlyPath),
+        detailImagesSelectedNames:
+          detailImagesSelectResult.selectedPaths.map(getPathFileName),
+        detailImagesFailedPaths:
+          detailImagesSelectResult.failedPaths.map(toUserFriendlyPath),
+        submitProductInfoClicked: submitClicked,
+        submitSuccess,
         requested: uploadResult.requested,
         availableInputs: uploadResult.availableInputs,
         availableSlots: uploadResult.availableSlots,
         uploaded: uploadResult.uploadedPaths.length,
         uploadedPaths: uploadResult.uploadedPaths.map(toUserFriendlyPath),
         uploadedNames: uploadResult.uploadedPaths.map(getPathFileName),
+        mainImagesSelectionCompleted: uploadResult.selectionCompleted,
+        mainImagesSelectorClosed: uploadResult.selectorClosed,
         pageKeptOpen: true,
       },
     };
