@@ -4751,6 +4751,7 @@ async function syncPsdSetProductionStatus(event: {
   progress?: number;
   total?: number;
   taskId?: string | null;
+  forceHttp?: boolean;
 }) {
   const statusMessage = String(event.message || "").trim();
   const taskId =
@@ -4781,7 +4782,7 @@ async function syncPsdSetProductionStatus(event: {
     });
   }
 
-  if (emittedBySocket) {
+  if (emittedBySocket && !event.forceHttp) {
     return;
   }
 
@@ -4789,6 +4790,8 @@ async function syncPsdSetProductionStatus(event: {
     await stickerPsdSetApi.updateStatus(event.psdSetId, {
       status: event.status,
       statusMessage: statusMessage || undefined,
+      taskId,
+      commandId: taskId,
     });
   } catch (error) {
     emitter.emit("log", {
@@ -5839,6 +5842,10 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     await stickerPsdSetApi.update(psdSetId, {
       images: updatedImages,
       processingTime: processingTime,
+      status: "completed",
+      statusMessage: "制作完成",
+      taskId: taskId || currentProductionTaskId || psdSetId,
+      commandId: taskId || currentProductionTaskId || psdSetId,
     });
 
     await syncPsdSetProductionStatus({
@@ -5847,6 +5854,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       message: "制作完成",
       progress: 5,
       total: 5,
+      forceHttp: true,
     });
     emitPsAutomationStatus({
       running: false,
