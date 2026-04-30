@@ -717,7 +717,7 @@ async function clickTaobaoFirstSearchedImage(page, index) {
 }
 
 async function selectTaobaoDetailImagesFromLibrary(page, imagePaths) {
-  const targetImagePaths = (imagePaths || []).filter(Boolean);
+  const targetImagePaths = (imagePaths || []).filter(Boolean).slice(0, 1);
   const result = {
     requested: targetImagePaths.length,
     selectedPaths: [],
@@ -729,6 +729,11 @@ async function selectTaobaoDetailImagesFromLibrary(page, imagePaths) {
     logger.info("淘宝无已上传主图可用于详情图选择，跳过详情图选择");
     return result;
   }
+  logger.info("淘宝详情图仅选择第一张主图素材，减少图片库操作次数", {
+    sourceCount: (imagePaths || []).filter(Boolean).length,
+    requested: targetImagePaths.length,
+    file: toUserFriendlyPath(targetImagePaths[0]),
+  });
 
   for (let index = 0; index < targetImagePaths.length; index += 1) {
     const imagePath = targetImagePaths[index];
