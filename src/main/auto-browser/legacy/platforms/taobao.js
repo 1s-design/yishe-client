@@ -9,6 +9,7 @@ import { logger } from "../utils/logger.js";
 const PLATFORM_KEY = "taobao";
 const DEFAULT_PUBLISH_URL = "https://item.upload.taobao.com/sell/v2/publish.htm";
 const TAOBAO_ACTION_DELAY_MS = 900;
+const TAOBAO_IMAGE_LIBRARY_DELAY_RANGE_MS = [1600, 3800];
 const TAOBAO_SECURITY_CHECK_TIMEOUT_MS = 90 * 1000;
 const TAOBAO_SECURITY_CHECK_POLL_MS = 1500;
 const TAOBAO_SECURITY_TEXT_PATTERN =
@@ -96,6 +97,20 @@ async function waitTaobaoActionDelay(page, reason = "action") {
   logger.debug?.("淘宝操作节流等待完成", {
     reason,
     delayMs: TAOBAO_ACTION_DELAY_MS,
+  });
+}
+
+function randomIntBetween(min, max) {
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
+
+async function waitTaobaoImageLibraryDelay(page, reason = "image_library_action") {
+  const [minDelay, maxDelay] = TAOBAO_IMAGE_LIBRARY_DELAY_RANGE_MS;
+  const delayMs = randomIntBetween(minDelay, maxDelay);
+  await page.waitForTimeout(delayMs);
+  logger.info("淘宝图片库随机等待完成", {
+    reason,
+    delayMs,
   });
 }
 
@@ -607,7 +622,7 @@ async function searchTaobaoImageNameInFrame(frame, searchName, index, contextNam
     }))) {
       return false;
     }
-    await waitTaobaoActionDelay(page, `${contextName}_before_search_input`);
+    await waitTaobaoImageLibraryDelay(page, `${contextName}_before_search_input`);
   }
 
   const input = frame
@@ -623,7 +638,7 @@ async function searchTaobaoImageNameInFrame(frame, searchName, index, contextNam
     imageName: searchName,
   });
   if (page) {
-    await waitTaobaoActionDelay(page, `${contextName}_after_search_enter`);
+    await waitTaobaoImageLibraryDelay(page, `${contextName}_after_search_enter`);
     await waitTaobaoSecurityCheckResolved(page, {
       frames: [frame],
       reason: `${contextName}_after_search`,
@@ -645,7 +660,7 @@ async function clickTaobaoFirstSearchedImageInFrame(frame, index, contextName) {
     }))) {
       return false;
     }
-    await waitTaobaoActionDelay(page, `${contextName}_before_select_result_click`);
+    await waitTaobaoImageLibraryDelay(page, `${contextName}_before_select_result_click`);
   }
 
   const list = frame
@@ -682,7 +697,7 @@ async function clickTaobaoFirstSearchedImageInFrame(frame, index, contextName) {
     item: itemDebug,
   });
   if (page) {
-    await waitTaobaoActionDelay(page, `${contextName}_after_select_result_click`);
+    await waitTaobaoImageLibraryDelay(page, `${contextName}_after_select_result_click`);
     await waitTaobaoSecurityCheckResolved(page, {
       frames: [frame],
       reason: `${contextName}_after_select_result`,
@@ -750,7 +765,7 @@ async function selectTaobaoDetailImagesFromLibrary(page, imagePaths) {
           imageName: searchName,
           file: toUserFriendlyPath(imagePath),
         });
-        await page.waitForTimeout(500);
+        await waitTaobaoImageLibraryDelay(page, "detail_images_between_selected_images");
         break;
       } catch (error) {
         logger.warn("淘宝详情图搜索选择图片失败", {
