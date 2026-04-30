@@ -9,10 +9,10 @@ import { logger } from "../utils/logger.js";
 const PLATFORM_KEY = "taobao";
 const DEFAULT_PUBLISH_URL = "https://item.upload.taobao.com/sell/v2/publish.htm";
 const TAOBAO_ACTION_DELAY_MS = 900;
-const TAOBAO_SECURITY_CHECK_TIMEOUT_MS = 5 * 60 * 1000;
+const TAOBAO_SECURITY_CHECK_TIMEOUT_MS = 90 * 1000;
 const TAOBAO_SECURITY_CHECK_POLL_MS = 1500;
 const TAOBAO_SECURITY_TEXT_PATTERN =
-  /验证码|安全验证|验证一下|拖动滑块|滑块|请完成验证|请按住滑块|环境异常|风险验证/;
+  /验证码|安全验证|拖动滑块|请完成验证|请按住滑块|风险验证/;
 
 function toUserFriendlyPath(filePath) {
   return String(filePath || "").replace(/\\/g, "/");
@@ -103,25 +103,66 @@ async function getTaobaoSecuritySignal(target) {
   try {
     const signal = await target.evaluate((patternSource) => {
       const pattern = new RegExp(patternSource);
-      const bodyText = String(document.body?.innerText || "").slice(0, 4000);
-      const matchedText = pattern.test(bodyText);
-      const matchedNode = !!document.querySelector(
-        [
-          '[class*="captcha"]',
-          '[id*="captcha"]',
-          '[class*="nc-container"]',
-          '[id*="nc"]',
-          '[class*="slider"]',
-          '[class*="verify"]',
-          '[id*="verify"]',
-          '[class*="risk"]',
-        ].join(","),
-      );
+      const isVisible = (element) => {
+        if (!element || element === document.body || element === document.documentElement) {
+          return false;
+        }
+        const style = window.getComputedStyle(element);
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          Number(style.opacity) === 0
+        ) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        return rect.width >= 20 && rect.height >= 12;
+      };
+      const visibleElements = Array.from(
+        document.querySelectorAll(
+          [
+            "button",
+            "[role='button']",
+            "span",
+            "div",
+            "p",
+            "label",
+            "[class*='captcha']",
+            "[id*='captcha']",
+            "[class*='nc-container']",
+            "[class*='slider']",
+            "[class*='verify']",
+          ].join(","),
+        ),
+      ).filter(isVisible);
+
+      const matchedTextElement = visibleElements.find((element) => {
+        const text = String(element.innerText || element.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        return text && text.length <= 300 && pattern.test(text);
+      });
+      const matchedNodeElement = visibleElements.find((element) => {
+        const marker = `${element.id || ""} ${element.className || ""}`;
+        if (!/(captcha|nc-container|slider|verify)/i.test(marker)) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        return rect.width >= 120 && rect.height >= 30;
+      });
+      const matchedText = !!matchedTextElement;
+      const matchedNode = !!matchedNodeElement;
+      const previewElement = matchedTextElement || matchedNodeElement;
+      const textPreview = String(
+        previewElement?.innerText || previewElement?.textContent || document.body?.innerText || "",
+      )
+        .replace(/\s+/g, " ")
+        .slice(0, 160);
       return {
         detected: matchedText || matchedNode,
         matchedText,
         matchedNode,
-        textPreview: bodyText.replace(/\s+/g, " ").slice(0, 160),
+        textPreview,
       };
     }, TAOBAO_SECURITY_TEXT_PATTERN.source);
 
@@ -429,9 +470,6 @@ async function openTaobaoDetailImagePanel(page) {
     return result;
   }
 
-  await waitTaobaoSecurityCheckResolved(page, {
-    reason: "detail_images_before_open_panel",
-  });
   await waitTaobaoActionDelay(page, "detail_images_before_open_panel_click");
   result.imageButtonClicked = await clickTextButtonInLocator(panel, "图片", 8000);
   if (!result.imageButtonClicked) {
@@ -868,9 +906,6 @@ async function waitTaobaoMainImagesFrameClosed(page, index) {
 
 async function uploadTaobaoImageByEmptySlot(page, emptySlot, filePath, index) {
   const beforeEmptyCount = await countTaobaoMainImageEmptySlots(page);
-  await waitTaobaoSecurityCheckResolved(page, {
-    reason: "main_image_before_open_single_dialog",
-  });
   await waitTaobaoActionDelay(page, "main_image_before_open_single_dialog_click");
   const clickedElementDebug = await emptySlot.evaluate((element) => {
     element.scrollIntoView({ block: "center", inline: "center" });
@@ -937,9 +972,6 @@ async function uploadTaobaoImageByEmptySlot(page, emptySlot, filePath, index) {
 }
 
 async function uploadTaobaoImagesFromSingleDialog(page, emptySlot, filePaths) {
-  await waitTaobaoSecurityCheckResolved(page, {
-    reason: "main_image_before_open_dialog",
-  });
   await waitTaobaoActionDelay(page, "main_image_before_open_dialog_click");
   const clickedElementDebug = await emptySlot.evaluate((element) => {
     element.scrollIntoView({ block: "center", inline: "center" });
