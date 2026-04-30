@@ -59,8 +59,6 @@ export interface UpdateStickerPsdSetDto {
   images?: string[]
   stickerPsdSetConfig?: any
   processingTime?: number
-  taskId?: string | null
-  commandId?: string | null
 }
 
 export interface PageStickerPsdSetDto {
@@ -115,10 +113,7 @@ export const stickerPsdSetApi = {
   /**
    * 更新套图状态
    */
-  async updateStatus(
-    id: string,
-    data: { status: string; statusMessage?: string; taskId?: string | null; commandId?: string | null }
-  ): Promise<any> {
+  async updateStatus(id: string, data: { status: string; statusMessage?: string }): Promise<any> {
     return request.post({
       url: `/sticker-psd-set/${id}/status`,
       data
