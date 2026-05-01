@@ -110,6 +110,25 @@ async function getServerModule() {
   return serverModulePromise;
 }
 
+async function ensureLocalServiceStartedForCachedToken(scene: string) {
+  const cachedToken = getCachedAuthToken();
+  if (!cachedToken) {
+    return false;
+  }
+
+  const { isServerRunning, startServer } = await getServerModule();
+  if (isServerRunning()) {
+    return true;
+  }
+
+  writeMainLog("INFO", "检测到本地缓存 token，自动启动 1519 服务", {
+    scene,
+    hasToken: true,
+  });
+  startServer(1519);
+  return true;
+}
+
 async function getSharp(): Promise<SharpFactory> {
   if (!sharpModulePromise) {
     sharpModulePromise = import("sharp");
@@ -910,6 +929,15 @@ if (!gotTheLock) {
 app.whenReady().then(() => {
   // 初始化默认工作目录（在创建窗口之前）
   initializeDefaultWorkspaceDirectory();
+  void ensureLocalServiceStartedForCachedToken("app-ready").catch((error) => {
+    writeMainLog("ERROR", "缓存 token 自动启动 1519 服务失败", {
+      scene: "app-ready",
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : error,
+    });
+  });
 
   // 添加协议注册代码
 
@@ -972,11 +1000,13 @@ app.whenReady().then(() => {
 
   // token 读取相关 IPC 处理器
   ipcMain.handle("get-token", async () => {
+    await ensureLocalServiceStartedForCachedToken("get-token");
     const { getTokenValue } = await getServerModule();
     return getTokenValue();
   });
 
   ipcMain.handle("is-token-exist", async () => {
+    await ensureLocalServiceStartedForCachedToken("is-token-exist");
     const { isTokenExist } = await getServerModule();
     return isTokenExist();
   });
@@ -1113,6 +1143,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("check-local-service-status", async () => {
     try {
+      await ensureLocalServiceStartedForCachedToken("check-local-service-status");
       const { isServerRunning } = await getServerModule();
       const running = isServerRunning();
       // 尝试访问健康检查接口来确认服务是否真正可用

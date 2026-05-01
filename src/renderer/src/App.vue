@@ -589,18 +589,26 @@ async function checkLocalServiceStatus() {
   }
 
   try {
-    const status = await nativeApi.checkLocalServiceStatus();
-    localServiceStatus.value = status?.running ? "running" : "stopped";
+    let status = await nativeApi.checkLocalServiceStatus();
+    if (!status?.running) {
+      const token = await getTokenFromClient();
+      if (token && typeof nativeApi.startLocalService === "function") {
+        await nativeApi.startLocalService().catch(() => null);
+        status = await nativeApi.checkLocalServiceStatus();
+      }
+    }
+    const available = !!(status?.running && status?.available !== false);
+    localServiceStatus.value = available ? "running" : "stopped";
     websocketClient.updateServiceStatus("localService", {
       label: "本地服务",
-      connected: !!status?.running,
-      available: !!status?.running,
-      status: status?.running ? "connected" : "disconnected",
-      state: status?.running ? "idle" : "offline",
+      connected: available,
+      available,
+      status: available ? "connected" : "disconnected",
+      state: available ? "idle" : "offline",
       busy: false,
-      message: status?.running ? "1519 本地服务可用" : "1519 本地服务未启动",
+      message: available ? "1519 本地服务可用" : "1519 未响应",
       lastCheckedAt,
-      lastError: null,
+      lastError: available ? null : "1519 未响应",
       supportedCommands: ["refreshRuntime", "health"],
     }, { emitClientInfo: false });
   } catch (error: any) {
