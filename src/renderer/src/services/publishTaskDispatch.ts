@@ -43,6 +43,7 @@ type ExecutePublishTaskOptions = {
 };
 
 const PUBLISH_TASK_HEARTBEAT_INTERVAL_MS = 10_000;
+const PUBLISH_TASK_RUNTIME_UPDATE_MIN_INTERVAL_MS = 5_000;
 
 class PublishTaskRetryableError extends Error {
   constructor(message: string) {
@@ -264,6 +265,50 @@ function startPublishTaskHeartbeat(
   return () => window.clearInterval(timer);
 }
 
+function buildRuntimeSnapshotFingerprint(snapshot: PublishTaskRuntimeSnapshot | null) {
+  if (!snapshot) {
+    return "";
+  }
+
+  return JSON.stringify({
+    status: snapshot.status || null,
+    message: snapshot.message || null,
+    currentStep: snapshot.currentStep || null,
+    progress: snapshot.progress ?? null,
+    error: snapshot.error || null,
+    runtimeStatus: snapshot.runtime?.status || null,
+    runtimeStep: snapshot.runtime?.step || null,
+    runtimeLogCount: snapshot.runtime?.logCount ?? null,
+    runtimeLastLogId: snapshot.runtime?.lastLogId || null,
+    runtimeLastLogMessage: snapshot.runtime?.lastLogMessage || null,
+  });
+}
+
+function createRuntimeUpdateEmitter(options: ExecutePublishTaskOptions | undefined) {
+  let lastFingerprint = "";
+  let lastEmittedAt = 0;
+
+  return async (snapshot: PublishTaskRuntimeSnapshot) => {
+    const fingerprint = buildRuntimeSnapshotFingerprint(snapshot);
+    const now = Date.now();
+    const terminal =
+      snapshot.status === "completed" ||
+      snapshot.status === "failed" ||
+      snapshot.status === "pending";
+    const shouldEmit =
+      terminal ||
+      fingerprint !== lastFingerprint ||
+      now - lastEmittedAt >= PUBLISH_TASK_RUNTIME_UPDATE_MIN_INTERVAL_MS;
+    if (!shouldEmit) {
+      return;
+    }
+
+    lastFingerprint = fingerprint;
+    lastEmittedAt = now;
+    await emitRuntime(options, snapshot);
+  };
+}
+
 class PublishTaskStoppedError extends Error {
   constructor(message: string) {
     super(message);
@@ -327,6 +372,7 @@ export async function executePublishQueueTask(
   });
   let detail: QueueMessage | null = null;
   let lastRuntimeSnapshot: PublishTaskRuntimeSnapshot | null = null;
+  const emitRuntimeUpdate = createRuntimeUpdateEmitter(options);
   const stopHeartbeat = startPublishTaskHeartbeat(options, () => {
     if (!lastRuntimeSnapshot) {
       return null;
@@ -436,7 +482,7 @@ export async function executePublishQueueTask(
           progress: status === "completed" ? 100 : undefined,
           error: error || null,
         };
-        await emitRuntime(options, lastRuntimeSnapshot);
+        await emitRuntimeUpdate(lastRuntimeSnapshot);
       },
       onRuntimeUpdate: async ({ runtime, mappedStatus, task }) => {
         lastRuntimeSnapshot = {
@@ -476,7 +522,7 @@ export async function executePublishQueueTask(
               ? task?.error?.message || runtime?.error || null
               : null,
         };
-        await emitRuntime(options, lastRuntimeSnapshot);
+        await emitRuntimeUpdate(lastRuntimeSnapshot);
       },
     };
 

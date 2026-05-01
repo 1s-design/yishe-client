@@ -141,6 +141,7 @@ export interface PlatformTaskExecutionContext {
 
 const UPLOADER_POLL_INTERVAL_MS = 2000;
 const UPLOADER_POLL_TIMEOUT_MS = 30 * 60 * 1000;
+const UPLOADER_RUNTIME_SYNC_MIN_INTERVAL_MS = 8000;
 
 export function getPlatformCapability(platform: string): PlatformCapability | null {
   return PLATFORM_CAPABILITIES[platform] || null;
@@ -619,6 +620,17 @@ function buildRuntimeSnapshot(
       runtimeTask?.updatedAt ||
       resolvedLastLog?.timestamp ||
       new Date().toISOString(),
+  });
+}
+
+function buildRuntimeSnapshotFingerprint(runtime: Record<string, any>) {
+  return JSON.stringify({
+    sourceId: runtime?.sourceId || null,
+    status: runtime?.status || null,
+    step: runtime?.step || null,
+    logCount: runtime?.logCount ?? null,
+    lastLogId: runtime?.lastLogId || null,
+    lastLogMessage: runtime?.lastLogMessage || null,
   });
 }
 
@@ -1434,6 +1446,8 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     const startedAt = Date.now();
     const profileId = resolveBrowserProfileId(row);
     let lastLogId: string | undefined;
+    let lastRuntimeSyncFingerprint = "";
+    let lastRuntimeSyncAt = 0;
 
     while (Date.now() - startedAt < UPLOADER_POLL_TIMEOUT_MS) {
       await context?.throwIfStopped?.({
@@ -1505,9 +1519,19 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
           undefined,
       });
 
-      await this.updateTaskRuntime(row, runtimeSnapshot, context);
-
       const mappedStatus = mapUploaderTaskStatus(runtimeTask.status);
+      const runtimeFingerprint = buildRuntimeSnapshotFingerprint(runtimeSnapshot);
+      const shouldSyncRuntime =
+        mappedStatus !== "processing" ||
+        runtimeLogs.length > 0 ||
+        runtimeFingerprint !== lastRuntimeSyncFingerprint ||
+        Date.now() - lastRuntimeSyncAt >= UPLOADER_RUNTIME_SYNC_MIN_INTERVAL_MS;
+      if (shouldSyncRuntime) {
+        await this.updateTaskRuntime(row, runtimeSnapshot, context);
+        lastRuntimeSyncFingerprint = runtimeFingerprint;
+        lastRuntimeSyncAt = Date.now();
+      }
+
       await context?.onRuntimeUpdate?.({
         sourceId,
         runtime: runtimeSnapshot,
