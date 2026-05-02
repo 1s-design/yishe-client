@@ -875,9 +875,10 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
       logger.warn(
         `环境 ${profile.id} 存在卡住的浏览器连接，已丢弃旧连接并重新建立: ${session.lastConnectError}`,
       );
+      // 旧连接卡住时必须清掉旧 Chrome，否则下一次连接可能再拉起一个窗口。
       await closeSession(session, {
         preserveError: true,
-        killProcess: false,
+        killProcess: true,
       }).catch(() => {});
     }
   }
