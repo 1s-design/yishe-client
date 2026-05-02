@@ -20,6 +20,8 @@ const REGION_ORIGIN_MAP = {
   us: 'https://agentseller-us.temu.com',
   eu: 'https://agentseller-eu.temu.com'
 };
+const TEMU_STORED_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
+const temuStoredSessionCache = new Map();
 
 function asPlainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -39,6 +41,80 @@ function toStringArray(value) {
 
 function normalizeRegion(region) {
   return REGION_ORIGIN_MAP[region] ? region : 'global';
+}
+
+function normalizeText(value) {
+  return String(value || '').trim();
+}
+
+function buildCookieHeader(cookies = {}) {
+  return Object.entries(asPlainObject(cookies))
+    .filter(([name, value]) => normalizeText(name) && value !== undefined && value !== null)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('; ');
+}
+
+function pickTemuSessionCookies(sessionContext = {}, region = 'global') {
+  const normalizedRegion = normalizeRegion(region);
+  const regionCookies = normalizedRegion === 'us'
+    ? sessionContext.cookies_us
+    : normalizedRegion === 'eu'
+      ? sessionContext.cookies_eu
+      : sessionContext.cookies_global;
+  const candidates = [
+    regionCookies,
+    sessionContext.cookies_global,
+    sessionContext.cookies
+  ];
+  return candidates.find((item) => Object.keys(asPlainObject(item)).length) || {};
+}
+
+function pickTemuSessionHeaders(sessionContext = {}, region = 'global') {
+  const normalizedRegion = normalizeRegion(region);
+  const regionHeaders = asPlainObject(sessionContext.regionHeaders);
+  const candidates = [
+    normalizedRegion === 'us' ? regionHeaders.us : normalizedRegion === 'eu' ? regionHeaders.eu : regionHeaders.global,
+    sessionContext.headersTemplate,
+    sessionContext.headers
+  ];
+  return candidates.find((item) => Object.keys(asPlainObject(item)).length) || {};
+}
+
+async function getCachedTemuSessionContext(profileId = '', options = {}) {
+  const cacheKey = normalizeText(profileId) || '__default__';
+  const cached = temuStoredSessionCache.get(cacheKey);
+  const now = Date.now();
+  if (!options.forceRefresh && cached && cached.expiresAt > now) {
+    return {
+      sessionContext: cached.sessionContext,
+      cacheHit: true
+    };
+  }
+
+  const sessionContext = await resolveTemuRealtimeSessionContext({ profileId });
+  if (sessionContext?.success) {
+    temuStoredSessionCache.set(cacheKey, {
+      sessionContext,
+      expiresAt: now + TEMU_STORED_SESSION_CACHE_TTL_MS
+    });
+  } else {
+    temuStoredSessionCache.delete(cacheKey);
+  }
+  logger.info('[temu-api-action] 已从服务端读取 Temu 已存会话', {
+    profileId,
+    success: !!sessionContext?.success,
+    cookieCount: sessionContext?.cookieCount || 0,
+    mallId: sessionContext?.mallId || '',
+    antiContentReady: !!sessionContext?.antiContent
+  });
+  return {
+    sessionContext,
+    cacheHit: false
+  };
+}
+
+function clearCachedTemuSessionContext(profileId = '') {
+  temuStoredSessionCache.delete(normalizeText(profileId) || '__default__');
 }
 
 function buildUrl(region, path) {
@@ -84,94 +160,95 @@ function buildFeatureResponse({ action, profileId, region, requestResult, result
 
 async function requestTemuJson(region, path, json = {}, options = {}) {
   const url = buildUrl(region, path);
-  const browser = await getOrCreateBrowser({ profileId: options.profileId });
-  const page = await browser.newPage({ background: true, activate: false });
-  const requestCapture = createTemuLiveRequestCapture(page.context());
-  try {
-    const origin = new URL(url).origin;
-    await page.goto(`${origin}/`, {
-      waitUntil: 'domcontentloaded',
-      timeout: Number(options.navigationTimeoutMs || 30_000) || 30_000
-    }).catch(() => undefined);
-    if (!requestCapture.state.antiContent || !requestCapture.state.mallId) {
-      await page.reload({
-        waitUntil: 'domcontentloaded',
-        timeout: 20_000
-      }).catch(() => undefined);
-      await page.waitForTimeout(2500).catch(() => undefined);
-    }
-    const retryCount = Math.max(0, Number(options.retryCount ?? 2) || 0);
-    let lastResult = null;
-    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
-      const capturedHeaders = {
-        ...(requestCapture.state.antiContent ? { 'anti-content': requestCapture.state.antiContent } : {}),
-        ...(requestCapture.state.mallId ? { mallid: requestCapture.state.mallId } : {})
-      };
-      lastResult = await page.evaluate(async ({ requestUrl, requestJson, requestOptions }) => {
-        const method = requestOptions.method || 'POST';
-        try {
-          const response = await fetch(requestUrl, {
-            method,
-            credentials: 'include',
-            headers: {
-              accept: 'application/json, text/plain, */*',
-              'content-type': 'application/json',
-              ...(requestOptions.headers || {})
-            },
-            body: method === 'GET' ? undefined : JSON.stringify(requestJson || {})
-          });
-          const rawText = await response.text();
-          let payload = null;
-          try {
-            payload = rawText ? JSON.parse(rawText) : null;
-          } catch {
-            payload = null;
-          }
-          return {
-            success: response.ok && payload?.success !== false,
-            status: response.status,
-            payload,
-            rawText,
-            url: requestUrl
-          };
-        } catch (error) {
-          return {
-            success: false,
-            status: 0,
-            payload: {
-              success: false,
-              error_msg: error?.message || String(error)
-            },
-            rawText: error?.stack || error?.message || String(error),
-            url: requestUrl,
-            message: error?.message || String(error)
-          };
-        }
-      }, {
-        requestUrl: url,
-        requestJson: json || {},
-        requestOptions: {
-          method: options.method || 'POST',
-          headers: {
-            ...capturedHeaders,
-            ...(options.headers || {})
-          }
-        }
-      });
-      if (lastResult?.status !== 0 || attempt >= retryCount) {
-        return lastResult;
-      }
-      await page.waitForTimeout(800 * (attempt + 1)).catch(() => undefined);
-      await page.goto(`${origin}/`, {
-        waitUntil: 'domcontentloaded',
-        timeout: 20_000
-      }).catch(() => undefined);
-    }
-    return lastResult;
-  } finally {
-    requestCapture.dispose();
-    await page.close().catch(() => undefined);
+  const method = String(options.method || 'POST').toUpperCase();
+  const { sessionContext, cacheHit } = await getCachedTemuSessionContext(options.profileId);
+  const sessionCookies = pickTemuSessionCookies(sessionContext || {}, region);
+  const sessionHeaders = pickTemuSessionHeaders(sessionContext || {}, region);
+  const cookieHeader = normalizeText(
+    buildCookieHeader(sessionCookies) || sessionContext?.cookieHeader
+  );
+  if (!sessionContext?.success || !cookieHeader) {
+    return {
+      success: false,
+      status: 0,
+      payload: {
+        success: false,
+        error_msg: '当前 Temu 已存会话缺失，无法直接调用 Temu 接口，请先重新采集会话'
+      },
+      rawText: '',
+      url,
+      message: '当前 Temu 已存会话缺失，无法直接调用 Temu 接口，请先重新采集会话'
+    };
   }
+  const origin = new URL(url).origin;
+  const headers = {
+    accept: sessionHeaders.accept || 'application/json, text/plain, */*',
+    'content-type': sessionHeaders['content-type'] || 'application/json',
+    origin: sessionHeaders.origin || origin,
+    referer: sessionHeaders.referer || sessionContext.currentUrl || `${origin}/`,
+    cookie: cookieHeader,
+    ...(sessionHeaders['user-agent'] ? { 'user-agent': sessionHeaders['user-agent'] } : {}),
+    ...(sessionContext.mallId || sessionHeaders.mallid ? { mallid: sessionContext.mallId || sessionHeaders.mallid } : {}),
+    ...(sessionContext.antiContent || sessionHeaders['anti-content']
+      ? { 'anti-content': sessionContext.antiContent || sessionHeaders['anti-content'] }
+      : {}),
+    ...(options.headers || {})
+  };
+  const retryCount = Math.max(0, Number(options.retryCount ?? 2) || 0);
+  let lastResult = null;
+  logger.debug?.('[temu-api-action] 使用已存会话直接请求 Temu 接口', {
+    profileId: options.profileId || '',
+    region: normalizeRegion(region),
+    method,
+    url,
+    sessionCacheHit: cacheHit,
+    cookieCount: Object.keys(sessionCookies).length,
+    mallId: headers.mallid || '',
+    antiContentReady: !!headers['anti-content']
+  });
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: method === 'GET' ? undefined : JSON.stringify(json || {})
+      });
+      const rawText = await response.text();
+      let payload = null;
+      try {
+        payload = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        payload = null;
+      }
+      lastResult = {
+        success: response.ok && payload?.success !== false,
+        status: response.status,
+        payload,
+        rawText,
+        url
+      };
+      if ([401, 403].includes(response.status)) {
+        clearCachedTemuSessionContext(options.profileId);
+      }
+    } catch (error) {
+      lastResult = {
+        success: false,
+        status: 0,
+        payload: {
+          success: false,
+          error_msg: error?.message || String(error)
+        },
+        rawText: error?.stack || error?.message || String(error),
+        url,
+        message: error?.message || String(error)
+      };
+    }
+    if (lastResult?.status !== 0 || attempt >= retryCount) {
+      return lastResult;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+  }
+  return lastResult;
 }
 
 function extractLifecycleSkcSpuPairs(payload) {
