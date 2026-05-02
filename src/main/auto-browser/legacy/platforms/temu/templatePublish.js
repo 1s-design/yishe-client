@@ -342,7 +342,7 @@ function resolveTemuTemplateInfoCandidates(publishInfo = {}) {
                     code: normalizeText(item?.code),
                     sort: Number(item?.sort) || index + 1
                 }))
-                .filter((item) => item.code)
+                .filter((item) => item.vendorProductId !== undefined || item.code || item.name || item.model)
                 .sort((a, b) => a.sort - b.sort)
             : []
     };
@@ -741,7 +741,9 @@ function normalizeTemuTemplateExtCodes(payload = {}, codeInfo = {}) {
     const vendorProductMappings = Array.isArray(codeInfo.vendorProductMappings)
         ? codeInfo.vendorProductMappings
         : [];
-    const skcExtCode = stickerCode && vendorCode ? `${stickerCode}-${vendorCode}` : '';
+    const skcExtCode = stickerCode
+        ? (vendorCode ? `${stickerCode}-${vendorCode}` : stickerCode)
+        : '';
 
     if (!Array.isArray(nextPayload.productSkcReqs)) {
         return nextPayload;
@@ -761,8 +763,10 @@ function normalizeTemuTemplateExtCodes(payload = {}, codeInfo = {}) {
         nextSkc.productSkuReqs = skuList.map((sku, skuIndex) => {
             const nextSku = isPlainObject(sku) ? { ...sku } : {};
             const vendorProductCode = normalizeText(vendorProductMappings[skuIndex]?.code);
-            if (stickerCode && vendorProductCode) {
-                nextSku.extCode = `${stickerCode}-${vendorProductCode}`;
+            if (stickerCode) {
+                nextSku.extCode = vendorProductCode
+                    ? `${stickerCode}-${vendorProductCode}`
+                    : stickerCode;
             }
             return nextSku;
         });
