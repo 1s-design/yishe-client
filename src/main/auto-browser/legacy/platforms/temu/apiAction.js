@@ -2,8 +2,9 @@ import { getOrCreateBrowser } from '../../services/BrowserService.js';
 import { logger } from '../../utils/logger.js';
 import {
   createTemuLiveRequestCapture,
-  uploadTemuImagesToCloud
+  resolveTemuRealtimeSessionContext
 } from './imageUpload.js';
+import { uploadTemuRealPictureImagesToCloud } from './realPictureImageUpload.js';
 
 const TEMU_GOODS_STATUS_LABEL_MAP = {
   1: '在售中',
@@ -262,6 +263,20 @@ function normalizeRealPicturePositionMap(value) {
   return result;
 }
 
+function normalizeRequiredRealPicturePositionMap(value) {
+  const inputMap = normalizeRealPicturePositionMap(value);
+  const allImageUrls = Array.from(new Set(
+    Object.values(inputMap).flatMap((urls) => normalizeRemoteUrlList(urls))
+  ));
+  if (!allImageUrls.length) {
+    return {};
+  }
+  return {
+    1: allImageUrls,
+    2: allImageUrls
+  };
+}
+
 function mergePositionImages(...maps) {
   return maps.reduce((result, map) => {
     Object.entries(asPlainObject(map)).forEach(([position, urls]) => {
@@ -429,19 +444,14 @@ function summarizeRealPictureListResult(result = {}) {
 }
 
 function buildRealPictureSubmitPayload(target, uploadImgUrls, confirmType = 4) {
-  const positions = Object.keys(asPlainObject(uploadImgUrls))
-    .map((position) => Number(position))
-    .filter((position) => Number.isFinite(position) && position > 0)
-    .sort((a, b) => a - b);
-  if (!positions.length) {
-    throw new Error('至少需要提供一个 position 的图片');
-  }
+  const requiredImageMap = normalizeRequiredRealPicturePositionMap(uploadImgUrls);
+  const positions = [1, 2];
   return {
     confirm_type: Number(confirmType || 4),
     spu_id: target.spuId,
     goods_id: target.goodsId,
     real_picture_info_list: positions.map((position) => {
-      const imageUrls = uploadImgUrls[String(position)] || [];
+      const imageUrls = requiredImageMap[String(position)] || requiredImageMap[position] || [];
       if (!imageUrls.length) {
         throw new Error(`position ${position} 至少需要一张图片`);
       }
@@ -573,21 +583,58 @@ function normalizeComplianceItem(item) {
 }
 
 async function uploadRealPicturePositionImages(profileId, region, positionImageUrls) {
+  const requiredPositionImageUrls = normalizeRequiredRealPicturePositionMap(positionImageUrls);
   const sourceEntries = [];
-  Object.entries(positionImageUrls).forEach(([position, urls]) => {
+  Object.entries(requiredPositionImageUrls).forEach(([position, urls]) => {
     normalizeRemoteUrlList(urls).forEach((sourceUrl) => {
       sourceEntries.push({ position, sourceUrl });
     });
   });
   const sources = Array.from(new Set(sourceEntries.map((item) => item.sourceUrl)));
-  const browser = await getOrCreateBrowser({ profileId });
-  const page = await browser.newPage({ background: true, activate: false });
+  logger.info('[temu-api-action] 实拍图上传图片归一化', {
+    inputPositions: Object.keys(asPlainObject(positionImageUrls)),
+    requiredPositions: Object.keys(requiredPositionImageUrls),
+    uniqueSourceCount: sources.length,
+    positionImageCount: Object.fromEntries(
+      Object.entries(requiredPositionImageUrls).map(([position, urls]) => [position, urls.length])
+    )
+  });
+  const storedSessionContext = await resolveTemuRealtimeSessionContext({ profileId });
+  logger.info('[temu-api-action] 实拍图上传服务端会话检查', {
+    hasStoredSession: !!storedSessionContext?.success,
+    cookieCount: storedSessionContext?.cookieCount || 0,
+    mallId: storedSessionContext?.mallId || '',
+    antiContentReady: !!storedSessionContext?.antiContent,
+    source: storedSessionContext?.source || ''
+  });
+
+  let page = null;
+  let requestCapture = null;
   try {
-    const origin = REGION_ORIGIN_MAP[normalizeRegion(region)] || REGION_ORIGIN_MAP.global;
-    await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
-    const uploadResult = await uploadTemuImagesToCloud(page, sources, {
+    if (!storedSessionContext?.success) {
+      const browser = await getOrCreateBrowser({ profileId });
+      const context = typeof browser.contexts === 'function' ? browser.contexts()[0] : null;
+      page = context && typeof context.newPage === 'function'
+        ? await context.newPage()
+        : await browser.newPage({ background: true, activate: false });
+      logger.info('[temu-api-action] 实拍图上传服务端会话不可用，创建页面兜底采集', {
+        reusedContext: !!context,
+        sourceCount: sources.length
+      });
+      requestCapture = createTemuLiveRequestCapture(page.context());
+      const origin = REGION_ORIGIN_MAP[normalizeRegion(region)] || REGION_ORIGIN_MAP.global;
+      await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
+      if (!requestCapture.state.antiContent || !requestCapture.state.mallId) {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => undefined);
+        await page.waitForTimeout(2500).catch(() => undefined);
+      }
+    }
+    const uploadResult = await uploadTemuRealPictureImagesToCloud(page, sources, {
       resourceLabel: '实拍图',
-      emptyMessage: '未提供实拍图图片，跳过上传'
+      emptyMessage: '未提供实拍图图片，跳过上传',
+      sessionContext: storedSessionContext?.success ? storedSessionContext : null,
+      requestCaptureState: requestCapture?.state || {},
+      allowAllCookiesFallback: true
     });
     if (!uploadResult?.success) {
       throw new Error(uploadResult?.message || '实拍图上传 Temu 云文件失败');
@@ -618,7 +665,10 @@ async function uploadRealPicturePositionImages(profileId, region, positionImageU
         .filter((item) => item.uploadedUrl)
     };
   } finally {
-    await page.close().catch(() => undefined);
+    requestCapture?.dispose?.();
+    if (page) {
+      await page.close().catch(() => undefined);
+    }
   }
 }
 
@@ -818,10 +868,10 @@ async function executeAction(actionKey, profileId, region, payload) {
     if (!target.goodsId) throw new Error('未能自动解析 goodsId，请手动传入 goodsId 后重试');
     if (!target.skuIdList.length) throw new Error('未能自动解析 skuIdList，请手动传入 skuIdList 后重试');
 
-    const uploadedReusableMap = normalizeRealPicturePositionMap(
+    const uploadedReusableMap = normalizeRequiredRealPicturePositionMap(
       payload.uploadedPositionImageUrls || payload.uploaded_position_image_urls
     );
-    const positionImageUrls = normalizeRealPicturePositionMap(payload.positionImageUrls || payload.position_image_urls);
+    const positionImageUrls = normalizeRequiredRealPicturePositionMap(payload.positionImageUrls || payload.position_image_urls);
     const uploadResult = Object.keys(uploadedReusableMap).length
       ? {
           uploadedPositionMap: uploadedReusableMap,
@@ -838,6 +888,22 @@ async function executeAction(actionKey, profileId, region, payload) {
     const existingMap = payload.appendToExisting === false ? {} : groupExistingLabelImages(target.labelImageList);
     const finalImageMap = mergePositionImages(existingMap, uploadResult.uploadedPositionMap);
     const submitPayload = buildRealPictureSubmitPayload(target, finalImageMap, Number(payload.confirmType || 4));
+    logger.info('[temu-api-action] 实拍图提交 payload 汇总', {
+      spuId: target.spuId,
+      goodsId: target.goodsId,
+      skuCount: target.skuIdList.length,
+      positions: submitPayload.real_picture_info_list.map((item) => item.position),
+      positionImageCount: Object.fromEntries(
+        submitPayload.real_picture_info_list.map((item) => [
+          item.position,
+          item.sku_photo_info_list?.[0]?.image_list?.length || 0
+        ])
+      ),
+      totalImageReferences: submitPayload.real_picture_info_list.reduce((total, item) => (
+        total + (Array.isArray(item.sku_photo_info_list) ? item.sku_photo_info_list : [])
+          .reduce((skuTotal, skuItem) => skuTotal + (Array.isArray(skuItem.image_list) ? skuItem.image_list.length : 0), 0)
+      ), 0)
+    });
     const response = await requestTemuJson(region, '/api/flash/real_picture/upload_new', submitPayload, { profileId });
     return buildFeatureResponse({
       action: actionKey,

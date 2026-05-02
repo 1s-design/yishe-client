@@ -285,6 +285,20 @@ function buildCookieHeader(cookies = {}) {
     .join("; ");
 }
 
+function normalizeTemuCookieEntries(cookieEntries = []) {
+  return (Array.isArray(cookieEntries) ? cookieEntries : []).reduce(
+    (result, cookie) => {
+      const name = normalizeText(cookie?.name);
+      if (!name || cookie?.value === undefined || cookie?.value === null) {
+        return result;
+      }
+      result[name] = String(cookie.value);
+      return result;
+    },
+    {},
+  );
+}
+
 function buildTemuUploadHeaderCandidates(
   sessionContext = {},
   requestCaptureState = {},
@@ -1140,8 +1154,9 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 60_000) {
   }
 }
 
-async function requestTemuUploadSignature(headerCandidates = []) {
+async function requestTemuUploadSignature(headerCandidates = [], options = {}) {
   let lastError = null;
+  const uploadTag = normalizeText(options.uploadTag) || TEMU_IMAGE_UPLOAD_SIGNATURE_TAG;
 
   for (const headers of headerCandidates) {
     try {
@@ -1154,7 +1169,7 @@ async function requestTemuUploadSignature(headerCandidates = []) {
             "content-type": "application/json",
           },
           body: JSON.stringify({
-            tag: TEMU_IMAGE_UPLOAD_SIGNATURE_TAG,
+            tag: uploadTag,
           }),
         },
         20_000,
@@ -1231,12 +1246,13 @@ function extractFileNameHints(value = "") {
   }
 }
 
-async function uploadSingleTemuImage(fileEntry, headerCandidates = []) {
+async function uploadSingleTemuImage(fileEntry, headerCandidates = [], options = {}) {
   let lastError = null;
   const attemptDetails = [];
+  const storeImageUrl = normalizeText(options.storeImageUrl) || TEMU_STORE_IMAGE_URL;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const signatureResult = await requestTemuUploadSignature(headerCandidates);
+    const signatureResult = await requestTemuUploadSignature(headerCandidates, options);
     if (!signatureResult.success) {
       lastError = new Error(signatureResult.message || "获取图片上传签名失败");
       attemptDetails.push({
@@ -1261,7 +1277,7 @@ async function uploadSingleTemuImage(fileEntry, headerCandidates = []) {
         );
 
         const response = await fetchWithTimeout(
-          TEMU_STORE_IMAGE_URL,
+          storeImageUrl,
           {
             method: "POST",
             headers,
@@ -1331,12 +1347,57 @@ async function refreshTemuUploadSession(page, options = {}) {
     mallid: options.requestCaptureState?.mallId || "",
   };
 
-  return await getTemuCurrentSessionContext(page, {
+  const sessionContext = await getTemuCurrentSessionContext(page, {
     region: "global",
     headersTemplate: fallbackHeadersTemplate,
     mallId: options.requestCaptureState?.mallId || "",
     antiContent: options.requestCaptureState?.antiContent || "",
   });
+  if (sessionContext?.success && sessionContext.cookieHeader) {
+    return sessionContext;
+  }
+
+  if (!options.allowAllCookiesFallback) {
+    return sessionContext;
+  }
+
+  const rawFallbackCookies = await page?.context?.().cookies().catch(() => []);
+  logger.info(`${PLATFORM_NAME}上传会话现场 cookies 检查`, {
+    currentUrl: normalizeText(page?.url?.()),
+    rawCookieCount: Array.isArray(rawFallbackCookies) ? rawFallbackCookies.length : 0,
+    regionCookieCounts: sessionContext?.cookieCounts || {},
+    hasSessionCookieHeader: !!sessionContext?.cookieHeader,
+    sessionMessage: sessionContext?.message || "",
+  });
+  const fallbackCookies = normalizeTemuCookieEntries(rawFallbackCookies);
+  const fallbackCookieHeader = buildCookieHeader(fallbackCookies);
+  if (fallbackCookieHeader) {
+    logger.warn(`${PLATFORM_NAME}上传会话未拿到区域 cookies，已回退使用当前浏览器全部 cookies`, {
+      cookieCount: Object.keys(fallbackCookies).length,
+      originalMessage: sessionContext?.message || "",
+    });
+    return {
+      ...(sessionContext || {}),
+      success: true,
+      message: "",
+      cookies: fallbackCookies,
+      cookies_global: sessionContext?.cookies_global || fallbackCookies,
+      cookieHeader: fallbackCookieHeader,
+      cookieCount: Object.keys(fallbackCookies).length,
+      headers: sessionContext?.headers || fallbackHeadersTemplate,
+      headersTemplate: sessionContext?.headersTemplate || fallbackHeadersTemplate,
+      mallId: sessionContext?.mallId || fallbackHeadersTemplate.mallid || "",
+      antiContent: sessionContext?.antiContent || fallbackHeadersTemplate["anti-content"] || "",
+      effectiveRegion: sessionContext?.effectiveRegion || "global",
+    };
+  }
+
+  logger.error(`${PLATFORM_NAME}上传会话 cookies 采集为空`, {
+    currentUrl: normalizeText(page?.url?.()),
+    sessionMessage: sessionContext?.message || "",
+    cookieCounts: sessionContext?.cookieCounts || {},
+  });
+  return sessionContext;
 }
 
 export function createTemuLiveRequestCapture(context) {
@@ -2001,6 +2062,10 @@ export async function uploadTemuImagesToCloud(
         uploadResult = await uploadSingleTemuImage(
           fileEntry,
           activeHeaderCandidates,
+          {
+            uploadTag: options.uploadTag,
+            storeImageUrl: options.storeImageUrl,
+          },
         );
         if (uploadResult.success) {
           break;
