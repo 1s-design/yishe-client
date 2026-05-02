@@ -10,6 +10,7 @@ import { normalizeText, pushTrace } from './utils.js';
 
 const TEMU_PRODUCT_ADD_URL = 'https://agentseller.temu.com/visage-agent-seller/product/add';
 const TEMU_PRODUCT_SUBMIT_TIMEOUT_MS = 60_000;
+const TEMU_PRODUCT_TITLE_SAFE_MAX_LENGTH = 230;
 
 function isPlainObject(value) {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -295,7 +296,7 @@ function buildTemuTemplatePayloadPreview(payload = {}) {
 
 function fillTemplateTitle(payload = {}, title = '') {
     const nextPayload = isPlainObject(payload) ? { ...payload } : {};
-    const normalizedTitle = normalizeText(title);
+    const normalizedTitle = limitTemuProductTitle(title);
     if (!normalizedTitle) {
         return nextPayload;
     }
@@ -303,6 +304,15 @@ function fillTemplateTitle(payload = {}, title = '') {
     nextPayload.productName = normalizedTitle;
 
     return nextPayload;
+}
+
+function limitTemuProductTitle(value = '') {
+    const normalized = normalizeText(value);
+    if (!normalized) {
+        return '';
+    }
+
+    return Array.from(normalized).slice(0, TEMU_PRODUCT_TITLE_SAFE_MAX_LENGTH).join('');
 }
 
 function resolveTemuTemplateInfoCandidates(publishInfo = {}) {
@@ -784,6 +794,14 @@ function stripTemuTemplateEditOnlyFields(payload = {}) {
     return nextPayload;
 }
 
+function normalizeTemuTemplateProductTitle(payload = {}) {
+    const nextPayload = isPlainObject(payload) ? { ...payload } : {};
+    if (nextPayload.productName) {
+        nextPayload.productName = limitTemuProductTitle(nextPayload.productName);
+    }
+    return nextPayload;
+}
+
 function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
     const templatePayload = cloneSerializable(productTemplate) || {};
     const titleAppliedPayload = fillTemplateTitle(templatePayload, options.title);
@@ -798,8 +816,9 @@ function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
         options.codeInfo || {}
     );
     const normalizedSkuPayload = normalizeTemuTemplateSkuFields(extCodeAppliedPayload);
+    const titleNormalizedPayload = normalizeTemuTemplateProductTitle(normalizedSkuPayload);
     return {
-        payload: stripTemuTemplateEditOnlyFields(normalizedSkuPayload),
+        payload: stripTemuTemplateEditOnlyFields(titleNormalizedPayload),
         templateUsesMagicVariables: false,
         variableWarnings: []
     };

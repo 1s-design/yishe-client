@@ -115,7 +115,7 @@ export function resolveTemuPublishBasicInfo(publishInfo = {}) {
         publishInfo.metadata?.titleConfig?.fixedTitle
     ], {
         multiline: false,
-        maxLength: 200
+        maxLength: 230
     });
 
     const description = resolveTextCandidate([
