@@ -4,6 +4,7 @@ import {
   runTemuSessionRestoreSmallFeature,
   runTemuPublishDetailRequestCaptureSmallFeature,
 } from "../platforms/temu/smallFeatures.js";
+import { runTemuApiActionSmallFeature } from "../platforms/temu/apiAction.js";
 import {
   runDoudianCheckLoginSmallFeature,
   runKuaishouShopCheckLoginSmallFeature,
@@ -183,6 +184,16 @@ const SMALL_FEATURE_REGISTRY = {
       },
     ],
     handler: runTemuSessionRestoreSmallFeature,
+  },
+  "temu-api-action": {
+    key: "temu-api-action",
+    name: "Temu API 动作执行",
+    platform: "temu",
+    category: "api",
+    visibility: "internal",
+    description: "由客户端直接执行 Temu API 动作，服务端只负责调度与状态记录。",
+    timeoutMs: 10 * 60 * 1000,
+    handler: runTemuApiActionSmallFeature,
   },
   "doudian-check-login": {
     key: "doudian-check-login",

@@ -659,13 +659,23 @@ const browserAutomationExecutionSlots = reactive<
 function resolveBrowserAutomationExecutionSlotKey(
   profileId?: string | null,
   fallbackTaskType?: string | null,
+  subTaskType?: string | null,
 ) {
   const normalizedProfileId = String(profileId || "").trim();
-  if (normalizedProfileId) {
-    return `profile:${normalizedProfileId}`;
-  }
   const normalizedTaskType = String(fallbackTaskType || "").trim();
-  return normalizedTaskType ? `task:${normalizedTaskType}` : "task:default";
+  const normalizedSubTaskType = String(subTaskType || "").trim();
+  if (normalizedProfileId) {
+    return [
+      `profile:${normalizedProfileId}`,
+      normalizedTaskType ? `task:${normalizedTaskType}` : "",
+      normalizedSubTaskType ? `sub:${normalizedSubTaskType}` : "",
+    ]
+      .filter(Boolean)
+      .join("|");
+  }
+  return normalizedTaskType
+    ? `task:${normalizedTaskType}${normalizedSubTaskType ? `|sub:${normalizedSubTaskType}` : ""}`
+    : "task:default";
 }
 
 function getBrowserAutomationExecutionEntries() {
@@ -730,10 +740,12 @@ function upsertBrowserAutomationExecutionSlot(
 function isBrowserAutomationExecutionSlotRunning(
   profileId?: string | null,
   fallbackTaskType?: string | null,
+  subTaskType?: string | null,
 ) {
   const slotKey = resolveBrowserAutomationExecutionSlotKey(
     profileId,
     fallbackTaskType,
+    subTaskType,
   );
   return !!browserAutomationExecutionSlots[slotKey]?.running;
 }
@@ -6809,14 +6821,35 @@ function registerBuiltInLocalServices() {
         if (!featureKey) {
           throw new Error("缺少 featureKey");
         }
+        const featureActionKey =
+          featureKey === "temu-api-action"
+            ? String(
+                command.payload?.actionKey ||
+                  (command.payload?.payload as Record<string, unknown> | undefined)?.actionKey ||
+                  "",
+              ).trim()
+            : "";
+        const featureSubActionKey =
+          featureKey === "temu-api-action"
+            ? String(
+                (command.payload?.payload as Record<string, unknown> | undefined)?.detailType ||
+                  ((command.payload?.payload as Record<string, unknown> | undefined)?.payload as Record<string, unknown> | undefined)?.detailType ||
+                  "",
+              ).trim()
+            : "";
+        const featureSlotKey = [featureActionKey, featureSubActionKey].filter(Boolean).join(":");
         const profileId =
           String(command.payload?.profileId || "").trim() || undefined;
-        if (isBrowserAutomationExecutionSlotRunning(profileId, featureKey)) {
+        if (isBrowserAutomationExecutionSlotRunning(profileId, featureKey, featureSlotKey)) {
           return {
             success: false,
-            message: "浏览器自动化环境正在执行工具，请稍后再试",
+            message: featureSlotKey
+              ? `浏览器自动化环境正在执行 ${featureSlotKey}，请稍后再试`
+              : "浏览器自动化环境正在执行工具，请稍后再试",
             data: {
               featureKey,
+              actionKey: featureActionKey || null,
+              subActionKey: featureSubActionKey || null,
               profileId: profileId || null,
               status: "busy",
             },
@@ -6827,12 +6860,14 @@ function registerBuiltInLocalServices() {
         const slotKey = resolveBrowserAutomationExecutionSlotKey(
           profileId,
           featureKey,
+          featureSlotKey,
         );
+        const featureTaskType = featureSlotKey ? `${featureKey}:${featureSlotKey}` : featureKey;
         upsertBrowserAutomationExecutionSlot(slotKey, {
           slotKey,
           running: true,
           taskId: command.commandId || `small-feature:${featureKey}`,
-          taskType: featureKey,
+          taskType: featureTaskType,
           queue: "toolkit",
           profileId: profileId || null,
           currentStep: "工具执行中",
@@ -6862,7 +6897,7 @@ function registerBuiltInLocalServices() {
             slotKey,
             running: false,
             taskId: command.commandId || `small-feature:${featureKey}`,
-            taskType: featureKey,
+            taskType: featureTaskType,
             queue: "toolkit",
             profileId: profileId || null,
             currentStep: "工具执行结束",
@@ -6889,6 +6924,8 @@ function registerBuiltInLocalServices() {
             (response.success ? "工具执行完成" : "工具执行失败"),
           data: {
             featureKey,
+            actionKey: featureActionKey || null,
+            subActionKey: featureSubActionKey || null,
             profileId: profileId || null,
             result: response.data || null,
           },
