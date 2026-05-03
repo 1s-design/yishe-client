@@ -61,6 +61,8 @@ export interface ProcessConfig {
   autoStart?: boolean
   // 启动前是否先执行停止钩子清理旧实例（适合固定端口的单实例服务）
   cleanupBeforeStart?: boolean
+  // 启动前需要兜底清理的本地监听端口（适合 pid 文件丢失后的固定端口服务）
+  cleanupPorts?: number[]
 }
 
 /**
@@ -354,9 +356,11 @@ export class ExternalProcessManager {
       if (config.cleanupBeforeStart) {
         this.writeProcessLog('INFO', '启动前清理外部进程旧实例', {
           processId: config.id,
-          processName: config.name
+          processName: config.name,
+          cleanupPorts: config.cleanupPorts || []
         })
         await this.runStopHook(config)
+        await this.cleanupListeningPorts(config)
       }
 
       // 创建工作目录
@@ -969,6 +973,73 @@ export class ExternalProcessManager {
       .map(config => this.startProcess(config.id))
     await Promise.allSettled(promises)
     this.writeProcessLog('INFO', '批量启动外部进程完成')
+  }
+
+  /**
+   * 固定端口服务的兜底清理：pid 文件丢失或 exe 路径变化时，stopHook 可能停不到旧实例。
+   */
+  private async cleanupListeningPorts(config: ProcessConfig): Promise<void> {
+    if (process.platform !== 'win32' || !config.cleanupPorts?.length) {
+      return
+    }
+
+    for (const port of config.cleanupPorts) {
+      const pids = await this.findListeningPidsByPort(port)
+      if (!pids.length) {
+        continue
+      }
+
+      this.writeProcessLog('WARN', '发现外部进程旧实例占用端口，准备清理', {
+        processId: config.id,
+        processName: config.name,
+        port,
+        pids
+      })
+
+      for (const pid of pids) {
+        await this.killProcessTree(pid)
+      }
+    }
+  }
+
+  private async findListeningPidsByPort(port: number): Promise<number[]> {
+    if (process.platform !== 'win32') {
+      return []
+    }
+
+    return new Promise((resolve) => {
+      const child = spawn('netstat', ['-ano', '-p', 'TCP'], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true
+      })
+      let output = ''
+
+      child.stdout?.on('data', (data) => {
+        output += String(data)
+      })
+
+      child.once('error', () => resolve([]))
+      child.once('exit', () => {
+        const pids = new Set<number>()
+        const portPattern = new RegExp(`[:.]${port}$`)
+
+        for (const line of output.split(/\r?\n/)) {
+          const parts = line.trim().split(/\s+/)
+          if (parts.length < 5 || parts[0].toUpperCase() !== 'TCP') {
+            continue
+          }
+
+          const localAddress = parts[1] || ''
+          const state = parts[3] || ''
+          const pid = Number(parts[4])
+          if (state.toUpperCase() === 'LISTENING' && portPattern.test(localAddress) && Number.isInteger(pid) && pid > 0) {
+            pids.add(pid)
+          }
+        }
+
+        resolve(Array.from(pids))
+      })
+    })
   }
 
   /**

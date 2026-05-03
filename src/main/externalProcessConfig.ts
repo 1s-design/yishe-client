@@ -261,6 +261,7 @@ function buildPsAutomationConfig(): ProcessConfig | null {
       autoRestart: true,
       restartDelay: 3000,
       cleanupBeforeStart: true,
+      cleanupPorts: [Number(PS_AUTOMATION_PORT)],
       stopTimeout: 15000,
       killTimeout: 8000,
       healthCheck: {
@@ -290,6 +291,7 @@ function buildPsAutomationConfig(): ProcessConfig | null {
     autoRestart: true,
     restartDelay: 3000,
     cleanupBeforeStart: true,
+    cleanupPorts: [Number(PS_AUTOMATION_PORT)],
     stopTimeout: 15000,
     killTimeout: 8000,
     healthCheck: {
