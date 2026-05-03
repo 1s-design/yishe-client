@@ -25,7 +25,7 @@ const SMALL_FEATURE_REGISTRY = {
     tips: [
       "只需要执行这一个动作：工具会先检查当前浏览器环境登录态。",
       "如果当前环境未登录且没有填写账号密码，会提示录入账号密码，或者让用户先在浏览器环境中手动登录。",
-      "成功条件已统一：需要拿到核心 cookies、headersTemplate、anti-content、mallList、mallId、accountId，以及 global/us/eu 三套区域 Cookie；缺一项都会判失败。",
+      "成功条件：global 会话可用即可成功；美区/欧区 Cookie 会尽力采集，失败时只作为告警返回。",
     ],
     fields: [
       {

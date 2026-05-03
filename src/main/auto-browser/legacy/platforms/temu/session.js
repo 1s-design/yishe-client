@@ -887,6 +887,65 @@ async function collectRegionCookies(context, regionKey) {
     }
 }
 
+async function probeTemuAuthenticatedSessionFromContext(page, captureState = {}) {
+    try {
+        const context = page?.context?.();
+        if (!context) {
+            return {
+                success: false,
+                message: '缺少浏览器上下文，无法探测 Temu 会话'
+            };
+        }
+
+        const allCookies = await context.cookies();
+        const cookiesGlobal = normalizeCookieEntries(
+            allCookies,
+            TEMU_REGION_COOKIE_DOMAINS.global
+        );
+        if (!Object.keys(cookiesGlobal).length) {
+            return {
+                success: false,
+                message: '未发现 Temu global cookies'
+            };
+        }
+
+        const capturedHeaders = extractTemuCaptureHeaders(captureState.capturedHeaders || {});
+        const currentUrl = String(page?.url?.() || '');
+        const origin = captureState.origin || capturedHeaders.origin || getFallbackOriginFromUrl(currentUrl);
+        const referer = captureState.referer || capturedHeaders.referer || currentUrl || `${origin}/`;
+        const userAgent = captureState.userAgent
+            || capturedHeaders['user-agent']
+            || await page.evaluate(() => navigator.userAgent).catch(() => '');
+        const headersTemplate = {
+            ...capturedHeaders,
+            accept: capturedHeaders.accept || TEMU_DEFAULT_ACCEPT,
+            'content-type': capturedHeaders['content-type'] || 'application/json',
+            origin,
+            referer,
+            'user-agent': userAgent
+        };
+        if (captureState.antiContent) {
+            headersTemplate['anti-content'] = captureState.antiContent;
+        }
+        if (captureState.mallId) {
+            headersTemplate.mallid = captureState.mallId;
+        }
+
+        const userInfoResult = await fetchTemuUserInfo(headersTemplate, cookiesGlobal);
+        return {
+            success: !!userInfoResult?.success,
+            message: userInfoResult?.message || '',
+            userInfoResult,
+            cookieCount: Object.keys(cookiesGlobal).length
+        };
+    } catch (error) {
+        return {
+            success: false,
+            message: error?.message || String(error)
+        };
+    }
+}
+
 export async function collectTemuSessionBundle(page, options = {}) {
     const context = page.context();
     const warnings = [];
@@ -930,12 +989,24 @@ export async function collectTemuSessionBundle(page, options = {}) {
         if (/\/auth\/authentication/i.test(currentUrl)) {
             const authenticationResult = await handleTemuAuthenticationPage(page, 25_000);
             if (!authenticationResult.success) {
-                return {
-                    success: false,
-                    reason: authenticationResult.reason || 'authentication_required',
-                    message: authenticationResult.message || '当前环境停留在 Temu 认证页，请完成认证后重新采集会话',
-                    currentUrl: authenticationResult.currentUrl || currentUrl
-                };
+                const sessionProbe = await probeTemuAuthenticatedSessionFromContext(page, trafficCapture.state);
+                if (sessionProbe.success) {
+                    warnings.push(`认证页未跳转，但 userInfo 已确认当前会话有效，继续采集；${authenticationResult.reason || 'authentication_page_pending'}`);
+                    logger.warn(`${PLATFORM_NAME}认证页未完成但会话已有效，继续采集`, {
+                        currentUrl: authenticationResult.currentUrl || currentUrl,
+                        authReason: authenticationResult.reason || '',
+                        cookieCount: sessionProbe.cookieCount || 0,
+                        userInfoMessage: sessionProbe.message || ''
+                    });
+                } else {
+                    return {
+                        success: false,
+                        reason: authenticationResult.reason || 'authentication_required',
+                        message: authenticationResult.message || '当前环境停留在 Temu 认证页，请完成认证后重新采集会话',
+                        currentUrl: authenticationResult.currentUrl || currentUrl,
+                        sessionProbe
+                    };
+                }
             }
             currentUrl = String(page.url() || '');
         }
@@ -1115,11 +1186,12 @@ export async function collectTemuSessionBundle(page, options = {}) {
             warnings
         };
         const completeness = inspectTemuSessionBundleCompleteness(sessionBundle, {
-            requireRegionalCookies: options.collectRegionCookies !== false,
+            requireRegionalCookies: false,
             requireAntiContent: true,
             requireIdentity: true
         });
         const failureReasons = [];
+        const regionalFailureReasons = [];
 
         if (!userInfoResult.success) {
             failureReasons.push(`身份信息拉取失败: ${userInfoResult.message || 'unknown error'}`);
@@ -1128,10 +1200,19 @@ export async function collectTemuSessionBundle(page, options = {}) {
             failureReasons.push('未捕获到 anti-content');
         }
         if (options.collectRegionCookies !== false && !regionCollection.us.success) {
-            failureReasons.push(`美区 Cookie 采集失败: ${regionCollection.us.warning || '未采集到独立 cookies'}`);
+            regionalFailureReasons.push(`美区 Cookie 采集失败: ${regionCollection.us.warning || '未采集到独立 cookies'}`);
         }
         if (options.collectRegionCookies !== false && !regionCollection.eu.success) {
-            failureReasons.push(`欧区 Cookie 采集失败: ${regionCollection.eu.warning || '未采集到独立 cookies'}`);
+            regionalFailureReasons.push(`欧区 Cookie 采集失败: ${regionCollection.eu.warning || '未采集到独立 cookies'}`);
+        }
+        if (regionalFailureReasons.length) {
+            warnings.push(...regionalFailureReasons);
+            logger.warn(`${PLATFORM_NAME}区域 Cookie 采集不完整，但 global 会话有效，继续返回成功`, {
+                regionalFailureReasons,
+                globalCookieCount: Object.keys(cookiesGlobal).length,
+                mallId,
+                accountId: userInfoResult.accountId || ''
+            });
         }
 
         if (!completeness.success) {

@@ -701,7 +701,7 @@ function buildTemuStoredSessionUpdatePayload(
   sessionBundle = {},
   profileId = "",
   existingProfile = {},
-  credentials = null,
+  credentialPair = null,
 ) {
   // 服务端结构尽量增量更新，避免现场采集时把历史可用区域信息整体抹掉。
   const collectedAt =
@@ -717,12 +717,12 @@ function buildTemuStoredSessionUpdatePayload(
   const storedCredentials = resolveTemuStoredCredentialPair(currentProfile);
   const nextCredentials = {
     account: normalizeText(
-      credentials?.account ||
+      credentialPair?.account ||
         sessionBundle?.account ||
         storedCredentials.account,
     ),
     password: normalizeText(
-      credentials?.password ||
+      credentialPair?.password ||
         sessionBundle?.password ||
         storedCredentials.password,
     ),
@@ -841,7 +841,7 @@ async function persistTemuCollectedSessionToServer(
   sessionBundle = {},
   profileId = "",
   existingProfile = null,
-  credentials = null,
+  credentialPair = null,
 ) {
   const normalizedProfileId = normalizeText(profileId);
   const token = normalizeText(getTokenValue());
@@ -877,7 +877,7 @@ async function persistTemuCollectedSessionToServer(
             sessionBundle,
             normalizedProfileId,
             currentProfile,
-            credentials,
+            credentialPair,
           ),
         }),
       },
