@@ -45,6 +45,8 @@ interface Window {
     getWorkspaceDirectory(): Promise<string>
     setWorkspaceDirectory(path: string): Promise<boolean>
     getImageToolStatus(): Promise<any>
+    startImageToolService(): Promise<any>
+    stopImageToolService(): Promise<any>
     getImageToolDirectories(): Promise<any>
     getImageToolCatalog(): Promise<any>
     getImageToolOperations(): Promise<any>
@@ -97,6 +99,8 @@ interface Window {
       directory?: 'uploads' | 'output' | 'template' | 'temp'
     }): Promise<any>
     getVideoTemplateStatus(): Promise<any>
+    startVideoTemplateService(): Promise<any>
+    stopVideoTemplateService(): Promise<any>
     getVideoTemplateCatalog(): Promise<any>
     listVideoTemplateRenders(): Promise<any>
     getVideoTemplateRender(jobId: string): Promise<any>

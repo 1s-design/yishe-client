@@ -59,6 +59,8 @@ const userInfo = ref<UserInfo | null>(null);
 const loadingUserInfo = ref(false);
 const checkingAuth = ref(true);
 const isLoggingOut = ref(false);
+const videoTemplateActionLoading = ref(false);
+const imageToolActionLoading = ref(false);
 
 const extensionConnectionStatus = ref<ExtensionConnectionStatus | null>(null);
 const uploaderServiceStatus = ref<"running" | "warning" | "stopped" | "error">(
@@ -302,9 +304,7 @@ function resolveVideoTemplateRuntimeMeta() {
     ? "success"
     : serviceError
       ? "danger"
-      : hasChecked
-      ? "warning"
-        : "muted";
+      : "muted";
   const description = !hasChecked
     ? ""
     : !available
@@ -316,7 +316,9 @@ function resolveVideoTemplateRuntimeMeta() {
         : "本地渲染服务在线";
 
   return {
+    connected: !!runtime?.connected,
     available,
+    busy: isBusy,
     hasChecked,
     summaryText,
     description,
@@ -350,7 +352,9 @@ function resolveImageProcessingRuntimeMeta() {
         : "客户端内置图片处理已就绪";
 
   return {
+    connected: !!runtime?.connected,
     available,
+    busy: isBusy,
     hasChecked,
     summaryText,
     description,
@@ -791,6 +795,196 @@ async function handleToggleDevTools() {
   }
 }
 
+async function startVideoTemplateFromDashboard() {
+  const nativeApi = window?.api;
+  if (typeof nativeApi?.startVideoTemplateService !== "function") {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "当前客户端不支持启动 Video Template",
+    });
+    return;
+  }
+
+  videoTemplateActionLoading.value = true;
+  try {
+    await nativeApi.startVideoTemplateService();
+    await websocketClient.syncServiceRuntime("video-template");
+    showToast({
+      color: "success",
+      icon: "mdi-filmstrip-box-multiple",
+      message: "Video Template 已启动",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "启动 Video Template 失败",
+    });
+  } finally {
+    videoTemplateActionLoading.value = false;
+  }
+}
+
+async function stopVideoTemplateFromDashboard() {
+  const nativeApi = window?.api;
+  if (typeof nativeApi?.stopVideoTemplateService !== "function") {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "当前客户端不支持关闭 Video Template",
+    });
+    return;
+  }
+
+  videoTemplateActionLoading.value = true;
+  try {
+    await nativeApi.stopVideoTemplateService();
+    websocketClient.updateServiceStatus("video-template", {
+      label: "Video Template 视频引擎",
+      connected: false,
+      available: false,
+      status: "disconnected",
+      state: "offline",
+      busy: false,
+      message: "Video Template 已关闭",
+      lastError: null,
+      details: {
+        warmed: false,
+      },
+    });
+    await websocketClient.syncServiceRuntime("video-template");
+    showToast({
+      color: "success",
+      icon: "mdi-stop-circle-outline",
+      message: "Video Template 已关闭",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "关闭 Video Template 失败",
+    });
+  } finally {
+    videoTemplateActionLoading.value = false;
+  }
+}
+
+async function refreshVideoTemplateFromDashboard() {
+  videoTemplateActionLoading.value = true;
+  try {
+    await websocketClient.syncServiceRuntime("video-template");
+    showToast({
+      color: "success",
+      icon: "mdi-refresh",
+      message: "Video Template 状态已刷新",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "刷新 Video Template 状态失败",
+    });
+  } finally {
+    videoTemplateActionLoading.value = false;
+  }
+}
+
+async function startImageToolFromDashboard() {
+  const nativeApi = window?.api;
+  if (typeof nativeApi?.startImageToolService !== "function") {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "当前客户端不支持启动 Image Tool",
+    });
+    return;
+  }
+
+  imageToolActionLoading.value = true;
+  try {
+    await nativeApi.startImageToolService();
+    await websocketClient.syncServiceRuntime("image-processing");
+    showToast({
+      color: "success",
+      icon: "mdi-image-multiple-outline",
+      message: "Image Tool 已启动",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "启动 Image Tool 失败",
+    });
+  } finally {
+    imageToolActionLoading.value = false;
+  }
+}
+
+async function stopImageToolFromDashboard() {
+  const nativeApi = window?.api;
+  if (typeof nativeApi?.stopImageToolService !== "function") {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "当前客户端不支持关闭 Image Tool",
+    });
+    return;
+  }
+
+  imageToolActionLoading.value = true;
+  try {
+    await nativeApi.stopImageToolService();
+    websocketClient.updateServiceStatus("image-processing", {
+      label: "Image Tool 图片处理",
+      connected: false,
+      available: false,
+      status: "disconnected",
+      state: "offline",
+      busy: false,
+      message: "Image Tool 已关闭",
+      lastError: null,
+      details: {
+        loaded: false,
+      },
+    });
+    await websocketClient.syncServiceRuntime("image-processing");
+    showToast({
+      color: "success",
+      icon: "mdi-stop-circle-outline",
+      message: "Image Tool 已关闭",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "关闭 Image Tool 失败",
+    });
+  } finally {
+    imageToolActionLoading.value = false;
+  }
+}
+
+async function refreshImageToolFromDashboard() {
+  imageToolActionLoading.value = true;
+  try {
+    await websocketClient.syncServiceRuntime("image-processing");
+    showToast({
+      color: "success",
+      icon: "mdi-refresh",
+      message: "Image Tool 状态已刷新",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "刷新 Image Tool 状态失败",
+    });
+  } finally {
+    imageToolActionLoading.value = false;
+  }
+}
+
 function handleDashboardAction(key: string) {
   if (key === "settings") {
     activePage.value = key;
@@ -809,6 +1003,42 @@ function handleDashboardAction(key: string) {
 
   if (key === "open-workspace") {
     void openWorkspaceFromDashboard();
+    return;
+  }
+}
+
+function handleDashboardCardAction(key: string) {
+  if (key === "video-template-toggle") {
+    if (
+      videoTemplateRuntimeMeta.value.connected ||
+      videoTemplateRuntimeMeta.value.busy
+    ) {
+      void stopVideoTemplateFromDashboard();
+    } else {
+      void startVideoTemplateFromDashboard();
+    }
+    return;
+  }
+
+  if (key === "video-template-refresh") {
+    void refreshVideoTemplateFromDashboard();
+    return;
+  }
+
+  if (key === "image-tool-toggle") {
+    if (
+      imageProcessingRuntimeMeta.value.connected ||
+      imageProcessingRuntimeMeta.value.busy
+    ) {
+      void stopImageToolFromDashboard();
+    } else {
+      void startImageToolFromDashboard();
+    }
+    return;
+  }
+
+  if (key === "image-tool-refresh") {
+    void refreshImageToolFromDashboard();
   }
 }
 
@@ -940,6 +1170,28 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     description: videoTemplateRuntimeMeta.value.description,
     icon: "mdi-filmstrip-box-multiple",
     tone: videoTemplateRuntimeMeta.value.tone,
+    actions: [
+      {
+        key: "video-template-toggle",
+        label:
+          videoTemplateRuntimeMeta.value.connected ||
+          videoTemplateRuntimeMeta.value.busy
+            ? "关闭"
+            : "启动",
+        icon:
+          videoTemplateRuntimeMeta.value.connected ||
+          videoTemplateRuntimeMeta.value.busy
+            ? "mdi-stop-circle-outline"
+            : "mdi-play-circle-outline",
+        loading: videoTemplateActionLoading.value,
+      },
+      {
+        key: "video-template-refresh",
+        label: "刷新",
+        icon: "mdi-refresh",
+        loading: videoTemplateActionLoading.value,
+      },
+    ],
   },
   {
     key: "image-processing",
@@ -948,6 +1200,28 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     description: imageProcessingRuntimeMeta.value.description,
     icon: "mdi-image-multiple-outline",
     tone: imageProcessingRuntimeMeta.value.tone,
+    actions: [
+      {
+        key: "image-tool-toggle",
+        label:
+          imageProcessingRuntimeMeta.value.connected ||
+          imageProcessingRuntimeMeta.value.busy
+            ? "关闭"
+            : "启动",
+        icon:
+          imageProcessingRuntimeMeta.value.connected ||
+          imageProcessingRuntimeMeta.value.busy
+            ? "mdi-stop-circle-outline"
+            : "mdi-play-circle-outline",
+        loading: imageToolActionLoading.value,
+      },
+      {
+        key: "image-tool-refresh",
+        label: "刷新",
+        icon: "mdi-refresh",
+        loading: imageToolActionLoading.value,
+      },
+    ],
   },
 ]);
 
@@ -1317,6 +1591,7 @@ onBeforeUnmount(() => {
                 :quick-actions="dashboardQuickActions"
                 :meta-items="dashboardMetaItems"
                 @navigate="handleDashboardAction"
+                @card-action="handleDashboardCardAction"
               />
               <Settings v-else-if="activePage === 'settings'" />
             </div>

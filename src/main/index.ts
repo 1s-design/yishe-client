@@ -57,6 +57,26 @@ let autoBrowserModulePromise: Promise<AutoBrowserModule> | null = null;
 let serverModulePromise: Promise<ServerModule> | null = null;
 let sharpModulePromise: Promise<any> | null = null;
 
+function isImageToolModuleLoaded() {
+  return !!imageToolModulePromise;
+}
+
+function getImageToolStatusSnapshot() {
+  return {
+    success: false,
+    status: "idle",
+    loaded: false,
+    message: "Image Tool 按需启动，当前尚未加载",
+    processors: [],
+    defaultProcessorId: "",
+    imageMagickDir: process.env.YISHE_IMAGEMAGICK_DIR || "",
+  };
+}
+
+function resetImageToolModule() {
+  imageToolModulePromise = null;
+}
+
 async function getImageToolModule() {
   if (!imageToolModulePromise) {
     imageToolModulePromise = import("./image-tool").then((module) => {
@@ -835,24 +855,7 @@ function schedulePostWindowStartupTasks() {
     });
   }, 2500);
 
-  if (app.isPackaged) {
-    setTimeout(() => {
-      writeMainLog("INFO", "开始后台预热 Video Template 服务", {
-        durationMs: Date.now() - appLaunchStartedAt,
-      });
-      void getVideoTemplateModule()
-        .then((module) => module.warmVideoTemplateService())
-        .catch((error) => {
-          console.error("❌ 预热 Video Template 服务失败:", error);
-          writeMainLog("WARN", "后台预热 Video Template 服务失败", {
-            error:
-              error instanceof Error
-                ? { message: error.message, stack: error.stack }
-                : error,
-          });
-        });
-    }, 8000);
-  }
+  writeMainLog("INFO", "Video Template 服务按需启动，跳过启动预热");
 }
 
 // This method will be called when Electron has finished
@@ -1055,7 +1058,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("auto-browser:invoke", async (_event, request) => {
     const startedAt = Date.now();
-    writeMainLog("INFO", "收到 auto-browser IPC 调用", {
+    writeMainLog("DEBUG", "收到 auto-browser IPC 调用", {
       method: request?.method || "GET",
       path: request?.path || "",
       query: request?.query || {},
@@ -1065,7 +1068,7 @@ app.whenReady().then(() => {
       const { invokeAutoBrowserRoute } = await getAutoBrowserModule();
       const response = await invokeAutoBrowserRoute(request);
       writeMainLog(
-        response?.ok ? "INFO" : "WARN",
+        response?.ok ? "DEBUG" : "WARN",
         "auto-browser IPC 调用完成",
         {
           method: request?.method || "GET",
@@ -1424,8 +1427,26 @@ ipcMain.handle("set-workspace-directory", async (_event, path: string) => {
 });
 
 ipcMain.handle("image-tool:get-status", async () => {
+  if (!isImageToolModuleLoaded()) {
+    return getImageToolStatusSnapshot();
+  }
+
   const { getImageToolStatus } = await getImageToolModule();
   return await getImageToolStatus();
+});
+
+ipcMain.handle("image-tool:start", async () => {
+  const { getImageToolStatus } = await getImageToolModule();
+  return await getImageToolStatus();
+});
+
+ipcMain.handle("image-tool:stop", async () => {
+  resetImageToolModule();
+  return {
+    success: true,
+    status: "stopped",
+    message: "Image Tool 已关闭",
+  };
 });
 
 ipcMain.handle("image-tool:get-directories", async () => {
@@ -1520,6 +1541,18 @@ ipcMain.handle("image-tool:clear-files", async (_event, payload: any) => {
 ipcMain.handle("video-template:get-status", async () => {
   const { getVideoTemplateStatus } = await getVideoTemplateModule();
   return await getVideoTemplateStatus();
+});
+
+ipcMain.handle("video-template:start", async () => {
+  const { warmVideoTemplateService, getVideoTemplateStatus } =
+    await getVideoTemplateModule();
+  await warmVideoTemplateService();
+  return await getVideoTemplateStatus();
+});
+
+ipcMain.handle("video-template:stop", async () => {
+  const { shutdownVideoTemplateService } = await getVideoTemplateModule();
+  return await shutdownVideoTemplateService();
 });
 
 ipcMain.handle("video-template:get-catalog", async () => {

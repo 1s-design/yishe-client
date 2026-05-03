@@ -32,6 +32,10 @@ const serviceMode = ref<ServiceMode>(getServiceMode());
 const workspaceDirectory = ref("");
 const workspaceLoading = ref(false);
 const selectingWorkspace = ref(false);
+const logDirectory = ref("");
+const logFileCount = ref(0);
+const logTotalSize = ref(0);
+const logLoading = ref(false);
 const supportsNativeApi = computed(() => !!getNativeApi());
 
 const currentApiBase = computed(() => getApiBaseByMode(serviceMode.value));
@@ -49,6 +53,19 @@ const themeOptions: Array<{ label: string; value: ThemePreference }> = [
 const workspaceDescription = computed(() =>
   workspaceDirectory.value ? "已设置工作目录" : "未设置工作目录",
 );
+const logDescription = computed(() =>
+  logDirectory.value ? "客户端运行日志" : "日志目录未加载",
+);
+const logSizeText = computed(() => {
+  const size = logTotalSize.value;
+  if (size >= 1024 * 1024) {
+    return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (size >= 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${size} B`;
+});
 
 const serviceStatusConfig = computed(() => {
   const mode = serviceMode.value;
@@ -230,6 +247,73 @@ const clearWorkspaceDirectory = async () => {
   }
 };
 
+const loadLogInfo = async () => {
+  try {
+    logLoading.value = true;
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.queryClientLog) {
+      logDirectory.value = "";
+      logFileCount.value = 0;
+      logTotalSize.value = 0;
+      return;
+    }
+
+    const result = await nativeApi.queryClientLog("list", {});
+    const files = Array.isArray(result?.files) ? result.files : [];
+    logDirectory.value = String(result?.root || "");
+    logFileCount.value = files.length;
+    logTotalSize.value = files.reduce(
+      (sum: number, file: any) => sum + (Number(file?.size) || 0),
+      0,
+    );
+  } catch (error) {
+    console.error("加载日志目录失败:", error);
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "加载日志目录失败",
+    });
+  } finally {
+    logLoading.value = false;
+  }
+};
+
+const openLogDirectory = async () => {
+  try {
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.queryClientLog || !nativeApi?.openPath) {
+      showToast({
+        color: "warning",
+        icon: "mdi-monitor-off",
+        message: "当前为浏览器环境，未注入桌面端日志能力",
+      });
+      return;
+    }
+
+    if (!logDirectory.value) {
+      await loadLogInfo();
+    }
+
+    if (!logDirectory.value) {
+      showToast({
+        color: "warning",
+        icon: "mdi-folder-alert-outline",
+        message: "日志目录暂不可用",
+      });
+      return;
+    }
+
+    await nativeApi.openPath(logDirectory.value);
+  } catch (error: any) {
+    console.error("打开日志目录失败:", error);
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "打开日志目录失败",
+    });
+  }
+};
+
 const handleServiceModeChanged = ((
   event: CustomEvent<{ mode: ServiceMode }>,
 ) => {
@@ -239,6 +323,7 @@ const handleServiceModeChanged = ((
 onMounted(() => {
   window.addEventListener("service-mode-changed", handleServiceModeChanged);
   void loadWorkspaceDirectory();
+  void loadLogInfo();
 });
 
 onBeforeUnmount(() => {
@@ -387,6 +472,48 @@ onBeforeUnmount(() => {
           }}
         </div>
       </article>
+
+      <article class="settings-panel settings-panel--wide">
+        <div class="settings-panel__head">
+          <div class="settings-panel__title">日志与诊断</div>
+          <div class="settings-panel__hint">{{ logDescription }}</div>
+        </div>
+
+        <div class="diagnostics-block">
+          <div class="field-label">日志目录</div>
+          <el-input
+            :model-value="logDirectory || '日志目录未加载'"
+            readonly
+            class="workspace-path-input"
+          />
+          <div class="diagnostics-summary">
+            <span>{{ logFileCount }} 个文件</span>
+            <span>{{ logSizeText }}</span>
+          </div>
+        </div>
+
+        <div class="workspace-actions">
+          <el-button
+            type="primary"
+            :disabled="!supportsNativeApi"
+            @click="openLogDirectory"
+          >
+            打开日志目录
+          </el-button>
+          <el-button
+            text
+            :disabled="!supportsNativeApi"
+            :loading="logLoading"
+            @click="loadLogInfo"
+          >
+            刷新
+          </el-button>
+        </div>
+
+        <div class="settings-note">
+          日志按日期分目录，默认保留最近 7 天，总量超过 100 MB 会自动清理旧日志
+        </div>
+      </article>
     </section>
   </div>
 </template>
@@ -471,6 +598,7 @@ onBeforeUnmount(() => {
 
 .workspace-block,
 .service-mode,
+.diagnostics-block,
 .address-list {
   display: flex;
   flex-direction: column;
@@ -515,6 +643,15 @@ onBeforeUnmount(() => {
 
 .address-list {
   gap: 6px;
+}
+
+.diagnostics-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--theme-text-muted);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .address-item {

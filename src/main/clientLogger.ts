@@ -5,7 +5,22 @@ import path from "path";
 type ClientLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
 const MAX_LOG_FILE_SIZE = 20 * 1024 * 1024;
-const MAX_LOG_FILES = 14;
+const MAX_LOG_DAYS = 7;
+const MAX_LOG_TOTAL_SIZE = 100 * 1024 * 1024;
+const LOG_FLUSH_INTERVAL_MS = 500;
+const LOG_BATCH_SIZE = 200;
+const LOG_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const LOG_LEVEL_PRIORITY: Record<ClientLogLevel, number> = {
+  DEBUG: 10,
+  INFO: 20,
+  WARN: 30,
+  ERROR: 40,
+};
+
+let logQueue: string[] = [];
+let flushTimer: NodeJS.Timeout | null = null;
+let flushPromise: Promise<void> | null = null;
+let lastCleanupAt = 0;
 
 function getLogDirectory() {
   const baseDir = app.isPackaged ? app.getPath("userData") : process.cwd();
@@ -50,8 +65,34 @@ function cleanupOldLogs() {
         mtimeMs: new Date(file.mtime).getTime(),
       }))
       .sort((a, b) => b.mtimeMs - a.mtimeMs);
-    for (const file of files.slice(MAX_LOG_FILES)) {
+
+    const keepDates = new Set(
+      Array.from(new Set(files.map((file) => file.name.split("/")[0])))
+        .sort((a, b) => b.localeCompare(a))
+        .slice(0, MAX_LOG_DAYS),
+    );
+
+    for (const file of files) {
+      const date = file.name.split("/")[0];
+      if (!keepDates.has(date)) {
+        fs.unlinkSync(file.path);
+      }
+    }
+
+    const remainingFiles = collectClientLogFiles()
+      .map((file) => ({
+        name: file.fileName,
+        path: resolveClientLogFilePath(file.fileName),
+        size: file.size,
+        mtimeMs: new Date(file.mtime).getTime(),
+      }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    let totalSize = remainingFiles.reduce((sum, file) => sum + file.size, 0);
+    for (const file of [...remainingFiles].reverse()) {
+      if (totalSize <= MAX_LOG_TOTAL_SIZE) break;
       fs.unlinkSync(file.path);
+      totalSize -= file.size;
     }
   } catch {
     // 日志清理失败不能影响客户端运行
@@ -63,14 +104,23 @@ function rotateIfNeeded(filePath: string) {
     if (!fs.existsSync(filePath)) return;
     const stat = fs.statSync(filePath);
     if (stat.size < MAX_LOG_FILE_SIZE) return;
-    fs.renameSync(filePath, path.join(path.dirname(filePath), `client.${Date.now()}.log`));
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\..+$/, "")
+      .replace("T", "-");
+    fs.renameSync(filePath, path.join(path.dirname(filePath), `client-${stamp}.log`));
   } catch {
     // 日志轮转失败不能影响客户端运行
   }
 }
 
 function isAllowedClientLogBaseName(name: string) {
-  return /^client(\.\d+)?\.log$/.test(name) || /^client\.\d{4}-\d{2}-\d{2}\.log(\.\d+)?$/.test(name);
+  return (
+    /^client(\.\d+)?\.log$/.test(name) ||
+    /^client-\d{8}-\d{6}\.log$/.test(name) ||
+    /^client\.\d{4}-\d{2}-\d{2}\.log(\.\d+)?$/.test(name)
+  );
 }
 
 function normalizeClientLogFileName(fileName: string) {
@@ -78,6 +128,71 @@ function normalizeClientLogFileName(fileName: string) {
     .trim()
     .replace(/\\/g, "/")
     .replace(/^\/+/, "");
+}
+
+function normalizeLogLevel(level: unknown): ClientLogLevel {
+  const normalized = String(level || "INFO").toUpperCase();
+  if (normalized === "DEBUG" || normalized === "INFO" || normalized === "WARN" || normalized === "ERROR") {
+    return normalized;
+  }
+  return "INFO";
+}
+
+function getMinimumLogLevel(): ClientLogLevel {
+  const configured = normalizeLogLevel(process.env.YISHE_CLIENT_LOG_LEVEL || "INFO");
+  return configured;
+}
+
+function shouldPersistLog(level: ClientLogLevel) {
+  return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[getMinimumLogLevel()];
+}
+
+function scheduleCleanupOldLogs() {
+  const now = Date.now();
+  if (now - lastCleanupAt < LOG_CLEANUP_INTERVAL_MS) {
+    return;
+  }
+  lastCleanupAt = now;
+  setTimeout(cleanupOldLogs, 0);
+}
+
+function flushQueuedLogs() {
+  if (flushPromise) {
+    return flushPromise;
+  }
+
+  flushPromise = (async () => {
+    while (logQueue.length > 0) {
+      const batch = logQueue.splice(0, LOG_BATCH_SIZE);
+      const filePath = getLogFilePath();
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+      rotateIfNeeded(filePath);
+      await fs.promises.appendFile(filePath, batch.join(""), "utf8");
+      scheduleCleanupOldLogs();
+    }
+  })()
+    .catch(() => {
+      // 日志写入失败不能影响客户端运行
+    })
+    .finally(() => {
+      flushPromise = null;
+      if (logQueue.length > 0) {
+        scheduleFlushQueuedLogs();
+      }
+    });
+
+  return flushPromise;
+}
+
+function scheduleFlushQueuedLogs() {
+  if (flushTimer) {
+    return;
+  }
+
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flushQueuedLogs();
+  }, LOG_FLUSH_INTERVAL_MS);
 }
 
 export function writeClientLog(input: {
@@ -88,11 +203,13 @@ export function writeClientLog(input: {
 }) {
   try {
     const filePath = getLogFilePath();
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    rotateIfNeeded(filePath);
+    const level = normalizeLogLevel(input?.level);
+    if (!shouldPersistLog(level)) {
+      return { success: true, filePath, skipped: true };
+    }
     const record = {
       time: new Date().toISOString(),
-      level: String(input?.level || "INFO").toUpperCase(),
+      level,
       module: String(input?.module || "client").trim() || "client",
       pid: process.pid,
       platform: process.platform,
@@ -100,8 +217,8 @@ export function writeClientLog(input: {
       message: String(input?.message || ""),
       data: sanitizeLogValue(input?.context || {}),
     };
-    fs.appendFileSync(filePath, `${JSON.stringify(record)}\n`, "utf8");
-    cleanupOldLogs();
+    logQueue.push(`${JSON.stringify(record)}\n`);
+    scheduleFlushQueuedLogs();
     return { success: true, filePath };
   } catch (error: any) {
     return { success: false, message: error?.message || String(error) };
@@ -174,7 +291,10 @@ function listClientLogFiles() {
 function resolveClientLogFilePath(fileName: string) {
   const normalizedName = normalizeClientLogFileName(fileName);
   const parts = normalizedName.split("/");
-  const isLegacyFile = parts.length === 1 && /^client\.\d{4}-\d{2}-\d{2}\.log(\.\d+)?$/.test(parts[0]);
+  const isLegacyFile =
+    parts.length === 1 &&
+    (/^client\.\d{4}-\d{2}-\d{2}\.log(\.\d+)?$/.test(parts[0]) ||
+      /^client-\d{8}-\d{6}\.log$/.test(parts[0]));
   const isDateFile =
     parts.length === 2 &&
     /^\d{4}-\d{2}-\d{2}$/.test(parts[0]) &&

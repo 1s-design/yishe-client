@@ -1009,6 +1009,39 @@ function emitPsAutomationStatus(patch?: Partial<typeof autoPsdBatchState>) {
   socket.emit("ps-automation-status", buildPsAutomationSnapshot());
 }
 
+function clearPhotoshopProductionBusyState(message = "套图制作已结束") {
+  const previous =
+    clientInfo.services?.["ps-automation"] || clientInfo.services?.photoshop;
+  const previousDetails =
+    previous?.details && typeof previous.details === "object"
+      ? previous.details
+      : ({} as Record<string, any>);
+  const photoshopReady = !!previousDetails.photoshopReady;
+  const photoshopRunning = !!previousDetails.photoshopRunning;
+  const nextState = photoshopReady
+    ? "idle"
+    : photoshopRunning
+      ? "connected"
+      : previous?.state || "connected";
+
+  // 套图完成事件先清本地 busy，避免侧边栏等到下一次 runtime 刷新才退出 loading。
+  updateServiceStatus("photoshop", {
+    label: "Photoshop",
+    connected: previous?.connected ?? true,
+    available: previous?.available ?? photoshopReady,
+    status: previous?.status || "connected",
+    state: nextState,
+    busy: false,
+    currentTaskId: null,
+    message,
+    lastError: null,
+    details: {
+      ...previousDetails,
+      photoshopStatus: photoshopReady ? "ready" : photoshopRunning ? "starting" : previousDetails.photoshopStatus,
+    },
+  });
+}
+
 function buildBrowserAutomationExecutionSnapshot() {
   const items = getBrowserAutomationExecutionEntries()
     .map((item) => ({ ...item }))
@@ -2690,6 +2723,44 @@ async function getRemotionRuntime() {
       string,
       any
     > | null;
+    const isIdleNotLoaded =
+      healthPayload?.status === "idle" || healthPayload?.warmed === false;
+
+    if (isIdleNotLoaded) {
+      return {
+        label: "Video Template 视频引擎",
+        connected: false,
+        available: false,
+        status: "disconnected" as const,
+        state: "offline" as const,
+        busy: false,
+        message: "Video Template 未启动",
+        endpoint: REMOTION_LOCAL_BASE,
+        lastCheckedAt: checkedAt,
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health", "start", "stop", "enqueueRender"],
+        details: {
+          templates: Array.isArray(healthPayload?.templates)
+            ? healthPayload.templates
+            : Array.isArray(previousDetails.templates)
+              ? previousDetails.templates
+              : remotionTemplateCache.items,
+          health: healthPayload,
+          processStatus: "stopped",
+          serviceHealthy: false,
+          warmed: false,
+          lastHeartbeatAt: checkedAt,
+          templateCount: Number(healthPayload?.templateCount || 0),
+          queueCount: 0,
+          activeJobsCount: 0,
+          queuedJobsCount: 0,
+          processingJobsCount: 0,
+          currentExecution: {
+            running: false,
+          },
+        },
+      };
+    }
 
     if (
       health?.success === false ||
@@ -2752,7 +2823,7 @@ async function getRemotionRuntime() {
       lastCheckedAt: checkedAt,
       lastError: null,
       currentTaskId: currentExecution?.id || null,
-      supportedCommands: ["refreshRuntime", "health", "enqueueRender"],
+      supportedCommands: ["refreshRuntime", "health", "start", "stop", "enqueueRender"],
       details: {
         templates,
         health: healthPayload,
@@ -2802,7 +2873,7 @@ async function getRemotionRuntime() {
       endpoint: REMOTION_LOCAL_BASE,
       lastCheckedAt: checkedAt,
       lastError: errorMessage,
-      supportedCommands: ["refreshRuntime", "health", "enqueueRender"],
+      supportedCommands: ["refreshRuntime", "health", "start", "stop", "enqueueRender"],
       details: {
         templates: Array.isArray(previousDetails.templates)
           ? previousDetails.templates
@@ -3330,26 +3401,6 @@ async function fetchImageProcessingJson(
   });
 }
 
-async function ensureImageProcessingProcessReady() {
-  const health = await fetchImageProcessingJson("/api/health", {
-    timeoutMs: IMAGE_PROCESSING_HEALTH_TIMEOUT_MS,
-  });
-  const payload = (health?.data || health || {}) as Record<string, any>;
-  if (
-    health?.success === false ||
-    payload?.status !== "healthy" ||
-    payload?.imageProcessor?.installed === false
-  ) {
-    throw new Error(
-      String(
-        payload?.imageProcessor?.message ||
-          payload?.message ||
-          "图片处理能力未就绪",
-      ),
-    );
-  }
-}
-
 async function getCachedImageProcessingMeta(force = false) {
   const now = Date.now();
   if (
@@ -3431,6 +3482,46 @@ async function getImageProcessingRuntime() {
       timeoutMs: IMAGE_PROCESSING_HEALTH_TIMEOUT_MS,
     });
     const healthPayload = (health?.data || health || {}) as Record<string, any>;
+    const isIdleNotLoaded =
+      healthPayload?.status === "idle" || healthPayload?.loaded === false;
+
+    if (isIdleNotLoaded) {
+      return {
+        label: "Image Tool 图片处理",
+        connected: false,
+        available: false,
+        status: "disconnected" as const,
+        state: "offline" as const,
+        busy: false,
+        message: "Image Tool 未启动",
+        endpoint: IMAGE_PROCESSING_LOCAL_BASE,
+        lastCheckedAt: checkedAt,
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health", "start", "stop", "createTask"],
+        supportedTaskTypes: ["process", "variations"],
+        details: {
+          catalog:
+            previousDetails.catalog && typeof previousDetails.catalog === "object"
+              ? previousDetails.catalog
+              : imageProcessingMetaCache.catalog,
+          operations: Array.isArray(previousDetails.operations)
+            ? previousDetails.operations
+            : imageProcessingMetaCache.operations,
+          variations: Array.isArray(previousDetails.variations)
+            ? previousDetails.variations
+            : imageProcessingMetaCache.variations,
+          processorStatus: null,
+          executable: false,
+          processStatus: "stopped",
+          serviceHealthy: false,
+          loaded: false,
+          lastHeartbeatAt: checkedAt,
+          activeJobsCount: activeTasks.length,
+          currentExecutions: activeTasks,
+        },
+      };
+    }
+
     const processorStatusFromHealth =
       healthPayload?.imageProcessor && typeof healthPayload.imageProcessor === "object"
         ? healthPayload.imageProcessor
@@ -3512,7 +3603,7 @@ async function getImageProcessingRuntime() {
       lastCheckedAt: checkedAt,
       lastError: runtimeAvailable ? null : runtimeMessage,
       currentTaskId: currentTask?.recordId || null,
-      supportedCommands: ["refreshRuntime", "health", "createTask"],
+      supportedCommands: ["refreshRuntime", "health", "start", "stop", "createTask"],
       supportedTaskTypes: ["process", "variations"],
       details: {
         health: healthPayload,
@@ -3551,7 +3642,7 @@ async function getImageProcessingRuntime() {
       endpoint: IMAGE_PROCESSING_LOCAL_BASE,
       lastCheckedAt: checkedAt,
       lastError: errorMessage,
-      supportedCommands: ["refreshRuntime", "health", "createTask"],
+      supportedCommands: ["refreshRuntime", "health", "start", "stop", "createTask"],
       supportedTaskTypes: ["process", "variations"],
       details: {
         catalog:
@@ -3889,8 +3980,6 @@ async function executeImageProcessingTask(command: ServiceCommandEnvelope) {
   if (taskType === "process" && operations.length <= 0) {
     throw new Error("缺少 operations");
   }
-
-  await ensureImageProcessingProcessReady();
 
   const now = new Date().toISOString();
   activeImageProcessingTasks.set(recordId, {
@@ -4763,6 +4852,7 @@ async function syncPsdSetProductionStatus(event: {
 async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
   // 记录制作开始时间
   const productionStartTime = Date.now();
+  let productionEndMessage = "套图制作已结束";
 
   // 设置制作状态为进行中
   isProductionInProgress = true;
@@ -5835,6 +5925,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       success: true,
       message: "套图制作完成！已生成并上传图片",
     });
+    productionEndMessage = "套图制作完成";
 
     emitter.emit("toast", {
       color: "success",
@@ -5875,6 +5966,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       success: false,
       message: error.message || "制作失败",
     });
+    productionEndMessage = error.message || "套图制作失败";
 
     throw error;
   } finally {
@@ -5890,6 +5982,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       currentPsSetName: null,
       currentStep: null,
     });
+    clearPhotoshopProductionBusyState(productionEndMessage);
     void syncServiceRuntime("photoshop");
   }
 }
@@ -7276,6 +7369,32 @@ function registerBuiltInLocalServices() {
         };
       }
 
+      if (command.action === "start") {
+        const nativeApi = getNativeApi() as any;
+        await nativeApi?.startVideoTemplateService?.();
+        const runtime = await syncServiceRuntime("video-template");
+        return {
+          success: !!runtime?.available,
+          message: runtime?.message || "Video Template 已启动",
+          data: {
+            runtime,
+          },
+        };
+      }
+
+      if (command.action === "stop") {
+        const nativeApi = getNativeApi() as any;
+        await nativeApi?.stopVideoTemplateService?.();
+        const runtime = await syncServiceRuntime("video-template");
+        return {
+          success: true,
+          message: runtime?.message || "Video Template 已关闭",
+          data: {
+            runtime,
+          },
+        };
+      }
+
       if (command.action === "enqueueRender") {
         const result = await executeRemotionRender(command);
         await syncServiceRuntime("video-template");
@@ -7297,6 +7416,32 @@ function registerBuiltInLocalServices() {
         return {
           success: !!runtime?.available,
           message: runtime?.message || "Image Tool 运行状态已刷新",
+          data: {
+            runtime,
+          },
+        };
+      }
+
+      if (command.action === "start") {
+        const nativeApi = getNativeApi() as any;
+        await nativeApi?.startImageToolService?.();
+        const runtime = await syncServiceRuntime("image-processing");
+        return {
+          success: !!runtime?.available,
+          message: runtime?.message || "Image Tool 已启动",
+          data: {
+            runtime,
+          },
+        };
+      }
+
+      if (command.action === "stop") {
+        const nativeApi = getNativeApi() as any;
+        await nativeApi?.stopImageToolService?.();
+        const runtime = await syncServiceRuntime("image-processing");
+        return {
+          success: true,
+          message: runtime?.message || "Image Tool 已关闭",
           data: {
             runtime,
           },

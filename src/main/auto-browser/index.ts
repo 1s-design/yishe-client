@@ -1887,7 +1887,7 @@ export async function invokeAutoBrowserRoute(
   const startedAt = Date.now();
   const method = normalizeRequestMethod(request?.method);
   const reqPath = normalizeRequestPath(request?.path);
-  writeAutoBrowserLog("INFO", "开始处理 auto-browser 路由", {
+  writeAutoBrowserLog("DEBUG", "开始处理 auto-browser 路由", {
     method,
     path: reqPath,
     query: request?.query || {},
@@ -1895,7 +1895,7 @@ export async function invokeAutoBrowserRoute(
   });
   try {
     const response = await autoBrowserService.invoke(request);
-    writeAutoBrowserLog(response.ok ? "INFO" : "WARN", "auto-browser 路由处理完成", {
+    writeAutoBrowserLog(response.ok ? "DEBUG" : "WARN", "auto-browser 路由处理完成", {
       method,
       path: reqPath,
       status: response.status,

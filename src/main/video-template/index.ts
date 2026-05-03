@@ -510,6 +510,31 @@ async function warmVideoTemplateService() {
   return queueWarmupPromise;
 }
 
+async function shutdownVideoTemplateService() {
+  if (queueInstance) {
+    for (const job of queueInstance.jobs.values()) {
+      if (
+        (job.status === "queued" || job.status === "in-progress") &&
+        typeof job.cancel === "function"
+      ) {
+        job.cancel();
+      }
+    }
+    queueInstance.jobs.clear();
+  }
+
+  queueInstance = null;
+  queueWarmupPromise = null;
+  bundlePromise = null;
+
+  return {
+    success: true,
+    service: "video-template",
+    status: "stopped",
+    message: "Video Template 已关闭",
+  };
+}
+
 async function ensureVideoTemplateQueue() {
   if (queueInstance) {
     return queueInstance;
@@ -545,10 +570,11 @@ function sanitizeInputProps(
 
 async function getVideoTemplateStatus() {
   const directories = ensureVideoTemplateDirectories();
-  const queue = await ensureVideoTemplateQueue();
-  const jobs = Array.from(queue.jobs.entries()).map(([jobId, job]) =>
-    formatJob(jobId, job),
-  );
+  const jobs = queueInstance
+    ? Array.from(queueInstance.jobs.entries()).map(([jobId, job]) =>
+        formatJob(jobId, job),
+      )
+    : [];
   const activeJobs = jobs.filter(
     (job) => job && (job.status === "queued" || job.status === "in-progress"),
   );
@@ -556,7 +582,8 @@ async function getVideoTemplateStatus() {
   return {
     success: true,
     service: "video-template",
-    status: "ok",
+    status: queueInstance ? "ok" : "idle",
+    warmed: !!queueInstance,
     templateCount: publicTemplateCatalog.length,
     templates: publicTemplateCatalog,
     directories,
@@ -576,7 +603,6 @@ async function getVideoTemplateStatus() {
 }
 
 async function getVideoTemplateCatalog() {
-  await ensureVideoTemplateQueue();
   return {
     success: true,
     templates: publicTemplateCatalog,
@@ -585,10 +611,11 @@ async function getVideoTemplateCatalog() {
 }
 
 async function listVideoTemplateRenders() {
-  const queue = await ensureVideoTemplateQueue();
-  const jobs = Array.from(queue.jobs.entries())
-    .map(([jobId, job]) => formatJob(jobId, job))
-    .filter((job) => !!job);
+  const jobs = queueInstance
+    ? Array.from(queueInstance.jobs.entries())
+        .map(([jobId, job]) => formatJob(jobId, job))
+        .filter((job) => !!job)
+    : [];
 
   return {
     success: true,
@@ -663,5 +690,6 @@ export {
   getVideoTemplateRender,
   getVideoTemplateStatus,
   listVideoTemplateRenders,
+  shutdownVideoTemplateService,
   warmVideoTemplateService,
 };

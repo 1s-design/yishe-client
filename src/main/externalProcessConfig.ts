@@ -96,7 +96,7 @@ function buildImageProcessingRuntimeConfig(): ProcessConfig | null {
       name: "Yishe Images 图片处理引擎",
       executable: standaloneExecutable,
       platforms: ["win32", "darwin"],
-      autoStart: true,
+      autoStart: false,
       autoRestart: true,
       restartDelay: 3000,
       healthCheck: {
@@ -184,7 +184,7 @@ function buildImageProcessingRuntimeConfig(): ProcessConfig | null {
     cwd: appRoot || undefined,
     env,
     platforms: ["win32", "darwin"],
-    autoStart: true,
+    autoStart: false,
     autoRestart: true,
     restartDelay: 3000,
     healthCheck: {

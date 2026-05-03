@@ -39,6 +39,8 @@ const api = {
   getWorkspaceDirectory: () => ipcRenderer.invoke('get-workspace-directory'),
   setWorkspaceDirectory: (path: string) => ipcRenderer.invoke('set-workspace-directory', path),
   getImageToolStatus: () => ipcRenderer.invoke('image-tool:get-status'),
+  startImageToolService: () => ipcRenderer.invoke('image-tool:start'),
+  stopImageToolService: () => ipcRenderer.invoke('image-tool:stop'),
   getImageToolDirectories: () => ipcRenderer.invoke('image-tool:get-directories'),
   getImageToolCatalog: () => ipcRenderer.invoke('image-tool:get-catalog'),
   getImageToolOperations: () => ipcRenderer.invoke('image-tool:get-operations'),
@@ -63,6 +65,8 @@ const api = {
   clearImageToolFiles: (payload: { directory?: 'uploads' | 'output' | 'template' | 'temp' }) =>
     ipcRenderer.invoke('image-tool:clear-files', payload),
   getVideoTemplateStatus: () => ipcRenderer.invoke('video-template:get-status'),
+  startVideoTemplateService: () => ipcRenderer.invoke('video-template:start'),
+  stopVideoTemplateService: () => ipcRenderer.invoke('video-template:stop'),
   getVideoTemplateCatalog: () => ipcRenderer.invoke('video-template:get-catalog'),
   listVideoTemplateRenders: () => ipcRenderer.invoke('video-template:list-renders'),
   getVideoTemplateRender: (jobId: string) => ipcRenderer.invoke('video-template:get-render', jobId),

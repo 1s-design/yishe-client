@@ -6,6 +6,15 @@ export interface DashboardStatusCard {
   description: string;
   icon: string;
   tone: "success" | "warning" | "danger" | "muted";
+  actions?: DashboardStatusCardAction[];
+}
+
+export interface DashboardStatusCardAction {
+  key: string;
+  label: string;
+  icon: string;
+  loading?: boolean;
+  disabled?: boolean;
 }
 
 export interface DashboardQuickAction {
@@ -29,6 +38,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   navigate: [key: string];
+  cardAction: [key: string];
 }>();
 
 function toneClass(tone: DashboardStatusCard["tone"]) {
@@ -59,6 +69,25 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
           <div class="dashboard-card__value">{{ item.value }}</div>
           <div v-if="item.description" class="dashboard-card__desc">
             {{ item.description }}
+          </div>
+          <div v-if="item.actions?.length" class="dashboard-card__actions">
+            <button
+              v-for="action in item.actions"
+              :key="action.key"
+              type="button"
+              class="dashboard-card__action"
+              :disabled="action.disabled || action.loading"
+              :title="action.label"
+              @click.stop="emit('cardAction', action.key)"
+            >
+              <i
+                :class="[
+                  'mdi',
+                  action.loading ? 'mdi-loading mdi-spin' : action.icon,
+                ]"
+              ></i>
+              <span>{{ action.label }}</span>
+            </button>
           </div>
         </article>
       </div>
@@ -215,6 +244,51 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
   line-height: 1.35;
 }
 
+.dashboard-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.dashboard-card__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 5px 8px;
+  border: 1px solid var(--theme-border);
+  border-radius: 8px;
+  background: var(--theme-surface-strong);
+  color: var(--theme-text);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.dashboard-card__action:hover:not(:disabled) {
+  border-color: var(--theme-border-strong);
+  background: var(--theme-surface);
+}
+
+.dashboard-card__action:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.dashboard-card__action .mdi {
+  font-size: 12px;
+}
+
+.mdi-spin {
+  animation: dashboardSpin 0.9s linear infinite;
+}
+
 .dashboard-card.is-success .dashboard-card__signal-dot {
   background: var(--theme-success);
   box-shadow: 0 0 0 0 rgba(23, 163, 74, 0.35);
@@ -282,6 +356,12 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
   }
   100% {
     box-shadow: 0 0 0 0 rgba(138, 138, 138, 0);
+  }
+}
+
+@keyframes dashboardSpin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
