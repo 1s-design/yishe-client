@@ -7,11 +7,7 @@ function resolveAutoOpenValue() {
         return ['1', 'true', 'yes'].includes(String(explicitValue).trim().toLowerCase());
     }
 
-    if (process.env.CI) {
-        return false;
-    }
-
-    return isPackagedRuntime();
+    return false;
 }
 
 export function shouldAutoOpenBrowserOnStart() {

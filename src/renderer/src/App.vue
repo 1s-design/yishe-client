@@ -15,12 +15,6 @@ import Dashboard, {
   type DashboardStatusCard,
 } from "./views/Dashboard.vue";
 import Settings from "./views/Settings.vue";
-import {
-  checkUploaderStatus,
-  getUploaderBrowserStatus,
-  isUploaderBrowserReady,
-  type UploaderBrowserStatus,
-} from "./api/uploader";
 
 type AppPageKey = "overview" | "settings";
 type ServiceStatusTone = "success" | "warning" | "danger" | "muted";
@@ -59,6 +53,7 @@ const userInfo = ref<UserInfo | null>(null);
 const loadingUserInfo = ref(false);
 const checkingAuth = ref(true);
 const isLoggingOut = ref(false);
+const browserAutomationActionLoading = ref(false);
 const videoTemplateActionLoading = ref(false);
 const imageToolActionLoading = ref(false);
 
@@ -160,18 +155,6 @@ function browserAutomationToneByState(
   }
 
   return "warning";
-}
-
-function buildUploaderRuntimeDetails(
-  browserStatus?: UploaderBrowserStatus | null,
-) {
-  return {
-    ...(browserStatus || {}),
-    browserConnected: !!browserStatus?.isConnected,
-    hasInstance: !!browserStatus?.hasInstance,
-    pageCount: browserStatus?.pageCount ?? 0,
-    pages: Array.isArray(browserStatus?.pages) ? browserStatus.pages : [],
-  };
 }
 
 function resolvePhotoshopRuntimeMeta() {
@@ -471,103 +454,27 @@ async function checkPsServiceStatus() {
 }
 
 async function checkUploaderServiceStatus() {
-  const lastCheckedAt = new Date().toISOString();
-
   try {
-    const status = await checkUploaderStatus();
-    if (!status.connected) {
+    const runtime = await websocketClient.syncServiceRuntime("uploader");
+    if (!runtime?.connected) {
       uploaderServiceStatus.value = "stopped";
-      websocketClient.updateServiceStatus("uploader", {
-        label: "浏览器自动化",
-        connected: false,
-        available: false,
-        status: "disconnected",
-        state: "offline",
-        busy: false,
-        message: "自动化服务未启动",
-        lastCheckedAt,
-        lastError: null,
-        supportedCommands: ["refreshRuntime", "health"],
-        details: buildUploaderRuntimeDetails(),
-      }, { emitClientInfo: false });
       return;
     }
 
-    const browserStatus = await getUploaderBrowserStatus();
-    const browserReady =
-      browserStatus.success && isUploaderBrowserReady(browserStatus.data);
-    const browserDetails = buildUploaderRuntimeDetails(browserStatus.data);
-
-    if (browserReady) {
+    if (runtime.available) {
       uploaderServiceStatus.value = "running";
-      websocketClient.updateServiceStatus("uploader", {
-        label: "浏览器自动化",
-        connected: true,
-        available: true,
-        status: "connected",
-        state: "idle",
-        busy: false,
-        message: "自动化服务与浏览器实例已连接",
-        lastCheckedAt,
-        lastError: null,
-        supportedCommands: ["refreshRuntime", "health"],
-        details: browserDetails,
-      }, { emitClientInfo: false });
       return;
     }
 
-    uploaderServiceStatus.value = browserStatus.success ? "warning" : "error";
-    const browserMessage =
-      browserStatus.message ||
-      browserStatus.data?.lastError ||
-      browserStatus.data?.localBrowser?.message ||
-      "自动化服务已启动，但浏览器实例未就绪";
-    websocketClient.updateServiceStatus("uploader", {
-      label: "浏览器自动化",
-      connected: true,
-      available: false,
-      status: "connected",
-      state: browserStatus.success ? "offline" : "error",
-      busy: false,
-      message: browserMessage,
-      lastCheckedAt,
-      lastError: browserMessage,
-      supportedCommands: ["refreshRuntime", "health"],
-      details: browserDetails,
-    }, { emitClientInfo: false });
+    uploaderServiceStatus.value =
+      runtime.status === "error" || runtime.state === "error"
+        ? "error"
+        : "warning";
   } catch (error: any) {
-    if (error?.code === "ECONNREFUSED" || error?.message?.includes("fetch")) {
-      uploaderServiceStatus.value = "stopped";
-      websocketClient.updateServiceStatus("uploader", {
-        label: "浏览器自动化",
-        connected: false,
-        available: false,
-        status: "disconnected",
-        state: "offline",
-        busy: false,
-        message: "自动化服务未启动",
-        lastCheckedAt,
-        lastError: null,
-        supportedCommands: ["refreshRuntime", "health"],
-        details: buildUploaderRuntimeDetails(),
-      }, { emitClientInfo: false });
-      return;
-    }
-
-    uploaderServiceStatus.value = "error";
-    websocketClient.updateServiceStatus("uploader", {
-      label: "浏览器自动化",
-      connected: false,
-      available: false,
-      status: "error",
-      state: "error",
-      busy: false,
-      message: error?.message || "自动化服务异常",
-      lastCheckedAt,
-      lastError: error?.message || "自动化服务异常",
-      supportedCommands: ["refreshRuntime", "health"],
-      details: buildUploaderRuntimeDetails(),
-    }, { emitClientInfo: false });
+    uploaderServiceStatus.value =
+      error?.code === "ECONNREFUSED" || error?.message?.includes("fetch")
+        ? "stopped"
+        : "error";
   }
 }
 
@@ -758,6 +665,94 @@ async function refreshLocation() {
       icon: "mdi-alert-circle-outline",
       message: "刷新位置信息失败",
     });
+  }
+}
+
+async function connectBrowserAutomationFromDashboard() {
+  browserAutomationActionLoading.value = true;
+  try {
+    const handler = (websocketClient as any).executeLocalServiceCommand;
+    if (typeof handler === "function") {
+      await handler({
+        pluginKey: "browser-automation",
+        action: "connect",
+      });
+    } else {
+      await window.api?.invokeAutoBrowser?.({
+        method: "POST",
+        path: "/api/browser/connect",
+        body: {},
+      });
+      await websocketClient.syncServiceRuntime("uploader");
+    }
+    await checkUploaderServiceStatus();
+    showToast({
+      color: "success",
+      icon: "mdi-robot-outline",
+      message: "浏览器窗口已打开",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "打开浏览器窗口失败",
+    });
+  } finally {
+    browserAutomationActionLoading.value = false;
+  }
+}
+
+async function closeBrowserAutomationFromDashboard() {
+  browserAutomationActionLoading.value = true;
+  try {
+    const handler = (websocketClient as any).executeLocalServiceCommand;
+    if (typeof handler === "function") {
+      await handler({
+        pluginKey: "browser-automation",
+        action: "close",
+      });
+    } else {
+      await window.api?.invokeAutoBrowser?.({
+        method: "POST",
+        path: "/api/browser/close",
+        body: {},
+      });
+      await websocketClient.syncServiceRuntime("uploader");
+    }
+    await checkUploaderServiceStatus();
+    showToast({
+      color: "success",
+      icon: "mdi-close-circle-outline",
+      message: "浏览器窗口已关闭",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "关闭浏览器窗口失败",
+    });
+  } finally {
+    browserAutomationActionLoading.value = false;
+  }
+}
+
+async function refreshBrowserAutomationFromDashboard() {
+  browserAutomationActionLoading.value = true;
+  try {
+    await checkUploaderServiceStatus();
+    showToast({
+      color: "success",
+      icon: "mdi-refresh",
+      message: "浏览器自动化状态已刷新",
+    });
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "刷新浏览器自动化状态失败",
+    });
+  } finally {
+    browserAutomationActionLoading.value = false;
   }
 }
 
@@ -1025,6 +1020,20 @@ function handleDashboardCardAction(key: string) {
     return;
   }
 
+  if (key === "browser-automation-toggle") {
+    if (uploaderServiceStatus.value === "running") {
+      void closeBrowserAutomationFromDashboard();
+    } else {
+      void connectBrowserAutomationFromDashboard();
+    }
+    return;
+  }
+
+  if (key === "browser-automation-refresh") {
+    void refreshBrowserAutomationFromDashboard();
+    return;
+  }
+
   if (key === "image-tool-toggle") {
     if (
       imageProcessingRuntimeMeta.value.connected ||
@@ -1150,6 +1159,23 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
             : "服务未启动",
     icon: "mdi-robot-outline",
     tone: browserAutomationToneByState(uploaderServiceStatus.value),
+    actions: [
+      {
+        key: "browser-automation-toggle",
+        label: uploaderServiceStatus.value === "running" ? "关闭" : "打开",
+        icon:
+          uploaderServiceStatus.value === "running"
+            ? "mdi-close-circle-outline"
+            : "mdi-open-in-new",
+        loading: browserAutomationActionLoading.value,
+      },
+      {
+        key: "browser-automation-refresh",
+        label: "刷新",
+        icon: "mdi-refresh",
+        loading: browserAutomationActionLoading.value,
+      },
+    ],
   },
   {
     key: "ps",

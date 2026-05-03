@@ -179,6 +179,9 @@ function buildSourcesFromQueryBody(body = {}) {
  * API服务器类
  */
 const BROWSER_CHECK_INTERVAL_MS = Number(process.env.BROWSER_CHECK_INTERVAL_MS) || 10000;
+const BROWSER_CHECK_RECONNECT_ON_TIMER = ['1', 'true', 'yes'].includes(
+    String(process.env.YISHE_BROWSER_CHECK_RECONNECT ?? process.env.UPLOADER_BROWSER_CHECK_RECONNECT ?? '').trim().toLowerCase()
+);
 const SILENT_REQUEST_PATHS = new Set([
     '/api',
     '/api/browser/status',
@@ -228,7 +231,7 @@ class ApiServer {
         if (this.browserCheckTimer) return;
         this.browserCheckTimer = setInterval(async () => {
             try {
-                const result = await checkAndReconnectBrowser({ reconnect: true });
+                const result = await checkAndReconnectBrowser({ reconnect: BROWSER_CHECK_RECONNECT_ON_TIMER });
                 if (result.available && (result.reconnected || result.adopted)) {
                     logger.info('定时检测: 已自动接管可用浏览器实例');
                 } else if (!result.available && result.message && !result.message.includes('无浏览器实例')) {
@@ -238,7 +241,7 @@ class ApiServer {
                 logger.debug('定时检测浏览器异常:', e?.message);
             }
         }, BROWSER_CHECK_INTERVAL_MS);
-        logger.info(`浏览器实例定时检测已启动，间隔 ${BROWSER_CHECK_INTERVAL_MS / 1000} 秒`);
+        logger.info(`浏览器实例定时检测已启动，间隔 ${BROWSER_CHECK_INTERVAL_MS / 1000} 秒，自动重连: ${BROWSER_CHECK_RECONNECT_ON_TIMER ? '开启' : '关闭'}`);
     }
 
     stopBrowserCheckTimer() {

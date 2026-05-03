@@ -89,6 +89,8 @@ const DEFAULT_WS_ENDPOINT =
 const IDENTITY_STORAGE_KEY = "yishe.ws.identity";
 const BROWSER_AUTOMATION_DISPATCH_STORAGE_KEY =
   "yishe.browserAutomation.autoDispatchEnabled";
+const BROWSER_AUTOMATION_MANUAL_CLOSE_STORAGE_KEY =
+  "yishe.browserAutomation.manualClosed";
 const NETWORK_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const LOCATION_ENDPOINT = "https://ipapi.co/json/";
 const PLUGIN_KEY_ALIASES: Record<string, string> = {
@@ -618,6 +620,7 @@ export const autoPsdBatchState = reactive({
 
 const browserAutomationDispatchState = reactive({
   autoDispatchEnabled: loadBrowserAutomationAutoDispatchEnabled(),
+  manualClosed: loadBrowserAutomationManualClosed(),
 });
 
 const browserAutomationExecutionState = reactive({
@@ -906,6 +909,52 @@ function loadBrowserAutomationAutoDispatchEnabled() {
   } catch {
     return true;
   }
+}
+
+function loadBrowserAutomationManualClosed() {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return false;
+  }
+
+  try {
+    return storage.getItem(BROWSER_AUTOMATION_MANUAL_CLOSE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function persistBrowserAutomationManualClosed(manualClosed: boolean) {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return;
+  }
+
+  try {
+    if (manualClosed) {
+      storage.setItem(BROWSER_AUTOMATION_MANUAL_CLOSE_STORAGE_KEY, "true");
+    } else {
+      storage.removeItem(BROWSER_AUTOMATION_MANUAL_CLOSE_STORAGE_KEY);
+    }
+  } catch {
+    // ignore persistence failures
+  }
+}
+
+function setBrowserAutomationManualClosed(
+  manualClosed: boolean,
+  source: string,
+) {
+  if (browserAutomationDispatchState.manualClosed === manualClosed) {
+    return;
+  }
+
+  browserAutomationDispatchState.manualClosed = manualClosed;
+  persistBrowserAutomationManualClosed(manualClosed);
+  logger.info("[browser-automation] manual close guard changed", {
+    manualClosed,
+    source,
+  });
 }
 
 function updateBrowserAutomationCommandExecution(payload: {
@@ -1323,6 +1372,8 @@ function sanitizeClientServiceRuntimeForWs(
     details: {
       autoDispatchEnabled:
         details.autoDispatchEnabled ?? runtime.autoDispatchEnabled ?? true,
+      manualClosed:
+        details.manualClosed ?? browserAutomationDispatchState.manualClosed,
       browserConnected: details.browserConnected === true,
       hasInstance: details.hasInstance === true,
       pageCount:
@@ -1638,6 +1689,7 @@ function buildBrowserAutomationRuntimePatch(
       ...previousDetails,
       ...payloadDetails,
       autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
+      manualClosed: browserAutomationDispatchState.manualClosed,
       supportedTaskTypes,
       executableTaskTypes: buildPublishTaskCapabilitySummary().map(
         (item) => item.taskType,
@@ -5987,6 +6039,10 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
   }
 }
 
+async function executeLocalServiceCommand(command: ServiceCommandEnvelope) {
+  return handleServiceCommand(command);
+}
+
 async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
   const lastCheckedAt = new Date().toISOString();
   const isBusy = isProductionInProgress;
@@ -6195,6 +6251,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
         pageCount: 0,
         serviceMessage: status.message ?? null,
         autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
+        manualClosed: browserAutomationDispatchState.manualClosed,
         capabilities: capabilitySummary,
         profiles: profileItems,
         instances: buildBrowserAutomationProfileInstances(profileItems, null),
@@ -6238,22 +6295,6 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
     profileId: activeProfileId,
   });
   let browser = await getUploaderBrowserStatus();
-  if (
-    !browserAutomationExecutionState.running &&
-    (!browser.success || !isUploaderBrowserReady(browser.data))
-  ) {
-    const reconnectHealth = await checkUploaderBrowserHealth({
-      reconnect: true,
-      profileId: activeProfileId,
-    });
-    if (reconnectHealth.success && reconnectHealth.status) {
-      browser = {
-        success: true,
-        data: reconnectHealth.status,
-        message: reconnectHealth.message,
-      };
-    }
-  }
   const available = browser.success && isUploaderBrowserReady(browser.data);
   const browserData = browser.data;
   const browserMessage =
@@ -6347,6 +6388,7 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       profilesRootDir: profilesResponse?.data?.profilesRootDir || null,
       workspaceDir: profilesResponse?.data?.workspaceDir || null,
       autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
+      manualClosed: browserAutomationDispatchState.manualClosed,
       capabilities: capabilitySummary,
       ecomCollect: ecomCollectCapability
         ? {
@@ -6649,6 +6691,12 @@ function registerBuiltInLocalServices() {
       }
 
       if (action === "connect") {
+        setBrowserAutomationManualClosed(false, "connect-command");
+        logger.info("[browser-automation] opening browser", {
+          action,
+          source: command.commandId ? "service-command" : "local-ui",
+          commandId: command.commandId,
+        });
         const response = await connectUploaderBrowser(command.payload || {});
         const runtime = await syncServiceRuntime("uploader");
         return {
@@ -6667,6 +6715,9 @@ function registerBuiltInLocalServices() {
         const response = await closeUploaderBrowser(
           String(command.payload?.profileId || "").trim() || undefined,
         );
+        if (response.success) {
+          setBrowserAutomationManualClosed(true, "close-command");
+        }
         const runtime = await syncServiceRuntime("uploader");
         return {
           success: response.success,
@@ -6771,6 +6822,13 @@ function registerBuiltInLocalServices() {
         if (!platform) {
           throw new Error("缺少 platform");
         }
+        setBrowserAutomationManualClosed(false, "open-platform-command");
+        logger.info("[browser-automation] opening platform page", {
+          action,
+          platform,
+          profileId: profileId || null,
+          commandId: command.commandId,
+        });
         const response = await openUploaderPlatform(platform, profileId);
         await syncServiceRuntime("uploader");
         return {
@@ -6792,6 +6850,13 @@ function registerBuiltInLocalServices() {
         }
         const profileId =
           String(command.payload?.profileId || "").trim() || undefined;
+        setBrowserAutomationManualClosed(false, "open-link-command");
+        logger.info("[browser-automation] opening link", {
+          action,
+          url,
+          profileId: profileId || null,
+          commandId: command.commandId,
+        });
         const response = await openUploaderLink(url, profileId);
         await syncServiceRuntime("uploader");
         return {
@@ -6914,6 +6979,7 @@ function registerBuiltInLocalServices() {
         if (!featureKey) {
           throw new Error("缺少 featureKey");
         }
+        setBrowserAutomationManualClosed(false, "run-small-feature-command");
         const featureActionKey =
           featureKey === "temu-api-action"
             ? String(
@@ -7166,6 +7232,9 @@ function registerBuiltInLocalServices() {
         const enabled = command.payload?.enabled !== false;
         browserAutomationDispatchState.autoDispatchEnabled = enabled;
         persistBrowserAutomationAutoDispatchEnabled(enabled);
+        if (enabled) {
+          setBrowserAutomationManualClosed(false, "set-auto-dispatch");
+        }
         const runtime = await syncUploaderRuntimeFromLocalState({
           autoDispatchEnabled: enabled,
           lastCheckedAt: new Date().toISOString(),
@@ -7194,6 +7263,40 @@ function registerBuiltInLocalServices() {
         }
         if (!taskType) {
           throw new Error("缺少 taskType");
+        }
+        if (browserAutomationDispatchState.manualClosed) {
+          const manualClosedMessage =
+            "浏览器窗口已被用户手动关闭，自动任务已回退待调度";
+          logger.warn("[browser-automation] publish task skipped by manual close guard", {
+            taskId,
+            taskType,
+            queue,
+            profileId: profileId || null,
+            dispatchToken: dispatchToken || null,
+          });
+          await emitPublishTaskRuntime({
+            taskId,
+            taskType,
+            queue,
+            dispatchToken,
+            profileId: profileId || null,
+            status: "pending",
+            message: manualClosedMessage,
+            currentStep: "浏览器已手动关闭，等待重新开启自动执行",
+            error: manualClosedMessage,
+          });
+          return {
+            success: false,
+            message: manualClosedMessage,
+            data: {
+              taskId,
+              taskType,
+              queue,
+              dispatchToken: dispatchToken || null,
+              profileId: profileId || null,
+              manualClosed: true,
+            },
+          };
         }
         if (isBrowserAutomationExecutionSlotRunning(profileId, taskType)) {
           const busyMessage = "浏览器自动化节点繁忙，任务已回退待调度";
@@ -7303,6 +7406,7 @@ function registerBuiltInLocalServices() {
       }
 
       if (action === "ecomCollectRun") {
+        setBrowserAutomationManualClosed(false, "ecom-collect-command");
         if (browserAutomationExecutionState.running) {
           return {
             success: false,
@@ -7319,6 +7423,7 @@ function registerBuiltInLocalServices() {
       }
 
       if (action === "ecomSelectionSupplyMatchRun") {
+        setBrowserAutomationManualClosed(false, "ecom-selection-command");
         if (browserAutomationExecutionState.running) {
           return {
             success: false,
@@ -7335,6 +7440,7 @@ function registerBuiltInLocalServices() {
       }
 
       if (action === "publish") {
+        setBrowserAutomationManualClosed(false, "publish-command");
         const response = await publishByUploader(
           (command.payload || {}) as Record<string, unknown>,
         );
@@ -7718,7 +7824,10 @@ function updateServiceStatus(
       payload.supportedTaskTypes ?? previous?.supportedTaskTypes ?? [],
     autoDispatchEnabled:
       payload.autoDispatchEnabled ?? previous?.autoDispatchEnabled ?? true,
-    details: payload.details ?? previous?.details ?? {},
+    details: {
+      ...(previous?.details || {}),
+      ...(payload.details || {}),
+    },
   };
 
   updateClientInfo(
@@ -7765,6 +7874,7 @@ export const websocketClient = {
   updateClientInfo,
   updateServiceStatus,
   syncServiceRuntime,
+  executeLocalServiceCommand,
   events: emitter,
   refreshLocation: fetchNetworkProfile,
 };
