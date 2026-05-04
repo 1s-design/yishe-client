@@ -9,6 +9,7 @@ import {
   runDoudianCheckLoginSmallFeature,
   runKuaishouShopCheckLoginSmallFeature,
   runQianniuCheckLoginSmallFeature,
+  runQianniuOpenWorkspaceSmallFeature,
 } from "../platforms/shopLoginFeatures.js";
 import { logger } from "../utils/logger.js";
 
@@ -287,6 +288,30 @@ const SMALL_FEATURE_REGISTRY = {
       },
     ],
     handler: runQianniuCheckLoginSmallFeature,
+  },
+  "qianniu-open-workspace": {
+    key: "qianniu-open-workspace",
+    name: "进入工作台",
+    platform: "qianniu",
+    category: "navigation",
+    visibility: "public",
+    description:
+      "打开千牛工作台首页（myseller.taobao.com），方便后续在工作台中进行操作。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先使用指定环境。",
+      "执行后会打开千牛工作台页面并保持页面不关闭。",
+      "如果当前环境未登录，打开后会跳转到登录页。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+    ],
+    handler: runQianniuOpenWorkspaceSmallFeature,
   },
 };
 

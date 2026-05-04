@@ -321,3 +321,98 @@ export async function runQianniuCheckLoginSmallFeature(
     runtimeOptions,
   );
 }
+
+export async function runQianniuOpenWorkspaceSmallFeature(
+  input = {},
+  runtimeOptions = {},
+) {
+  const platformKey = "qianniu";
+  const platformConfig = PLATFORM_CONFIGS?.[platformKey];
+  if (!platformConfig) {
+    throw new Error("千牛平台配置不存在");
+  }
+
+  const profileId = String(input?.profileId || "").trim() || undefined;
+  const targetUrl = platformConfig.loginCheckUrl || platformConfig.uploadUrl;
+  const pageOperator = runtimeOptions?.pageOperator || new PageOperator();
+  const executionTrace = [];
+  const managePage = !runtimeOptions?.page;
+  let page = runtimeOptions?.page || null;
+
+  const pushTrace = (step, status, detail = {}) => {
+    executionTrace.push({
+      step,
+      status,
+      time: new Date().toISOString(),
+      detail,
+    });
+  };
+
+  try {
+    logger.info("千牛工具开始进入工作台", {
+      profileId: profileId || "default",
+      targetUrl,
+    });
+    pushTrace("start", "success", {
+      profileId: profileId || null,
+      targetUrl,
+    });
+
+    if (managePage) {
+      const browser = await getOrCreateBrowser({ profileId });
+      page = await browser.newPage({ foreground: true });
+      await pageOperator.setupAntiDetection(page);
+      pushTrace("open_page", "success", {
+        currentUrl: page.url(),
+      });
+    } else {
+      pushTrace("open_page", "success", {
+        reusedCurrentPage: true,
+        currentUrl: page.url(),
+      });
+    }
+
+    await page.goto(targetUrl, {
+      waitUntil: platformConfig.waitUntil || "domcontentloaded",
+      timeout: platformConfig.timeout || 45000,
+    });
+    await page.waitForTimeout(2000);
+    pushTrace("navigate_to_workspace", "success", {
+      currentUrl: page.url(),
+      pageTitle: await page.title().catch(() => ""),
+    });
+
+    return {
+      success: true,
+      message: "已打开千牛工作台",
+      data: {
+        featureKey: "qianniu-open-workspace",
+        platform: platformKey,
+        platformName: "千牛",
+        profileId: profileId || null,
+        currentUrl: page.url(),
+        pageTitle: await page.title().catch(() => ""),
+        executionTrace,
+        pageKeptOpen: true,
+      },
+    };
+  } catch (error) {
+    logger.error("千牛进入工作台失败:", error);
+    pushTrace("open_workspace", "failed", {
+      error: error instanceof Error ? error.message : String(error || ""),
+    });
+    return {
+      success: false,
+      message: error?.message || "千牛进入工作台失败",
+      data: {
+        featureKey: "qianniu-open-workspace",
+        platform: platformKey,
+        platformName: "千牛",
+        profileId: profileId || null,
+        currentUrl: page?.url?.() || "",
+        pageTitle: await page?.title?.().catch(() => ""),
+        executionTrace,
+      },
+    };
+  }
+}

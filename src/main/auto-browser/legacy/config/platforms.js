@@ -266,8 +266,8 @@ export const PLATFORM_CONFIGS = {
     },
     qianniu: {
         name: '千牛',
-        uploadUrl: 'https://qianniu.com/',
-        loginCheckUrl: 'https://qianniu.com/',
+        uploadUrl: 'https://myseller.taobao.com/',
+        loginCheckUrl: 'https://myseller.taobao.com/',
         waitUntil: 'domcontentloaded',
         timeout: 45000,
         antiDetection: true,
