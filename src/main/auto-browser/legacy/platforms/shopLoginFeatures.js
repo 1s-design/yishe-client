@@ -46,6 +46,19 @@ const SHOP_PLATFORM_LOGIN_CONFIG = {
       "passport.alibaba.com",
     ],
   },
+  qianniu: {
+    platformKey: "qianniu",
+    platformName: "千牛",
+    checkMode: "redirect_url",
+    loginUrlMarkers: [
+      ...DEFAULT_LOGIN_URL_MARKERS,
+      "login.taobao.com",
+      "login.tmall.com",
+      "passport.taobao.com",
+      "passport.alibaba.com",
+      "sso.taobao.com",
+    ],
+  },
 };
 
 function normalizeKeepPageOpen(value, defaultValue = false) {
@@ -293,6 +306,17 @@ export async function runKuaishouShopCheckLoginSmallFeature(
 ) {
   return await runShopPlatformCheckLoginSmallFeature(
     "kuaishou_shop",
+    input,
+    runtimeOptions,
+  );
+}
+
+export async function runQianniuCheckLoginSmallFeature(
+  input = {},
+  runtimeOptions = {},
+) {
+  return await runShopPlatformCheckLoginSmallFeature(
+    "qianniu",
     input,
     runtimeOptions,
   );

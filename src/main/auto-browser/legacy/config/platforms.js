@@ -264,6 +264,37 @@ export const PLATFORM_CONFIGS = {
         preProcess: null,
         postProcess: null
     },
+    qianniu: {
+        name: '千牛',
+        uploadUrl: 'https://qianniu.com/',
+        loginCheckUrl: 'https://qianniu.com/',
+        waitUntil: 'domcontentloaded',
+        timeout: 45000,
+        antiDetection: true,
+        checkLogin: true,
+        selectors: {},
+        loginSelectors: {
+            userElements: [
+                '.avatar',
+                '.user-avatar',
+                '.user-info',
+                '.account-name',
+                '[class*="seller-nick"]',
+                '[class*="user-avatar"]',
+                '[class*="header-avatar"]'
+            ],
+            loginElements: [
+                '.login-btn',
+                '.login-button',
+                '.auth-btn',
+                'text=登录',
+                'text=扫码登录',
+                '[class*="login"]'
+            ]
+        },
+        preProcess: null,
+        postProcess: null
+    },
     kuaishou_shop: {
         name: '快手小店',
         uploadUrl: 'https://s.kwaixiaodian.com/zone/goods/nexus/self/release/add',
