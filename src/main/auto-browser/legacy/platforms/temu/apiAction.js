@@ -21,7 +21,9 @@ const REGION_ORIGIN_MAP = {
   eu: 'https://agentseller-eu.temu.com'
 };
 const TEMU_STORED_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
+const TEMU_API_REQUEST_TIMEOUT_MS = 45 * 1000;
 const temuStoredSessionCache = new Map();
+let temuApiRequestSeq = 0;
 
 function asPlainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -158,9 +160,62 @@ function buildFeatureResponse({ action, profileId, region, requestResult, result
   };
 }
 
+function summarizeTemuApiRequestPayload(payload) {
+  const source = asPlainObject(payload);
+  const summary = {};
+  [
+    'pageNum',
+    'pageSize',
+    'priceOrderId',
+    'supplierResult',
+    'productSkuId',
+    'skcId',
+    'spuId',
+    'goodsId'
+  ].forEach((key) => {
+    if (source[key] !== undefined && source[key] !== null) {
+      summary[key] = source[key];
+    }
+  });
+  if (Array.isArray(source.items)) {
+    summary.itemCount = source.items.length;
+    summary.firstItem = source.items[0]
+      ? {
+          productSkuId: source.items[0].productSkuId,
+          price: source.items[0].price
+        }
+      : null;
+  }
+  if (Array.isArray(source.bargainReasonList)) {
+    summary.bargainReasonCount = source.bargainReasonList.length;
+  }
+  if (Array.isArray(source.skcSpuList)) {
+    summary.skcSpuCount = source.skcSpuList.length;
+  }
+  return {
+    ...summary,
+    approxBytes: (() => {
+      try {
+        return JSON.stringify(payload || {}).length;
+      } catch {
+        return 0;
+      }
+    })()
+  };
+}
+
 async function requestTemuJson(region, path, json = {}, options = {}) {
+  const requestId = `temu-api-${Date.now()}-${++temuApiRequestSeq}`;
   const url = buildUrl(region, path);
   const method = String(options.method || 'POST').toUpperCase();
+  const requestTimeoutMs = Math.max(
+    5_000,
+    Math.min(
+      3 * 60 * 1000,
+      Number(options.timeoutMs || options.requestTimeoutMs || TEMU_API_REQUEST_TIMEOUT_MS) ||
+        TEMU_API_REQUEST_TIMEOUT_MS
+    )
+  );
   const { sessionContext, cacheHit } = await getCachedTemuSessionContext(options.profileId);
   const sessionCookies = pickTemuSessionCookies(sessionContext || {}, region);
   const sessionHeaders = pickTemuSessionHeaders(sessionContext || {}, region);
@@ -207,11 +262,29 @@ async function requestTemuJson(region, path, json = {}, options = {}) {
     antiContentReady: !!headers['anti-content']
   });
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    const attemptStartedAt = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
+      logger.info('[temu-api-action] Temu API 请求开始', {
+        requestId,
+        traceId: options.traceId || '',
+        actionKey: options.actionKey || '',
+        step: options.step || '',
+        profileId: options.profileId || '',
+        region: normalizeRegion(region),
+        method,
+        url,
+        attempt: attempt + 1,
+        retryCount,
+        requestTimeoutMs,
+        payloadSummary: summarizeTemuApiRequestPayload(json)
+      });
       const response = await fetch(url, {
         method,
         headers,
-        body: method === 'GET' ? undefined : JSON.stringify(json || {})
+        body: method === 'GET' ? undefined : JSON.stringify(json || {}),
+        signal: controller.signal
       });
       const rawText = await response.text();
       let payload = null;
@@ -231,17 +304,52 @@ async function requestTemuJson(region, path, json = {}, options = {}) {
         clearCachedTemuSessionContext(options.profileId);
       }
     } catch (error) {
+      const aborted = error?.name === 'AbortError';
       lastResult = {
         success: false,
         status: 0,
         payload: {
           success: false,
-          error_msg: error?.message || String(error)
+          error_msg: aborted
+            ? `Temu API 请求超时 (${requestTimeoutMs}ms)`
+            : error?.message || String(error)
         },
         rawText: error?.stack || error?.message || String(error),
         url,
-        message: error?.message || String(error)
+        message: aborted
+          ? `Temu API 请求超时 (${requestTimeoutMs}ms)`
+          : error?.message || String(error)
       };
+      logger.warn('[temu-api-action] Temu API 请求异常', {
+        requestId,
+        traceId: options.traceId || '',
+        actionKey: options.actionKey || '',
+        step: options.step || '',
+        profileId: options.profileId || '',
+        region: normalizeRegion(region),
+        method,
+        url,
+        attempt: attempt + 1,
+        aborted,
+        message: lastResult.message
+      });
+    } finally {
+      clearTimeout(timeoutId);
+      logger.info('[temu-api-action] Temu API 请求结束', {
+        requestId,
+        traceId: options.traceId || '',
+        actionKey: options.actionKey || '',
+        step: options.step || '',
+        profileId: options.profileId || '',
+        region: normalizeRegion(region),
+        method,
+        url,
+        attempt: attempt + 1,
+        status: lastResult?.status ?? null,
+        success: !!lastResult?.success,
+        elapsedMs: Date.now() - attemptStartedAt,
+        message: lastResult?.message || normalizeTemuApiMessage(lastResult?.payload, '')
+      });
     }
     if (lastResult?.status !== 0 || attempt >= retryCount) {
       return lastResult;
@@ -799,6 +907,9 @@ async function runPagedSearchForChainSupplier({ action, profileId, region, paylo
 }
 
 async function executeAction(actionKey, profileId, region, payload) {
+  const traceId = String(payload.traceId || payload.batchTraceId || '').trim() ||
+    `temu-action-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const rowTrace = asPlainObject(payload.rowTrace);
   if (actionKey === 'goods.price-review.list') {
     return runPagedSearchForChainSupplier({
       action: actionKey,
@@ -837,17 +948,46 @@ async function executeAction(actionKey, profileId, region, payload) {
 
   if (actionKey === 'goods.modify-price') {
     const supplierResult = Number(payload.supplierResult || 0);
+    const priceOrderId = Number(payload.priceOrderId || 0);
+    logger.info('[temu-api-action] 核价动作开始', {
+      traceId,
+      profileId,
+      region,
+      supplierResult,
+      priceOrderId,
+      rowTrace,
+      itemCount: Array.isArray(payload.items) ? payload.items.length : 0,
+      firstItem: Array.isArray(payload.items) && payload.items[0]
+        ? {
+            productSkuId: payload.items[0].productSkuId,
+            price: payload.items[0].price
+          }
+        : null
+    });
+    const startedAt = Date.now();
     const response =
       supplierResult === 3
         ? await requestTemuJson(region, '/api/kiana/mms/magneto/api/price-review-order/no-bom/review', {
-            priceOrderId: Number(payload.priceOrderId || 0)
-          }, { profileId })
+            priceOrderId
+          }, { profileId, traceId, actionKey, step: 'price-review-abandon' })
         : await requestTemuJson(region, '/api/kiana/mms/magneto/price/bargain-no-bom', {
             supplierResult,
-            priceOrderId: Number(payload.priceOrderId || 0),
+            priceOrderId,
             items: Array.isArray(payload.items) ? payload.items : [],
             bargainReasonList: Array.isArray(payload.bargainReasonList) ? payload.bargainReasonList : []
-          }, { profileId });
+          }, { profileId, traceId, actionKey, step: supplierResult === 2 ? 'price-review-reprice' : 'price-review-confirm' });
+    logger.info('[temu-api-action] 核价动作结束', {
+      traceId,
+      profileId,
+      region,
+      supplierResult,
+      priceOrderId,
+      rowTrace,
+      success: !!response?.success,
+      status: response?.status ?? null,
+      elapsedMs: Date.now() - startedAt,
+      message: response?.message || normalizeTemuApiMessage(response?.payload, '')
+    });
     return buildFeatureResponse({
       action: actionKey,
       profileId,
@@ -855,7 +995,7 @@ async function executeAction(actionKey, profileId, region, payload) {
       requestResult: response,
       successMessage: supplierResult === 3 ? '提交放弃报价成功' : supplierResult === 2 ? '提交重新报价成功' : '提交确认报价成功',
       failureMessage: supplierResult === 3 ? '提交放弃报价失败' : supplierResult === 2 ? '提交重新报价失败' : '提交确认报价失败',
-      result: { priceOrderId: Number(payload.priceOrderId || 0), supplierResult }
+      result: { priceOrderId, supplierResult, traceId, rowTrace }
     });
   }
 
