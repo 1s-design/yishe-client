@@ -1,6 +1,7 @@
 import aliexpressPlatform from './aliexpress/index.js';
 import alibaba1688Platform from './alibaba_1688/index.js';
 import amazonPlatform from './amazon/index.js';
+import coupangPlatform from './coupang/index.js';
 import douyinShopPlatform from './douyin_shop/index.js';
 import ebayPlatform from './ebay/index.js';
 import googleTrendsPlatform from './google_trends/index.js';
@@ -8,11 +9,16 @@ import jdPlatform from './jd/index.js';
 import mercadolibrePlatform from './mercadolibre/index.js';
 import neweggPlatform from './newegg/index.js';
 import ozonPlatform from './ozon/index.js';
+import pinterestPlatform from './pinterest/index.js';
+import rakutenPlatform from './rakuten/index.js';
+import redditPlatform from './reddit/index.js';
 import sheinPlatform from './shein/index.js';
+import shopeePlatform from './shopee/index.js';
 import taobaoPlatform from './taobao/index.js';
 import temuPlatform from './temu/index.js';
 import tiktokShopPlatform from './tiktok_shop/index.js';
 import walmartPlatform from './walmart/index.js';
+import xiaohongshuPlatform from './xiaohongshu/index.js';
 import {
     buildPlatformCapability,
     ECOM_CAPABILITY_STATUS_META,
@@ -34,6 +40,12 @@ const PLATFORM_LIST = [
     sheinPlatform,
     ozonPlatform,
     mercadolibrePlatform,
+    rakutenPlatform,
+    shopeePlatform,
+    coupangPlatform,
+    pinterestPlatform,
+    redditPlatform,
+    xiaohongshuPlatform,
 ];
 
 export const PLATFORM_CONFIGS = Object.fromEntries(
