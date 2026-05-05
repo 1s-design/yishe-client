@@ -1387,6 +1387,15 @@ function sanitizeClientServiceRuntimeForWs(
       currentExecution: sanitizeBrowserAutomationExecutionForWs(
         details.currentExecution,
       ),
+      ecomCollect:
+        details.ecomCollect && typeof details.ecomCollect === "object"
+          ? details.ecomCollect
+          : uploaderEcomCollectCapabilityCache.data
+            ? {
+                ...uploaderEcomCollectCapabilityCache.data,
+                source: "cache",
+              }
+            : null,
     },
   };
 }
