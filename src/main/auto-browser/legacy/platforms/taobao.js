@@ -12,6 +12,7 @@ const TAOBAO_ACTION_DELAY_MS = 900;
 const TAOBAO_IMAGE_LIBRARY_DELAY_RANGE_MS = [1600, 3800];
 const TAOBAO_SECURITY_CHECK_TIMEOUT_MS = 90 * 1000;
 const TAOBAO_SECURITY_CHECK_POLL_MS = 1500;
+const TAOBAO_TITLE_MAX_LENGTH = 30;
 const TAOBAO_SECURITY_TEXT_PATTERN =
   /验证码|安全验证|拖动滑块|请完成验证|请按住滑块|风险验证/;
 
@@ -38,9 +39,8 @@ function getUploadedLocalFileSearchNames(filePath) {
 }
 
 function normalizeTitle(title) {
-  return String(title || "")
-    .trim()
-    .slice(0, 60);
+  const normalized = String(title || "").trim();
+  return Array.from(normalized).slice(0, TAOBAO_TITLE_MAX_LENGTH).join("");
 }
 
 function normalizeProductCode(productCode) {
