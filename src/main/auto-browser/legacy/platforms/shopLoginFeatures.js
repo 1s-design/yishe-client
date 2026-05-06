@@ -14,6 +14,17 @@ const DEFAULT_LOGIN_URL_MARKERS = [
 ];
 
 const SHOP_PLATFORM_LOGIN_CONFIG = {
+  temu: {
+    platformKey: "temu",
+    platformName: "Temu",
+    checkMode: "redirect_url",
+    loginUrlMarkers: [
+      ...DEFAULT_LOGIN_URL_MARKERS,
+      "login.temu.com",
+      "agentseller.temu.com/login",
+      "agentseller.temu.com/bgn_verification",
+    ],
+  },
   doudian: {
     platformKey: "doudian",
     platformName: "抖店",
@@ -88,6 +99,16 @@ function normalizeKeepPageOpen(value, defaultValue = false) {
     }
   }
   return defaultValue;
+}
+
+function buildShopPlatformFeatureKey(platformKey, action) {
+  const publicPlatformKeyMap = {
+    kuaishou_shop: "kuaishou-shop",
+  };
+  const normalizedPlatformKey = String(platformKey || "").trim();
+  const publicPlatformKey =
+    publicPlatformKeyMap[normalizedPlatformKey] || normalizedPlatformKey;
+  return `${publicPlatformKey}-${action}`;
 }
 
 function collectLoginUrlMarkers(currentUrl, markers = DEFAULT_LOGIN_URL_MARKERS) {
@@ -261,7 +282,7 @@ export async function runShopPlatformCheckLoginSmallFeature(
         ? `${platformMeta.platformName}当前已登录`
         : `${platformMeta.platformName}当前未登录`,
       data: {
-        featureKey: `${normalizedPlatformKey}-check-login`,
+        featureKey: buildShopPlatformFeatureKey(normalizedPlatformKey, "check-login"),
         platform: normalizedPlatformKey,
         platformName: platformMeta.platformName,
         profileId: profileId || null,
@@ -284,7 +305,7 @@ export async function runShopPlatformCheckLoginSmallFeature(
       success: false,
       message: error?.message || `${platformMeta.platformName}登录检测失败`,
       data: {
-        featureKey: `${normalizedPlatformKey}-check-login`,
+        featureKey: buildShopPlatformFeatureKey(normalizedPlatformKey, "check-login"),
         platform: normalizedPlatformKey,
         platformName: platformMeta.platformName,
         profileId: profileId || null,
@@ -445,10 +466,15 @@ export async function runQianniuOpenWorkspaceSmallFeature(
   input = {},
   runtimeOptions = {},
 ) {
-  const platformKey = "qianniu";
-  const platformConfig = PLATFORM_CONFIGS?.[platformKey];
-  if (!platformConfig) {
-    throw new Error("千牛平台配置不存在");
+  return await runShopPlatformOpenWorkspaceSmallFeature("qianniu", input, runtimeOptions);
+}
+
+async function runShopPlatformOpenWorkspaceSmallFeature(platformKey, input = {}, runtimeOptions = {}) {
+  const normalizedPlatformKey = String(platformKey || "").trim();
+  const platformMeta = SHOP_PLATFORM_LOGIN_CONFIG[normalizedPlatformKey];
+  const platformConfig = PLATFORM_CONFIGS?.[normalizedPlatformKey];
+  if (!platformMeta || !platformConfig) {
+    throw new Error(`暂不支持 ${platformKey} 平台进入工作台`);
   }
 
   const profileId = String(input?.profileId || "").trim() || undefined;
@@ -468,7 +494,7 @@ export async function runQianniuOpenWorkspaceSmallFeature(
   };
 
   try {
-    logger.info("千牛工具开始进入工作台", {
+    logger.info(`${platformMeta.platformName}工具开始进入工作台`, {
       profileId: profileId || "default",
       targetUrl,
     });
@@ -503,11 +529,11 @@ export async function runQianniuOpenWorkspaceSmallFeature(
 
     return {
       success: true,
-      message: "已打开千牛工作台",
+      message: `已打开${platformMeta.platformName}工作台`,
       data: {
-        featureKey: "qianniu-open-workspace",
-        platform: platformKey,
-        platformName: "千牛",
+        featureKey: buildShopPlatformFeatureKey(normalizedPlatformKey, "open-workspace"),
+        platform: normalizedPlatformKey,
+        platformName: platformMeta.platformName,
         profileId: profileId || null,
         currentUrl: page.url(),
         pageTitle: await page.title().catch(() => ""),
@@ -516,17 +542,17 @@ export async function runQianniuOpenWorkspaceSmallFeature(
       },
     };
   } catch (error) {
-    logger.error("千牛进入工作台失败:", error);
+    logger.error(`${platformMeta.platformName}进入工作台失败:`, error);
     pushTrace("open_workspace", "failed", {
       error: error instanceof Error ? error.message : String(error || ""),
     });
     return {
       success: false,
-      message: error?.message || "千牛进入工作台失败",
+      message: error?.message || `${platformMeta.platformName}进入工作台失败`,
       data: {
-        featureKey: "qianniu-open-workspace",
-        platform: platformKey,
-        platformName: "千牛",
+        featureKey: buildShopPlatformFeatureKey(normalizedPlatformKey, "open-workspace"),
+        platform: normalizedPlatformKey,
+        platformName: platformMeta.platformName,
         profileId: profileId || null,
         currentUrl: page?.url?.() || "",
         pageTitle: await page?.title?.().catch(() => ""),
@@ -534,4 +560,25 @@ export async function runQianniuOpenWorkspaceSmallFeature(
       },
     };
   }
+}
+
+export async function runDoudianOpenWorkspaceSmallFeature(
+  input = {},
+  runtimeOptions = {},
+) {
+  return await runShopPlatformOpenWorkspaceSmallFeature("doudian", input, runtimeOptions);
+}
+
+export async function runKuaishouShopOpenWorkspaceSmallFeature(
+  input = {},
+  runtimeOptions = {},
+) {
+  return await runShopPlatformOpenWorkspaceSmallFeature("kuaishou_shop", input, runtimeOptions);
+}
+
+export async function runTemuOpenWorkspaceSmallFeature(
+  input = {},
+  runtimeOptions = {},
+) {
+  return await runShopPlatformOpenWorkspaceSmallFeature("temu", input, runtimeOptions);
 }

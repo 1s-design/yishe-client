@@ -7,7 +7,10 @@ import {
 import { runTemuApiActionSmallFeature } from "../platforms/temu/apiAction.js";
 import {
   runDoudianCheckLoginSmallFeature,
+  runDoudianOpenWorkspaceSmallFeature,
   runKuaishouShopCheckLoginSmallFeature,
+  runKuaishouShopOpenWorkspaceSmallFeature,
+  runTemuOpenWorkspaceSmallFeature,
   runQianniuCheckLoginSmallFeature,
   runQianniuOpenWorkspaceSmallFeature,
   runAlibaba1688CheckLoginSmallFeature,
@@ -199,6 +202,30 @@ const SMALL_FEATURE_REGISTRY = {
     timeoutMs: 10 * 60 * 1000,
     handler: runTemuApiActionSmallFeature,
   },
+  "temu-open-workspace": {
+    key: "temu-open-workspace",
+    name: "进入工作台",
+    platform: "temu",
+    category: "navigation",
+    visibility: "public",
+    description:
+      "打开 Temu 商家中心首页（agentseller.temu.com），方便后续在工作台中进行操作。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先使用指定环境。",
+      "执行后会打开 Temu 商家中心页面并保持页面不关闭。",
+      "如果当前环境未登录，打开后会跳转到登录页。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+    ],
+    handler: runTemuOpenWorkspaceSmallFeature,
+  },
   "doudian-check-login": {
     key: "doudian-check-login",
     name: "检测是否登录",
@@ -228,6 +255,30 @@ const SMALL_FEATURE_REGISTRY = {
       },
     ],
     handler: runDoudianCheckLoginSmallFeature,
+  },
+  "doudian-open-workspace": {
+    key: "doudian-open-workspace",
+    name: "进入工作台",
+    platform: "doudian",
+    category: "navigation",
+    visibility: "public",
+    description:
+      "打开抖店店铺首页（fxg.jinritemai.com/ffa/mshop/homepage），方便后续在工作台中进行操作。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先使用指定环境。",
+      "执行后会打开抖店首页并保持页面不关闭。",
+      "如果当前环境未登录，打开后会跳转到登录页。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+    ],
+    handler: runDoudianOpenWorkspaceSmallFeature,
   },
   "kuaishou-shop-check-login": {
     key: "kuaishou-shop-check-login",
@@ -259,6 +310,30 @@ const SMALL_FEATURE_REGISTRY = {
       },
     ],
     handler: runKuaishouShopCheckLoginSmallFeature,
+  },
+  "kuaishou-shop-open-workspace": {
+    key: "kuaishou-shop-open-workspace",
+    name: "进入工作台",
+    platform: "kuaishou_shop",
+    category: "navigation",
+    visibility: "public",
+    description:
+      "打开快手小店首页（s.kwaixiaodian.com/zone/home），方便后续在工作台中进行操作。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先使用指定环境。",
+      "执行后会打开快手小店首页并保持页面不关闭。",
+      "如果当前环境未登录，打开后会跳转到登录页。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+    ],
+    handler: runKuaishouShopOpenWorkspaceSmallFeature,
   },
   "qianniu-check-login": {
     key: "qianniu-check-login",

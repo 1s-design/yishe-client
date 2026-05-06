@@ -488,6 +488,7 @@ export const PLATFORM_CONFIGS = {
     temu: {
         name: 'Temu',
         uploadUrl: 'https://agentseller.temu.com/goods/create/category',
+        loginCheckUrl: 'https://agentseller.temu.com/',
         waitUntil: 'domcontentloaded',
         timeout: 45000,
         antiDetection: true,
