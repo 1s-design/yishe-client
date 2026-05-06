@@ -691,7 +691,74 @@ async function clickTaobaoFirstSearchedImageInFrame(frame, index, contextName) {
     };
   }).catch(() => null);
 
-  await firstItem.click({ timeout: 5000 });
+  await firstItem
+    .evaluate((element) => {
+      element.scrollIntoView({ block: "center", inline: "center" });
+    })
+    .catch(() => undefined);
+
+  const pointerReady = await firstItem
+    .evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const target = document.elementFromPoint(x, y);
+      return !!target && (target === element || element.contains(target));
+    })
+    .catch(() => false);
+
+  try {
+    await firstItem.click({ timeout: pointerReady ? 5000 : 1200 });
+  } catch (error) {
+    const fallbackDebug = await firstItem
+      .evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const target = document.elementFromPoint(x, y);
+        const clickTarget =
+          element.querySelector("img") ||
+          element.querySelector("button") ||
+          element.querySelector("[role='button']") ||
+          element;
+        clickTarget.dispatchEvent(
+          new MouseEvent("mouseover", { bubbles: true, cancelable: true, view: window }),
+        );
+        clickTarget.dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }),
+        );
+        clickTarget.dispatchEvent(
+          new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }),
+        );
+        clickTarget.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, view: window }),
+        );
+        return {
+          reason: "dom_click_fallback",
+          interceptedBy: target
+            ? {
+                tagName: target.tagName,
+                className: String(target.className || ""),
+                text: String(target.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80),
+              }
+            : null,
+          clickTarget: {
+            tagName: clickTarget.tagName,
+            className: String(clickTarget.className || ""),
+          },
+        };
+      })
+      .catch((fallbackError) => ({
+        reason: "dom_click_fallback_failed",
+        error: fallbackError?.message || String(fallbackError),
+      }));
+    logger.warn(`淘宝${contextName}搜索结果普通点击被拦截，已尝试DOM点击兜底`, {
+      index,
+      error: error?.message || String(error),
+      fallback: fallbackDebug,
+      item: itemDebug,
+    });
+  }
   logger.info(`淘宝${contextName}已点击搜索结果第一张图片`, {
     index,
     item: itemDebug,
