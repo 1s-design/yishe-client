@@ -4865,6 +4865,7 @@ async function syncPsdSetProductionStatus(event: {
   message?: string;
   progress?: number;
   total?: number;
+  images?: string[];
 }) {
   const statusMessage = String(event.message || "").trim();
 
@@ -4876,6 +4877,7 @@ async function syncPsdSetProductionStatus(event: {
         message: statusMessage,
         progress: event.progress,
         total: event.total,
+        images: Array.isArray(event.images) ? event.images : undefined,
         clientId: identity.clientId,
         machineCode: identity.machineCode,
         assignedClientId: identity.clientId,
@@ -5898,12 +5900,15 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       throw new Error(`所有文件上传COS失败: ${uploadErrors.join("; ")}`);
     }
 
-    // 如果有部分失败，记录警告但不中断流程
+    // 必须所有生成文件都上传到云端后，才允许进入 completed。
     if (uploadErrors.length > 0) {
       emitter.emit("log", {
-        level: "warn",
+        level: "error",
         message: `[psd-set] 部分文件上传失败: ${uploadErrors.join("; ")}，已成功上传 ${uploadedImageUrls.length}/${successfulFiles.length} 个文件`,
       });
+      throw new Error(
+        `部分文件上传COS失败，已成功上传 ${uploadedImageUrls.length}/${successfulFiles.length} 个文件: ${uploadErrors.join("; ")}`,
+      );
     }
 
     emitter.emit("psdSetProgress", {
@@ -5951,6 +5956,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       message: "制作完成",
       progress: 5,
       total: 5,
+      images: updatedImages,
     });
     emitPsAutomationStatus({
       running: false,
