@@ -160,6 +160,130 @@ function buildFeatureResponse({ action, profileId, region, requestResult, result
   };
 }
 
+function pickDefinedFields(source, keys) {
+  const result = {};
+  const record = asPlainObject(source);
+  keys.forEach((key) => {
+    if (record[key] !== undefined) {
+      result[key] = record[key];
+    }
+  });
+  return result;
+}
+
+function slimPriceReviewSku(value) {
+  return pickDefinedFields(value, [
+    'skuId',
+    'productSkuId',
+    'extCode',
+    'skuExtCode',
+    'skuPreviewImage',
+    'priceReviewStatus',
+    'productPropertyList'
+  ]);
+}
+
+function slimPriceReviewReview(value) {
+  const source = asPlainObject(value);
+  const result = pickDefinedFields(source, [
+    'priceOrderId',
+    'suggestSupplyPrice',
+    'supplyPrice',
+    'priceDifference',
+    'priceDifferenceRatio',
+    'times',
+    'priceReviewStatus',
+    'supplierResult'
+  ]);
+  result.productSkuList = Array.isArray(source.productSkuList)
+    ? source.productSkuList.map(slimPriceReviewSku)
+    : [];
+  return result;
+}
+
+function slimPriceReviewSkc(value) {
+  const source = asPlainObject(value);
+  const result = pickDefinedFields(source, [
+    'skcId',
+    'productSkcId',
+    'extCode',
+    'skcExtCode',
+    'previewImgUrlList'
+  ]);
+  result.supplierPriceReviewInfoList = Array.isArray(source.supplierPriceReviewInfoList)
+    ? source.supplierPriceReviewInfoList.map(slimPriceReviewReview)
+    : [];
+  return result;
+}
+
+function slimPriceReviewItem(value) {
+  const source = asPlainObject(value);
+  const result = pickDefinedFields(source, [
+    'productId',
+    'spuId',
+    'productName',
+    'spuName',
+    'leafCategoryName',
+    'fullCategoryName',
+    'carouselImageUrlList'
+  ]);
+  result.skcList = Array.isArray(source.skcList)
+    ? source.skcList.map(slimPriceReviewSkc)
+    : [];
+  return result;
+}
+
+function filterPriceReviewListResponse(response) {
+  if (!asPlainObject(response).action || response.action !== 'goods.price-review.list') {
+    return response;
+  }
+  const result = asPlainObject(response.result);
+  const rawPayload = asPlainObject(response.raw);
+  const rawResult = asPlainObject(rawPayload.result);
+  const sourceItems = Array.isArray(result.items)
+    ? result.items
+    : Array.isArray(rawResult.dataList)
+      ? rawResult.dataList
+      : [];
+  const items = sourceItems.map(slimPriceReviewItem);
+  const total = Number(result.total ?? rawResult.total ?? items.length) || 0;
+  return {
+    ...response,
+    result: {
+      ...result,
+      total,
+      items,
+      skcSpuList: Array.isArray(result.skcSpuList)
+        ? result.skcSpuList
+        : extractLifecycleSkcSpuPairs({ result: { dataList: items } })
+    },
+    raw: rawPayload && rawResult
+      ? {
+          success: rawPayload.success,
+          errorCode: rawPayload.errorCode,
+          errorMsg: rawPayload.errorMsg,
+          result: {
+            total: rawResult.total,
+          }
+        }
+      : response.raw
+  };
+}
+
+function measureJsonPayload(value) {
+  const startedAt = Date.now();
+  let text = '';
+  try {
+    text = JSON.stringify(value ?? null);
+  } catch {
+    text = JSON.stringify(String(value ?? ''));
+  }
+  return {
+    bytes: Buffer.byteLength(text, 'utf8'),
+    elapsedMs: Date.now() - startedAt
+  };
+}
+
 function summarizeTemuApiRequestPayload(payload) {
   const source = asPlainObject(payload);
   const summary = {};
@@ -1359,23 +1483,38 @@ export async function runTemuApiActionSmallFeature(input = {}) {
     });
     throw error;
   }
-  if (actionKey === 'goods.real-picture.list') {
+  const filteredResult = actionKey === 'goods.price-review.list'
+    ? filterPriceReviewListResponse(result)
+    : result;
+  if (actionKey === 'goods.price-review.list') {
+    logger.info('[temu-api-action] 核价列表结果已精简，准备回传', {
+      actionKey,
+      success: !!filteredResult.success,
+      resultSummary: {
+        total: Number(filteredResult?.result?.total || 0) || 0,
+        itemCount: Array.isArray(filteredResult?.result?.items) ? filteredResult.result.items.length : 0,
+        fetchedAll: filteredResult?.result?.fetchedAll === true,
+        fetchedPages: Number(filteredResult?.result?.fetchedPages || 0) || 0,
+        payloadBytes: measureJsonPayload(filteredResult).bytes
+      }
+    });
+  } else if (actionKey === 'goods.real-picture.list') {
     logger.info('[temu-api-action] Temu 动作执行完成', {
       actionKey,
-      success: !!result.success,
-      message: result.message || '',
-      resultSummary: summarizeRealPictureListResult(result.result || {})
+      success: !!filteredResult.success,
+      message: filteredResult.message || '',
+      resultSummary: summarizeRealPictureListResult(filteredResult.result || {})
     });
   } else {
     logger.info('[temu-api-action] Temu 动作执行完成', {
       actionKey,
-      success: !!result.success,
-      message: result.message || ''
+      success: !!filteredResult.success,
+      message: filteredResult.message || ''
     });
   }
   return {
-    success: !!result.success,
-    message: result.message || (result.success ? 'Temu 动作执行成功' : 'Temu 动作执行失败'),
-    data: result
+    success: !!filteredResult.success,
+    message: filteredResult.message || (filteredResult.success ? 'Temu 动作执行成功' : 'Temu 动作执行失败'),
+    data: filteredResult
   };
 }

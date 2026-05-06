@@ -4183,6 +4183,33 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
     action,
     service: normalizedCommand.service,
   });
+  const emitServiceCommandResult = (result: ServiceCommandResult) => {
+    const emitStartedAt = Date.now();
+    let resultBytes = 0;
+    try {
+      resultBytes = new Blob([JSON.stringify(result)]).size;
+    } catch {
+      resultBytes = 0;
+    }
+    logger.info("[ws] service-command result emit start", {
+      commandId: result.commandId,
+      pluginKey,
+      action,
+      success: result.success,
+      bytes: resultBytes,
+    });
+    socket?.emit("service-command-result", result);
+    logger.info("[ws] service-command result emit done", {
+      commandId: result.commandId,
+      pluginKey,
+      action,
+      success: result.success,
+      bytes: resultBytes,
+      elapsedMs: Date.now() - emitStartedAt,
+    });
+    emitter.emit("serviceCommandResult", result);
+  };
+
   if (!handler) {
     const result: ServiceCommandResult = {
       commandId: normalizedCommand.commandId,
@@ -4194,8 +4221,7 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
       error: "unsupported_service",
       finishedAt: new Date().toISOString(),
     };
-    socket?.emit("service-command-result", result);
-    emitter.emit("serviceCommandResult", result);
+    emitServiceCommandResult(result);
     logger.warn("[ws] service-command unsupported", result);
     return;
   }
@@ -4254,8 +4280,7 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
       errorDetail,
       finishedAt: new Date().toISOString(),
     };
-    socket?.emit("service-command-result", result);
-    emitter.emit("serviceCommandResult", result);
+    emitServiceCommandResult(result);
     if (result.success) {
       logger.info("[ws] service-command completed", {
         commandId: result.commandId,
