@@ -1125,23 +1125,65 @@ async function executeAction(actionKey, profileId, region, payload) {
 
   if (actionKey === 'jit.open') {
     const skcSpuList = Array.isArray(payload.skcSpuList) ? payload.skcSpuList : [];
-    const response = await requestTemuJson(region, '/visage-agent-seller/product/skc/batchOpenJit', {
-      productSkcSubSellModeReqList: skcSpuList.map((item) => ({
+    const productSkcSubSellModeReqList = skcSpuList
+      .map((item) => ({
         productSkcId: Number(item?.skcId || item?.productSkcId || 0),
         productId: Number(item?.spuId || item?.productId || 0)
       }))
+      .filter((item) => item.productSkcId > 0 && item.productId > 0);
+    logger.info('[temu-api-action] JIT 开通请求汇总', {
+      profileId,
+      region,
+      requestedCount: skcSpuList.length,
+      validCount: productSkcSubSellModeReqList.length,
+      firstPair: productSkcSubSellModeReqList[0] || null
+    });
+    const response = await requestTemuJson(region, '/visage-agent-seller/product/skc/batchOpenJit', {
+      productSkcSubSellModeReqList
     }, { profileId });
+    const failedSkcList = Array.isArray(response.payload?.result?.handleProductFailedMsgList)
+      ? response.payload.result.handleProductFailedMsgList
+      : [];
+    const requestedCount = productSkcSubSellModeReqList.length;
+    const failedCount = failedSkcList.length;
+    const actualSuccess = !!response.success && requestedCount > 0 && failedCount < requestedCount;
+    const firstFailureMessage = normalizeText(
+      failedSkcList[0]?.msg ||
+        failedSkcList[0]?.message ||
+        failedSkcList[0]?.errorMsg ||
+        ''
+    );
+    logger.info('[temu-api-action] JIT 开通结果汇总', {
+      profileId,
+      region,
+      httpSuccess: !!response.success,
+      requestedCount,
+      failedCount,
+      successCount: Math.max(0, requestedCount - failedCount),
+      firstFailedSkc: failedSkcList[0] || null,
+      firstFailureMessage
+    });
+    const message = actualSuccess
+      ? failedCount
+        ? `开通 JIT 部分成功：成功 ${requestedCount - failedCount} 个，失败 ${failedCount} 个`
+        : '开通 JIT 成功'
+      : firstFailureMessage || normalizeTemuApiMessage(response.payload, response.message || '开通 JIT 失败') || '开通 JIT 失败';
     return buildFeatureResponse({
       action: actionKey,
       profileId,
       region,
-      requestResult: response,
-      successMessage: '开通 JIT 成功',
+      requestResult: {
+        ...response,
+        success: actualSuccess,
+        message
+      },
+      successMessage: message,
       failureMessage: '开通 JIT 失败',
       result: {
-        failedSkcList: Array.isArray(response.payload?.result?.handleProductFailedMsgList)
-          ? response.payload.result.handleProductFailedMsgList
-          : []
+        requestedCount,
+        successCount: Math.max(0, requestedCount - failedCount),
+        failedCount,
+        failedSkcList
       }
     });
   }
