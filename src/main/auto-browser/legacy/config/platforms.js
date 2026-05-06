@@ -802,6 +802,37 @@ export const PLATFORM_CONFIGS = {
             userElements: ['.user-icon'],
             loginElements: ['.login-btn']
         }
+    },
+    alibaba_1688: {
+        name: '1688',
+        uploadUrl: 'https://work.1688.com/',
+        loginCheckUrl: 'https://work.1688.com/',
+        waitUntil: 'domcontentloaded',
+        timeout: 45000,
+        antiDetection: true,
+        checkLogin: true,
+        selectors: {},
+        loginSelectors: {
+            userElements: [
+                '.user-avatar',
+                '.user-info',
+                '.account-name',
+                '[class*="avatar"]',
+                '[class*="user-name"]',
+                '[class*="header-avatar"]'
+            ],
+            loginElements: [
+                '.login-btn',
+                '.login-button',
+                '.auth-btn',
+                'a[href*="login"]',
+                'a[href*="passport"]',
+                'button[class*="login"]',
+                '[class*="login"]'
+            ]
+        },
+        preProcess: null,
+        postProcess: null
     }
 };
 

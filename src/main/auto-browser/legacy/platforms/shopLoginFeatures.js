@@ -59,6 +59,19 @@ const SHOP_PLATFORM_LOGIN_CONFIG = {
       "sso.taobao.com",
     ],
   },
+  alibaba_1688: {
+    platformKey: "alibaba_1688",
+    platformName: "1688",
+    checkMode: "redirect_url",
+    loginUrlMarkers: [
+      ...DEFAULT_LOGIN_URL_MARKERS,
+      "login.1688.com",
+      "passport.1688.com",
+      "sso.1688.com",
+      "login.alibaba.com",
+      "passport.alibaba.com",
+    ],
+  },
 };
 
 function normalizeKeepPageOpen(value, defaultValue = false) {
@@ -320,6 +333,112 @@ export async function runQianniuCheckLoginSmallFeature(
     input,
     runtimeOptions,
   );
+}
+
+export async function runAlibaba1688CheckLoginSmallFeature(
+  input = {},
+  runtimeOptions = {},
+) {
+  return await runShopPlatformCheckLoginSmallFeature(
+    "alibaba_1688",
+    input,
+    runtimeOptions,
+  );
+}
+
+export async function runAlibaba1688OpenWorkspaceSmallFeature(
+  input = {},
+  runtimeOptions = {},
+) {
+  const platformKey = "alibaba_1688";
+  const platformConfig = PLATFORM_CONFIGS?.[platformKey];
+  if (!platformConfig) {
+    throw new Error("1688平台配置不存在");
+  }
+
+  const profileId = String(input?.profileId || "").trim() || undefined;
+  const targetUrl = platformConfig.loginCheckUrl || platformConfig.uploadUrl;
+  const pageOperator = runtimeOptions?.pageOperator || new PageOperator();
+  const executionTrace = [];
+  const managePage = !runtimeOptions?.page;
+  let page = runtimeOptions?.page || null;
+
+  const pushTrace = (step, status, detail = {}) => {
+    executionTrace.push({
+      step,
+      status,
+      time: new Date().toISOString(),
+      detail,
+    });
+  };
+
+  try {
+    logger.info("1688工具开始进入工作台", {
+      profileId: profileId || "default",
+      targetUrl,
+    });
+    pushTrace("start", "success", {
+      profileId: profileId || null,
+      targetUrl,
+    });
+
+    if (managePage) {
+      const browser = await getOrCreateBrowser({ profileId });
+      page = await browser.newPage({ foreground: true });
+      await pageOperator.setupAntiDetection(page);
+      pushTrace("open_page", "success", {
+        currentUrl: page.url(),
+      });
+    } else {
+      pushTrace("open_page", "success", {
+        reusedCurrentPage: true,
+        currentUrl: page.url(),
+      });
+    }
+
+    await page.goto(targetUrl, {
+      waitUntil: platformConfig.waitUntil || "domcontentloaded",
+      timeout: platformConfig.timeout || 45000,
+    });
+    await page.waitForTimeout(2000);
+    pushTrace("navigate_to_workspace", "success", {
+      currentUrl: page.url(),
+      pageTitle: await page.title().catch(() => ""),
+    });
+
+    return {
+      success: true,
+      message: "已打开1688工作台",
+      data: {
+        featureKey: "alibaba-1688-open-workspace",
+        platform: platformKey,
+        platformName: "1688",
+        profileId: profileId || null,
+        currentUrl: page.url(),
+        pageTitle: await page.title().catch(() => ""),
+        executionTrace,
+        pageKeptOpen: true,
+      },
+    };
+  } catch (error) {
+    logger.error("1688进入工作台失败:", error);
+    pushTrace("open_workspace", "failed", {
+      error: error instanceof Error ? error.message : String(error || ""),
+    });
+    return {
+      success: false,
+      message: error?.message || "1688进入工作台失败",
+      data: {
+        featureKey: "alibaba-1688-open-workspace",
+        platform: platformKey,
+        platformName: "1688",
+        profileId: profileId || null,
+        currentUrl: page?.url?.() || "",
+        pageTitle: await page?.title?.().catch(() => ""),
+        executionTrace,
+      },
+    };
+  }
 }
 
 export async function runQianniuOpenWorkspaceSmallFeature(

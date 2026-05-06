@@ -10,6 +10,8 @@ import {
   runKuaishouShopCheckLoginSmallFeature,
   runQianniuCheckLoginSmallFeature,
   runQianniuOpenWorkspaceSmallFeature,
+  runAlibaba1688CheckLoginSmallFeature,
+  runAlibaba1688OpenWorkspaceSmallFeature,
 } from "../platforms/shopLoginFeatures.js";
 import { logger } from "../utils/logger.js";
 
@@ -312,6 +314,61 @@ const SMALL_FEATURE_REGISTRY = {
       },
     ],
     handler: runQianniuOpenWorkspaceSmallFeature,
+  },
+  "alibaba-1688-check-login": {
+    key: "alibaba-1688-check-login",
+    name: "检测是否登录",
+    platform: "alibaba_1688",
+    category: "session",
+    visibility: "public",
+    description:
+      "打开当前环境的1688工作台首页，检测该环境是否处于已登录状态。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先检测指定环境。",
+      "该能力是原子化登录检测，后续页面、服务端转发和 AI 调用都可以复用同一个 featureKey。",
+      "默认检测完成后自动关闭临时页面。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+      {
+        key: "keepPageOpen",
+        label: "保留页面",
+        type: "boolean",
+        required: false,
+        defaultValue: false,
+      },
+    ],
+    handler: runAlibaba1688CheckLoginSmallFeature,
+  },
+  "alibaba-1688-open-workspace": {
+    key: "alibaba-1688-open-workspace",
+    name: "进入工作台",
+    platform: "alibaba_1688",
+    category: "navigation",
+    visibility: "public",
+    description:
+      "打开1688工作台首页（work.1688.com），方便后续在工作台中进行操作。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先使用指定环境。",
+      "执行后会打开1688工作台页面并保持页面不关闭。",
+      "如果当前环境未登录，打开后会跳转到登录页。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+    ],
+    handler: runAlibaba1688OpenWorkspaceSmallFeature,
   },
 };
 
