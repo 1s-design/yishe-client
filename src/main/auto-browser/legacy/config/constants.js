@@ -47,7 +47,8 @@ export const SUPPORTED_PLATFORMS = [
   'kuaishou',
   'doudian',
   'kuaishou_shop',
-  'temu'
+  'temu',
+  'pdd'
 ];
 
 export const PLATFORM_NAMES = {
@@ -57,5 +58,6 @@ export const PLATFORM_NAMES = {
   kuaishou: '快手',
   doudian: '抖店',
   kuaishou_shop: '快手小店',
-  temu: 'Temu'
+  temu: 'Temu',
+  pdd: '拼多多'
 };

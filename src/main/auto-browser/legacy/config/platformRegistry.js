@@ -115,6 +115,15 @@ export const PLATFORM_REGISTRY = {
         capabilities: [
             createCapability('publish', '发布商品', '发布淘宝商品', resolveCapabilityHandler({ platform: 'taobao', action: 'publish' }))
         ]
+    },
+    pdd: {
+        id: 'pdd',
+        name: '拼多多',
+        category: 'commerce',
+        defaultAction: 'publish',
+        capabilities: [
+            createCapability('publish', '发布商品', '发布拼多多商品', resolveCapabilityHandler({ platform: 'pdd', action: 'publish' }))
+        ]
     }
 };
 

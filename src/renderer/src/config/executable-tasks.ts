@@ -20,6 +20,7 @@ export const EXECUTABLE_TASK_TYPES = [
   'publish-product-kuaishou_shop',
   'publish-product-temu',
   'publish-product-taobao',
+  'publish-product-pdd',
   'publish-product-xiaohongshu',
   'publish-product-weibo',
 ] as const
@@ -94,6 +95,11 @@ async function executeTaobaoPublish(row: any, context?: PlatformTaskExecutionCon
   await executePlatformTask('taobao', row, context)
 }
 
+/** 拼多多发布处理 */
+async function executePddPublish(row: any, context?: PlatformTaskExecutionContext) {
+  await executePlatformTask('pdd', row, context)
+}
+
 /** 小红书发布处理 */
 async function executeXiaohongshuPublish(row: any, context?: PlatformTaskExecutionContext) {
   await executePlatformTask('xiaohongshu', row, context)
@@ -117,6 +123,7 @@ const TASK_EXECUTORS: Partial<Record<ExecutableTaskType, TaskExecutor>> = {
   'publish-product-kuaishou_shop': executeKuaishouShopPublish,
   'publish-product-temu': executeTemuPublish,
   'publish-product-taobao': executeTaobaoPublish,
+  'publish-product-pdd': executePddPublish,
   'publish-product-xiaohongshu': executeXiaohongshuPublish,
   'publish-product-weibo': executeWeiboPublish,
 }

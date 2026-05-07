@@ -70,6 +70,12 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
     label: "发布商品-淘宝",
     executionBackend: "uploader_api",
   },
+  pdd: {
+    id: "pdd",
+    taskType: "publish-product-pdd",
+    label: "发布商品-拼多多",
+    executionBackend: "uploader_api",
+  },
   tiktok: {
     id: "tiktok",
     taskType: "publish-product-tiktok",
@@ -110,6 +116,11 @@ const PLATFORM_IMAGE_PROCESS_RULES: Record<
   doudian: DEFAULT_IMAGE_PROCESS_RULE,
   kuaishou_shop: DEFAULT_IMAGE_PROCESS_RULE,
   taobao: DEFAULT_IMAGE_PROCESS_RULE,
+  pdd: {
+    ...DEFAULT_IMAGE_PROCESS_RULE,
+    width: 1500,
+    height: 1500,
+  },
 };
 
 export interface PlatformExecutor {
@@ -862,12 +873,12 @@ function resolveImageProcessRule(
   };
   const imagePolicy = resourceProcessing?.imagePolicy || {};
 
-  const width =
+  let width =
     Number(imagePolicy?.width) ||
     Number(imagePolicy?.maxSide) ||
     platformRule.width ||
     DEFAULT_IMAGE_PROCESS_RULE.width;
-  const height =
+  let height =
     Number(imagePolicy?.height) ||
     Number(imagePolicy?.maxSide) ||
     platformRule.height ||
@@ -876,6 +887,11 @@ function resolveImageProcessRule(
     Number(imagePolicy?.maxBytes) ||
     platformRule.maxBytes ||
     DEFAULT_IMAGE_PROCESS_RULE.maxBytes;
+
+  if (platform === "pdd") {
+    width = Math.min(Number(width) || 1500, 1500);
+    height = Math.min(Number(height) || 1500, 1500);
+  }
 
   return {
     width,

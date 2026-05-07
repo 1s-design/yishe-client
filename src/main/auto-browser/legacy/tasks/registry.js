@@ -9,6 +9,7 @@ import executeDoudianPublishTask, { DOUDIAN_PUBLISH_TASK_KEY } from './publish/d
 import executeKuaishouShopPublishTask, { KUAISHOU_SHOP_PUBLISH_TASK_KEY } from './publish/kuaishou-shop.publish.js';
 import executeTemuPublishTask, { TEMU_PUBLISH_TASK_KEY } from './publish/temu.publish.js';
 import executeTaobaoPublishTask, { TAOBAO_PUBLISH_TASK_KEY } from './publish/taobao.publish.js';
+import executePddPublishTask, { PDD_PUBLISH_TASK_KEY } from './publish/pdd.publish.js';
 
 export const TASK_REGISTRY = {
     [DOUYIN_PUBLISH_TASK_KEY]: {
@@ -98,6 +99,14 @@ export const TASK_REGISTRY = {
         name: '淘宝发布商品',
         description: '执行淘宝商品发布任务',
         handler: executeTaobaoPublishTask
+    },
+    [PDD_PUBLISH_TASK_KEY]: {
+        key: PDD_PUBLISH_TASK_KEY,
+        platform: 'pdd',
+        action: 'publish',
+        name: '拼多多发布商品',
+        description: '执行拼多多商品发布任务',
+        handler: executePddPublishTask
     }
 };
 

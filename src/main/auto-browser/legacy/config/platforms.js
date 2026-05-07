@@ -516,6 +516,44 @@ export const PLATFORM_CONFIGS = {
             ]
         }
     },
+    pdd: {
+        name: '拼多多',
+        uploadUrl: 'https://mms.pinduoduo.com/goods/goods_add/index',
+        loginCheckUrl: 'https://mms.pinduoduo.com/home/',
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+        antiDetection: true,
+        checkLogin: true,
+        selectors: {
+            titleInput: [
+                'input[placeholder*="商品标题"]',
+                'textarea[placeholder*="商品标题"]',
+                'input[placeholder*="标题"]',
+                'textarea[placeholder*="标题"]'
+            ],
+            fileInput: 'input[type="file"]',
+            submitButton: [
+                'button:has-text("发布")',
+                'button:has-text("提交")',
+                'button:has-text("保存")'
+            ]
+        },
+        loginSelectors: {
+            userElements: [
+                '[class*="user"]',
+                '[class*="avatar"]',
+                '[class*="mall"]',
+                '[class*="merchant"]'
+            ],
+            loginElements: [
+                'input[type="password"]',
+                'input[placeholder*="密码"]',
+                'input[placeholder*="手机号"]',
+                'text=登录',
+                '[class*="login"]'
+            ]
+        }
+    },
     wechat_channels: {
         name: '视频号',
         uploadUrl: 'https://channels.weixin.qq.com/platform/post/create',

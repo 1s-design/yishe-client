@@ -57,6 +57,17 @@ const SHOP_PLATFORM_LOGIN_CONFIG = {
       "passport.alibaba.com",
     ],
   },
+  pdd: {
+    platformKey: "pdd",
+    platformName: "拼多多",
+    checkMode: "redirect_url",
+    loginUrlMarkers: [
+      ...DEFAULT_LOGIN_URL_MARKERS,
+      "mms.pinduoduo.com/login",
+      "mms.pinduoduo.com/login.html",
+      "mms.pinduoduo.com/mobile-login",
+    ],
+  },
   qianniu: {
     platformKey: "qianniu",
     platformName: "千牛",
