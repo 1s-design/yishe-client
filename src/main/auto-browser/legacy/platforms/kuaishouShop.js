@@ -1194,6 +1194,7 @@ export async function publishToKuaishouShop(publishInfo = {}) {
   const pageOperator = new PageOperator();
   const tempFiles = [];
   let page = null;
+  let shouldClosePage = false;
 
   try {
     const settings =
@@ -1398,6 +1399,7 @@ export async function publishToKuaishouShop(publishInfo = {}) {
       failureReasons.push("SKU编码未填写成功");
     if (inventoryFilledCount <= 0) failureReasons.push("库存未填写成功");
     if (!submitAuditClicked) failureReasons.push("未确认提交审核成功");
+    shouldClosePage = success;
 
     return {
       success,
@@ -1405,7 +1407,7 @@ export async function publishToKuaishouShop(publishInfo = {}) {
         ? `${PLATFORM_NAME}发布流程已提交`
         : `${PLATFORM_NAME}发布流程未完成：${failureReasons.join("，") || "关键步骤未完成"}`,
       data: {
-        pageKeptOpen: true,
+        pageKeptOpen: !success,
         titleFilled,
         shortTitleFilled,
         titleValue: title,
@@ -1433,8 +1435,17 @@ export async function publishToKuaishouShop(publishInfo = {}) {
     };
   } finally {
     tempFiles.forEach((file) => imageManager.deleteTempFile(file));
-    if (page) {
-      logger.info(`${PLATFORM_NAME}调试模式：保留页面，不自动关闭 tab`);
+    if (page && shouldClosePage) {
+      try {
+        await page.close({ runBeforeUnload: false });
+        logger.info(`${PLATFORM_NAME}发布完成，已自动关闭发布页面`);
+      } catch (closeError) {
+        logger.warn(
+          `${PLATFORM_NAME}发布页面关闭失败: ${closeError?.message || closeError}`,
+        );
+      }
+    } else if (page) {
+      logger.info(`${PLATFORM_NAME}发布未完成，保留页面用于排查`);
     }
   }
 }
