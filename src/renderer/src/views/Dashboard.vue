@@ -17,27 +17,11 @@ export interface DashboardStatusCardAction {
   disabled?: boolean;
 }
 
-export interface DashboardQuickAction {
-  key: string;
-  title: string;
-  description: string;
-  icon: string;
-}
-
-export interface DashboardMetaItem {
-  key: string;
-  label: string;
-  value: string;
-}
-
 const props = defineProps<{
   statusCards: DashboardStatusCard[];
-  quickActions: DashboardQuickAction[];
-  metaItems: DashboardMetaItem[];
 }>();
 
 const emit = defineEmits<{
-  navigate: [key: string];
   cardAction: [key: string];
 }>();
 
@@ -47,223 +31,135 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
 </script>
 
 <template>
-  <div class="dashboard-page">
-    <section class="dashboard-group">
-      <div class="dashboard-group__head">
-        <div class="dashboard-group__title">运行状态</div>
-        <div class="dashboard-group__hint">当前客户端与桥接服务状态</div>
+  <div class="dash-cards">
+    <article
+      v-for="item in props.statusCards"
+      :key="item.key"
+      class="dash-card"
+      :class="toneClass(item.tone)"
+      :title="item.description"
+    >
+      <div class="dash-card__head">
+        <span class="dash-card__dot" :class="toneClass(item.tone)"></span>
+        <span class="dash-card__title">{{ item.title }}</span>
       </div>
-      <div class="dashboard-status-grid">
-        <article
-          v-for="item in props.statusCards"
-          :key="item.key"
-          class="dashboard-card"
-          :class="toneClass(item.tone)"
-        >
-          <div class="dashboard-card__top">
-            <span class="dashboard-card__signal" :class="toneClass(item.tone)">
-              <span class="dashboard-card__signal-dot"></span>
-            </span>
-            <span class="dashboard-card__title">{{ item.title }}</span>
-          </div>
-          <div class="dashboard-card__value">{{ item.value }}</div>
-          <div v-if="item.description" class="dashboard-card__desc">
-            {{ item.description }}
-          </div>
-          <div v-if="item.actions?.length" class="dashboard-card__actions">
-            <button
-              v-for="action in item.actions"
-              :key="action.key"
-              type="button"
-              class="dashboard-card__action"
-              :disabled="action.disabled || action.loading"
-              :title="action.label"
-              @click.stop="emit('cardAction', action.key)"
-            >
-              <i
-                :class="[
-                  'mdi',
-                  action.loading ? 'mdi-loading mdi-spin' : action.icon,
-                ]"
-              ></i>
-              <span>{{ action.label }}</span>
-            </button>
-          </div>
-        </article>
+      <div class="dash-card__row">
+        <span class="dash-card__value">{{ item.value }}</span>
+        <span v-if="item.actions?.length" class="dash-card__actions">
+          <button
+            v-for="action in item.actions"
+            :key="action.key"
+            type="button"
+            class="dash-card__btn"
+            :disabled="action.disabled || action.loading"
+            :title="action.label"
+            @click.stop="emit('cardAction', action.key)"
+          >
+            <i
+              :class="[
+                'mdi',
+                action.loading ? 'mdi-loading mdi-spin' : action.icon,
+              ]"
+            ></i>
+          </button>
+        </span>
       </div>
-    </section>
-
-    <section class="dashboard-group">
-      <div class="dashboard-group__head">
-        <div class="dashboard-group__title">快捷操作</div>
-      </div>
-      <div class="dashboard-actions">
-        <button
-          v-for="item in props.quickActions"
-          :key="item.key"
-          type="button"
-          class="dashboard-action"
-          @click="emit('navigate', item.key)"
-        >
-          <span class="dashboard-action__icon">
-            <i :class="['mdi', item.icon]"></i>
-          </span>
-          <span class="dashboard-action__body">
-            <span class="dashboard-action__title">{{ item.title }}</span>
-            <span class="dashboard-action__desc">{{ item.description }}</span>
-          </span>
-        </button>
-      </div>
-    </section>
-
-    <section class="dashboard-group">
-      <div class="dashboard-group__head">
-        <div class="dashboard-group__title">设备信息</div>
-      </div>
-      <div class="dashboard-meta">
-        <div
-          v-for="item in props.metaItems"
-          :key="item.key"
-          class="dashboard-meta__item"
-        >
-          <span class="dashboard-meta__label">{{ item.label }}</span>
-          <span class="dashboard-meta__value">{{ item.value }}</span>
-        </div>
-      </div>
-    </section>
+    </article>
   </div>
 </template>
 
 <style scoped>
-.dashboard-page {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.dashboard-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.dashboard-group__head {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.dashboard-group__title {
-  color: var(--theme-text);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.dashboard-group__hint {
-  color: var(--theme-text-muted);
-  font-size: 10px;
-  line-height: 1.4;
-}
-
-.dashboard-status-grid,
-.dashboard-actions {
+.dash-cards {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
-.dashboard-status-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.dashboard-actions {
-  grid-template-columns: 1fr;
-}
-
-.dashboard-card,
-.dashboard-action,
-.dashboard-meta__item {
-  border: 1px solid var(--theme-border);
-  border-radius: 12px;
-  background: var(--theme-surface);
-}
-
-.dashboard-card {
+.dash-card {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  min-height: 92px;
-  padding: 12px 13px;
+  gap: 5px;
+  padding: 10px 11px;
+  border: 1px solid var(--theme-border);
+  border-radius: 10px;
+  background: var(--theme-surface);
+  min-height: 54px;
   transition:
     border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    background-color 0.18s ease;
+    box-shadow 0.18s ease;
 }
 
-.dashboard-card__top {
+.dash-card__head {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
 }
 
-.dashboard-card__signal {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-.dashboard-card__signal-dot {
-  width: 10px;
-  height: 10px;
+.dash-card__dot {
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
+  flex-shrink: 0;
   background: var(--theme-text-soft);
-  box-shadow: 0 0 0 0 rgba(138, 138, 138, 0.35);
-  animation: dashboardPulseMuted 2s ease-in-out infinite;
 }
 
-.dashboard-card__title {
-  color: var(--theme-text);
-  font-size: 11px;
+.dash-card__dot.is-success {
+  background: var(--theme-success);
+  animation: dashPulse 2s ease-in-out infinite;
+}
+
+.dash-card__dot.is-warning {
+  background: var(--theme-warning);
+  animation: dashPulse 2s ease-in-out infinite;
+}
+
+.dash-card__dot.is-danger {
+  background: var(--theme-danger);
+  animation: dashPulse 2s ease-in-out infinite;
+}
+
+.dash-card__dot.is-muted {
+  background: var(--theme-text-soft);
+}
+
+.dash-card__title {
+  color: var(--theme-text-muted);
+  font-size: 10px;
   font-weight: 600;
 }
 
-.dashboard-card__value {
+.dash-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dash-card__value {
   color: var(--theme-text);
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.15;
-  word-break: break-word;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
-.dashboard-card__desc {
-  color: var(--theme-text-muted);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.dashboard-card__actions {
+.dash-card__actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: auto;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
-.dashboard-card__action {
+.dash-card__btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-height: 26px;
-  padding: 5px 8px;
+  width: 24px;
+  height: 24px;
   border: 1px solid var(--theme-border);
-  border-radius: 8px;
-  background: var(--theme-surface-strong);
+  border-radius: 7px;
+  background: var(--theme-surface-muted);
   color: var(--theme-text);
-  font-size: 10px;
-  line-height: 1;
+  font-size: 12px;
   cursor: pointer;
   transition:
     border-color 0.18s ease,
@@ -271,189 +167,47 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
     opacity 0.18s ease;
 }
 
-.dashboard-card__action:hover:not(:disabled) {
+.dash-card__btn:hover:not(:disabled) {
   border-color: var(--theme-border-strong);
-  background: var(--theme-surface);
+  background: var(--theme-surface-strong);
 }
 
-.dashboard-card__action:disabled {
+.dash-card__btn:disabled {
   cursor: default;
-  opacity: 0.62;
+  opacity: 0.55;
 }
 
-.dashboard-card__action .mdi {
-  font-size: 12px;
+.dash-card__btn .mdi-spin {
+  animation: dashSpin 0.9s linear infinite;
 }
 
-.mdi-spin {
-  animation: dashboardSpin 0.9s linear infinite;
-}
-
-.dashboard-card.is-success .dashboard-card__signal-dot {
-  background: var(--theme-success);
-  box-shadow: 0 0 0 0 rgba(23, 163, 74, 0.35);
-  animation-name: dashboardPulseSuccess;
-}
-
-.dashboard-card.is-warning .dashboard-card__signal-dot {
-  background: var(--theme-warning);
-  box-shadow: 0 0 0 0 rgba(197, 139, 17, 0.34);
-  animation-name: dashboardPulseWarning;
-}
-
-.dashboard-card.is-danger .dashboard-card__signal-dot {
-  background: var(--theme-danger);
-  box-shadow: 0 0 0 0 rgba(213, 67, 67, 0.34);
-  animation-name: dashboardPulseDanger;
-}
-
-.dashboard-card.is-muted .dashboard-card__signal-dot {
-  background: var(--theme-text-soft);
-}
-
-@keyframes dashboardPulseSuccess {
+@keyframes dashPulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(23, 163, 74, 0.34);
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 32%, transparent);
   }
   70% {
-    box-shadow: 0 0 0 8px rgba(23, 163, 74, 0);
+    box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 0%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(23, 163, 74, 0);
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent);
   }
 }
 
-@keyframes dashboardPulseWarning {
-  0% {
-    box-shadow: 0 0 0 0 rgba(197, 139, 17, 0.34);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(197, 139, 17, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(197, 139, 17, 0);
-  }
-}
-
-@keyframes dashboardPulseDanger {
-  0% {
-    box-shadow: 0 0 0 0 rgba(213, 67, 67, 0.34);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(213, 67, 67, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(213, 67, 67, 0);
-  }
-}
-
-@keyframes dashboardPulseMuted {
-  0% {
-    box-shadow: 0 0 0 0 rgba(138, 138, 138, 0.28);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(138, 138, 138, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(138, 138, 138, 0);
-  }
-}
-
-@keyframes dashboardSpin {
+@keyframes dashSpin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.dashboard-action {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 10px 12px;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease;
-}
-
-.dashboard-action:hover {
-  border-color: var(--theme-border-strong);
-  background: var(--theme-surface-strong);
-}
-
-.dashboard-action__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 8px;
-  background: var(--theme-surface-strong);
-  color: var(--theme-text);
-  font-size: 12px;
-}
-
-.dashboard-action__body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.dashboard-action__title {
-  color: var(--theme-text);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.dashboard-action__desc {
-  color: var(--theme-text-muted);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.dashboard-meta {
-  display: grid;
-  gap: 8px;
-}
-
-.dashboard-meta__item {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 10px;
-  min-height: 40px;
-  padding: 8px 10px;
-}
-
-.dashboard-meta__label {
-  color: var(--theme-text-muted);
-  font-size: 10px;
-}
-
-.dashboard-meta__value {
-  color: var(--theme-text);
-  font-size: 11px;
-  font-weight: 600;
-  text-align: right;
-  word-break: break-word;
-}
-
-@media (max-width: 520px) {
-  .dashboard-status-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 680px) {
+  .dash-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
-  .dashboard-meta__item {
+@media (max-width: 420px) {
+  .dash-cards {
     grid-template-columns: 1fr;
-    gap: 4px;
-  }
-
-  .dashboard-meta__value {
-    text-align: left;
   }
 }
 </style>

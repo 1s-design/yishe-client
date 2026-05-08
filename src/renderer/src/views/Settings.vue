@@ -42,20 +42,14 @@ const currentApiBase = computed(() => getApiBaseByMode(serviceMode.value));
 const currentWsEndpoint = computed(() => getWsEndpointByMode(serviceMode.value));
 const themeDescription = computed(() =>
   themePreference.value === "auto"
-    ? `当前显示：${resolvedThemeLabel.value}`
-    : `当前固定为${resolvedThemeLabel.value}`,
+    ? `当前：${resolvedThemeLabel.value}`
+    : `固定${resolvedThemeLabel.value}`,
 );
 const themeOptions: Array<{ label: string; value: ThemePreference }> = [
   { label: "跟随时间", value: "auto" },
-  { label: "浅色模式", value: "light" },
-  { label: "深色模式", value: "dark" },
+  { label: "浅色", value: "light" },
+  { label: "深色", value: "dark" },
 ];
-const workspaceDescription = computed(() =>
-  workspaceDirectory.value ? "已设置工作目录" : "未设置工作目录",
-);
-const logDescription = computed(() =>
-  logDirectory.value ? "客户端运行日志" : "日志目录未加载",
-);
 const logSizeText = computed(() => {
   const size = logTotalSize.value;
   if (size >= 1024 * 1024) {
@@ -69,16 +63,9 @@ const logSizeText = computed(() => {
 
 const serviceStatusConfig = computed(() => {
   const mode = serviceMode.value;
-  if (mode === "local") {
-    return {
-      tone: "warning",
-      text: "本地",
-    };
-  }
-
   return {
-    tone: "success",
-    text: "远程",
+    tone: mode === "local" ? "warning" : "success",
+    text: mode === "local" ? "本地" : "远程",
   };
 });
 
@@ -126,16 +113,10 @@ const loadWorkspaceDirectory = async () => {
       workspaceDirectory.value = "";
       return;
     }
-
     const path = await nativeApi.getWorkspaceDirectory();
     workspaceDirectory.value = path || "";
   } catch (error) {
     console.error("加载工作目录失败:", error);
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "加载工作目录失败",
-    });
   } finally {
     workspaceLoading.value = false;
   }
@@ -146,69 +127,31 @@ const selectWorkspaceDirectory = async () => {
     selectingWorkspace.value = true;
     const nativeApi = getNativeApi();
     if (!nativeApi?.selectWorkspaceDirectory) {
-      showToast({
-        color: "warning",
-        icon: "mdi-monitor-off",
-        message: "当前为浏览器环境，未注入桌面端工作目录能力",
-      });
+      showToast({ color: "warning", icon: "mdi-monitor-off", message: "浏览器环境不支持" });
       return;
     }
-
     const selectedPath = await nativeApi.selectWorkspaceDirectory();
-    if (!selectedPath) {
-      return;
-    }
-
+    if (!selectedPath) return;
     workspaceDirectory.value = selectedPath;
     websocketClient.updateClientInfo({
       workspaceDirectory: String(selectedPath || "").trim(),
     });
-    showToast({
-      color: "success",
-      icon: "mdi-folder-check-outline",
-      message: "工作目录已更新",
-    });
+    showToast({ color: "success", icon: "mdi-folder-check-outline", message: "工作目录已更新" });
   } catch (error) {
     console.error("选择工作目录失败:", error);
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "选择工作目录失败",
-    });
   } finally {
     selectingWorkspace.value = false;
   }
 };
 
 const openWorkspaceDirectory = async () => {
-  if (!workspaceDirectory.value) {
-    showToast({
-      color: "warning",
-      icon: "mdi-alert-outline",
-      message: "请先设置工作目录",
-    });
-    return;
-  }
-
+  if (!workspaceDirectory.value) return;
   try {
     const nativeApi = getNativeApi();
-    if (!nativeApi?.openPath) {
-      showToast({
-        color: "warning",
-        icon: "mdi-monitor-off",
-        message: "当前为浏览器环境，未注入桌面端工作目录能力",
-      });
-      return;
-    }
-
+    if (!nativeApi?.openPath) return;
     await nativeApi.openPath(workspaceDirectory.value);
   } catch (error: any) {
     console.error("打开工作目录失败:", error);
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "打开工作目录失败",
-    });
   }
 };
 
@@ -216,32 +159,13 @@ const clearWorkspaceDirectory = async () => {
   try {
     workspaceLoading.value = true;
     const nativeApi = getNativeApi();
-    if (!nativeApi?.setWorkspaceDirectory) {
-      showToast({
-        color: "warning",
-        icon: "mdi-monitor-off",
-        message: "当前为浏览器环境，未注入桌面端工作目录能力",
-      });
-      return;
-    }
-
+    if (!nativeApi?.setWorkspaceDirectory) return;
     await nativeApi.setWorkspaceDirectory("");
     workspaceDirectory.value = "";
-    websocketClient.updateClientInfo({
-      workspaceDirectory: "",
-    });
-    showToast({
-      color: "success",
-      icon: "mdi-delete-circle-outline",
-      message: "工作目录已清除",
-    });
+    websocketClient.updateClientInfo({ workspaceDirectory: "" });
+    showToast({ color: "success", icon: "mdi-delete-circle-outline", message: "工作目录已清除" });
   } catch (error) {
     console.error("清除工作目录失败:", error);
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "清除工作目录失败",
-    });
   } finally {
     workspaceLoading.value = false;
   }
@@ -257,7 +181,6 @@ const loadLogInfo = async () => {
       logTotalSize.value = 0;
       return;
     }
-
     const result = await nativeApi.queryClientLog("list", {});
     const files = Array.isArray(result?.files) ? result.files : [];
     logDirectory.value = String(result?.root || "");
@@ -268,11 +191,6 @@ const loadLogInfo = async () => {
     );
   } catch (error) {
     console.error("加载日志目录失败:", error);
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "加载日志目录失败",
-    });
   } finally {
     logLoading.value = false;
   }
@@ -281,42 +199,16 @@ const loadLogInfo = async () => {
 const openLogDirectory = async () => {
   try {
     const nativeApi = getNativeApi();
-    if (!nativeApi?.queryClientLog || !nativeApi?.openPath) {
-      showToast({
-        color: "warning",
-        icon: "mdi-monitor-off",
-        message: "当前为浏览器环境，未注入桌面端日志能力",
-      });
-      return;
-    }
-
-    if (!logDirectory.value) {
-      await loadLogInfo();
-    }
-
-    if (!logDirectory.value) {
-      showToast({
-        color: "warning",
-        icon: "mdi-folder-alert-outline",
-        message: "日志目录暂不可用",
-      });
-      return;
-    }
-
+    if (!nativeApi?.queryClientLog || !nativeApi?.openPath) return;
+    if (!logDirectory.value) await loadLogInfo();
+    if (!logDirectory.value) return;
     await nativeApi.openPath(logDirectory.value);
   } catch (error: any) {
     console.error("打开日志目录失败:", error);
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "打开日志目录失败",
-    });
   }
 };
 
-const handleServiceModeChanged = ((
-  event: CustomEvent<{ mode: ServiceMode }>,
-) => {
+const handleServiceModeChanged = ((event: CustomEvent<{ mode: ServiceMode }>) => {
   serviceMode.value = event.detail.mode;
 }) as EventListener;
 
@@ -332,422 +224,243 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="settings-page">
-    <section class="settings-grid">
-      <article class="settings-panel">
-        <div class="settings-panel__head">
-          <div class="settings-panel__title">显示</div>
-          <div class="settings-panel__hint">{{ themeDescription }}</div>
-        </div>
-        <el-radio-group
-          v-model="themePreference"
-          class="segmented-group"
-          @change="(value) => setThemePreference(value as ThemePreference)"
+  <div class="settings-compact">
+    <div class="settings-row">
+      <div class="settings-row__label">显示</div>
+      <el-radio-group
+        v-model="themePreference"
+        class="seg"
+        @change="(value) => setThemePreference(value as ThemePreference)"
+      >
+        <el-radio-button
+          v-for="item in themeOptions"
+          :key="item.value"
+          :label="item.value"
         >
-          <el-radio-button
-            v-for="item in themeOptions"
-            :key="item.value"
-            :label="item.value"
-          >
-            {{ item.label }}
-          </el-radio-button>
-        </el-radio-group>
-      </article>
+          {{ item.label }}
+        </el-radio-button>
+      </el-radio-group>
+      <span class="settings-row__hint">{{ themeDescription }}</span>
+    </div>
 
-      <article class="settings-panel settings-panel--wide">
-        <div class="settings-panel__head">
-          <div class="settings-panel__title">工作目录</div>
-          <div class="settings-panel__hint">{{ workspaceDescription }}</div>
+    <div class="settings-row">
+      <div class="settings-row__label">工作目录</div>
+      <div class="settings-row__content">
+        <el-input
+          :model-value="workspaceDirectory || '未设置'"
+          readonly
+          size="small"
+          class="settings-input"
+        />
+        <div class="settings-row__btns">
+          <el-button size="small" type="primary" :disabled="!supportsNativeApi" :loading="selectingWorkspace" @click="selectWorkspaceDirectory">选择</el-button>
+          <el-button size="small" :disabled="!workspaceDirectory || !supportsNativeApi" @click="openWorkspaceDirectory">打开</el-button>
+          <el-button size="small" :disabled="!workspaceDirectory || workspaceLoading || !supportsNativeApi" @click="clearWorkspaceDirectory">清除</el-button>
         </div>
+      </div>
+    </div>
 
-        <div class="workspace-block">
-          <div class="field-label">当前目录</div>
-          <el-input
-            :model-value="workspaceDirectory || '未设置工作目录'"
-            readonly
-            class="workspace-path-input"
-          />
+    <div class="settings-row">
+      <div class="settings-row__label">服务配置</div>
+      <div class="settings-row__content">
+        <div class="settings-addr-row">
+          <span class="settings-addr-row__dot" :class="`is-${serviceStatusConfig.tone}`"></span>
+          <span class="settings-addr-row__label">API</span>
+          <span class="settings-addr-row__value">{{ currentApiBase }}</span>
+          <span class="settings-addr-row__tag" :class="`is-${serviceStatusConfig.tone}`">{{ serviceStatusConfig.text }}</span>
         </div>
-
-        <div class="workspace-actions">
-          <el-button
-            type="primary"
-            :disabled="!supportsNativeApi"
-            :loading="selectingWorkspace"
-            @click="selectWorkspaceDirectory"
-          >
-            选择目录
-          </el-button>
-          <el-button
-            :disabled="!workspaceDirectory || !supportsNativeApi"
-            @click="openWorkspaceDirectory"
-          >
-            打开目录
-          </el-button>
-          <el-button
-            :disabled="
-              !workspaceDirectory || workspaceLoading || !supportsNativeApi
-            "
-            @click="clearWorkspaceDirectory"
-          >
-            清除目录
-          </el-button>
-          <el-button
-            text
-            :disabled="!supportsNativeApi"
-            :loading="workspaceLoading"
-            @click="loadWorkspaceDirectory"
-          >
-            刷新
-          </el-button>
+        <div class="settings-addr-row">
+          <span class="settings-addr-row__dot" :class="`is-${serviceStatusConfig.tone}`"></span>
+          <span class="settings-addr-row__label">WS</span>
+          <span class="settings-addr-row__value">{{ currentWsEndpoint }}</span>
+          <span class="settings-addr-row__tag" :class="`is-${serviceStatusConfig.tone}`">{{ serviceStatusConfig.text }}</span>
         </div>
-
-        <div v-if="!workspaceDirectory" class="settings-note is-warning">
-          工作目录未设置
-        </div>
-        <div v-if="!supportsNativeApi" class="settings-note is-warning">
-          当前为浏览器调试环境，工作目录配置仅在桌面客户端内可用
-        </div>
-      </article>
-
-      <article class="settings-panel settings-panel--wide">
-        <div class="settings-panel__head">
-          <div class="settings-panel__title">服务配置</div>
-          <div class="settings-panel__hint">当前 API 与 WebSocket 连接信息</div>
-        </div>
-
-        <div v-if="isDevelopment" class="service-mode">
-          <div class="field-label">服务模式</div>
-          <el-radio-group
-            v-model="serviceMode"
-            class="segmented-group"
-            @change="handleServiceModeChange"
-          >
-            <el-radio-button label="local">本地服务</el-radio-button>
-            <el-radio-button label="remote">远程服务</el-radio-button>
+        <div v-if="isDevelopment" class="settings-row__btns" style="margin-top:4px">
+          <el-radio-group v-model="serviceMode" class="seg" @change="handleServiceModeChange">
+            <el-radio-button label="local">本地</el-radio-button>
+            <el-radio-button label="remote">远程</el-radio-button>
           </el-radio-group>
         </div>
+      </div>
+    </div>
 
-        <div class="address-list">
-          <div class="address-item">
-            <div class="field-label">API</div>
-            <div class="address-item__value">
-              <span
-                class="status-dot"
-                :class="`is-${serviceStatusConfig.tone}`"
-              ></span>
-              <span class="address-text">{{ currentApiBase }}</span>
-              <span
-                class="status-text"
-                :class="`is-${serviceStatusConfig.tone}`"
-              >
-                {{ serviceStatusConfig.text }}
-              </span>
-            </div>
-          </div>
-
-          <div class="address-item">
-            <div class="field-label">WebSocket</div>
-            <div class="address-item__value">
-              <span
-                class="status-dot"
-                :class="`is-${serviceStatusConfig.tone}`"
-              ></span>
-              <span class="address-text">{{ currentWsEndpoint }}</span>
-              <span
-                class="status-text"
-                :class="`is-${serviceStatusConfig.tone}`"
-              >
-                {{ serviceStatusConfig.text }}
-              </span>
-            </div>
-          </div>
+    <div class="settings-row">
+      <div class="settings-row__label">日志</div>
+      <div class="settings-row__content">
+        <el-input
+          :model-value="logDirectory || '未加载'"
+          readonly
+          size="small"
+          class="settings-input"
+        />
+        <div class="settings-row__meta">
+          <span>{{ logFileCount }} 个文件 · {{ logSizeText }}</span>
+          <span>保留最近 7 天，超过 100 MB 自动清理</span>
         </div>
-
-        <div class="settings-note">
-          {{
-            isDevelopment
-              ? "切换服务后可能需要重新登录"
-              : "生产环境固定使用远程服务"
-          }}
+        <div class="settings-row__btns">
+          <el-button size="small" type="primary" :disabled="!supportsNativeApi" @click="openLogDirectory">打开日志</el-button>
+          <el-button size="small" text :disabled="!supportsNativeApi" :loading="logLoading" @click="loadLogInfo">刷新</el-button>
         </div>
-      </article>
-
-      <article class="settings-panel settings-panel--wide">
-        <div class="settings-panel__head">
-          <div class="settings-panel__title">日志与诊断</div>
-          <div class="settings-panel__hint">{{ logDescription }}</div>
-        </div>
-
-        <div class="diagnostics-block">
-          <div class="field-label">日志目录</div>
-          <el-input
-            :model-value="logDirectory || '日志目录未加载'"
-            readonly
-            class="workspace-path-input"
-          />
-          <div class="diagnostics-summary">
-            <span>{{ logFileCount }} 个文件</span>
-            <span>{{ logSizeText }}</span>
-          </div>
-        </div>
-
-        <div class="workspace-actions">
-          <el-button
-            type="primary"
-            :disabled="!supportsNativeApi"
-            @click="openLogDirectory"
-          >
-            打开日志目录
-          </el-button>
-          <el-button
-            text
-            :disabled="!supportsNativeApi"
-            :loading="logLoading"
-            @click="loadLogInfo"
-          >
-            刷新
-          </el-button>
-        </div>
-
-        <div class="settings-note">
-          日志按日期分目录，默认保留最近 7 天，总量超过 100 MB 会自动清理旧日志
-        </div>
-      </article>
-    </section>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.settings-page {
+.settings-compact {
   display: flex;
   flex-direction: column;
+  gap: 8px;
 }
 
-.settings-grid {
+.settings-row {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-}
-
-.settings-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 10px;
   border: 1px solid var(--theme-border);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--theme-surface);
 }
 
-.settings-panel__head {
+.settings-row__label {
+  color: var(--theme-text);
+  font-size: 11px;
+  font-weight: 700;
+  padding-top: 4px;
+}
+
+.settings-row__content {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 5px;
+  min-width: 0;
 }
 
-.settings-panel__title {
-  color: var(--theme-text);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.settings-panel__hint {
+.settings-row__hint {
   color: var(--theme-text-muted);
   font-size: 10px;
-  line-height: 1.4;
+  grid-column: 2;
+  margin-top: -2px;
 }
 
-.field-label {
-  color: var(--theme-text-soft);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.settings-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--theme-text-muted);
+  font-size: 10px;
 }
 
-.segmented-group {
-  display: inline-flex;
+.settings-row__btns {
+  display: flex;
   flex-wrap: wrap;
   gap: 5px;
 }
 
-.segmented-group :deep(.el-radio-button__inner) {
+.settings-row__btns :deep(.el-button) {
+  margin: 0;
+  border-radius: 8px;
+  font-size: 10px;
+  min-height: 26px;
+}
+
+.settings-input :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  background: var(--theme-surface-muted);
+  border: 1px solid var(--theme-border);
+  box-shadow: none;
+}
+
+.settings-input :deep(.el-input__inner) {
+  color: var(--theme-text);
+  font-size: 10px;
+}
+
+.seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.seg :deep(.el-radio-button__inner) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 82px;
-  min-height: 28px;
-  border-radius: 9px !important;
-  padding: 0 10px;
+  min-width: 56px;
+  min-height: 24px;
+  border-radius: 7px !important;
+  padding: 0 8px;
   font-size: 10px;
   line-height: 1;
 }
 
-.segmented-group :deep(.el-radio-button:first-child .el-radio-button__inner),
-.segmented-group :deep(.el-radio-button:last-child .el-radio-button__inner) {
-  border-radius: 9px !important;
+.seg :deep(.el-radio-button:first-child .el-radio-button__inner),
+.seg :deep(.el-radio-button:last-child .el-radio-button__inner) {
+  border-radius: 7px !important;
 }
 
-.segmented-group
-  :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+.seg :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
   background: var(--theme-text) !important;
   border-color: var(--theme-text) !important;
   color: var(--theme-contrast) !important;
 }
 
-.workspace-block,
-.service-mode,
-.diagnostics-block,
-.address-list {
+.settings-addr-row {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 6px;
-  padding: 8px;
+  padding: 5px 8px;
   border: 1px solid var(--theme-border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--theme-surface-strong);
 }
 
-.workspace-path-input :deep(.el-input__wrapper) {
-  min-height: 32px;
-  border-radius: 10px;
-  background: var(--theme-surface-strong);
-  border: 1px solid var(--theme-border);
-  box-shadow: none;
-}
-
-.workspace-path-input :deep(.el-input__inner) {
-  color: var(--theme-text);
-  font-size: 11px;
-}
-
-.workspace-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.workspace-actions :deep(.el-button) {
-  min-height: 30px;
-  margin: 0;
-  border-radius: 9px;
-  font-size: 10px;
-}
-
-.workspace-actions :deep(.el-button--primary) {
-  border-color: var(--theme-text);
-  background: var(--theme-text);
-  color: var(--theme-contrast);
-}
-
-.address-list {
-  gap: 6px;
-}
-
-.diagnostics-summary {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--theme-text-muted);
-  font-size: 10px;
-  line-height: 1.4;
-}
-
-.address-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
-  border: 1px solid var(--theme-border-strong);
-  border-radius: 10px;
-  background: var(--theme-surface);
-}
-
-.address-item__value {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 6px;
-}
-
-.address-text {
-  min-width: 0;
-  flex: 1;
-  color: var(--theme-text);
-  font-size: 10px;
-  line-height: 1.4;
-  word-break: break-all;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
+.settings-addr-row__dot {
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
+  flex-shrink: 0;
   background: var(--theme-border-strong);
 }
 
-.status-dot.is-success {
-  background: var(--theme-success);
+.settings-addr-row__dot.is-success { background: var(--theme-success); }
+.settings-addr-row__dot.is-warning { background: var(--theme-warning); }
+
+.settings-addr-row__label {
+  color: var(--theme-text-soft);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  width: 22px;
+  flex-shrink: 0;
 }
 
-.status-dot.is-warning {
-  background: var(--theme-warning);
-}
-
-.status-text {
+.settings-addr-row__value {
+  flex: 1;
+  min-width: 0;
+  color: var(--theme-text);
   font-size: 10px;
-  font-weight: 600;
-  white-space: nowrap;
+  word-break: break-all;
+  line-height: 1.3;
 }
 
-.status-text.is-success {
-  color: var(--theme-success);
+.settings-addr-row__tag {
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
-.status-text.is-warning {
-  color: var(--theme-warning);
-}
+.settings-addr-row__tag.is-success { color: var(--theme-success); }
+.settings-addr-row__tag.is-warning { color: var(--theme-warning); }
 
-.settings-note {
-  padding: 8px;
-  border: 1px solid var(--theme-border);
-  border-radius: 10px;
-  background: var(--theme-surface);
-  color: var(--theme-text-muted);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.settings-note.is-warning {
-  border-color: color-mix(
-    in srgb,
-    var(--theme-warning) 32%,
-    var(--theme-border)
-  );
-  color: var(--theme-warning);
-}
-
-@media (max-width: 767px) {
-  .settings-panel {
-    padding: 10px;
-  }
-
-  .segmented-group,
-  .workspace-actions {
-    width: 100%;
-  }
-
-  .workspace-actions {
+@media (max-width: 520px) {
+  .settings-row {
     grid-template-columns: 1fr;
   }
-
-  .address-item__value {
-    grid-template-columns: 8px minmax(0, 1fr);
-  }
-
-  .status-text {
-    grid-column: 2;
+  .settings-row__label {
+    padding-top: 0;
   }
 }
 </style>

@@ -10,34 +10,14 @@ import { useThemeMode } from "./composables/useThemeMode";
 import LoadingOverlay from "./components/LoadingOverlay.vue";
 import Login from "./views/Login.vue";
 import Dashboard, {
-  type DashboardMetaItem,
-  type DashboardQuickAction,
   type DashboardStatusCard,
 } from "./views/Dashboard.vue";
 import Settings from "./views/Settings.vue";
 
-type AppPageKey = "overview" | "settings";
 type ServiceStatusTone = "success" | "warning" | "danger" | "muted";
 
 interface ExtensionConnectionStatus {
   connected: boolean;
-  clientId?: string;
-  clientSource?: string;
-  connectedAt?: string;
-  lastClientInfoAt?: string;
-  workspaceDirectory?: string;
-  user?: {
-    id?: string | number | null;
-    account?: string | null;
-    name?: string | null;
-    nickname?: string | null;
-    email?: string | null;
-  } | null;
-  machine?: {
-    code?: string | null;
-    platform?: string | null;
-    createdAt?: string | null;
-  } | null;
   totalConnections?: number;
 }
 
@@ -45,7 +25,6 @@ const { showToast } = useToast();
 const { themePreferenceLabel, themeToggleIcon, setThemePreference } =
   useThemeMode();
 
-const activePage = ref<AppPageKey>("overview");
 const appVersion = ref("");
 const serverStatus = ref(false);
 const isLoggedIn = ref(false);
@@ -86,27 +65,6 @@ function getNativeApi() {
 
   return (window as typeof window & { api?: typeof window.api }).api;
 }
-
-const pageMap: Record<
-  AppPageKey,
-  { label: string; description: string; icon: string }
-> = {
-  overview: {
-    label: "执行概览",
-    description: "查看客户端在线状态、桥接能力与当前执行环境。",
-    icon: "mdi-view-dashboard-outline",
-  },
-  settings: {
-    label: "客户端设置",
-    description: "维护主题模式、服务地址与必要的运行配置。",
-    icon: "mdi-cog-outline",
-  },
-};
-
-const menuItems: Array<{ key: AppPageKey; label: string; icon: string }> = [
-  { key: "overview", label: "执行概览", icon: "mdi-view-dashboard-outline" },
-  { key: "settings", label: "客户端设置", icon: "mdi-cog-outline" },
-];
 
 watch(
   userInfo,
@@ -187,13 +145,7 @@ function resolvePhotoshopRuntimeMeta() {
   const serviceError =
     runtime?.status === "error" || (!connected && runtime?.state === "error");
 
-  const serviceText = serviceError
-    ? "服务异常"
-    : connected
-      ? "服务在线"
-      : "服务未启动";
-
-  const appText = busy
+  const valueText = busy
     ? "执行中"
     : photoshopStatus === "ready"
       ? "PS 可用"
@@ -201,43 +153,21 @@ function resolvePhotoshopRuntimeMeta() {
         ? "启动中"
         : connected
           ? "PS 未启动"
-          : "不可用";
-
-  const summaryText = busy
-    ? "执行中"
-    : photoshopStatus === "ready"
-      ? "就绪"
-      : photoshopStatus === "starting"
-        ? "等待就绪"
-        : connected
-          ? "服务在线"
           : serviceError
             ? "异常"
             : "未启动";
 
   const description = busy
-    ? "当前有套图任务正在处理。"
+    ? "当前有套图任务正在处理"
     : photoshopStatus === "ready"
-      ? "PS 服务已连接，Photoshop 可执行。"
+      ? "PS 服务已连接，可执行"
       : photoshopStatus === "starting"
-        ? "PS 服务已连接，Photoshop 已启动，等待可执行状态。"
+        ? "等待 PS 就绪"
         : connected
-          ? "PS 服务已连接，但 Photoshop 尚未启动。"
+          ? "PS 尚未启动"
           : serviceError
-            ? runtime?.message || "PS 处理服务异常。"
-            : "客户端保留桌面桥接与执行能力。";
-
-  const headerLabel = busy
-    ? "PS 正在执行"
-    : photoshopStatus === "ready"
-      ? "PS 可用"
-      : photoshopStatus === "starting"
-        ? "服务在线 / PS 启动中"
-        : connected
-          ? "服务在线 / PS 未启动"
-          : serviceError
-            ? "PS 桥接异常"
-            : "PS 桥接未启动";
+            ? runtime?.message || "PS 异常"
+            : "服务未启动";
 
   const tone: ServiceStatusTone = busy
     ? "warning"
@@ -249,17 +179,7 @@ function resolvePhotoshopRuntimeMeta() {
           ? "danger"
           : "warning";
 
-  return {
-    connected,
-    available,
-    busy,
-    serviceText,
-    appText,
-    summaryText,
-    description,
-    headerLabel,
-    tone,
-  };
+  return { connected, available, busy, valueText, description, tone };
 }
 
 const photoshopRuntimeMeta = computed(() => resolvePhotoshopRuntimeMeta());
@@ -276,13 +196,8 @@ function resolveVideoTemplateRuntimeMeta() {
   const activeJobsCount = Number(details?.activeJobsCount ?? details?.queueCount ?? 0);
   const queuedJobsCount = Number(details?.queuedJobsCount ?? 0);
   const isBusy = !!(runtime?.busy || runtime?.state === "busy" || activeJobsCount > 0);
-  const serviceError =
-    runtime?.status === "error" || runtime?.state === "error";
-  const summaryText = available
-    ? "服务可用"
-    : hasChecked
-      ? "服务不可用"
-      : "检测中";
+  const serviceError = runtime?.status === "error" || runtime?.state === "error";
+  const valueText = available ? "可用" : hasChecked ? "不可用" : "检测中";
   const tone: ServiceStatusTone = available
     ? "success"
     : serviceError
@@ -294,24 +209,14 @@ function resolveVideoTemplateRuntimeMeta() {
       ? String(runtime?.lastError || runtime?.message || "服务不可用")
       : isBusy
         ? queuedJobsCount > 0
-          ? `当前有 ${activeJobsCount} 个任务，排队中 ${queuedJobsCount} 个`
-          : "当前有视频任务制作中"
+          ? `${activeJobsCount} 个任务，排队 ${queuedJobsCount}`
+          : "有视频任务制作中"
         : "本地渲染服务在线";
 
-  return {
-    connected: !!runtime?.connected,
-    available,
-    busy: isBusy,
-    hasChecked,
-    summaryText,
-    description,
-    tone,
-  };
+  return { connected: !!runtime?.connected, available, busy: isBusy, hasChecked, valueText, description, tone };
 }
 
-const videoTemplateRuntimeMeta = computed(() =>
-  resolveVideoTemplateRuntimeMeta(),
-);
+const videoTemplateRuntimeMeta = computed(() => resolveVideoTemplateRuntimeMeta());
 
 function resolveImageProcessingRuntimeMeta() {
   const runtime =
@@ -324,64 +229,36 @@ function resolveImageProcessingRuntimeMeta() {
   const hasChecked = !!runtime?.lastCheckedAt;
   const activeJobsCount = Number(details?.activeJobsCount ?? 0);
   const isBusy = !!(runtime?.busy || runtime?.state === "busy" || activeJobsCount > 0);
-  const summaryText = available ? "可用" : hasChecked ? "不可用" : "检测中";
+  const valueText = available ? "可用" : hasChecked ? "不可用" : "检测中";
   const tone: ServiceStatusTone = available ? "success" : "muted";
   const description = !hasChecked
     ? ""
     : !available
       ? String(runtime?.message || runtime?.lastError || "当前不可用")
       : isBusy
-        ? `当前有 ${activeJobsCount} 个图片任务处理中`
-        : "客户端内置图片处理已就绪";
+        ? `${activeJobsCount} 个图片任务处理中`
+        : "图片处理已就绪";
 
-  return {
-    connected: !!runtime?.connected,
-    available,
-    busy: isBusy,
-    hasChecked,
-    summaryText,
-    description,
-    tone,
-  };
+  return { connected: !!runtime?.connected, available, busy: isBusy, hasChecked, valueText, description, tone };
 }
 
-const imageProcessingRuntimeMeta = computed(() =>
-  resolveImageProcessingRuntimeMeta(),
-);
+const imageProcessingRuntimeMeta = computed(() => resolveImageProcessingRuntimeMeta());
 
 function websocketTone(status: string): ServiceStatusTone {
-  if (status === "connected") {
-    return "success";
-  }
-
-  if (status === "connecting" || status === "reconnecting") {
-    return "warning";
-  }
-
-  if (status === "error") {
-    return "danger";
-  }
-
+  if (status === "connected") return "success";
+  if (status === "connecting" || status === "reconnecting") return "warning";
+  if (status === "error") return "danger";
   return "muted";
 }
 
 function websocketText(status: string) {
   switch (status) {
-    case "connected":
-      return "已连接";
-    case "connecting":
-      return "连接中";
-    case "reconnecting":
-      return "重连中";
-    case "error":
-      return "连接异常";
-    default:
-      return "未连接";
+    case "connected": return "已连接";
+    case "connecting": return "连接中";
+    case "reconnecting": return "重连中";
+    case "error": return "连接异常";
+    default: return "未连接";
   }
-}
-
-function toneClass(tone: ServiceStatusTone) {
-  return `is-${tone}`;
 }
 
 function throttle(lastCheck: number, delay: number) {
@@ -389,27 +266,18 @@ function throttle(lastCheck: number, delay: number) {
 }
 
 function ensureWebsocketConnected() {
-  if (ACTIVE_WS_STATUSES.includes(wsState.status)) {
-    return;
-  }
+  if (ACTIVE_WS_STATUSES.includes(wsState.status)) return;
   websocketClient.connect();
 }
 
 function disconnectWebsocketIfNeeded() {
-  if (["idle", "disconnected"].includes(wsState.status)) {
-    return;
-  }
+  if (["idle", "disconnected"].includes(wsState.status)) return;
   websocketClient.disconnect();
 }
 
 function handleWindowForegroundRecovery() {
-  if (!isLoggedIn.value) {
-    return;
-  }
-
-  if (document.visibilityState !== "visible") {
-    return;
-  }
+  if (!isLoggedIn.value) return;
+  if (document.visibilityState !== "visible") return;
 
   if (!ACTIVE_WS_STATUSES.includes(wsState.status)) {
     websocketClient.reconnect();
@@ -423,10 +291,7 @@ function handleWindowForegroundRecovery() {
 }
 
 async function checkServerStatus() {
-  if (!throttle(lastServerCheck, THROTTLE_DELAY)) {
-    return;
-  }
-
+  if (!throttle(lastServerCheck, THROTTLE_DELAY)) return;
   lastServerCheck = Date.now();
 
   try {
@@ -439,9 +304,7 @@ async function checkServerStatus() {
 
 function startServerPolling() {
   void checkServerStatus();
-  if (serverTimer) {
-    window.clearInterval(serverTimer);
-  }
+  if (serverTimer) window.clearInterval(serverTimer);
   serverTimer = window.setInterval(checkServerStatus, 4000);
 }
 
@@ -449,7 +312,7 @@ async function checkPsServiceStatus() {
   try {
     await websocketClient.syncServiceRuntime("photoshop");
   } catch {
-    // runtime 会在 websocketClient 内部兜底写回 profile，这里无需额外处理
+    // handled internally
   }
 }
 
@@ -491,7 +354,7 @@ async function checkLocalServiceStatus() {
       status: "disconnected",
       state: "offline",
       busy: false,
-      message: "当前为浏览器环境，未注入桌面端本地服务能力",
+      message: "当前为浏览器环境",
       lastCheckedAt,
       lastError: null,
       supportedCommands: ["refreshRuntime", "health"],
@@ -563,9 +426,7 @@ async function checkAuthAndGetUserInfo() {
       try {
         await fetch(`${LOCAL_API_BASE}/logoutToken`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
         }).catch(() => {});
       } catch {
         // ignore
@@ -599,8 +460,7 @@ async function handleLoginSuccess() {
     showToast({
       color: "error",
       icon: "mdi-alert-circle",
-      message:
-        error?.response?.data?.message || error?.message || "获取用户信息失败",
+      message: error?.response?.data?.message || error?.message || "获取用户信息失败",
     });
   } finally {
     loadingUserInfo.value = false;
@@ -608,9 +468,7 @@ async function handleLoginSuccess() {
 }
 
 async function handleLogout() {
-  if (isLoggingOut.value) {
-    return;
-  }
+  if (isLoggingOut.value) return;
 
   isLoggingOut.value = true;
   try {
@@ -644,39 +502,12 @@ async function reconnectWebsocket() {
   });
 }
 
-async function refreshLocation() {
-  showToast({
-    color: "info",
-    icon: "mdi-map-search",
-    message: "正在刷新位置信息...",
-  });
-
-  try {
-    await websocketClient.refreshLocation(true);
-    showToast({
-      color: "success",
-      icon: "mdi-map-marker",
-      message: "位置信息已更新",
-    });
-  } catch (error) {
-    console.error("刷新位置失败", error);
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "刷新位置信息失败",
-    });
-  }
-}
-
 async function connectBrowserAutomationFromDashboard() {
   browserAutomationActionLoading.value = true;
   try {
     const handler = (websocketClient as any).executeLocalServiceCommand;
     if (typeof handler === "function") {
-      await handler({
-        pluginKey: "browser-automation",
-        action: "connect",
-      });
+      await handler({ pluginKey: "browser-automation", action: "connect" });
     } else {
       await window.api?.invokeAutoBrowser?.({
         method: "POST",
@@ -686,17 +517,9 @@ async function connectBrowserAutomationFromDashboard() {
       await websocketClient.syncServiceRuntime("uploader");
     }
     await checkUploaderServiceStatus();
-    showToast({
-      color: "success",
-      icon: "mdi-robot-outline",
-      message: "浏览器窗口已打开",
-    });
+    showToast({ color: "success", icon: "mdi-robot-outline", message: "浏览器窗口已打开" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "打开浏览器窗口失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "打开浏览器窗口失败" });
   } finally {
     browserAutomationActionLoading.value = false;
   }
@@ -707,10 +530,7 @@ async function closeBrowserAutomationFromDashboard() {
   try {
     const handler = (websocketClient as any).executeLocalServiceCommand;
     if (typeof handler === "function") {
-      await handler({
-        pluginKey: "browser-automation",
-        action: "close",
-      });
+      await handler({ pluginKey: "browser-automation", action: "close" });
     } else {
       await window.api?.invokeAutoBrowser?.({
         method: "POST",
@@ -720,17 +540,9 @@ async function closeBrowserAutomationFromDashboard() {
       await websocketClient.syncServiceRuntime("uploader");
     }
     await checkUploaderServiceStatus();
-    showToast({
-      color: "success",
-      icon: "mdi-close-circle-outline",
-      message: "浏览器窗口已关闭",
-    });
+    showToast({ color: "success", icon: "mdi-close-circle-outline", message: "浏览器窗口已关闭" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "关闭浏览器窗口失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "关闭浏览器窗口失败" });
   } finally {
     browserAutomationActionLoading.value = false;
   }
@@ -740,64 +552,18 @@ async function refreshBrowserAutomationFromDashboard() {
   browserAutomationActionLoading.value = true;
   try {
     await checkUploaderServiceStatus();
-    showToast({
-      color: "success",
-      icon: "mdi-refresh",
-      message: "浏览器自动化状态已刷新",
-    });
+    showToast({ color: "success", icon: "mdi-refresh", message: "浏览器自动化状态已刷新" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "刷新浏览器自动化状态失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "刷新浏览器自动化状态失败" });
   } finally {
     browserAutomationActionLoading.value = false;
-  }
-}
-
-async function openWorkspaceFromDashboard() {
-  try {
-    const path = await window.api.getWorkspaceDirectory();
-    if (!path) {
-      activePage.value = "settings";
-      showToast({
-        color: "warning",
-        icon: "mdi-folder-alert-outline",
-        message: "工作目录未设置，已为你切换到客户端设置",
-      });
-      return;
-    }
-
-    await window.api.openPath(path);
-  } catch (error: any) {
-    console.error("打开工作目录失败", error);
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "打开工作目录失败",
-    });
-  }
-}
-
-async function handleToggleDevTools() {
-  try {
-    if (window?.api?.toggleDevTools) {
-      await window.api.toggleDevTools();
-    }
-  } catch (error) {
-    console.warn("切换开发者工具失败:", error);
   }
 }
 
 async function startVideoTemplateFromDashboard() {
   const nativeApi = window?.api;
   if (typeof nativeApi?.startVideoTemplateService !== "function") {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "当前客户端不支持启动 Video Template",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "当前客户端不支持启动 Video Template" });
     return;
   }
 
@@ -805,17 +571,9 @@ async function startVideoTemplateFromDashboard() {
   try {
     await nativeApi.startVideoTemplateService();
     await websocketClient.syncServiceRuntime("video-template");
-    showToast({
-      color: "success",
-      icon: "mdi-filmstrip-box-multiple",
-      message: "Video Template 已启动",
-    });
+    showToast({ color: "success", icon: "mdi-filmstrip-box-multiple", message: "Video Template 已启动" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "启动 Video Template 失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "启动 Video Template 失败" });
   } finally {
     videoTemplateActionLoading.value = false;
   }
@@ -824,11 +582,7 @@ async function startVideoTemplateFromDashboard() {
 async function stopVideoTemplateFromDashboard() {
   const nativeApi = window?.api;
   if (typeof nativeApi?.stopVideoTemplateService !== "function") {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "当前客户端不支持关闭 Video Template",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "当前客户端不支持关闭 Video Template" });
     return;
   }
 
@@ -844,22 +598,12 @@ async function stopVideoTemplateFromDashboard() {
       busy: false,
       message: "Video Template 已关闭",
       lastError: null,
-      details: {
-        warmed: false,
-      },
+      details: { warmed: false },
     });
     await websocketClient.syncServiceRuntime("video-template");
-    showToast({
-      color: "success",
-      icon: "mdi-stop-circle-outline",
-      message: "Video Template 已关闭",
-    });
+    showToast({ color: "success", icon: "mdi-stop-circle-outline", message: "Video Template 已关闭" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "关闭 Video Template 失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "关闭 Video Template 失败" });
   } finally {
     videoTemplateActionLoading.value = false;
   }
@@ -869,17 +613,9 @@ async function refreshVideoTemplateFromDashboard() {
   videoTemplateActionLoading.value = true;
   try {
     await websocketClient.syncServiceRuntime("video-template");
-    showToast({
-      color: "success",
-      icon: "mdi-refresh",
-      message: "Video Template 状态已刷新",
-    });
+    showToast({ color: "success", icon: "mdi-refresh", message: "Video Template 状态已刷新" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "刷新 Video Template 状态失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "刷新 Video Template 状态失败" });
   } finally {
     videoTemplateActionLoading.value = false;
   }
@@ -888,11 +624,7 @@ async function refreshVideoTemplateFromDashboard() {
 async function startImageToolFromDashboard() {
   const nativeApi = window?.api;
   if (typeof nativeApi?.startImageToolService !== "function") {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "当前客户端不支持启动 Image Tool",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "当前客户端不支持启动 Image Tool" });
     return;
   }
 
@@ -900,17 +632,9 @@ async function startImageToolFromDashboard() {
   try {
     await nativeApi.startImageToolService();
     await websocketClient.syncServiceRuntime("image-processing");
-    showToast({
-      color: "success",
-      icon: "mdi-image-multiple-outline",
-      message: "Image Tool 已启动",
-    });
+    showToast({ color: "success", icon: "mdi-image-multiple-outline", message: "Image Tool 已启动" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "启动 Image Tool 失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "启动 Image Tool 失败" });
   } finally {
     imageToolActionLoading.value = false;
   }
@@ -919,11 +643,7 @@ async function startImageToolFromDashboard() {
 async function stopImageToolFromDashboard() {
   const nativeApi = window?.api;
   if (typeof nativeApi?.stopImageToolService !== "function") {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: "当前客户端不支持关闭 Image Tool",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "当前客户端不支持关闭 Image Tool" });
     return;
   }
 
@@ -939,22 +659,12 @@ async function stopImageToolFromDashboard() {
       busy: false,
       message: "Image Tool 已关闭",
       lastError: null,
-      details: {
-        loaded: false,
-      },
+      details: { loaded: false },
     });
     await websocketClient.syncServiceRuntime("image-processing");
-    showToast({
-      color: "success",
-      icon: "mdi-stop-circle-outline",
-      message: "Image Tool 已关闭",
-    });
+    showToast({ color: "success", icon: "mdi-stop-circle-outline", message: "Image Tool 已关闭" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "关闭 Image Tool 失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "关闭 Image Tool 失败" });
   } finally {
     imageToolActionLoading.value = false;
   }
@@ -964,62 +674,27 @@ async function refreshImageToolFromDashboard() {
   imageToolActionLoading.value = true;
   try {
     await websocketClient.syncServiceRuntime("image-processing");
-    showToast({
-      color: "success",
-      icon: "mdi-refresh",
-      message: "Image Tool 状态已刷新",
-    });
+    showToast({ color: "success", icon: "mdi-refresh", message: "Image Tool 状态已刷新" });
   } catch (error: any) {
-    showToast({
-      color: "error",
-      icon: "mdi-alert-circle-outline",
-      message: error?.message || "刷新 Image Tool 状态失败",
-    });
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "刷新 Image Tool 状态失败" });
   } finally {
     imageToolActionLoading.value = false;
   }
 }
 
-function handleDashboardAction(key: string) {
-  if (key === "settings") {
-    activePage.value = key;
-    return;
-  }
-
-  if (key === "reconnect") {
-    void reconnectWebsocket();
-    return;
-  }
-
-  if (key === "refresh-location") {
-    void refreshLocation();
-    return;
-  }
-
-  if (key === "open-workspace") {
-    void openWorkspaceFromDashboard();
-    return;
-  }
-}
-
 function handleDashboardCardAction(key: string) {
   if (key === "video-template-toggle") {
-    if (
-      videoTemplateRuntimeMeta.value.connected ||
-      videoTemplateRuntimeMeta.value.busy
-    ) {
+    if (videoTemplateRuntimeMeta.value.connected || videoTemplateRuntimeMeta.value.busy) {
       void stopVideoTemplateFromDashboard();
     } else {
       void startVideoTemplateFromDashboard();
     }
     return;
   }
-
   if (key === "video-template-refresh") {
     void refreshVideoTemplateFromDashboard();
     return;
   }
-
   if (key === "browser-automation-toggle") {
     if (uploaderServiceStatus.value === "running") {
       void closeBrowserAutomationFromDashboard();
@@ -1028,97 +703,44 @@ function handleDashboardCardAction(key: string) {
     }
     return;
   }
-
   if (key === "browser-automation-refresh") {
     void refreshBrowserAutomationFromDashboard();
     return;
   }
-
   if (key === "image-tool-toggle") {
-    if (
-      imageProcessingRuntimeMeta.value.connected ||
-      imageProcessingRuntimeMeta.value.busy
-    ) {
+    if (imageProcessingRuntimeMeta.value.connected || imageProcessingRuntimeMeta.value.busy) {
       void stopImageToolFromDashboard();
     } else {
       void startImageToolFromDashboard();
     }
     return;
   }
-
   if (key === "image-tool-refresh") {
     void refreshImageToolFromDashboard();
   }
 }
 
 const isDevelopment = process.env.NODE_ENV === "development";
-
-const currentPage = computed(() => pageMap[activePage.value]);
 const currentUserLabel = computed(
   () => userInfo.value?.username || userInfo.value?.account || "未命名账号",
 );
+
 const serviceModeLabel = computed(() =>
-  currentServiceMode.value === "local" ? "本地服务模式" : "远程服务模式",
+  currentServiceMode.value === "local" ? "本地模式" : "远程模式",
 );
-const sidebarRuntimeItems = computed(() => [
-  {
-    key: "client",
-    label: "客户端服务",
-    value: serverStatus.value ? "在线" : "离线",
-    tone: serviceToneByState(serverStatus.value),
-    neutralValue: false,
-  },
-  {
-    key: "ws",
-    label: "远程链路",
-    value: websocketText(wsState.status),
-    tone: websocketTone(wsState.status),
-    neutralValue: false,
-  },
-  {
-    key: "uploader",
-    label: "浏览器自动化",
-    value:
-      uploaderServiceStatus.value === "running"
-        ? "就绪"
-        : uploaderServiceStatus.value === "warning"
-          ? "待连接"
-          : uploaderServiceStatus.value === "error"
-            ? "异常"
-            : "未启动",
-    tone: browserAutomationToneByState(uploaderServiceStatus.value),
-    neutralValue: false,
-  },
-  {
-    key: "ps",
-    label: "Photoshop",
-    value: photoshopRuntimeMeta.value.summaryText,
-    tone: photoshopRuntimeMeta.value.tone,
-    neutralValue: photoshopRuntimeMeta.value.busy,
-  },
-  {
-    key: "video-template",
-    label: "Video Template",
-    value: videoTemplateRuntimeMeta.value.summaryText,
-    tone: videoTemplateRuntimeMeta.value.tone,
-    neutralValue: false,
-  },
-  {
-    key: "image-processing",
-    label: "Image Tool",
-    value: imageProcessingRuntimeMeta.value.summaryText,
-    tone: imageProcessingRuntimeMeta.value.tone,
-    neutralValue: false,
-  },
-]);
+
+const networkLocation = computed(() =>
+  [networkProfile.city, networkProfile.region, networkProfile.country]
+    .filter(Boolean)
+    .join(" / ") || "--"
+);
 
 const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
   {
     key: "ws",
     title: "远程连接",
     value: websocketText(wsState.status),
-    description:
-      currentServiceMode.value === "local" ? "本地服务模式" : "远程服务模式",
+    description: serviceModeLabel.value,
     icon: "mdi-connection",
     tone: websocketTone(wsState.status),
   },
@@ -1145,17 +767,9 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
       uploaderServiceStatus.value === "running"
         ? "服务与浏览器已连接"
         : uploaderServiceStatus.value === "warning"
-          ? String(
-              clientProfile.services?.uploader?.message ||
-                clientProfile.services?.uploader?.lastError ||
-                "等待浏览器实例连接",
-            )
+          ? "等待浏览器实例连接"
           : uploaderServiceStatus.value === "error"
-            ? String(
-                clientProfile.services?.uploader?.message ||
-                  clientProfile.services?.uploader?.lastError ||
-                  "状态检测异常",
-              )
+            ? "状态检测异常"
             : "服务未启动",
     icon: "mdi-robot-outline",
     tone: browserAutomationToneByState(uploaderServiceStatus.value),
@@ -1163,10 +777,7 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
       {
         key: "browser-automation-toggle",
         label: uploaderServiceStatus.value === "running" ? "关闭" : "打开",
-        icon:
-          uploaderServiceStatus.value === "running"
-            ? "mdi-close-circle-outline"
-            : "mdi-open-in-new",
+        icon: uploaderServiceStatus.value === "running" ? "mdi-close-circle-outline" : "mdi-open-in-new",
         loading: browserAutomationActionLoading.value,
       },
       {
@@ -1180,35 +791,23 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
   {
     key: "ps",
     title: "Photoshop",
-    value: `${photoshopRuntimeMeta.value.serviceText} / ${photoshopRuntimeMeta.value.appText}`,
-    description: photoshopRuntimeMeta.value.busy
-      ? "任务执行中"
-      : photoshopRuntimeMeta.value.connected
-        ? "桌面桥接已连接"
-        : "服务未启动",
+    value: photoshopRuntimeMeta.value.valueText,
+    description: photoshopRuntimeMeta.value.description,
     icon: "mdi-image-filter-drama",
     tone: photoshopRuntimeMeta.value.tone,
   },
   {
     key: "video-template",
     title: "Video Template",
-    value: videoTemplateRuntimeMeta.value.summaryText,
+    value: videoTemplateRuntimeMeta.value.valueText,
     description: videoTemplateRuntimeMeta.value.description,
     icon: "mdi-filmstrip-box-multiple",
     tone: videoTemplateRuntimeMeta.value.tone,
     actions: [
       {
         key: "video-template-toggle",
-        label:
-          videoTemplateRuntimeMeta.value.connected ||
-          videoTemplateRuntimeMeta.value.busy
-            ? "关闭"
-            : "启动",
-        icon:
-          videoTemplateRuntimeMeta.value.connected ||
-          videoTemplateRuntimeMeta.value.busy
-            ? "mdi-stop-circle-outline"
-            : "mdi-play-circle-outline",
+        label: videoTemplateRuntimeMeta.value.connected || videoTemplateRuntimeMeta.value.busy ? "关闭" : "启动",
+        icon: videoTemplateRuntimeMeta.value.connected || videoTemplateRuntimeMeta.value.busy ? "mdi-stop-circle-outline" : "mdi-play-circle-outline",
         loading: videoTemplateActionLoading.value,
       },
       {
@@ -1222,23 +821,15 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
   {
     key: "image-processing",
     title: "Image Tool",
-    value: imageProcessingRuntimeMeta.value.summaryText,
+    value: imageProcessingRuntimeMeta.value.valueText,
     description: imageProcessingRuntimeMeta.value.description,
     icon: "mdi-image-multiple-outline",
     tone: imageProcessingRuntimeMeta.value.tone,
     actions: [
       {
         key: "image-tool-toggle",
-        label:
-          imageProcessingRuntimeMeta.value.connected ||
-          imageProcessingRuntimeMeta.value.busy
-            ? "关闭"
-            : "启动",
-        icon:
-          imageProcessingRuntimeMeta.value.connected ||
-          imageProcessingRuntimeMeta.value.busy
-            ? "mdi-stop-circle-outline"
-            : "mdi-play-circle-outline",
+        label: imageProcessingRuntimeMeta.value.connected || imageProcessingRuntimeMeta.value.busy ? "关闭" : "启动",
+        icon: imageProcessingRuntimeMeta.value.connected || imageProcessingRuntimeMeta.value.busy ? "mdi-stop-circle-outline" : "mdi-play-circle-outline",
         loading: imageToolActionLoading.value,
       },
       {
@@ -1250,83 +841,6 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     ],
   },
 ]);
-
-const dashboardQuickActions = computed<DashboardQuickAction[]>(() => [
-  {
-    key: "open-workspace",
-    title: "工作目录",
-    description: "打开当前目录",
-    icon: "mdi-folder-open-outline",
-  },
-  {
-    key: "reconnect",
-    title: "刷新连接",
-    description: "重新连接远程服务",
-    icon: "mdi-rotate-right",
-  },
-  {
-    key: "refresh-location",
-    title: "刷新位置",
-    description: "更新网络位置信息",
-    icon: "mdi-crosshairs-gps",
-  },
-  {
-    key: "settings",
-    title: "客户端设置",
-    description: "打开设置页面",
-    icon: "mdi-cog-outline",
-  },
-]);
-
-const dashboardMetaItems = computed<DashboardMetaItem[]>(() => [
-  {
-    key: "machine",
-    label: "设备编码",
-    value:
-      clientProfile.machine?.code ||
-      websocketClient.identity.machineCode ||
-      "--",
-  },
-  {
-    key: "version",
-    label: "客户端版本",
-    value: appVersion.value || "--",
-  },
-  {
-    key: "service-mode",
-    label: "服务模式",
-    value: currentServiceMode.value === "local" ? "本地服务" : "远程服务",
-  },
-  {
-    key: "location",
-    label: "网络位置",
-    value:
-      [networkProfile.city, networkProfile.region, networkProfile.country]
-        .filter(Boolean)
-        .join(" / ") || "--",
-  },
-  {
-    key: "user",
-    label: "当前账号",
-    value: userInfo.value?.username || userInfo.value?.account || "--",
-  },
-  {
-    key: "workspace",
-    label: "工作目录",
-    value: clientProfile.workspaceDirectory || "--",
-  },
-  {
-    key: "extension",
-    label: "插件连接",
-    value: extensionConnectionStatus.value?.totalConnections
-      ? `${extensionConnectionStatus.value.totalConnections} 个连接`
-      : "暂无连接",
-  },
-]);
-
-const appFooterText = computed(
-  () => `版本 ${appVersion.value || "--"} · ${serviceModeLabel.value}`,
-);
 
 watch(isLoggedIn, (loggedIn) => {
   if (loggedIn) {
@@ -1391,7 +905,6 @@ onMounted(() => {
   void checkAuthAndGetUserInfo();
 
   (window as any).__materialUploadService = downloadImageAndUploadMaterial;
-  // 兼容旧主进程注入名，实际仍复用统一素材上传服务。
   (window as any).__crawlerMaterialUploadService = downloadImageAndUploadMaterial;
 
   void checkPsServiceStatus();
@@ -1432,7 +945,6 @@ onMounted(() => {
       extensionConnectionStatus.value = {
         connected: data.total > 0,
         totalConnections: data.total,
-        ...(data.connections?.[0] || {}),
       };
     } catch {
       extensionConnectionStatus.value = null;
@@ -1502,125 +1014,74 @@ onBeforeUnmount(() => {
       />
 
       <div class="app-shell" :class="{ 'is-logging-out': isLoggingOut }">
-        <aside class="app-sidebar">
-          <div class="app-sidebar__top">
-            <div class="app-brand">
-              <div class="app-brand__icon">
-                <i class="mdi mdi-creation-outline"></i>
-              </div>
-              <div class="app-brand__title">衣设客户端</div>
-            </div>
+        <header class="app-topbar">
+          <div class="app-topbar__left">
+            <span class="app-topbar__brand">
+              <i class="mdi mdi-creation-outline"></i>
+            </span>
+            <span class="app-topbar__title">衣设客户端</span>
+          </div>
 
-            <nav class="app-nav">
-              <button
-                v-for="item in menuItems"
-                :key="item.key"
-                type="button"
-                class="app-nav__item"
-                :class="{ 'is-active': activePage === item.key }"
-                @click="activePage = item.key"
-              >
-                <span class="app-nav__icon">
-                  <i :class="['mdi', item.icon]"></i>
-                </span>
-                <span class="app-nav__text">{{ item.label }}</span>
-                <span class="app-nav__marker"></span>
+          <div class="app-topbar__center">
+            <span class="app-topbar__meta">{{ currentUserLabel }}</span>
+            <span class="app-topbar__sep">·</span>
+            <span class="app-topbar__meta app-topbar__meta--muted">{{ networkLocation }}</span>
+            <span class="app-topbar__sep">·</span>
+            <span class="app-topbar__meta app-topbar__meta--muted">v{{ appVersion || '--' }}</span>
+          </div>
+
+          <div class="app-topbar__right">
+            <el-dropdown trigger="click" placement="bottom-end">
+              <button type="button" class="topbar-btn" :title="themePreferenceLabel">
+                <i :class="['mdi', themeToggleIcon]"></i>
               </button>
-            </nav>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="setThemePreference('auto')">跟随时间</el-dropdown-item>
+                  <el-dropdown-item @click="setThemePreference('light')">浅色模式</el-dropdown-item>
+                  <el-dropdown-item @click="setThemePreference('dark')">深色模式</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
 
-            <div class="app-sidebar__status">
-              <div class="sidebar-section__title">运行状态</div>
-              <div class="sidebar-runtime-list">
-                <div
-                  v-for="item in sidebarRuntimeItems"
-                  :key="item.key"
-                  class="sidebar-runtime"
-                  :class="[toneClass(item.tone), { 'is-neutral-value': item.neutralValue }]"
-                >
-                  <span class="sidebar-runtime__signal"></span>
-                  <span class="sidebar-runtime__label">{{ item.label }}</span>
-                  <span class="sidebar-runtime__value">{{ item.value }}</span>
-                </div>
-              </div>
-            </div>
+            <button type="button" class="topbar-btn" title="刷新连接" @click="reconnectWebsocket">
+              <i class="mdi mdi-rotate-right"></i>
+            </button>
+
+            <button
+              v-if="isDevelopment"
+              type="button"
+              class="topbar-btn"
+              title="开发者工具"
+              @click="() => { window?.api?.toggleDevTools?.(); }"
+            >
+              <i class="mdi mdi-bug-outline"></i>
+            </button>
+
+            <button
+              type="button"
+              class="topbar-btn topbar-btn--danger"
+              title="退出登录"
+              :disabled="isLoggingOut"
+              @click="handleLogout"
+            >
+              <i :class="['mdi', isLoggingOut ? 'mdi-loading mdi-spin' : 'mdi-logout']"></i>
+            </button>
           </div>
+        </header>
 
-          <div class="app-sidebar__bottom">
-            <div class="app-sidebar__footer">
-              <div class="app-sidebar__meta">{{ currentUserLabel }}</div>
-              <div class="app-sidebar__meta app-sidebar__meta--muted">
-                {{ appFooterText }}
-              </div>
-              <el-button
-                class="sidebar-logout"
-                type="danger"
-                :loading="isLoggingOut"
-                @click="handleLogout"
-              >
-                <i class="mdi mdi-logout"></i>
-                <span>{{ isLoggingOut ? "退出中..." : "退出登录" }}</span>
-              </el-button>
-            </div>
-          </div>
-        </aside>
+        <main class="app-body">
+          <section class="app-section">
+            <div class="app-section__title">运行状态</div>
+            <Dashboard
+              :status-cards="dashboardStatusCards"
+              @card-action="handleDashboardCardAction"
+            />
+          </section>
 
-        <main class="app-main">
-          <header class="app-header">
-            <div class="app-header__text">
-              <h1 class="app-header__title">{{ currentPage.label }}</h1>
-              <p class="app-header__desc">{{ currentPage.description }}</p>
-            </div>
-
-            <div class="app-header__actions">
-              <el-dropdown trigger="click" placement="bottom-end">
-                <el-button class="header-button" text>
-                  <i :class="['mdi', themeToggleIcon]"></i>
-                  <span>{{ themePreferenceLabel }}</span>
-                </el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item @click="setThemePreference('auto')">
-                      跟随时间
-                    </el-dropdown-item>
-                    <el-dropdown-item @click="setThemePreference('light')">
-                      浅色模式
-                    </el-dropdown-item>
-                    <el-dropdown-item @click="setThemePreference('dark')">
-                      深色模式
-                    </el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
-
-              <el-button class="header-button" text @click="reconnectWebsocket">
-                <i class="mdi mdi-rotate-right"></i>
-                <span>刷新连接</span>
-              </el-button>
-
-              <el-button
-                v-if="isDevelopment"
-                class="header-button"
-                text
-                @click="handleToggleDevTools"
-              >
-                <i class="mdi mdi-bug-outline"></i>
-                <span>调试</span>
-              </el-button>
-            </div>
-          </header>
-
-          <section class="page-shell">
-            <div class="page-shell__inner">
-              <Dashboard
-                v-if="activePage === 'overview'"
-                :status-cards="dashboardStatusCards"
-                :quick-actions="dashboardQuickActions"
-                :meta-items="dashboardMetaItems"
-                @navigate="handleDashboardAction"
-                @card-action="handleDashboardCardAction"
-              />
-              <Settings v-else-if="activePage === 'settings'" />
-            </div>
+          <section class="app-section">
+            <div class="app-section__title">设置</div>
+            <Settings />
           </section>
         </main>
       </div>
@@ -1632,7 +1093,7 @@ onBeforeUnmount(() => {
 .client-app {
   height: 100vh;
   min-height: 100vh;
-  padding: 18px;
+  padding: 12px;
   overflow: auto;
 }
 
@@ -1671,14 +1132,13 @@ onBeforeUnmount(() => {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
-  gap: 0;
-  width: min(840px, 100%);
-  height: min(580px, calc(100vh - 24px));
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  min-height: min(580px, calc(100vh - 24px));
   margin: 0 auto;
   border: 1px solid var(--theme-border);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--theme-surface-elevated);
   box-shadow: var(--theme-shadow-xs);
   overflow: hidden;
@@ -1688,321 +1148,140 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.app-sidebar {
+.app-topbar {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 0;
-  padding: 10px;
-  border-right: 1px solid var(--theme-border);
+  min-height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--theme-border);
   background: var(--theme-sidebar);
-  overflow: hidden;
+  flex-shrink: 0;
 }
 
-.app-sidebar__top,
-.app-sidebar__bottom {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.app-brand {
+.app-topbar__left {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 0 6px;
-  border-radius: 10px;
-  color: var(--theme-text);
+  gap: 7px;
+  flex-shrink: 0;
 }
 
-.app-brand__icon {
+.app-topbar__brand {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--theme-surface-strong);
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--theme-surface-muted);
   color: var(--theme-primary);
-  font-size: 13px;
+  font-size: 12px;
 }
 
-.app-brand__title {
+.app-topbar__title {
   color: var(--theme-text);
   font-size: 11px;
   font-weight: 700;
 }
 
-.app-sidebar__status {
+.app-topbar__center {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: 0;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+  justify-content: center;
 }
 
-.sidebar-section__title {
+.app-topbar__meta {
+  color: var(--theme-text);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-topbar__meta--muted {
+  color: var(--theme-text-muted);
+  font-weight: 400;
+}
+
+.app-topbar__sep {
   color: var(--theme-text-soft);
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
-.app-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.app-nav__item {
-  position: relative;
+.app-topbar__right {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 32px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--theme-text-muted);
-  cursor: pointer;
-  text-align: left;
-  transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
-.app-nav__item:hover {
-  background: var(--theme-surface-strong);
-  border-color: var(--theme-border);
-  color: var(--theme-text);
-}
-
-.app-nav__item.is-active {
-  background: var(--theme-surface-strong);
-  border-color: var(--theme-border-strong);
-  color: var(--theme-text);
-}
-
-.app-nav__icon {
+.topbar-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border-radius: 6px;
-  background: var(--theme-surface-muted);
-  color: inherit;
-  font-size: 11px;
-}
-
-.app-nav__text {
-  flex: 1;
-  min-width: 0;
-  color: inherit;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.app-nav__marker {
-  width: 4px;
-  height: 14px;
-  border-radius: 999px;
-  background: transparent;
-  transition: background-color 0.18s ease;
-}
-
-.app-nav__item.is-active .app-nav__marker {
-  background: var(--theme-primary);
-}
-
-.sidebar-runtime-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sidebar-runtime {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0 8px;
-  border-radius: 10px;
-  background: var(--theme-surface-strong);
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--theme-border);
-  color: var(--theme-text-muted);
+  border-radius: 7px;
+  background: var(--theme-surface-muted);
+  color: var(--theme-text);
+  font-size: 13px;
+  cursor: pointer;
   transition:
     border-color 0.18s ease,
-    background-color 0.18s ease;
+    background-color 0.18s ease,
+    opacity 0.18s ease;
 }
 
-.sidebar-runtime__signal {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: currentColor;
-  box-shadow: 0 0 0 0 currentColor;
-  animation: sidebarRuntimePulse 2s ease-in-out infinite;
+.topbar-btn:hover {
+  border-color: var(--theme-border-strong);
+  background: var(--theme-surface-strong);
 }
 
-.sidebar-runtime__label {
-  min-width: 0;
-  color: var(--theme-text);
-  font-size: 10px;
-  font-weight: 600;
+.topbar-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
-.sidebar-runtime__value {
-  color: inherit;
-  font-size: 9px;
-  font-weight: 700;
-}
-
-.sidebar-runtime.is-neutral-value .sidebar-runtime__value {
-  color: var(--theme-text);
-}
-
-.sidebar-runtime.is-success {
-  color: var(--theme-success);
-}
-
-.sidebar-runtime.is-warning {
-  color: var(--theme-warning);
-}
-
-.sidebar-runtime.is-danger {
+.topbar-btn--danger {
   color: var(--theme-danger);
 }
 
-.sidebar-runtime.is-muted {
-  color: var(--theme-text-soft);
+.topbar-btn--danger:hover {
+  border-color: color-mix(in srgb, var(--theme-danger) 40%, var(--theme-border));
+  background: color-mix(in srgb, var(--theme-danger) 10%, var(--theme-surface-muted));
 }
 
-.app-sidebar__footer {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 12px;
-  background: var(--theme-surface-strong);
+.topbar-btn .mdi-spin {
+  animation: client-spin 0.8s linear infinite;
 }
 
-.app-sidebar__meta {
-  color: var(--theme-text);
-  font-size: 10px;
-  line-height: 1.4;
-}
-
-.app-sidebar__meta--muted {
-  color: var(--theme-text-soft);
-}
-
-.sidebar-logout {
-  width: 100%;
-  min-height: 30px;
-  border: none;
-  border-radius: 10px;
-  background: var(--theme-danger) !important;
-  color: #fff !important;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.sidebar-logout:hover,
-.sidebar-logout:focus-visible {
-  background: color-mix(in srgb, var(--theme-danger) 88%, #000 12%) !important;
-  color: #fff !important;
-}
-
-.sidebar-logout :deep(span) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-
-.app-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-}
-
-.app-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 12px 10px;
-  border-bottom: 1px solid var(--theme-border);
-  background: var(--theme-surface);
-}
-
-.app-header__text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.app-header__title {
-  margin: 0;
-  color: var(--theme-text);
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.app-header__desc {
-  margin: 0;
-  color: var(--theme-text-muted);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.app-header__actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.header-button {
-  min-height: 28px;
-  padding: 0 8px;
-  border-radius: 9px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-surface-strong);
-  color: var(--theme-text);
-  font-size: 10px;
-}
-
-.header-button :deep(span) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.page-shell {
+.app-body {
   flex: 1;
   min-height: 0;
   padding: 10px 12px 12px;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.page-shell__inner {
-  max-width: 100%;
-  margin: 0 auto;
+.app-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-section__title {
+  color: var(--theme-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 @keyframes client-spin {
@@ -2011,76 +1290,17 @@ onBeforeUnmount(() => {
   }
 }
 
-@keyframes sidebarRuntimePulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 32%, transparent 68%);
-  }
-  70% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 0%, transparent 100%);
-  }
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent 100%);
-  }
-}
-
-@media (max-width: 1180px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-    height: auto;
-  }
-
-  .app-sidebar {
-    border-right: none;
-    border-bottom: 1px solid var(--theme-border);
-    overflow: visible;
-  }
-
-  .app-nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .app-sidebar__status {
+@media (max-width: 600px) {
+  .app-topbar__center {
     display: none;
   }
-}
 
-@media (max-width: 767px) {
   .client-app {
-    padding: 8px;
+    padding: 6px;
   }
 
-  .app-sidebar {
-    padding: 8px;
-  }
-
-  .app-nav {
-    grid-template-columns: 1fr;
-  }
-
-  .app-header,
-  .page-shell {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .app-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .app-header__title {
-    font-size: 15px;
-  }
-
-  .app-header__actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .header-button {
-    width: 100%;
-    justify-content: center;
+  .app-shell {
+    border-radius: 10px;
   }
 }
 </style>

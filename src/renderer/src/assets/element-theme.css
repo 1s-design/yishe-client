@@ -83,9 +83,36 @@
 }
 
 html[data-theme="dark"] {
+  --el-color-primary: #c8c8c8 !important;
+  --el-color-primary-light-3: #b4b4b4 !important;
+  --el-color-primary-light-5: #9e9e9e !important;
+  --el-color-primary-light-7: #888888 !important;
+  --el-color-primary-light-8: #727272 !important;
+  --el-color-primary-light-9: #5c5c5c !important;
+  --el-color-primary-dark-2: #e2e2e2 !important;
   --el-color-success: var(--theme-success) !important;
   --el-color-warning: var(--theme-warning) !important;
   --el-color-danger: var(--theme-danger) !important;
+
+  --el-fill-color-blank: var(--theme-surface-strong) !important;
+  --el-fill-color-light: var(--theme-surface-muted) !important;
+  --el-fill-color-lighter: color-mix(
+    in srgb,
+    var(--theme-surface-muted) 86%,
+    transparent
+  ) !important;
+  --el-bg-color-overlay: var(--theme-surface-strong) !important;
+}
+
+html[data-theme="dark"] .el-button--primary,
+html[data-theme="dark"] .el-button--primary:focus {
+  color: var(--theme-contrast) !important;
+}
+
+html[data-theme="dark"] .el-button--primary:hover {
+  color: var(--theme-contrast) !important;
+  background: var(--el-color-primary-light-3) !important;
+  border-color: var(--el-color-primary-light-3) !important;
 }
 
 .el-button,
