@@ -1100,6 +1100,7 @@ export async function publishToPdd(publishInfo = {}) {
   const pageOperator = new PageOperator();
   const tempFiles = [];
   let page = null;
+  let shouldClosePage = false;
 
   try {
     const settings = resolveSettings(publishInfo);
@@ -1170,6 +1171,7 @@ export async function publishToPdd(publishInfo = {}) {
     tempFiles.push(...(mainImageUploadResult.tempFiles || []));
     const filledTitle = await fillPddProductTitle(page, title);
     const submitted = await submitPddProduct(page);
+    shouldClosePage = true;
 
     return {
       success: true,
@@ -1209,7 +1211,7 @@ export async function publishToPdd(publishInfo = {}) {
           mainImageUploadResult.detailConfirmClicked,
         mainImageSkuSelected: mainImageUploadResult.skuSelected,
         submitted,
-        pageKeptOpen: true,
+        pageKeptOpen: false,
         automationStage: "submitted",
       },
     };
@@ -1225,6 +1227,18 @@ export async function publishToPdd(publishInfo = {}) {
     };
   } finally {
     tempFiles.forEach((file) => imageManager.deleteTempFile(file));
+    if (page && shouldClosePage) {
+      try {
+        await page.close({ runBeforeUnload: false });
+        logger.info(`${PLATFORM_NAME}发布完成，已自动关闭发布页面`);
+      } catch (closeError) {
+        logger.warn(
+          `${PLATFORM_NAME}发布页面关闭失败: ${closeError?.message || closeError}`,
+        );
+      }
+    } else if (page) {
+      logger.info(`${PLATFORM_NAME}发布未完成，保留页面用于排查`);
+    }
   }
 }
 
