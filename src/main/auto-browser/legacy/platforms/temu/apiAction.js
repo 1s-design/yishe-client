@@ -233,6 +233,85 @@ function slimPriceReviewItem(value) {
   return result;
 }
 
+function slimConfirmationSkc(value) {
+  const source = asPlainObject(value);
+  const result = pickDefinedFields(source, [
+    'skcId',
+    'productSkcId',
+    'extCode',
+    'skcExtCode',
+    'previewImgUrlList',
+    'applyJitStatus',
+    'secondarySelectStatus',
+    'supplierTodoStatus'
+  ]);
+  const skuIdList = Array.isArray(source.productSkuIdList)
+    ? source.productSkuIdList.map(Number).filter(Boolean)
+    : [];
+  if (skuIdList.length) {
+    result.productSkuIdList = skuIdList;
+  }
+  return result;
+}
+
+function slimConfirmationItem(value) {
+  const source = asPlainObject(value);
+  const result = pickDefinedFields(source, [
+    'productId',
+    'spuId',
+    'goodsId',
+    'productName',
+    'spuName',
+    'leafCategoryName',
+    'fullCategoryName',
+    'carouselImageUrlList',
+    'createTime',
+    'updateTime',
+    'siteVersion'
+  ]);
+  result.skcList = Array.isArray(source.skcList)
+    ? source.skcList.map(slimConfirmationSkc)
+    : [];
+  return result;
+}
+
+function filterConfirmationListResponse(response) {
+  if (!asPlainObject(response).action || response.action !== 'goods.confirmation.list') {
+    return response;
+  }
+  const result = asPlainObject(response.result);
+  const rawPayload = asPlainObject(response.raw);
+  const rawResult = asPlainObject(rawPayload.result);
+  const sourceItems = Array.isArray(result.items)
+    ? result.items
+    : Array.isArray(rawResult.dataList)
+      ? rawResult.dataList
+      : [];
+  const items = sourceItems.map(slimConfirmationItem);
+  const total = Number(result.total ?? rawResult.total ?? items.length) || 0;
+  return {
+    ...response,
+    result: {
+      ...result,
+      total,
+      items,
+      skcSpuList: Array.isArray(result.skcSpuList)
+        ? result.skcSpuList
+        : extractLifecycleSkcSpuPairs({ result: { dataList: items } })
+    },
+    raw: rawPayload && rawResult
+      ? {
+          success: rawPayload.success,
+          errorCode: rawPayload.errorCode,
+          errorMsg: rawPayload.errorMsg,
+          result: {
+            total: rawResult.total,
+          }
+        }
+      : response.raw
+  };
+}
+
 function filterPriceReviewListResponse(response) {
   if (!asPlainObject(response).action || response.action !== 'goods.price-review.list') {
     return response;
@@ -1070,6 +1149,67 @@ async function executeAction(actionKey, profileId, region, payload) {
     });
   }
 
+  if (actionKey === 'goods.confirmation.list') {
+    return runPagedSearchForChainSupplier({
+      action: actionKey,
+      profileId,
+      region,
+      payload: {
+        removeStatus: 0,
+        supplierTodoTypeList: [6],
+        ...payload
+      },
+      pageSize: Math.min(1000, Math.max(1, Number(payload.pageSize || 100) || 100)),
+      successMessage: '获取商品确认列表成功',
+      failureMessage: '获取商品确认列表失败'
+    });
+  }
+
+  if (actionKey === 'goods.confirmation.confirm') {
+    const goodsId = Number(payload.goodsId || 0);
+    const siteVersion = Number(payload.siteVersion || 0);
+    const priceConfirmKeyStr = String(payload.priceConfirmKeyStr || '1');
+    const goodsSkuIdList = Array.isArray(payload.goodsSkuIdList)
+      ? payload.goodsSkuIdList.map((id) => Number(id)).filter((id) => id > 0)
+      : [];
+    logger.info('[temu-api-action] 商品确认动作开始', {
+      traceId,
+      profileId,
+      region,
+      goodsId,
+      siteVersion,
+      skuCount: goodsSkuIdList.length,
+      rowTrace
+    });
+    const startedAt = Date.now();
+    const response = await requestTemuJson(region, '/bg-brando-mms/goods/bindSiteConfirmForPrice', {
+      goodsId,
+      siteVersion,
+      priceConfirmKeyStr,
+      goodsSkuIdList
+    }, { profileId, traceId, actionKey, step: 'confirmation-confirm' });
+    logger.info('[temu-api-action] 商品确认动作结束', {
+      traceId,
+      profileId,
+      region,
+      goodsId,
+      rowTrace,
+      success: !!response?.success,
+      status: response?.status ?? null,
+      elapsedMs: Date.now() - startedAt,
+      message: response?.message || normalizeTemuApiMessage(response?.payload, '')
+    });
+    return buildFeatureResponse({
+      action: actionKey,
+      profileId,
+      region,
+      requestResult: response,
+      successMessage: '商品确认成功',
+      failureMessage: '商品确认失败',
+      result: { goodsId, siteVersion, priceConfirmKeyStr, goodsSkuIdList, traceId, rowTrace }
+    });
+  }
+
   if (actionKey === 'goods.modify-price') {
     const supplierResult = Number(payload.supplierResult || 0);
     const priceOrderId = Number(payload.priceOrderId || 0);
@@ -1525,9 +1665,12 @@ export async function runTemuApiActionSmallFeature(input = {}) {
     });
     throw error;
   }
-  const filteredResult = actionKey === 'goods.price-review.list'
+  let filteredResult = actionKey === 'goods.price-review.list'
     ? filterPriceReviewListResponse(result)
     : result;
+  if (actionKey === 'goods.confirmation.list') {
+    filteredResult = filterConfirmationListResponse(result);
+  }
   if (actionKey === 'goods.price-review.list') {
     logger.info('[temu-api-action] 核价列表结果已精简，准备回传', {
       actionKey,
@@ -1546,6 +1689,18 @@ export async function runTemuApiActionSmallFeature(input = {}) {
       success: !!filteredResult.success,
       message: filteredResult.message || '',
       resultSummary: summarizeRealPictureListResult(filteredResult.result || {})
+    });
+  } else if (actionKey === 'goods.confirmation.list') {
+    logger.info('[temu-api-action] 商品确认列表结果已精简，准备回传', {
+      actionKey,
+      success: !!filteredResult.success,
+      resultSummary: {
+        total: Number(filteredResult?.result?.total || 0) || 0,
+        itemCount: Array.isArray(filteredResult?.result?.items) ? filteredResult.result.items.length : 0,
+        fetchedAll: filteredResult?.result?.fetchedAll === true,
+        fetchedPages: Number(filteredResult?.result?.fetchedPages || 0) || 0,
+        payloadBytes: measureJsonPayload(filteredResult).bytes
+      }
     });
   } else {
     logger.info('[temu-api-action] Temu 动作执行完成', {
