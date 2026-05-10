@@ -8,13 +8,27 @@ import { logger } from "../utils/logger.js";
 
 const PLATFORM_KEY = "taobao";
 const DEFAULT_PUBLISH_URL = "https://item.upload.taobao.com/sell/v2/publish.htm";
+const QIANNIU_MATERIAL_CENTER_URL =
+  "https://qn.taobao.com/home.htm/material-center/mine-material/";
 const TAOBAO_ACTION_DELAY_MS = 900;
 const TAOBAO_IMAGE_LIBRARY_DELAY_RANGE_MS = [1600, 3800];
+const TAOBAO_MATERIAL_UPLOAD_TIMEOUT_MS = 180000;
 const TAOBAO_SECURITY_CHECK_TIMEOUT_MS = 90 * 1000;
 const TAOBAO_SECURITY_CHECK_POLL_MS = 1500;
 const TAOBAO_TITLE_MAX_LENGTH = 30;
+const TAOBAO_IMAGE_RESULT_LIST_SELECTOR =
+  '[class^="PicList_PicturesShow_main-document__"], [class*=" PicList_PicturesShow_main-document__"]';
+const TAOBAO_IMAGE_EMPTY_RESULT_PATTERN =
+  /暂无数据|暂无图片|无搜索结果|没有找到|未找到|没有相关|No data/i;
 const TAOBAO_SECURITY_TEXT_PATTERN =
   /验证码|安全验证|拖动滑块|请完成验证|请按住滑块|风险验证/;
+const SAFE_TAOBAO_IMAGE_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".gif",
+]);
 
 function toUserFriendlyPath(filePath) {
   return String(filePath || "").replace(/\\/g, "/");
@@ -28,13 +42,119 @@ function getUploadedLocalFileName(filePath) {
   return getPathFileName(filePath);
 }
 
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function addTaobaoImageSearchName(candidates, value) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return;
+  candidates.push(normalized);
+}
+
+function isTaobaoNoiseHashSuffix(value) {
+  const normalized = String(value || "").replace(/^\./, "");
+  return /^[a-f0-9]{24,}$/i.test(normalized);
+}
+
+function stripTaobaoNoiseHashSuffix(value) {
+  const normalized = String(value || "").trim();
+  const dotIndex = normalized.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    return normalized;
+  }
+
+  const suffix = normalized.slice(dotIndex + 1);
+  if (!isTaobaoNoiseHashSuffix(suffix)) {
+    return normalized;
+  }
+
+  return normalized.slice(0, dotIndex);
+}
+
+function getSafeTaobaoImageExtension(filePath) {
+  const fileName = getPathFileName(filePath);
+  const ext = path.posix.extname(fileName).toLowerCase();
+  return SAFE_TAOBAO_IMAGE_EXTENSIONS.has(ext) ? ext : ".jpg";
+}
+
+function sanitizeTaobaoMaterialBaseName(value, fallback) {
+  const stripped = stripTaobaoNoiseHashSuffix(safeDecodeURIComponent(value));
+  const withoutExt = stripTaobaoNoiseHashSuffix(
+    stripped.slice(0, stripped.length - path.posix.extname(stripped).length),
+  );
+  const sanitized = String(withoutExt || "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 96);
+  return sanitized || fallback;
+}
+
+function buildShortTaobaoMaterialBaseName(value, index, runId) {
+  const sanitized = sanitizeTaobaoMaterialBaseName(value, `img_${index + 1}`);
+  const firstToken = sanitized.split("_").find(Boolean) || `img${index + 1}`;
+  const shortToken = firstToken.slice(0, 8).toLowerCase();
+  return `tb_${runId}_${index + 1}_${shortToken}`;
+}
+
+function isShortTaobaoMaterialName(value) {
+  return /^tb_[a-z0-9]{1,12}_\d+_[a-z0-9]{1,16}$/i.test(String(value || ""));
+}
+
+function resolveUniqueFilePath(dir, baseName, ext) {
+  let candidate = path.join(dir, `${baseName}${ext}`);
+  let counter = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${baseName}_${counter}${ext}`);
+    counter += 1;
+  }
+  return candidate;
+}
+
 function getUploadedLocalFileSearchNames(filePath) {
   const fileName = getUploadedLocalFileName(filePath);
+  const decodedFileName = safeDecodeURIComponent(fileName);
   const ext = path.posix.extname(fileName);
   const nameWithoutExt = ext ? fileName.slice(0, -ext.length) : fileName;
-  const nameBeforeHashSuffix = nameWithoutExt.split(".")[0];
+  const decodedExt = path.posix.extname(decodedFileName);
+  const decodedNameWithoutExt = decodedExt
+    ? decodedFileName.slice(0, -decodedExt.length)
+    : decodedFileName;
+  const candidates = [];
+  const hasNoiseHashSuffix =
+    (ext && isTaobaoNoiseHashSuffix(ext)) ||
+    (decodedExt && isTaobaoNoiseHashSuffix(decodedExt));
+  if (isShortTaobaoMaterialName(nameWithoutExt)) {
+    return [nameWithoutExt, fileName];
+  }
+
+  const names = hasNoiseHashSuffix
+    ? [nameWithoutExt, decodedNameWithoutExt]
+    : [nameWithoutExt, fileName, decodedNameWithoutExt, decodedFileName];
+
+  for (const name of names) {
+    addTaobaoImageSearchName(candidates, name);
+    addTaobaoImageSearchName(candidates, name.replace(/[_-]+/g, " "));
+    addTaobaoImageSearchName(candidates, name.replace(/\s+/g, "_"));
+  }
+
+  for (const name of [nameWithoutExt, decodedNameWithoutExt]) {
+    addTaobaoImageSearchName(candidates, name.replace(/\s*[(（]\d+[)）]\s*$/u, ""));
+    addTaobaoImageSearchName(candidates, name.replace(/[_-]\d+$/u, ""));
+    const dotSegments = name.split(".");
+    const lastDotSegment = dotSegments.at(-1);
+    if (dotSegments.length > 1 && isTaobaoNoiseHashSuffix(lastDotSegment)) {
+      addTaobaoImageSearchName(candidates, dotSegments.slice(0, -1).join("."));
+    }
+  }
+
   return Array.from(
-    new Set([nameBeforeHashSuffix, nameWithoutExt, fileName].filter(Boolean)),
+    new Set(candidates.filter(Boolean)),
   );
 }
 
@@ -65,6 +185,7 @@ function resolvePublishUrl(settings = {}, publishInfo = {}) {
 async function prepareImages(images, imageManager) {
   const filePaths = [];
   const tempFiles = [];
+  const runId = Date.now();
 
   for (const [index, rawSource] of images.entries()) {
     const source = String(rawSource || "").trim();
@@ -73,7 +194,7 @@ async function prepareImages(images, imageManager) {
     if (/^https?:\/\//i.test(source)) {
       const tempPath = await imageManager.downloadImage(
         source,
-        `${PLATFORM_KEY}_${Date.now()}_${index}`,
+        `${PLATFORM_KEY}_${runId}_${index + 1}`,
       );
       filePaths.push(tempPath);
       tempFiles.push(tempPath);
@@ -509,104 +630,188 @@ async function getTaobaoDetailImagesFrame(page) {
   return await frameElement.contentFrame();
 }
 
+function getTaobaoSearchScopes(page) {
+  return [page, ...page.frames()];
+}
+
+function buildTaobaoTextLocators(scope, text) {
+  const locators = [];
+
+  if (typeof scope.getByRole === "function") {
+    locators.push(scope.getByRole("button", { name: text, exact: true }));
+    locators.push(scope.getByRole("button", { name: new RegExp(text) }));
+  }
+
+  locators.push(scope.locator("button").filter({ hasText: text }));
+  locators.push(scope.locator('[role="button"]').filter({ hasText: text }));
+
+  if (typeof scope.getByText === "function") {
+    locators.push(scope.getByText(text, { exact: true }));
+    locators.push(scope.getByText(new RegExp(text)));
+  }
+
+  return locators.map((locator) => locator.first());
+}
+
+async function clickTaobaoText(page, text, label, options = {}) {
+  const timeout = options.timeout ?? 15000;
+  const scopes = getTaobaoSearchScopes(page);
+  const errors = [];
+
+  for (const scope of scopes) {
+    for (const locator of buildTaobaoTextLocators(scope, text)) {
+      try {
+        await locator.waitFor({ state: "visible", timeout: Math.min(timeout, 1500) });
+        await locator.scrollIntoViewIfNeeded().catch(() => undefined);
+        await locator.click({ timeout: 5000 });
+        logger.info(`淘宝${label}点击成功`, { text });
+        return { clicked: true, text };
+      } catch (error) {
+        errors.push(error?.message || String(error));
+      }
+    }
+  }
+
+  throw new Error(
+    `淘宝未找到或无法点击${label}：${text}（${errors.slice(-3).join(" | ")}）`,
+  );
+}
+
+async function waitTaobaoMaterialUploadFinished(page, expectedCount) {
+  const startedAt = Date.now();
+  const successHandle = await page.waitForFunction(
+    () => {
+      const bodyText = String(document.body?.innerText || "");
+      const successMatched = bodyText.includes("文件上传成功");
+      const doneVisible = Array.from(document.querySelectorAll("button, [role='button'], span, div"))
+        .some((element) => {
+          const text = String(element.textContent || "").replace(/\s+/g, " ").trim();
+          if (text !== "完成") return false;
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            Number(style.opacity) !== 0 &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        });
+      return successMatched && doneVisible
+        ? { message: "文件上传成功", doneVisible }
+        : false;
+    },
+    { timeout: TAOBAO_MATERIAL_UPLOAD_TIMEOUT_MS, polling: 800 },
+  );
+
+  const successResult = await successHandle.jsonValue();
+  const elapsedMs = Date.now() - startedAt;
+  logger.info("淘宝素材中心检测到上传成功提示", {
+    expectedCount,
+    message: successResult?.message || "",
+    elapsedMs,
+  });
+  return {
+    successCount: expectedCount,
+    message: successResult?.message || "文件上传成功",
+    elapsedMs,
+  };
+}
+
+async function uploadTaobaoImagesToMaterialCenter(page, filePaths) {
+  const result = {
+    materialPageOpened: false,
+    uploadFileClicked: false,
+    fileInputFound: false,
+    uploadSuccessCount: 0,
+    uploadSuccessMessage: "",
+    uploadElapsedMs: 0,
+    doneClicked: false,
+  };
+
+  if (!filePaths.length) {
+    return result;
+  }
+
+  logger.info("淘宝进入千牛素材中心上传页", {
+    url: QIANNIU_MATERIAL_CENTER_URL,
+    fileCount: filePaths.length,
+    files: filePaths.map(getPathFileName),
+  });
+
+  await page.goto(QIANNIU_MATERIAL_CENTER_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });
+  result.materialPageOpened = true;
+  await page.waitForTimeout(3000);
+
+  if (!(await checkLogin(page))) {
+    throw new Error("请先登录淘宝/千牛商家后台");
+  }
+
+  const uploadFileClick = await clickTaobaoText(page, "上传文件", "素材中心上传文件按钮", {
+    timeout: 30000,
+  });
+  result.uploadFileClicked = uploadFileClick.clicked;
+  await waitTaobaoActionDelay(page, "material_center_after_upload_file_click");
+
+  const fileInputs = page.locator("input[type=file]");
+  await fileInputs.first().waitFor({ state: "attached", timeout: 30000 });
+
+  const inputCount = await fileInputs.count().catch(() => 0);
+  let fileInput = null;
+  let inputSnapshot = null;
+  for (let index = inputCount - 1; index >= 0; index -= 1) {
+    const candidate = fileInputs.nth(index);
+    const snapshot = await candidate
+      .evaluate((element) => ({
+        tagName: element.tagName,
+        type: element.getAttribute("type") || "",
+        accept: element.getAttribute("accept") || "",
+        multiple: !!element.multiple,
+        disabled: !!element.disabled,
+      }))
+      .catch(() => null);
+    if (snapshot && !snapshot.disabled) {
+      fileInput = candidate;
+      inputSnapshot = { ...snapshot, index, inputCount };
+      break;
+    }
+  }
+
+  result.fileInputFound = !!fileInput;
+
+  if (!fileInput) {
+    throw new Error("淘宝素材中心未找到可用的上传 input[type=file]");
+  }
+
+  logger.info("淘宝准备通过千牛素材中心 input 批量上传图片", {
+    fileCount: filePaths.length,
+    inputSnapshot,
+  });
+
+  await fileInput.setInputFiles(filePaths);
+  const uploadResult = await waitTaobaoMaterialUploadFinished(page, filePaths.length);
+  result.uploadSuccessCount = uploadResult.successCount;
+  result.uploadSuccessMessage = uploadResult.message;
+  result.uploadElapsedMs = uploadResult.elapsedMs;
+
+  const doneClick = await clickTaobaoText(page, "完成", "素材中心完成按钮", {
+    timeout: 30000,
+  });
+  result.doneClicked = doneClick.clicked;
+  await waitTaobaoActionDelay(page, "material_center_after_done_click");
+
+  return result;
+}
+
 function getFrameUrl(frame) {
   if (!frame) return "";
   if (typeof frame.url === "function") {
     return frame.url();
   }
   return String(frame.url || "");
-}
-
-async function waitTaobaoFileChooserFromLocalUpload(page, index) {
-  const frame = await getTaobaoMainImagesFrame(page);
-  if (!frame) {
-    logger.warn("淘宝未找到主图上传 iframe: #mainImagesGroup", { index });
-    return null;
-  }
-  if (!(await waitTaobaoSecurityCheckResolved(page, {
-    frames: [frame],
-    reason: "main_image_before_local_upload",
-  }))) {
-    return null;
-  }
-  await waitTaobaoActionDelay(page, "main_image_before_local_upload_click");
-
-  const button = frame.locator("button").filter({ hasText: "本地上传" }).first();
-  await button.waitFor({ timeout: 5000, state: "visible" });
-  logger.info("淘宝找到本地上传按钮", {
-    index,
-    frameUrl: getFrameUrl(frame),
-  });
-
-  const [fileChooser] = await Promise.all([
-    page.waitForEvent("filechooser", { timeout: 15000 }),
-    button.click({ timeout: 5000 }),
-  ]);
-  logger.info("淘宝本地上传按钮已触发文件选择器:", {
-    index,
-  });
-  await waitTaobaoActionDelay(page, "main_image_after_local_upload_click");
-  return fileChooser;
-}
-
-async function clickTaobaoUploadDoneButton(page, index) {
-  const frame = await getTaobaoMainImagesFrame(page);
-  if (!frame) {
-    logger.warn("淘宝未找到主图上传 iframe: #mainImagesGroup", { index });
-    return false;
-  }
-
-  const button = frame.locator("button").filter({ hasText: "完成" }).first();
-  await button.waitFor({ timeout: 15000, state: "visible" });
-  const enabled = await button.isEnabled().catch(() => true);
-  if (!enabled) {
-    logger.warn("淘宝上传完成按钮不可用", { index });
-    return false;
-  }
-  if (!(await waitTaobaoSecurityCheckResolved(page, {
-    frames: [frame],
-    reason: "main_image_before_upload_done",
-  }))) {
-    return false;
-  }
-  await waitTaobaoActionDelay(page, "main_image_before_upload_done_click");
-  logger.info("淘宝找到上传完成按钮", {
-    index,
-    frameUrl: getFrameUrl(frame),
-  });
-  await button.click({ timeout: 5000 });
-  logger.info("淘宝已点击上传完成按钮", { index });
-  await waitTaobaoActionDelay(page, "main_image_after_upload_done_click");
-  return true;
-}
-
-async function waitTaobaoBatchUploadCompleted(page, filePaths) {
-  const frame = await getTaobaoMainImagesFrame(page);
-  if (!frame) {
-    logger.warn("淘宝未找到主图上传 iframe，无法等待批量上传完成");
-    return false;
-  }
-
-  await page.waitForTimeout(Math.max(5000, filePaths.length * 1500));
-
-  const doneButton = frame.locator("button").filter({ hasText: "完成" }).first();
-  let result = false;
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 45000) {
-    const visible = await doneButton.isVisible().catch(() => false);
-    const enabled = await doneButton.isEnabled().catch(() => false);
-    if (visible && enabled) {
-      result = true;
-      break;
-    }
-    await page.waitForTimeout(500);
-  }
-
-  logger.info("淘宝批量图片上传完成检测:", {
-    requested: filePaths.length,
-    completed: result,
-  });
-  return result;
 }
 
 async function searchTaobaoImageNameInFrame(frame, searchName, index, contextName) {
@@ -625,17 +830,19 @@ async function searchTaobaoImageNameInFrame(frame, searchName, index, contextNam
     await waitTaobaoImageLibraryDelay(page, `${contextName}_before_search_input`);
   }
 
+  const finalSearchName = stripTaobaoNoiseHashSuffix(searchName);
   const input = frame
     .locator('input[placeholder="搜索图片名称"], input[placeholder*="搜索图片名称"]')
     .first();
   await input.waitFor({ timeout: 10000, state: "visible" });
   await input.click({ clickCount: 3 }).catch(() => undefined);
   await input.fill("");
-  await input.fill(searchName);
+  await input.fill(finalSearchName);
   await input.press("Enter");
   logger.info(`淘宝${contextName}已搜索图片名称`, {
     index,
-    imageName: searchName,
+    imageName: finalSearchName,
+    rawImageName: searchName,
   });
   if (page) {
     await waitTaobaoImageLibraryDelay(page, `${contextName}_after_search_enter`);
@@ -644,6 +851,52 @@ async function searchTaobaoImageNameInFrame(frame, searchName, index, contextNam
       reason: `${contextName}_after_search`,
     });
   }
+
+  const hasResult = await hasTaobaoImageSearchResult(frame, index, contextName);
+  if (!hasResult) {
+    logger.warn(`淘宝${contextName}搜索无可选结果`, {
+      index,
+      imageName: finalSearchName,
+      rawImageName: searchName,
+    });
+  }
+  return hasResult;
+}
+
+async function hasTaobaoImageSearchResult(frame, index, contextName) {
+  const list = frame.locator(TAOBAO_IMAGE_RESULT_LIST_SELECTOR).first();
+  try {
+    await list.waitFor({ timeout: 12000, state: "visible" });
+  } catch (error) {
+    const bodyText = await frame
+      .locator("body")
+      .innerText({ timeout: 1000 })
+      .catch(() => "");
+    const emptyMatched = TAOBAO_IMAGE_EMPTY_RESULT_PATTERN.test(bodyText);
+    logger.warn(`淘宝${contextName}搜索结果列表未出现`, {
+      index,
+      emptyMatched,
+      textPreview: String(bodyText || "").replace(/\s+/g, " ").slice(0, 120),
+      error: error?.message || String(error),
+    });
+    return false;
+  }
+
+  const resultCount = await list.locator(":scope > *").count().catch(() => 0);
+  if (resultCount <= 0) {
+    logger.warn(`淘宝${contextName}搜索结果列表为空`, { index });
+    return false;
+  }
+
+  const listText = await list.innerText({ timeout: 1000 }).catch(() => "");
+  if (TAOBAO_IMAGE_EMPTY_RESULT_PATTERN.test(listText)) {
+    logger.warn(`淘宝${contextName}搜索结果为空提示命中`, {
+      index,
+      textPreview: String(listText || "").replace(/\s+/g, " ").slice(0, 120),
+    });
+    return false;
+  }
+
   return true;
 }
 
@@ -663,11 +916,7 @@ async function clickTaobaoFirstSearchedImageInFrame(frame, index, contextName) {
     await waitTaobaoImageLibraryDelay(page, `${contextName}_before_select_result_click`);
   }
 
-  const list = frame
-    .locator(
-      '[class^="PicList_PicturesShow_main-document__"], [class*=" PicList_PicturesShow_main-document__"]',
-    )
-    .first();
+  const list = frame.locator(TAOBAO_IMAGE_RESULT_LIST_SELECTOR).first();
   await list.waitFor({ timeout: 10000, state: "visible" });
 
   let firstItem = list.locator(":scope > *").first();
@@ -1012,74 +1261,7 @@ async function waitTaobaoMainImagesFrameClosed(page, index) {
   return !stillVisible;
 }
 
-async function uploadTaobaoImageByEmptySlot(page, emptySlot, filePath, index) {
-  const beforeEmptyCount = await countTaobaoMainImageEmptySlots(page);
-  await waitTaobaoActionDelay(page, "main_image_before_open_single_dialog_click");
-  const clickedElementDebug = await emptySlot.evaluate((element) => {
-    element.scrollIntoView({ block: "center", inline: "center" });
-    const rect = element.getBoundingClientRect();
-    const detail = {
-      tagName: element.tagName,
-      className: element.className,
-      text: String(element.textContent || "").trim().slice(0, 80),
-      rect: {
-        x: Math.round(rect.x),
-        y: Math.round(rect.y),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-      },
-    };
-    element.click();
-    return detail;
-  });
-  logger.info("淘宝已直接点击 image-empty 元素:", {
-    index,
-    file: toUserFriendlyPath(filePath),
-    element: clickedElementDebug,
-  });
-  await waitTaobaoActionDelay(page, "main_image_after_open_single_dialog_click");
-
-  const fileChooser = await waitTaobaoFileChooserFromLocalUpload(page, index);
-
-  if (fileChooser) {
-    await fileChooser.setFiles(filePath);
-    await waitTaobaoSecurityCheckResolved(page, {
-      reason: "main_image_after_set_single_file",
-    });
-    await waitTaobaoActionDelay(page, "main_image_after_set_single_file");
-    logger.info(`淘宝主图已通过文件选择器上传: index=${index}, file=${toUserFriendlyPath(filePath)}`);
-    if (await clickTaobaoUploadDoneButton(page, index)) {
-      if (await searchTaobaoUploadedImageName(page, filePath, index)) {
-        if (await clickTaobaoFirstSearchedImage(page, index)) {
-          const applied = await waitTaobaoMainImageSelectionApplied(
-            page,
-            index,
-            beforeEmptyCount,
-          );
-          if (applied) {
-            await blurTaobaoPageAfterImageSelection(page, index);
-            await waitTaobaoMainImagesFrameClosed(page, index);
-          }
-          return applied;
-        }
-      }
-    }
-    return false;
-  }
-
-  const inputLocator = page.locator('input[type="file"]');
-  const inputCount = await inputLocator.count();
-  if (inputCount > 0) {
-    await inputLocator.last().setInputFiles(filePath);
-    logger.info(`淘宝主图已通过文件输入框兜底上传: index=${index}, file=${toUserFriendlyPath(filePath)}`);
-    return true;
-  }
-
-  logger.warn(`淘宝主图上传失败，未找到文件选择器或文件输入框: index=${index}`);
-  return false;
-}
-
-async function uploadTaobaoImagesFromSingleDialog(page, emptySlot, filePaths) {
+async function selectTaobaoMainImagesFromLibrary(page, emptySlot, filePaths) {
   await waitTaobaoActionDelay(page, "main_image_before_open_dialog_click");
   const clickedElementDebug = await emptySlot.evaluate((element) => {
     element.scrollIntoView({ block: "center", inline: "center" });
@@ -1098,33 +1280,11 @@ async function uploadTaobaoImagesFromSingleDialog(page, emptySlot, filePaths) {
     element.click();
     return detail;
   });
-  logger.info("淘宝已点击首个 image-empty 打开主图弹窗:", {
+  logger.info("淘宝已点击首个 image-empty 打开主图素材选择弹窗:", {
     fileCount: filePaths.length,
     element: clickedElementDebug,
   });
   await waitTaobaoActionDelay(page, "main_image_after_open_dialog_click");
-
-  const fileChooser = await waitTaobaoFileChooserFromLocalUpload(page, 0);
-  if (!fileChooser) {
-    logger.warn("淘宝未触发本地上传文件选择器");
-    return [];
-  }
-
-  await fileChooser.setFiles(filePaths);
-  await waitTaobaoSecurityCheckResolved(page, {
-    reason: "main_image_after_set_files",
-  });
-  await waitTaobaoActionDelay(page, "main_image_after_set_files");
-  logger.info("淘宝主图已通过文件选择器批量写入:", {
-    fileCount: filePaths.length,
-    files: filePaths.map(getPathFileName),
-  });
-
-  await waitTaobaoBatchUploadCompleted(page, filePaths);
-
-  if (!(await clickTaobaoUploadDoneButton(page, 0))) {
-    return [];
-  }
 
   const selectedFiles = [];
   for (let index = 0; index < filePaths.length; index += 1) {
@@ -1160,6 +1320,10 @@ async function uploadTaobaoImagesFromSingleDialog(page, emptySlot, filePaths) {
 
     if (applied) {
       selectedFiles.push(filePath);
+      logger.info("淘宝主图已从素材库选中图片", {
+        index,
+        file: toUserFriendlyPath(filePath),
+      });
     } else {
       logger.warn(`淘宝主图搜索选择未确认回填: index=${index}, names=${searchNames.join(", ")}`);
     }
@@ -1170,8 +1334,53 @@ async function uploadTaobaoImagesFromSingleDialog(page, emptySlot, filePaths) {
   return selectedFiles;
 }
 
-async function uploadTaobaoImages(page, images, imageManager) {
+async function prepareTaobaoPublishImages(images, imageManager) {
   const targetImages = (images || []).filter(Boolean).slice(0, 5);
+  const preparedImages = await prepareImages(targetImages, imageManager);
+  const materialFilePaths = [];
+  const materialTempFiles = [];
+  const materialRunId = Date.now().toString(36).slice(-6);
+
+  for (const [index, sourcePath] of preparedImages.filePaths.entries()) {
+    const originalFileName = getPathFileName(sourcePath);
+    const ext = getSafeTaobaoImageExtension(sourcePath);
+    const materialBaseName = buildShortTaobaoMaterialBaseName(
+      originalFileName,
+      index,
+      materialRunId,
+    );
+    const materialPath = resolveUniqueFilePath(
+      imageManager.tempDir,
+      materialBaseName,
+      ext,
+    );
+
+    fs.copyFileSync(sourcePath, materialPath);
+    materialFilePaths.push(materialPath);
+    materialTempFiles.push(materialPath);
+
+    logger.info("淘宝素材中心上传文件名已安全化", {
+      index,
+      sourceFile: originalFileName,
+      materialFile: getPathFileName(materialPath),
+    });
+  }
+
+  logger.info("淘宝准备发布图片:", materialFilePaths.map(toUserFriendlyPath));
+
+  return {
+    requested: materialFilePaths.length,
+    filePaths: materialFilePaths,
+    sourceFilePaths: preparedImages.filePaths,
+    tempFiles: [
+      ...preparedImages.tempFiles,
+      ...materialTempFiles,
+    ],
+  };
+}
+
+async function selectTaobaoImages(page, filePaths) {
+  const targetImages = (filePaths || []).filter(Boolean).slice(0, 5);
   const result = {
     requested: targetImages.length,
     availableInputs: 0,
@@ -1181,24 +1390,11 @@ async function uploadTaobaoImages(page, images, imageManager) {
     selectorClosed: null,
   };
   if (!targetImages.length) {
-    logger.info("淘宝未提供主图，跳过图片上传");
+    logger.info("淘宝未提供主图，跳过图片选择");
     return {
       ...result,
       selectionCompleted: true,
       selectorClosed: true,
-    };
-  }
-
-  const preparedImages = await prepareImages(targetImages, imageManager);
-  result.requested = preparedImages.filePaths.length;
-  logger.info("淘宝准备上传的图片:", preparedImages.filePaths.map(toUserFriendlyPath));
-
-  if (!preparedImages.filePaths.length) {
-    return {
-      ...result,
-      selectionCompleted: true,
-      selectorClosed: true,
-      tempFiles: preparedImages.tempFiles,
     };
   }
 
@@ -1215,30 +1411,29 @@ async function uploadTaobaoImages(page, images, imageManager) {
   const emptySlotCount = await emptySlotLocator.count();
   result.availableSlots = emptySlotCount;
   if (emptySlotCount <= 0) {
-    logger.warn("淘宝未找到主图空位，暂不上传图片");
+    logger.warn("淘宝未找到主图空位，暂不选择图片");
     return {
       ...result,
       selectionCompleted: false,
       selectorClosed: true,
-      tempFiles: preparedImages.tempFiles,
     };
   }
 
-  const maxUploadCount = Math.min(preparedImages.filePaths.length, emptySlotCount, 5);
+  const maxUploadCount = Math.min(targetImages.length, emptySlotCount, 5);
   result.requested = maxUploadCount;
-  const uploadFiles = preparedImages.filePaths.slice(0, maxUploadCount);
+  const uploadFiles = targetImages.slice(0, maxUploadCount);
   const firstEmptySlot = page.locator(".image-list").first().locator(".image-empty").first();
   if ((await firstEmptySlot.count()) <= 0) {
-    logger.info("淘宝主图空位已用完，结束上传");
+    logger.info("淘宝主图空位已用完，结束图片选择");
   } else {
     try {
-      result.uploadedPaths = await uploadTaobaoImagesFromSingleDialog(
+      result.uploadedPaths = await selectTaobaoMainImagesFromLibrary(
         page,
         firstEmptySlot,
         uploadFiles,
       );
     } catch (error) {
-      logger.warn(`淘宝主图批量上传异常: ${error?.message || error}`);
+      logger.warn(`淘宝主图素材库选择异常: ${error?.message || error}`);
     }
   }
 
@@ -1251,13 +1446,10 @@ async function uploadTaobaoImages(page, images, imageManager) {
   }
 
   logger.info(
-    `淘宝主图上传流程结束: uploaded=${result.uploadedPaths.length}/${result.requested}, selectionCompleted=${result.selectionCompleted}, selectorClosed=${result.selectorClosed}, files=${result.uploadedPaths.map(getPathFileName).join(", ")}`,
+    `淘宝主图素材库选择流程结束: selected=${result.uploadedPaths.length}/${result.requested}, selectionCompleted=${result.selectionCompleted}, selectorClosed=${result.selectorClosed}, files=${result.uploadedPaths.map(getPathFileName).join(", ")}`,
   );
 
-  return {
-    ...result,
-    tempFiles: preparedImages.tempFiles,
-  };
+  return result;
 }
 
 export async function publishToTaobao(publishInfo = {}) {
@@ -1298,13 +1490,35 @@ export async function publishToTaobao(publishInfo = {}) {
     page = await browser.newPage({ foreground: true });
     await pageOperator.setupAntiDetection(page);
 
-    await page.goto(targetUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
-    });
-    await page.waitForTimeout(4000);
-    logger.info(`淘宝当前页面: ${page.url()}`);
-    logger.info(`淘宝当前标题: ${await page.title().catch(() => "")}`);
+    const preparedImages = await prepareTaobaoPublishImages(
+      sourceImages,
+      imageManager,
+    );
+    tempFiles.push(...(preparedImages.tempFiles || []));
+
+    let materialUploadResult = null;
+    if (preparedImages.filePaths.length > 0) {
+      materialUploadResult = await uploadTaobaoImagesToMaterialCenter(
+        page,
+        preparedImages.filePaths,
+      );
+
+      await page.goto(targetUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+      await page.waitForTimeout(4000);
+      logger.info(`淘宝素材上传后回到发布页: ${page.url()}`);
+      logger.info(`淘宝发布页标题: ${await page.title().catch(() => "")}`);
+    } else {
+      await page.goto(targetUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+      await page.waitForTimeout(4000);
+      logger.info(`淘宝当前页面: ${page.url()}`);
+      logger.info(`淘宝当前标题: ${await page.title().catch(() => "")}`);
+    }
 
     if (!(await checkLogin(page))) {
       return {
@@ -1318,12 +1532,10 @@ export async function publishToTaobao(publishInfo = {}) {
       };
     }
 
-    const uploadResult = await uploadTaobaoImages(
+    const uploadResult = await selectTaobaoImages(
       page,
-      sourceImages,
-      imageManager,
+      preparedImages.filePaths,
     );
-    tempFiles.push(...(uploadResult.tempFiles || []));
     const mainImagesReady =
       uploadResult.requested <= 0 ||
       (uploadResult.selectionCompleted && uploadResult.selectorClosed !== false);
@@ -1331,7 +1543,7 @@ export async function publishToTaobao(publishInfo = {}) {
       const pageClosed = await closeTaobaoPublishPage(page, "main_images_not_ready");
       return {
         success: false,
-        message: "淘宝主图未全部上传并选择完成，已停止后续操作",
+        message: "淘宝主图未全部从素材库选择完成，已停止后续操作",
         data: {
           itemId,
           targetUrl,
@@ -1342,6 +1554,9 @@ export async function publishToTaobao(publishInfo = {}) {
           uploaded: uploadResult.uploadedPaths.length,
           uploadedPaths: uploadResult.uploadedPaths.map(toUserFriendlyPath),
           uploadedNames: uploadResult.uploadedPaths.map(getPathFileName),
+          materialUploadPageOpened: !!materialUploadResult?.materialPageOpened,
+          materialUploadSuccessCount: materialUploadResult?.uploadSuccessCount || 0,
+          materialUploadDoneClicked: !!materialUploadResult?.doneClicked,
           mainImagesSelectionCompleted: uploadResult.selectionCompleted,
           mainImagesSelectorClosed: uploadResult.selectorClosed,
           pageKeptOpen: !pageClosed,
@@ -1411,6 +1626,11 @@ export async function publishToTaobao(publishInfo = {}) {
         uploaded: uploadResult.uploadedPaths.length,
         uploadedPaths: uploadResult.uploadedPaths.map(toUserFriendlyPath),
         uploadedNames: uploadResult.uploadedPaths.map(getPathFileName),
+        materialUploadPageOpened: !!materialUploadResult?.materialPageOpened,
+        materialUploadSuccessCount: materialUploadResult?.uploadSuccessCount || 0,
+        materialUploadMessage: materialUploadResult?.uploadSuccessMessage || "",
+        materialUploadElapsedMs: materialUploadResult?.uploadElapsedMs || 0,
+        materialUploadDoneClicked: !!materialUploadResult?.doneClicked,
         mainImagesSelectionCompleted: uploadResult.selectionCompleted,
         mainImagesSelectorClosed: uploadResult.selectorClosed,
         pageKeptOpen: !pageClosed,
