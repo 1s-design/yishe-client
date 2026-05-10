@@ -1307,10 +1307,7 @@ function sanitizeClientUserForWs(value: unknown) {
     "account",
     "name",
     "nickname",
-    "email",
-    "phone",
     "companyId",
-    "company",
   ]);
 }
 
@@ -1387,15 +1384,6 @@ function sanitizeClientServiceRuntimeForWs(
       currentExecution: sanitizeBrowserAutomationExecutionForWs(
         details.currentExecution,
       ),
-      ecomCollect:
-        details.ecomCollect && typeof details.ecomCollect === "object"
-          ? details.ecomCollect
-          : uploaderEcomCollectCapabilityCache.data
-            ? {
-                ...uploaderEcomCollectCapabilityCache.data,
-                source: "cache",
-              }
-            : null,
     },
   };
 }
@@ -1706,6 +1694,8 @@ function buildBrowserAutomationRuntimePatch(
       executableTaskLabels: buildPublishTaskCapabilitySummary(),
       currentExecution: executionSnapshot,
       executions: executionSnapshot.items,
+      ecomCollect: null,
+      ecomCollectCapabilities: null,
       ...(mergedInstances.length ? { instances: mergedInstances } : {}),
       runningProfileIds,
       availableProfileIds,
@@ -6314,18 +6304,10 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
             : null,
         profilesRootDir: profilesResponse?.data?.profilesRootDir || null,
         workspaceDir: profilesResponse?.data?.workspaceDir || null,
-        ecomCollect: uploaderEcomCollectCapabilityCache.data
-          ? {
-              ...uploaderEcomCollectCapabilityCache.data,
-              source: "cache",
-            }
-          : null,
       },
     });
   }
 
-  const ecomCollectCapability =
-    await getCachedUploaderEcomCollectCapabilities();
   const activeProfileId =
     profilesResponse?.data?.activeProfileId ||
     browserAutomationExecutionState.profileId ||
@@ -6392,7 +6374,9 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       "ecomSelectionSupplyMatchRun",
       "setAutoDispatch",
     ],
-    supportedTaskTypes: capabilitySummary.map((item) => item.taskType),
+    supportedTaskTypes: buildBrowserAutomationSupportedTaskTypes(
+      uploaderEcomCollectCapabilityCache.data,
+    ),
     autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
     details: {
       browserConnected: !!browserData?.isConnected,
@@ -6430,12 +6414,6 @@ async function getUploaderRuntime(): Promise<Partial<ClientServiceStatus>> {
       autoDispatchEnabled: browserAutomationDispatchState.autoDispatchEnabled,
       manualClosed: browserAutomationDispatchState.manualClosed,
       capabilities: capabilitySummary,
-      ecomCollect: ecomCollectCapability
-        ? {
-            ...ecomCollectCapability,
-            source: "uploader",
-          }
-        : null,
     },
   });
 }

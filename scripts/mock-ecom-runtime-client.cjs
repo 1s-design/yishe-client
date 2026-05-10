@@ -111,10 +111,9 @@ async function runUploaderEcomCollect(data) {
 }
 
 async function buildBrowserAutomationRuntime() {
-  const [apiInfo, browserStatus, capabilityStatus] = await Promise.all([
+  const [apiInfo, browserStatus] = await Promise.all([
     requestJson(`${UPLOADER_API_BASE}/api`),
     requestJson(`${UPLOADER_API_BASE}/api/browser/status`),
-    requestJson(`${UPLOADER_API_BASE}/api/ecom-collect/capabilities`),
   ]);
 
   const serviceData = apiInfo.json || {};
@@ -122,11 +121,6 @@ async function buildBrowserAutomationRuntime() {
     browserStatus.ok && browserStatus.json?.success
       ? browserStatus.json.data || {}
       : {};
-  const capabilityData =
-    capabilityStatus.ok && capabilityStatus.json?.success
-      ? capabilityStatus.json.data || null
-      : null;
-
   const browserConnected = !!browserData.isConnected;
   const available =
     browserStatus.ok && browserStatus.json?.success && browserConnected;
@@ -157,7 +151,6 @@ async function buildBrowserAutomationRuntime() {
       lastActivity: browserData.lastActivity || null,
       connection: browserData.connection || null,
       pages: Array.isArray(browserData.pages) ? browserData.pages : [],
-      ecomCollect: capabilityData,
     },
   };
 }
