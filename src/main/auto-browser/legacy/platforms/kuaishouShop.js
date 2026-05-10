@@ -470,6 +470,7 @@ async function uploadGoodsDetailImages(page, filePaths) {
 }
 
 async function clickSubmitAudit(page) {
+  let clickTriggered = false;
   try {
     logger.info(`${PLATFORM_NAME}提交流程：等待“提交审核”按钮进入可点击状态`);
     const buttonScan = await page.evaluate(() => {
@@ -733,6 +734,7 @@ async function clickSubmitAudit(page) {
         attempt,
         clickMethod,
       });
+      clickTriggered = true;
       logger.info(`${PLATFORM_NAME}提交流程：等待成功页面文案`, {
         attempt,
         successTexts: SUBMIT_AUDIT_SUCCESS_TEXTS,
@@ -766,12 +768,12 @@ async function clickSubmitAudit(page) {
       }
     }
 
-    return false;
+    return clickTriggered;
   } catch (error) {
     logger.warn(
       `${PLATFORM_NAME}提交流程执行失败或超时: ${error?.message || error}`,
     );
-    return false;
+    return clickTriggered;
   }
 }
 

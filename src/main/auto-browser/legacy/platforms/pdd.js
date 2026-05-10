@@ -1101,6 +1101,7 @@ export async function publishToPdd(publishInfo = {}) {
   const tempFiles = [];
   let page = null;
   let shouldClosePage = false;
+  const pagesToClose = new Set();
 
   try {
     const settings = resolveSettings(publishInfo);
@@ -1129,6 +1130,7 @@ export async function publishToPdd(publishInfo = {}) {
       profileId: publishInfo?.profileId,
     });
     page = await browser.newPage({ foreground: true });
+    pagesToClose.add(page);
     await pageOperator.setupAntiDetection(page);
 
     await page.goto(PDD_GOODS_LIST_URL, {
@@ -1159,6 +1161,7 @@ export async function publishToPdd(publishInfo = {}) {
     }
 
     page = await openPddSimilarPublishPage(page, goodsId);
+    pagesToClose.add(page);
     const targetUrl = page.url();
 
     const mainImageUploadResult = await uploadMainImages(
@@ -1228,13 +1231,21 @@ export async function publishToPdd(publishInfo = {}) {
   } finally {
     tempFiles.forEach((file) => imageManager.deleteTempFile(file));
     if (page && shouldClosePage) {
-      try {
-        await page.close({ runBeforeUnload: false });
-        logger.info(`${PLATFORM_NAME}发布完成，已自动关闭发布页面`);
-      } catch (closeError) {
-        logger.warn(
-          `${PLATFORM_NAME}发布页面关闭失败: ${closeError?.message || closeError}`,
-        );
+      for (const targetPage of pagesToClose) {
+        try {
+          if (!targetPage || targetPage.isClosed?.()) {
+            continue;
+          }
+          const targetUrl = targetPage.url?.() || "";
+          await targetPage.close({ runBeforeUnload: false });
+          logger.info(`${PLATFORM_NAME}发布完成，已自动关闭相关页面`, {
+            targetUrl,
+          });
+        } catch (closeError) {
+          logger.warn(
+            `${PLATFORM_NAME}发布相关页面关闭失败: ${closeError?.message || closeError}`,
+          );
+        }
       }
     } else if (page) {
       logger.info(`${PLATFORM_NAME}发布未完成，保留页面用于排查`);
