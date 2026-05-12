@@ -332,14 +332,16 @@ async function setBrowserWindowMaximized(context, headless = false) {
     let page = context.pages()[0];
     const createdPage = !page;
     if (!page) page = await context.newPage();
+    let cdp = null;
     try {
-        const cdp = await context.newCDPSession(page);
+        cdp = await context.newCDPSession(page);
         const { windowId } = await cdp.send('Browser.getWindowForTarget');
         await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } });
         logger.info('已通过 CDP 将浏览器窗口设为最大化');
     } catch (e) {
         logger.warn('设置窗口最大化失败（可忽略）:', e?.message || e);
     } finally {
+        await cdp?.detach?.().catch(() => {});
         if (createdPage && page) await page.close().catch(() => { });
     }
 }
@@ -524,6 +526,8 @@ async function newPageWithReconnect(options = {}, pageOptions = {}) {
     } catch (err) {
         if (!isBrowserClosedError(err)) throw err;
         logger.warn('检测到浏览器/上下文已关闭，清除引用并尝试重新连接:', err.message);
+        const staleBrowser = browserInstance;
+        const staleContext = contextInstance;
         contextInstance = null;
         browserInstance = null;
         connectPromise = null;
@@ -531,6 +535,10 @@ async function newPageWithReconnect(options = {}, pageOptions = {}) {
         browserStatus.isConnected = false;
         browserStatus.pageCount = 0;
         currentBrowserOpenedAt = null;
+        try { await staleContext?.close?.(); } catch {}
+        try { await staleBrowser?.close?.(); } catch {
+          try { staleBrowser?.disconnect?.(); } catch {}
+        }
         await getOrCreateBrowser(currentBrowserOptions);
         if (!contextInstance) throw new Error('重新连接后仍无法获取浏览器上下文');
         const page = await contextInstance.newPage(pageOptions);
@@ -704,15 +712,20 @@ export async function detectExistingBrowser() {
             };
         }
 
-        // 如果浏览器实例存在但不可用，清理它
         if (browserInstance || contextInstance) {
             logger.info('现有浏览器实例不可用，将重新创建');
+            const staleBrowser = browserInstance;
+            const staleContext = contextInstance;
             browserInstance = null;
             contextInstance = null;
             browserStatus.isInitialized = false;
             browserStatus.isConnected = false;
             currentManagedProfileId = null;
             currentBrowserOpenedAt = null;
+            try { await staleContext?.close?.(); } catch {}
+            try { await staleBrowser?.close?.(); } catch {
+              try { staleBrowser?.disconnect?.(); } catch {}
+            }
         }
 
         logger.debug('未发现可复用实例，将创建新的 Playwright 实例');
@@ -977,6 +990,8 @@ export async function checkAndReconnectBrowser(options = {}) {
     }
 
     logger.info('浏览器实例已断开，清除引用');
+    const staleBrowser = browserInstance;
+    const staleContext = contextInstance;
     contextInstance = null;
     browserInstance = null;
     connectPromise = null;
@@ -984,6 +999,10 @@ export async function checkAndReconnectBrowser(options = {}) {
     browserStatus.isConnected = false;
     browserStatus.pageCount = 0;
     currentBrowserOpenedAt = null;
+    try { await staleContext?.close?.(); } catch {}
+    try { await staleBrowser?.close?.(); } catch {
+      try { staleBrowser?.disconnect?.(); } catch {}
+    }
 
     if (reconnect) {
         try {

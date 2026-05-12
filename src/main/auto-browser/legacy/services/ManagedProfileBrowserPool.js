@@ -107,8 +107,9 @@ async function setBrowserWindowMaximized(context, headless = false) {
     page = await context.newPage();
   }
 
+  let cdp = null;
   try {
-    const cdp = await context.newCDPSession(page);
+    cdp = await context.newCDPSession(page);
     const { windowId } = await cdp.send("Browser.getWindowForTarget");
     await cdp.send("Browser.setWindowBounds", {
       windowId,
@@ -120,6 +121,7 @@ async function setBrowserWindowMaximized(context, headless = false) {
       logger.warn("设置窗口最大化失败（可忽略）:", message);
     }
   } finally {
+    await cdp?.detach?.().catch(() => {});
     if (createdPage && page) {
       await page.close().catch(() => {});
     }
@@ -693,6 +695,8 @@ async function isSessionAvailable(session) {
     session.updatedAt = new Date().toISOString();
     return true;
   } catch (error) {
+    const staleBrowser = session.browserInstance;
+    const stalePid = session.chromePid;
     session.browserStatus.isConnected = false;
     session.browserStatus.pageCount = 0;
     session.browserInstance = null;
@@ -700,6 +704,14 @@ async function isSessionAvailable(session) {
     session.chromePid = null;
     session.lastConnectError = error?.message || String(error);
     session.updatedAt = new Date().toISOString();
+    try {
+      await staleBrowser?.close?.();
+    } catch {
+      try { staleBrowser?.disconnect?.(); } catch {}
+    }
+    if (stalePid) {
+      await killPids([stalePid]).catch(() => {});
+    }
     return false;
   }
 }
@@ -736,8 +748,9 @@ async function focusSessionWindow(session) {
     throw new Error("未找到可聚焦页面");
   }
 
+  let cdp = null;
   try {
-    const cdp = await session.contextInstance.newCDPSession(page);
+    cdp = await session.contextInstance.newCDPSession(page);
     const windowStateResponse = await cdp.send("Browser.getWindowForTarget").catch(() => null);
     const windowId = windowStateResponse?.windowId;
     const currentWindowState = String(windowStateResponse?.bounds?.windowState || "").trim();
@@ -751,6 +764,8 @@ async function focusSessionWindow(session) {
     }
   } catch (error) {
     logger.warn("恢复浏览器窗口状态失败（可忽略）:", error?.message || error);
+  } finally {
+    await cdp?.detach?.().catch(() => {});
   }
 
   await page.bringToFront().catch(() => {});

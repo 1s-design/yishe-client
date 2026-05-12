@@ -2700,6 +2700,14 @@ export async function publishToDoudian(publishInfo = {}) {
     };
   } finally {
     tempFiles.forEach((file) => imageManager.deleteTempFile(file));
+    if (page) {
+      try {
+        await page.close();
+        logger.info("抖店页面已关闭");
+      } catch (closeError) {
+        logger.warn("抖店关闭页面失败:", closeError);
+      }
+    }
   }
 }
 
