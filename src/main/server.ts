@@ -1105,6 +1105,9 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
   app.post('/api/upload-to-cos', async (req, res) => {
     try {
       const { fileData, fileName } = req.body;
+      const category = typeof req.body?.category === 'string' && req.body.category.trim()
+        ? req.body.category.trim()
+        : 'client-api-crawler';
 
       if (!fileData || typeof fileData !== 'string') {
         res.status(400).json({
@@ -1157,7 +1160,7 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
 
       // 上传到COS（使用新的分类路径）
       const cosKey = await generateCosKey({
-        category: 'client-api-crawler',
+        category,
         filename: fileName
       });
       const cosResult = await uploadFileToCos(tempFilePath, cosKey);
@@ -1364,6 +1367,105 @@ function _startServer(port: number = 1519): (() => Promise<void>) {
    */
   app.post('/api/material-upload', async (req, res) => {
     await handleMaterialUpload(req, res, 'sticker');
+  });
+
+  app.post('/api/file-upload', async (req, res) => {
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const requestLogPayload = { ...req.body };
+    if (typeof requestLogPayload.fileData === 'string' && requestLogPayload.fileData) {
+      requestLogPayload.fileData = `[data-url omitted, length=${requestLogPayload.fileData.length}]`;
+    }
+    if (typeof requestLogPayload.localFilePath === 'string' && requestLogPayload.localFilePath) {
+      requestLogPayload.localFilePath = '[local path omitted]';
+    }
+
+    console.log(`[file-upload:${requestId}] ========== 开始处理请求 ==========`);
+    console.log(`[file-upload:${requestId}] 请求体:`, JSON.stringify(requestLogPayload, null, 2));
+
+    try {
+      const {
+        url,
+        name,
+        description,
+        fileData,
+        localFilePath,
+        fileName,
+        contentType,
+        fileSize,
+        suffix,
+      } = req.body || {};
+
+      const hasFileData = Boolean(fileData && typeof fileData === 'string');
+      const hasLocalFilePath = Boolean(localFilePath && typeof localFilePath === 'string');
+      if (!hasFileData && !hasLocalFilePath) {
+        res.status(400).json({
+          code: 1,
+          status: false,
+          message: 'fileData 或 localFilePath 参数必填',
+        });
+        return;
+      }
+
+      if (!fileName || typeof fileName !== 'string') {
+        res.status(400).json({
+          code: 1,
+          status: false,
+          message: 'fileName 参数必填',
+        });
+        return;
+      }
+
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (!mainWindow) {
+        throw new Error('主窗口未找到');
+      }
+
+      const payload = {
+        url,
+        name,
+        description,
+        fileData,
+        localFilePath,
+        fileName,
+        contentType,
+        fileSize,
+        suffix,
+      };
+      const result = await mainWindow.webContents.executeJavaScript(`
+        (async () => {
+          const uploadService = window.__fileResourceUploadService;
+          if (uploadService) {
+            return await uploadService(${JSON.stringify(payload)});
+          }
+          return { ok: false, message: '文件资源上传服务未初始化' };
+        })()
+      `);
+
+      if (result.ok) {
+        console.log(`[file-upload:${requestId}] ========== ✅ 全部流程完成 ==========`);
+        console.log(`[file-upload:${requestId}] COS URL: ${result.data?.cosUrl}`);
+        res.status(200).json({
+          code: 0,
+          status: true,
+          message: result.message || '文件保存成功',
+          data: result.data,
+        });
+        return;
+      }
+
+      res.status(500).json({
+        code: 1,
+        status: false,
+        message: result.message || '文件保存失败',
+      });
+    } catch (error: any) {
+      console.error(`[file-upload:${requestId}] ❌ 上传失败:`, error);
+      res.status(500).json({
+        code: 1,
+        status: false,
+        message: error?.message || '文件保存失败',
+      });
+    }
   });
 
   // 兼容旧接口：

@@ -5,6 +5,7 @@ import { getUserInfo, logout, type UserInfo } from "./api/auth";
 import { getTokenFromClient } from "./api/user";
 import { LOCAL_API_BASE, getServiceMode } from "./config/api";
 import { downloadImageAndUploadMaterial } from "./services/materialUpload";
+import { uploadFileResource } from "./services/fileUpload";
 import { useToast } from "./composables/useToast";
 import { useThemeMode } from "./composables/useThemeMode";
 import LoadingOverlay from "./components/LoadingOverlay.vue";
@@ -64,6 +65,10 @@ function getNativeApi() {
   }
 
   return (window as typeof window & { api?: typeof window.api }).api;
+}
+
+function toggleDevTools() {
+  getNativeApi()?.toggleDevTools?.();
 }
 
 watch(
@@ -906,6 +911,7 @@ onMounted(() => {
 
   (window as any).__materialUploadService = downloadImageAndUploadMaterial;
   (window as any).__crawlerMaterialUploadService = downloadImageAndUploadMaterial;
+  (window as any).__fileResourceUploadService = uploadFileResource;
 
   void checkPsServiceStatus();
   psServiceStatusInterval = setInterval(checkPsServiceStatus, 8000);
@@ -1053,7 +1059,7 @@ onBeforeUnmount(() => {
               type="button"
               class="topbar-btn"
               title="开发者工具"
-              @click="() => { window?.api?.toggleDevTools?.(); }"
+              @click="toggleDevTools"
             >
               <i class="mdi mdi-bug-outline"></i>
             </button>

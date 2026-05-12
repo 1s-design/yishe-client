@@ -46,8 +46,8 @@ const legacyOwnershipWriteKeywords = [
   '/psd-template/create',
   '/font-template/create',
   '/custom-model/create',
-  '/clip-material/create',
   '/draft/create',
+  '/file-resource/create',
   '/crawler/material/add',
   '/crawler/material/update'
 ]
