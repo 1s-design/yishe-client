@@ -1201,6 +1201,8 @@ function sanitizeBrowserAutomationConnectionForWs(value: unknown) {
     connected: source.connected === true || source.isConnected === true,
     hasInstance: source.hasInstance === true,
     connecting: source.connecting === true,
+    headless:
+      typeof source.headless === "boolean" ? source.headless : null,
     pageCount: typeof source.pageCount === "number" ? source.pageCount : null,
     lastActivity: String(source.lastActivity || "").trim() || null,
   };
@@ -1228,6 +1230,8 @@ function sanitizeBrowserAutomationInstanceForWs(instance: unknown) {
     browserVersion: String(source.browserVersion || "").trim() || null,
     hasInstance: source.hasInstance === true,
     connecting: source.connecting === true,
+    headless:
+      typeof source.headless === "boolean" ? source.headless : null,
     userDataDir: String(source.userDataDir || "").trim() || null,
     isActiveProfile: source.isActiveProfile === true,
   };
@@ -1796,6 +1800,10 @@ function buildBrowserAutomationProfileInstances(
         ).trim() || "",
       hasInstance: browserInstance?.hasInstance === true,
       connecting: browserInstance?.connecting === true,
+      headless:
+        typeof browserInstance?.headless === "boolean"
+          ? browserInstance.headless
+          : null,
       lastError:
         runningExecution?.lastError || browserInstance?.lastError || null,
       userDataDir:

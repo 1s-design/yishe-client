@@ -48,6 +48,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normalizeWindowDimension(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 640 && parsed <= 7680 ? parsed : fallback;
+}
+
+function resolveWindowSize(options = {}) {
+  const width = normalizeWindowDimension(
+    options.windowWidth ?? process.env.BROWSER_WINDOW_WIDTH,
+    1440,
+  );
+  const height = normalizeWindowDimension(
+    options.windowHeight ?? process.env.BROWSER_WINDOW_HEIGHT,
+    900,
+  );
+  return { width, height };
+}
+
 function normalizeDebugPort(value) {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) {
@@ -98,8 +115,9 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-async function setBrowserWindowMaximized(context, headless = false) {
+async function setBrowserWindowMaximized(context, headless = false, options = {}) {
   if (!context || headless) return;
+  const { width, height } = resolveWindowSize(options);
 
   let page = context.pages()[0];
   const createdPage = !page;
@@ -113,7 +131,11 @@ async function setBrowserWindowMaximized(context, headless = false) {
     const { windowId } = await cdp.send("Browser.getWindowForTarget");
     await cdp.send("Browser.setWindowBounds", {
       windowId,
-      bounds: { windowState: "maximized" },
+      bounds: {
+        windowState: "normal",
+        width,
+        height,
+      },
     });
   } catch (error) {
     const message = error?.message || String(error || "");
@@ -451,7 +473,8 @@ async function killPortProcesses(port) {
   return killPids(pids);
 }
 
-function buildChromeLaunchArgs({ port, headless = false, userDataDir }) {
+function buildChromeLaunchArgs({ port, headless = false, userDataDir, windowWidth, windowHeight }) {
+  const normalizedSize = resolveWindowSize({ windowWidth, windowHeight });
   return [
     "--remote-debugging-address=127.0.0.1",
     `--remote-debugging-port=${port}`,
@@ -461,11 +484,20 @@ function buildChromeLaunchArgs({ port, headless = false, userDataDir }) {
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
-    ...(headless ? ["--headless=new"] : ["--start-maximized"]),
+    ...(headless
+      ? ["--headless=new"]
+      : [`--window-size=${normalizedSize.width},${normalizedSize.height}`]),
   ];
 }
 
-function launchChromeWithDebugPort({ port, headless = false, userDataDir, executablePath }) {
+function launchChromeWithDebugPort({
+  port,
+  headless = false,
+  userDataDir,
+  executablePath,
+  windowWidth,
+  windowHeight,
+}) {
   const safePort = normalizeDebugPort(port);
   const safeUserDataDir = String(userDataDir || "").trim();
   const safeExecutablePath = String(executablePath || "").trim();
@@ -487,7 +519,13 @@ function launchChromeWithDebugPort({ port, headless = false, userDataDir, execut
 
   const child = spawn(
     safeExecutablePath,
-    buildChromeLaunchArgs({ port: safePort, headless, userDataDir: safeUserDataDir }),
+    buildChromeLaunchArgs({
+      port: safePort,
+      headless,
+      userDataDir: safeUserDataDir,
+      windowWidth,
+      windowHeight,
+    }),
     {
       detached: true,
       stdio: "ignore",
@@ -728,6 +766,27 @@ function shouldReconnectSession(session, nextOptions = {}) {
   );
 }
 
+function resolveRequestedHeadlessMode(session, options = {}) {
+  if (typeof options.headless === "boolean") {
+    return options.headless;
+  }
+  const requestedProfileId = String(options.profileId || session?.profileId || "").trim();
+  if (requestedProfileId) {
+    const requestedProfile = getBrowserProfile(requestedProfileId);
+    if (typeof requestedProfile?.headless === "boolean") {
+      return requestedProfile.headless;
+    }
+  }
+  if (
+    session &&
+    (session.browserInstance || session.contextInstance || session.connectPromise) &&
+    typeof session.currentBrowserOptions?.headless === "boolean"
+  ) {
+    return session.currentBrowserOptions.headless;
+  }
+  return getHeadlessMode();
+}
+
 async function focusSessionWindow(session) {
   if (!session?.contextInstance) {
     throw new Error("浏览器上下文不可用");
@@ -850,7 +909,7 @@ export function hasManagedProfileBrowser(profileId) {
 export async function getOrCreateManagedProfileBrowser(options = {}) {
   const profile = resolveProfile(options.profileId);
   const session = getSession(profile.id, true);
-  const headless = typeof options.headless === "boolean" ? options.headless : getHeadlessMode();
+  const headless = resolveRequestedHeadlessMode(session, options);
   const allowLaunch = options.allowLaunch !== false;
   const skipWindowMaximize = options.skipWindowMaximize === true;
   const executablePath = String(
@@ -870,6 +929,8 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
     userDataDir: profile.userDataDir,
     debugPort,
     cdpEndpoint,
+    windowWidth: options.windowWidth,
+    windowHeight: options.windowHeight,
   };
 
   session.profileName = profile.name || profile.id;
@@ -909,6 +970,15 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
       background: true,
       headless,
     });
+    if (!skipWindowMaximize) {
+      await withTimeout(
+        setBrowserWindowMaximized(session.contextInstance, headless, options),
+        POST_CONNECT_STEP_TIMEOUT_MS,
+        "setBrowserWindowMaximized",
+      ).catch((error) => {
+        logger.warn(`环境 ${profile.id} 设置窗口大小超时/失败（已忽略）:`, error?.message || error);
+      });
+    }
     await installBrowserPageRuntime(session.contextInstance, () => buildProfileRuntimePayload(getBrowserProfile(profile.id) || profile), {
       logger,
       logLabel: "安装浏览器页面运行时失败:",
@@ -963,6 +1033,8 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
           headless,
           userDataDir: profile.userDataDir,
           executablePath,
+          windowWidth: options.windowWidth,
+          windowHeight: options.windowHeight,
         });
         session.chromePid = launched.pid || null;
 
@@ -1036,7 +1108,7 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
       });
       if (!skipWindowMaximize) {
         await withTimeout(
-          setBrowserWindowMaximized(session.contextInstance, headless),
+          setBrowserWindowMaximized(session.contextInstance, headless, options),
           POST_CONNECT_STEP_TIMEOUT_MS,
           "setBrowserWindowMaximized",
         ).catch((error) => {
@@ -1075,6 +1147,7 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
         browserVersion: session.browserVersion || "",
         lastUsedAt: session.updatedAt,
         debugPort,
+        headless,
       });
     } catch (error) {
       session.lastConnectError = error?.message || String(error);
@@ -1186,6 +1259,10 @@ function buildInstanceSummary(profile, session, pages = []) {
   const lastActivityValue = session?.browserStatus?.lastActivity || null;
   const debugPort = resolveSessionDebugPort(session, profile);
   const cdpEndpoint = session?.cdpEndpoint || (debugPort ? buildCdpEndpoint(debugPort) : null);
+  const headless =
+    typeof session?.currentBrowserOptions?.headless === "boolean"
+      ? session.currentBrowserOptions.headless
+      : null;
   return {
     profileId: profile.id,
     profileName: profile.name || profile.id,
@@ -1193,6 +1270,7 @@ function buildInstanceSummary(profile, session, pages = []) {
     debugPort,
     cdpEndpoint,
     chromePid: session?.chromePid || null,
+    headless,
     hasInstance,
     isConnected: !!session?.browserStatus?.isConnected,
     connecting: !!session?.connectPromise,
@@ -1215,6 +1293,7 @@ function buildInstanceSummary(profile, session, pages = []) {
       debugPort,
       cdpEndpoint,
       chromePid: session?.chromePid || null,
+      headless,
       activeProfileId: listBrowserProfiles().activeProfileId || null,
       activeProfile: getActiveBrowserProfile() || null,
     },

@@ -133,6 +133,24 @@ function getHeadlessMode() {
     return false; // 默认非无头模式
 }
 
+function normalizeWindowDimension(value, fallback) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 640 && parsed <= 7680 ? parsed : fallback;
+}
+
+function resolveWindowSize(options = {}) {
+    return {
+        width: normalizeWindowDimension(
+            options.windowWidth ?? process.env.BROWSER_WINDOW_WIDTH,
+            1440,
+        ),
+        height: normalizeWindowDimension(
+            options.windowHeight ?? process.env.BROWSER_WINDOW_HEIGHT,
+            900,
+        ),
+    };
+}
+
 function normalizePathLike(value) {
     const normalized = String(value || '').trim();
     if (!normalized) {
@@ -293,6 +311,26 @@ function isHeadlessConnection() {
     return getHeadlessMode();
 }
 
+function resolveRequestedHeadlessMode(options = {}) {
+    if (typeof options?.headless === 'boolean') {
+        return options.headless;
+    }
+    const requestedProfileId = String(options?.profileId || '').trim();
+    if (requestedProfileId) {
+        const requestedProfile = getBrowserProfile(requestedProfileId);
+        if (typeof requestedProfile?.headless === 'boolean') {
+            return requestedProfile.headless;
+        }
+    }
+    if (
+        (browserInstance || contextInstance || connectPromise) &&
+        typeof currentBrowserOptions?.headless === 'boolean'
+    ) {
+        return currentBrowserOptions.headless;
+    }
+    return getHeadlessMode();
+}
+
 async function shouldReconnectForOptions(options = {}) {
     if (!contextInstance && !browserInstance) {
         return false;
@@ -327,8 +365,9 @@ async function shouldReconnectForOptions(options = {}) {
 /**
  * 通过 CDP 将浏览器窗口设为最大化（仅在有界面模式下调用）
  */
-async function setBrowserWindowMaximized(context, headless = false) {
+async function setBrowserWindowMaximized(context, headless = false, options = {}) {
     if (!context || headless) return; // 无头模式下跳过
+    const { width, height } = resolveWindowSize(options);
     let page = context.pages()[0];
     const createdPage = !page;
     if (!page) page = await context.newPage();
@@ -336,8 +375,11 @@ async function setBrowserWindowMaximized(context, headless = false) {
     try {
         cdp = await context.newCDPSession(page);
         const { windowId } = await cdp.send('Browser.getWindowForTarget');
-        await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } });
-        logger.info('已通过 CDP 将浏览器窗口设为最大化');
+        await cdp.send('Browser.setWindowBounds', {
+            windowId,
+            bounds: { windowState: 'normal', width, height },
+        });
+        logger.info(`已通过 CDP 设置浏览器窗口大小: ${width}x${height}`);
     } catch (e) {
         logger.warn('设置窗口最大化失败（可忽略）:', e?.message || e);
     } finally {
@@ -507,7 +549,7 @@ async function newPageWithReconnect(options = {}, pageOptions = {}) {
         if (!contextInstance) {
             if (browserInstance && typeof browserInstance.contexts === 'function') {
                 const ctxs = browserInstance.contexts();
-                const headless = getHeadlessMode();
+                const headless = resolveRequestedHeadlessMode(options);
                 const contextOptions = { devtools: !headless };
                 // 无头模式下需要指定 viewport
                 if (headless) {
@@ -569,7 +611,15 @@ function tryListProfiles(userDataDir) {
  * 启动带远程调试端口的 Chrome（仅 --remote-debugging-port，使用指定 user-data-dir 保持登录态）
  * 支持无头模式通过 headless 参数或 HEADLESS 环境变量
  */
-export function launchWithDebugPort({ port = null, headless = null, userDataDir = null, executablePath = null, profileId = null } = {}) {
+export function launchWithDebugPort({
+    port = null,
+    headless = null,
+    userDataDir = null,
+    executablePath = null,
+    profileId = null,
+    windowWidth = undefined,
+    windowHeight = undefined,
+} = {}) {
     const explicitExecutablePath = normalizePathLike(executablePath);
     if (explicitExecutablePath && !existsSync(explicitExecutablePath)) {
         throw new Error(
@@ -602,6 +652,7 @@ export function launchWithDebugPort({ port = null, headless = null, userDataDir 
 
     // 确定是否使用无头模式
     const useHeadless = headless !== undefined ? headless : getHeadlessMode();
+    const windowSize = resolveWindowSize({ windowWidth, windowHeight });
     logger.info(`launchWithDebugPort - 输入 headless: ${headless}, 最终使用 useHeadless: ${useHeadless}`);
     logger.info(`launchWithDebugPort - userDataDir: ${finalUserDataDir}`);
     
@@ -621,7 +672,7 @@ export function launchWithDebugPort({ port = null, headless = null, userDataDir 
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
-        ...(useHeadless ? ['--headless=new'] : [])
+        ...(useHeadless ? ['--headless=new'] : [`--window-size=${windowSize.width},${windowSize.height}`])
     ];
 
     const child = spawn(exe, args, { stdio: 'ignore', detached: true });
@@ -754,6 +805,10 @@ export async function getOrCreateBrowser(options = {}) {
         return await getOrCreateManagedProfileBrowser(normalizedOptions);
     }
 
+    if (typeof normalizedOptions.headless !== 'boolean') {
+        normalizedOptions.headless = resolveRequestedHeadlessMode(normalizedOptions);
+    }
+
     currentBrowserOptions = { ...normalizedOptions };
     options = { ...currentBrowserOptions };
 
@@ -773,6 +828,13 @@ export async function getOrCreateBrowser(options = {}) {
     // 首先尝试检测现有浏览器
     const existingBrowser = await detectExistingBrowser();
     if (existingBrowser) {
+        await setBrowserWindowMaximized(
+            contextInstance,
+            resolveRequestedHeadlessMode(options),
+            options,
+        ).catch((error) => {
+            logger.warn('设置现有浏览器窗口大小失败（可忽略）:', error?.message || error);
+        });
         return existingBrowser;
     }
 
@@ -786,7 +848,7 @@ export async function getOrCreateBrowser(options = {}) {
         lastConnectError = null;
 
         connectPromise = (async () => {
-            const headless = options.headless !== undefined ? options.headless : getHeadlessMode();
+            const headless = resolveRequestedHeadlessMode(options);
             const chromium = await getPlaywrightChromium();
             logger.info(`getOrCreateBrowser - options.headless: ${options.headless}, 最终使用 headless: ${headless}`);
             const modeStr = headless ? '无头' : '有界面';
@@ -814,6 +876,8 @@ export async function getOrCreateBrowser(options = {}) {
                     headless,
                     userDataDir: cdpSelection.userDataDir,
                     executablePath: options.chromeExecutablePath,
+                    windowWidth: options.windowWidth,
+                    windowHeight: options.windowHeight,
                 });
                 currentExecutablePath = launched.executablePath || currentExecutablePath;
                 await new Promise((resolve) => setTimeout(resolve, 3500));
@@ -849,7 +913,7 @@ export async function getOrCreateBrowser(options = {}) {
             contextInstance = browserInstance.contexts()[0] || await browserInstance.newContext(contextOptions);
             currentBrowserOpenedAt = new Date().toISOString();
             await installBrowserContextPatches(contextInstance);
-            await setBrowserWindowMaximized(contextInstance, headless);
+            await setBrowserWindowMaximized(contextInstance, headless, options);
             browserStatus.isInitialized = true;
             browserStatus.isConnected = true;
             browserStatus.lastActivity = Date.now();
@@ -859,6 +923,7 @@ export async function getOrCreateBrowser(options = {}) {
                 markBrowserProfileUsed(currentManagedProfileId, {
                     browserVersion: currentBrowserVersion || '',
                     lastUsedAt: new Date().toISOString(),
+                    headless,
                 });
             }
 

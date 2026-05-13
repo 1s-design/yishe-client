@@ -294,6 +294,7 @@ export interface UploaderBrowserInstanceSummary {
   profileId: string;
   profileName?: string;
   port?: number | null;
+  headless?: boolean | null;
   hasInstance?: boolean;
   isConnected?: boolean;
   connecting?: boolean;

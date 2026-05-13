@@ -271,6 +271,7 @@ function buildProfileRecord(profileId, payload = {}) {
         platforms: normalizePlatforms(payload.platforms),
         debugPort: normalizeDebugPort(payload.debugPort),
         browserVersion: String(payload.browserVersion || '').trim() || '',
+        headless: typeof payload.headless === 'boolean' ? payload.headless : null,
         loginSummary: payload.loginSummary && typeof payload.loginSummary === 'object'
             ? payload.loginSummary
             : {},
@@ -368,6 +369,7 @@ function summarizeProfile(profile, registry) {
         platforms: normalizePlatforms(profile?.platforms),
         debugPort: normalizeDebugPort(profile?.debugPort),
         browserVersion: String(profile?.browserVersion || '').trim() || '',
+        headless: typeof profile?.headless === 'boolean' ? profile.headless : null,
         loginSummary: profile?.loginSummary && typeof profile.loginSummary === 'object'
             ? profile.loginSummary
             : {},
