@@ -2025,6 +2025,7 @@ async function executeEcomCollectCommand(command: ServiceCommandEnvelope) {
     taskId,
     platform,
     taskType,
+    ...(profileId ? { profileId } : {}),
     workspaceDir,
     timeoutMs,
     configData:
