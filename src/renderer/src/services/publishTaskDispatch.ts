@@ -84,6 +84,53 @@ function resolveQueueName(task: QueueMessage | null, fallbackQueue: string) {
   return String(task?.queue || fallbackQueue || "").trim();
 }
 
+function stringifyRuntimeError(value: any): string {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (value instanceof Error) return value.message || String(value);
+  if (typeof value === "object") {
+    return String(
+      value.message ||
+        value.errorMessage ||
+        value.reason ||
+        value.detail ||
+        "",
+    ).trim();
+  }
+  return String(value).trim();
+}
+
+function resolveFailedRuntimeMessage(task: any, runtime: any): string {
+  const result = task?.result;
+  if (Array.isArray(result?.results)) {
+    const platformReasons = result.results
+      .filter((item: any) => item?.success === false)
+      .map((item: any) => {
+        const platform = String(item?.platform || "未知平台").trim() || "未知平台";
+        const reason =
+          stringifyRuntimeError(item?.message) ||
+          stringifyRuntimeError(item?.error) ||
+          stringifyRuntimeError(item?.data?.message) ||
+          stringifyRuntimeError(item?.data?.error) ||
+          "未知错误";
+        return `${platform}: ${reason}`;
+      })
+      .filter(Boolean);
+    if (platformReasons.length) {
+      return platformReasons.join("；");
+    }
+  }
+
+  return (
+    stringifyRuntimeError(task?.error) ||
+    stringifyRuntimeError(result?.message) ||
+    stringifyRuntimeError(result?.error) ||
+    stringifyRuntimeError(runtime?.error) ||
+    stringifyRuntimeError(runtime?.lastLogMessage) ||
+    "任务执行失败"
+  );
+}
+
 export function buildPublishTaskCapabilitySummary() {
   return getExecutableTaskDisplayList().map((item) => ({
     taskType: item.value,
@@ -485,6 +532,10 @@ export async function executePublishQueueTask(
         await emitRuntimeUpdate(lastRuntimeSnapshot);
       },
       onRuntimeUpdate: async ({ runtime, mappedStatus, task }) => {
+        const failureMessage =
+          mappedStatus === "failed"
+            ? resolveFailedRuntimeMessage(task, runtime)
+            : "";
         lastRuntimeSnapshot = {
           taskId: detail!.id,
           taskType: detail!.type,
@@ -501,15 +552,15 @@ export async function executePublishQueueTask(
                 ? "completed"
                 : "running",
           message:
-            task?.step ||
-            runtime?.message ||
-            (mappedStatus === "completed"
-              ? "任务执行完成"
-              : mappedStatus === "failed"
-                ? "任务执行失败"
-                : "任务执行中"),
+            mappedStatus === "failed"
+              ? failureMessage
+              : task?.step ||
+                runtime?.message ||
+                (mappedStatus === "completed" ? "任务执行完成" : "任务执行中"),
           currentStep:
-            task?.step || runtime?.step || runtime?.status || "任务执行中",
+            mappedStatus === "failed"
+              ? "执行失败"
+              : task?.step || runtime?.step || runtime?.status || "任务执行中",
           progress:
             typeof task?.progress === "number"
               ? task.progress
@@ -519,7 +570,7 @@ export async function executePublishQueueTask(
           runtime: runtime || null,
           error:
             mappedStatus === "failed"
-              ? task?.error?.message || runtime?.error || null
+              ? failureMessage
               : null,
         };
         await emitRuntimeUpdate(lastRuntimeSnapshot);

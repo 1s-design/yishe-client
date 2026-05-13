@@ -39,6 +39,43 @@ function isExplicitFailureResult(result) {
   return isPlainObject(result) && result.success === false;
 }
 
+function stringifyFailureReason(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value.trim();
+  if (value instanceof Error) return String(value.message || value).trim();
+  if (isPlainObject(value)) {
+    return String(
+      value.message ||
+        value.errorMessage ||
+        value.reason ||
+        value.detail ||
+        "",
+    ).trim();
+  }
+  return String(value).trim();
+}
+
+function collectFailedPlatformReasons(result) {
+  if (!Array.isArray(result?.results)) return [];
+
+  return result.results
+    .filter((item) => isPlainObject(item) && item.success === false)
+    .map((item) => {
+      const platform = String(item.platform || "未知平台").trim() || "未知平台";
+      const reason =
+        stringifyFailureReason(item.message) ||
+        stringifyFailureReason(item.error) ||
+        stringifyFailureReason(item.data?.message) ||
+        stringifyFailureReason(item.data?.error) ||
+        "未知错误";
+      return {
+        platform,
+        reason,
+        message: `${platform}: ${reason}`,
+      };
+    });
+}
+
 function normalizeSource(source = {}) {
   const normalized = {
     system: String(source.system || "unknown").trim() || "unknown",
@@ -357,8 +394,14 @@ export class TaskManager {
       };
     }
 
+    const failedReasons = collectFailedPlatformReasons(result);
+    const failedReasonText = failedReasons
+      .map((item) => item.message)
+      .filter(Boolean)
+      .join("；");
     const message = String(
-      result.message ||
+      failedReasonText ||
+        result.message ||
         result.error?.message ||
         (typeof result.failedCount === "number" && result.failedCount > 0
           ? `任务执行失败，失败平台数: ${result.failedCount}`
@@ -379,6 +422,7 @@ export class TaskManager {
       failedCount: Number.isFinite(Number(result.failedCount))
         ? Number(result.failedCount)
         : undefined,
+      failedReasons: failedReasons.length ? failedReasons : undefined,
       timestamp: result.timestamp,
     };
   }
@@ -568,6 +612,7 @@ export class TaskManager {
       message: result.message,
       success: result.success,
       platform: result.platform,
+      error: stringifyFailureReason(result.error) || undefined,
       timestamp: result.timestamp,
     };
   }
