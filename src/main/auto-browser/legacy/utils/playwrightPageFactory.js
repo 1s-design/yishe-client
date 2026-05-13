@@ -1,6 +1,9 @@
 import { logger } from './logger.js';
 
 const DEFAULT_BACKGROUND_PAGE_TIMEOUT_MS = 5000;
+// 任务执行创建新页面时是否主动激活浏览器窗口/标签页。
+// true: 按 foreground/activate 参数抢前台；false: 即使平台脚本传 foreground，也尽量后台执行。
+const ACTIVATE_BROWSER_WINDOW_DURING_TASK = true;
 const patchedContexts = new WeakSet();
 const originalNewPageMethods = new WeakMap();
 
@@ -77,6 +80,9 @@ function shouldCreateBackgroundPage(options = {}) {
 }
 
 function shouldActivatePage(options = {}) {
+    if (!ACTIVATE_BROWSER_WINDOW_DURING_TASK) {
+        return false;
+    }
     return options.activate === true || options.foreground === true;
 }
 
@@ -118,6 +124,9 @@ async function activatePageIfNeeded(context, page, options = {}) {
 
 function shouldActivateForegroundPage(options = {}) {
     if (options.headless === true) {
+        return false;
+    }
+    if (!ACTIVATE_BROWSER_WINDOW_DURING_TASK) {
         return false;
     }
 
