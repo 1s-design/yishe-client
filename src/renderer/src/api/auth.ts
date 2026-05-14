@@ -68,9 +68,9 @@ const validateToken = async (): Promise<boolean> => {
       console.log("Token 验证失败：401 Unauthorized");
       return false;
     }
-    // 其他错误也认为 token 无效
-    console.warn("Token 验证失败:", error);
-    return false;
+    // 网络、数据库、Redis 等服务端临时异常不能当成 token 无效，否则会误清登录态。
+    console.warn("Token 验证暂时不可用，保留本地 token:", error);
+    throw error;
   }
 };
 

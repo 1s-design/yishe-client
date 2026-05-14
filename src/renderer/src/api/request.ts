@@ -140,6 +140,17 @@ const service = axios.create({
   timeout: 10000
 })
 
+function isAuthExpiredResponse(error: any) {
+  if (error?.response?.status !== 401) {
+    return false
+  }
+  const message = String(error?.response?.data?.message || error?.response?.data?.error || '')
+  if (!message) {
+    return true
+  }
+  return /token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(message)
+}
+
 // 导出更新baseURL的方法（用于服务切换）
 export function updateApiBaseUrl(newBaseUrl: string) {
   service.defaults.baseURL = newBaseUrl
@@ -214,7 +225,7 @@ service.interceptors.response.use(
   async error => {
     // 如果 token 失效，清除本地 token 并触发重新登录
     // 但登录接口的 401 不应该触发清除 token（可能是账号密码错误）
-    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
+    if (isAuthExpiredResponse(error) && !error.config?.url?.includes('/auth/login')) {
       try {
         await fetch(`${LOCAL_API_BASE}/logoutToken`, {
           method: 'POST',

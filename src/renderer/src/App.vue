@@ -438,8 +438,12 @@ async function checkAuthAndGetUserInfo() {
       }
     } else {
       console.error("获取用户信息失败:", error);
-      isLoggedIn.value = false;
-      userInfo.value = null;
+      // 服务端数据库/Redis 抖动会导致 500、超时或连接断开；这不是退出登录。
+      // 保留登录态和本地 token，等服务恢复后由前台恢复逻辑重新拉取用户信息。
+      if (!userInfo.value) {
+        userInfo.value = JSON.parse(window.localStorage.getItem("userInfo") || "null");
+      }
+      isLoggedIn.value = true;
     }
   } finally {
     loadingUserInfo.value = false;
