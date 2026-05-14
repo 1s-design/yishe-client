@@ -200,6 +200,7 @@ interface ClientServiceStatus {
   endpoint?: string;
   lastCheckedAt?: string;
   currentTaskId?: string | null;
+  dispatchToken?: string | null;
   lastError?: string | null;
   debugAvailable?: boolean;
   supportedCommands?: string[];
@@ -598,6 +599,8 @@ const remotionRecordRuntimeCache = new Map<
 let isProductionInProgress = false;
 let currentProductionTaskId: string | null = null;
 let currentProductionPsdSetId: string | null = null;
+let currentProductionDispatchToken: string | null = null;
+let currentProductionProfileId: string | null = null;
 const psAutomationControlState = reactive({
   enabled: null as boolean | null,
   autoDispatchEnabled: null as boolean | null,
@@ -613,6 +616,8 @@ export const autoPsdBatchState = reactive({
   currentPsSetName: null as string | null,
   currentStep: null as string | null,
   progress: null as number | null,
+  profileId: null as string | null,
+  dispatchToken: null as string | null,
   lastError: null as string | null,
   lastHeartbeatAt: null as string | null,
   updatedAt: null as string | null,
@@ -1027,6 +1032,8 @@ function buildPsAutomationSnapshot() {
     currentPsSetName: autoPsdBatchState.currentPsSetName,
     currentStep: autoPsdBatchState.currentStep,
     progress: autoPsdBatchState.progress,
+    profileId: autoPsdBatchState.profileId,
+    dispatchToken: autoPsdBatchState.dispatchToken,
     lastError: autoPsdBatchState.lastError,
     lastHeartbeatAt: autoPsdBatchState.lastHeartbeatAt,
     updatedAt: autoPsdBatchState.updatedAt,
@@ -4890,8 +4897,13 @@ async function syncPsdSetProductionStatus(event: {
   progress?: number;
   total?: number;
   images?: string[];
+  dispatchToken?: string | null;
+  profileId?: string | null;
 }) {
   const statusMessage = String(event.message || "").trim();
+  const dispatchToken = String(event.dispatchToken || currentProductionDispatchToken || "").trim();
+  const profileId = String(event.profileId || currentProductionProfileId || "").trim();
+  let emittedToSocket = false;
 
   try {
     if (socket && socket.connected) {
@@ -4902,11 +4914,14 @@ async function syncPsdSetProductionStatus(event: {
         progress: event.progress,
         total: event.total,
         images: Array.isArray(event.images) ? event.images : undefined,
+        dispatchToken: dispatchToken || undefined,
+        profileId: profileId || undefined,
         clientId: identity.clientId,
         machineCode: identity.machineCode,
         assignedClientId: identity.clientId,
         assignedMachineCode: identity.machineCode,
       });
+      emittedToSocket = true;
     }
   } catch (error) {
     emitter.emit("log", {
@@ -4915,10 +4930,21 @@ async function syncPsdSetProductionStatus(event: {
     });
   }
 
+  const shouldPersistProcessingClaim =
+    event.status === "processing" && (event.progress ?? 0) === 0;
+  const shouldPersistRestStatus =
+    event.status === "processing" ||
+    event.status === "completed" ||
+    event.status === "failed";
+  if (!shouldPersistRestStatus || (emittedToSocket && !shouldPersistProcessingClaim)) {
+    return;
+  }
+
   try {
     await stickerPsdSetApi.updateStatus(event.psdSetId, {
       status: event.status,
       statusMessage: statusMessage || undefined,
+      dispatchToken: dispatchToken || undefined,
     });
   } catch (error) {
     emitter.emit("log", {
@@ -4936,18 +4962,29 @@ async function syncPsdSetProductionStatus(event: {
  * 4. 上传生成的图片到COS
  * 5. 更新套图的images字段
  */
-async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
+async function handlePsdSetProduction(
+  psdSetId: string,
+  taskId?: string,
+  dispatchToken?: string | null,
+  profileId?: string | null,
+) {
   // 记录制作开始时间
   const productionStartTime = Date.now();
   let productionEndMessage = "套图制作已结束";
+  const normalizedDispatchToken = String(dispatchToken || "").trim() || null;
+  const normalizedProfileId = String(profileId || "").trim() || null;
 
   // 设置制作状态为进行中
   isProductionInProgress = true;
   currentProductionTaskId = taskId || psdSetId;
   currentProductionPsdSetId = psdSetId;
+  currentProductionDispatchToken = normalizedDispatchToken;
+  currentProductionProfileId = normalizedProfileId;
   emitPsAutomationStatus({
     running: true,
     currentPsSetId: psdSetId,
+    profileId: normalizedProfileId,
+    dispatchToken: normalizedDispatchToken,
     currentStep: "客户端处理中",
     progress: 0,
     lastError: null,
@@ -4962,6 +4999,8 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     message: "客户端处理中",
     progress: 0,
     total: 5,
+    dispatchToken: normalizedDispatchToken,
+    profileId: normalizedProfileId,
   });
 
   try {
@@ -4972,6 +5011,8 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     writePsdSetFileLog("info", "开始处理套图制作", {
       psdSetId,
       commandId: taskId || null,
+      dispatchToken: normalizedDispatchToken,
+      profileId: normalizedProfileId,
     });
     emitter.emit("toast", {
       color: "info",
@@ -5001,6 +5042,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
+      dispatchToken: normalizedDispatchToken,
       currentStep: "正在获取套图信息",
       progress: 20,
     });
@@ -5047,6 +5089,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       message: `已获取套图信息：${psdSet.name || "未命名套图"}`,
       progress: 1,
       total: 5,
+      dispatchToken: normalizedDispatchToken,
     });
 
     const localPsdPathRaw =
@@ -5194,10 +5237,12 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       message: "正在下载贴纸文件",
       progress: 2,
       total: 5,
+      dispatchToken: normalizedDispatchToken,
     });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
+      dispatchToken: normalizedDispatchToken,
       currentStep: "正在下载贴纸文件",
       progress: 40,
     });
@@ -5354,6 +5399,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
         message: "正在下载PSD模板文件",
         progress: 2,
         total: 5,
+        dispatchToken: normalizedDispatchToken,
       });
       emitter.emit("log", {
         level: "info",
@@ -5528,10 +5574,12 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       message: "正在处理PSD文件",
       progress: 3,
       total: 5,
+      dispatchToken: normalizedDispatchToken,
     });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
+      dispatchToken: normalizedDispatchToken,
       currentStep: "正在处理PSD文件",
       progress: 60,
     });
@@ -5838,10 +5886,12 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       message: "正在上传生成的图片",
       progress: 4,
       total: 5,
+      dispatchToken: normalizedDispatchToken,
     });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
+      dispatchToken: normalizedDispatchToken,
       currentStep: "正在上传生成的图片",
       progress: 80,
     });
@@ -5972,6 +6022,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     await stickerPsdSetApi.update(psdSetId, {
       images: updatedImages,
       processingTime: processingTime,
+      dispatchToken: normalizedDispatchToken || undefined,
     });
 
     await syncPsdSetProductionStatus({
@@ -5981,11 +6032,13 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       progress: 5,
       total: 5,
       images: updatedImages,
+      dispatchToken: normalizedDispatchToken,
     });
     emitPsAutomationStatus({
       running: false,
       currentPsSetId: null,
       currentPsSetName: null,
+      dispatchToken: null,
       currentStep: null,
       progress: 100,
       lastError: null,
@@ -6005,6 +6058,7 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     writePsdSetFileLog("info", "套图制作完成", {
       psdSetId,
       commandId: taskId || null,
+      dispatchToken: normalizedDispatchToken,
       imageCount: updatedImages.length,
       processingTime,
       uploadedImageUrls,
@@ -6031,6 +6085,8 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     writePsdSetFileLog("error", "套图制作失败", {
       psdSetId,
       commandId: taskId || null,
+      dispatchToken: normalizedDispatchToken,
+      profileId: normalizedProfileId,
       errorMessage: error?.message || String(error),
       errorName: error?.name || null,
       errorStack: error?.stack || null,
@@ -6042,10 +6098,14 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
       psdSetId,
       status: "failed",
       message: error.message || "制作失败",
+      dispatchToken: normalizedDispatchToken,
+      profileId: normalizedProfileId,
     });
     emitPsAutomationStatus({
       running: false,
       currentPsSetId: psdSetId,
+      profileId: normalizedProfileId,
+      dispatchToken: normalizedDispatchToken,
       currentStep: error.message || "制作失败",
       progress: null,
       lastError: error.message || "制作失败",
@@ -6065,12 +6125,16 @@ async function handlePsdSetProduction(psdSetId: string, taskId?: string) {
     isProductionInProgress = false;
     currentProductionTaskId = null;
     currentProductionPsdSetId = null;
+    currentProductionDispatchToken = null;
+    currentProductionProfileId = null;
     emitPsAutomationStatus({
       running: false,
       progress: null,
       queueCount: 0,
       currentPsSetId: null,
       currentPsSetName: null,
+      profileId: null,
+      dispatchToken: null,
       currentStep: null,
     });
     clearPhotoshopProductionBusyState(productionEndMessage);
@@ -6096,6 +6160,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
       state: "offline",
       busy: isBusy,
       currentTaskId: currentProductionTaskId,
+      dispatchToken: currentProductionDispatchToken,
       message: "当前为浏览器环境，未注入桌面端 Photoshop 能力",
       endpoint: "http://localhost:1595",
       lastCheckedAt,
@@ -6128,6 +6193,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
       state: isBusy ? "busy" : available ? "idle" : "connected",
       busy: isBusy,
       currentTaskId: currentProductionTaskId,
+      dispatchToken: currentProductionDispatchToken,
       message: isBusy
         ? "正在执行 Photoshop 任务"
         : photoshopReady
@@ -6540,6 +6606,17 @@ function registerBuiltInLocalServices() {
     execute: async (command) => {
       if (command.action === "processPsdSet") {
         const psdSetId = command.payload?.psdSetId;
+        const dispatchToken = String(
+          command.payload?.dispatchToken ||
+            command.command?.payload?.dispatchToken ||
+            "",
+        ).trim();
+        const profileId =
+          String(
+            command.payload?.profileId ||
+              command.command?.payload?.profileId ||
+              "",
+          ).trim() || null;
         if (!psdSetId) {
           throw new Error("缺少 psdSetId");
         }
@@ -6557,6 +6634,8 @@ function registerBuiltInLocalServices() {
               psdSetId,
               commandId: incomingCommandId || null,
               currentTaskId: currentTaskId || null,
+              dispatchToken: dispatchToken || null,
+              profileId,
             });
             return {
               success: true,
@@ -6574,6 +6653,8 @@ function registerBuiltInLocalServices() {
               psdSetId,
               status: "pending",
               message: "客户端正在制作其他套图，等待重新调度",
+              dispatchToken: dispatchToken || undefined,
+              profileId: profileId || undefined,
               clientId: identity.clientId,
               machineCode: identity.machineCode,
               assignedClientId: identity.clientId,
@@ -6593,11 +6674,11 @@ function registerBuiltInLocalServices() {
             },
           };
         }
-        await handlePsdSetProduction(psdSetId, command.commandId);
+        await handlePsdSetProduction(psdSetId, command.commandId, dispatchToken || null, profileId);
         return {
           success: true,
           message: "套图制作完成",
-          data: { psdSetId },
+          data: { psdSetId, dispatchToken: dispatchToken || null, profileId },
         };
       }
 
@@ -7907,8 +7988,12 @@ export const websocketClient = {
 };
 
 // 导出制作入口，便于界面直接触发套图制作
-export async function startPsdSetProduction(psdSetId: string) {
-  return handlePsdSetProduction(psdSetId);
+export async function startPsdSetProduction(
+  psdSetId: string,
+  dispatchToken?: string | null,
+  profileId?: string | null,
+) {
+  return handlePsdSetProduction(psdSetId, undefined, dispatchToken, profileId);
 }
 
 // 查询制作中的状态，避免并发制作
@@ -7918,4 +8003,8 @@ export function isPsdSetProductionInProgress() {
 
 export function getCurrentPsdSetProductionTaskId() {
   return currentProductionTaskId;
+}
+
+export function getCurrentPsdSetProductionDispatchToken() {
+  return currentProductionDispatchToken;
 }

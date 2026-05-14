@@ -32,6 +32,8 @@ const serviceMode = ref<ServiceMode>(getServiceMode());
 const workspaceDirectory = ref("");
 const workspaceLoading = ref(false);
 const selectingWorkspace = ref(false);
+const deviceKey = ref("");
+const deviceKeyLoading = ref(false);
 const logDirectory = ref("");
 const logFileCount = ref(0);
 const logTotalSize = ref(0);
@@ -60,6 +62,9 @@ const logSizeText = computed(() => {
   }
   return `${size} B`;
 });
+
+const clientId = computed(() => String(websocketClient.identity.clientId || "").trim());
+const machineCode = computed(() => String(websocketClient.identity.machineCode || "").trim());
 
 const serviceStatusConfig = computed(() => {
   const mode = serviceMode.value;
@@ -119,6 +124,59 @@ const loadWorkspaceDirectory = async () => {
     console.error("加载工作目录失败:", error);
   } finally {
     workspaceLoading.value = false;
+  }
+};
+
+const loadDeviceKey = async () => {
+  try {
+    deviceKeyLoading.value = true;
+    const nativeApi = getNativeApi() as typeof window.api | undefined;
+    if (!nativeApi?.getDeviceKey) {
+      deviceKey.value = "";
+      return;
+    }
+    deviceKey.value = String((await nativeApi.getDeviceKey()) || "").trim();
+  } catch (error) {
+    console.error("加载机器码失败:", error);
+    deviceKey.value = "";
+  } finally {
+    deviceKeyLoading.value = false;
+  }
+};
+
+const copyDeviceKey = async () => {
+  if (!deviceKey.value) return;
+
+  try {
+    await navigator.clipboard.writeText(deviceKey.value);
+    showToast({ color: "success", icon: "mdi-content-copy", message: "机器码已复制" });
+  } catch (error) {
+    console.error("复制机器码失败:", error);
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "复制机器码失败" });
+  }
+};
+
+const copyMachineCode = async () => {
+  if (!machineCode.value) return;
+
+  try {
+    await navigator.clipboard.writeText(machineCode.value);
+    showToast({ color: "success", icon: "mdi-content-copy", message: "机器码已复制" });
+  } catch (error) {
+    console.error("复制机器码失败:", error);
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "复制机器码失败" });
+  }
+};
+
+const copyClientId = async () => {
+  if (!clientId.value) return;
+
+  try {
+    await navigator.clipboard.writeText(clientId.value);
+    showToast({ color: "success", icon: "mdi-content-copy", message: "客户端 ID 已复制" });
+  } catch (error) {
+    console.error("复制客户端 ID 失败:", error);
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "复制客户端 ID 失败" });
   }
 };
 
@@ -214,6 +272,7 @@ const handleServiceModeChanged = ((event: CustomEvent<{ mode: ServiceMode }>) =>
 
 onMounted(() => {
   window.addEventListener("service-mode-changed", handleServiceModeChanged);
+  void loadDeviceKey();
   void loadWorkspaceDirectory();
   void loadLogInfo();
 });
@@ -241,6 +300,52 @@ onBeforeUnmount(() => {
         </el-radio-button>
       </el-radio-group>
       <span class="settings-row__hint">{{ themeDescription }}</span>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-row__label">机器码</div>
+      <div class="settings-row__content">
+        <el-input
+          :model-value="machineCode || '未获取'"
+          readonly
+          size="small"
+          class="settings-input settings-input--mono"
+        />
+        <div class="settings-row__btns">
+          <el-button size="small" type="primary" :disabled="!machineCode" @click="copyMachineCode">复制</el-button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-row__label">设备标识</div>
+      <div class="settings-row__content">
+        <el-input
+          :model-value="deviceKey || '未获取'"
+          readonly
+          size="small"
+          class="settings-input settings-input--mono"
+        />
+        <div class="settings-row__btns">
+          <el-button size="small" type="primary" :disabled="!deviceKey || !supportsNativeApi" @click="copyDeviceKey">复制</el-button>
+          <el-button size="small" text :disabled="!supportsNativeApi" :loading="deviceKeyLoading" @click="loadDeviceKey">刷新</el-button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-row__label">客户端 ID</div>
+      <div class="settings-row__content">
+        <el-input
+          :model-value="clientId || '未获取'"
+          readonly
+          size="small"
+          class="settings-input settings-input--mono"
+        />
+        <div class="settings-row__btns">
+          <el-button size="small" type="primary" :disabled="!clientId" @click="copyClientId">复制</el-button>
+        </div>
+      </div>
     </div>
 
     <div class="settings-row">
@@ -376,6 +481,10 @@ onBeforeUnmount(() => {
 .settings-input :deep(.el-input__inner) {
   color: var(--theme-text);
   font-size: 10px;
+}
+
+.settings-input--mono :deep(.el-input__inner) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 .seg {
