@@ -132,11 +132,20 @@ jobs:
       - name: Build app
         run: npm run build
 
+      - name: Reset Electron builder cache
+        shell: bash
+        run: |
+          rm -rf release "$RUNNER_TEMP/electron-cache" "$RUNNER_TEMP/electron-builder-cache"
+          mkdir -p "$RUNNER_TEMP/electron-cache" "$RUNNER_TEMP/electron-builder-cache"
+
       - name: Package Electron app
         run: npx electron-builder ${{ matrix.build_args }} --publish never
         env:
           GH_TOKEN: ${{ secrets.github_token }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
+          ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2

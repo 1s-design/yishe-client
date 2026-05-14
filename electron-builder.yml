@@ -53,6 +53,7 @@ mac:
   target:
     - dmg
   icon: build/icon.icns
+  executableName: yishe-client
   binaries:
     - resources/google-art/darwin/dezoomify-rs-mac
   artifactName: yishe-client.${ext}
@@ -106,4 +107,4 @@ publish:
   provider: github
   releaseType: release
 electronDownload:
-  mirror: https://npmmirror.com/mirrors/electron/
+  mirror: https://github.com/electron/electron/releases/download/
