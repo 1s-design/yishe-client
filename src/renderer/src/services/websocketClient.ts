@@ -6150,6 +6150,15 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
   const lastCheckedAt = new Date().toISOString();
   const isBusy = isProductionInProgress;
   const nativeApi = getNativeApi();
+  const previousRuntime =
+    clientInfo.services?.["ps-automation"] ||
+    clientInfo.services?.photoshop ||
+    {};
+  const previousPhotoshopReady = !!(
+    previousRuntime?.details?.photoshopReady === true ||
+    previousRuntime?.available === true
+  );
+  const previousConnected = previousRuntime?.connected === true;
 
   if (!nativeApi) {
     return {
@@ -6182,8 +6191,12 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
     const health = await photoshopApi.checkHealth();
     const psStatus = await photoshopApi.checkPhotoshopStatus(false);
     const photoshopRunning = !!psStatus.is_running;
-    const photoshopReady = !!(psStatus.is_available && photoshopRunning);
-    const available = !!(photoshopReady && !isBusy);
+    const reportedPhotoshopReady = !!(psStatus.is_available && photoshopRunning);
+    const photoshopReady = !!(
+      reportedPhotoshopReady ||
+      (isBusy && photoshopRunning && previousPhotoshopReady)
+    );
+    const available = photoshopReady;
 
     return {
       label: "Photoshop",
@@ -6230,6 +6243,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
               ? "starting"
               : "stopped",
         rawStatus: psStatus,
+        rawPhotoshopReady: reportedPhotoshopReady,
       },
     };
   } catch (error: any) {
@@ -6238,7 +6252,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
       error?.message?.includes("Network Error") ||
       error?.message?.includes("fetch");
 
-    if (networkError) {
+    if (networkError && !(isBusy && previousConnected)) {
       return {
         label: "Photoshop",
         connected: false,
@@ -6259,6 +6273,44 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
           photoshopRunning: false,
           photoshopReady: false,
           photoshopStatus: "unknown",
+        },
+      };
+    }
+
+    if (isBusy && previousConnected) {
+      return {
+        label: "Photoshop",
+        connected: true,
+        available: previousPhotoshopReady,
+        status: "connected",
+        state: "busy",
+        busy: true,
+        currentTaskId: currentProductionTaskId,
+        dispatchToken: currentProductionDispatchToken,
+        message: "正在执行 Photoshop 任务，状态检测暂时未响应",
+        endpoint: "http://localhost:1595",
+        lastCheckedAt,
+        lastError: error?.message || "PS 状态检测暂时未响应",
+        debugAvailable: true,
+        supportedCommands:
+          previousRuntime?.supportedCommands || [
+            "refreshRuntime",
+            "health",
+            "startPhotoshop",
+            "stopPhotoshop",
+            "restartPhotoshop",
+            "processPsdSet",
+            "analyzePsd",
+            "runtimeAnalyzePsd",
+            "debugProcess",
+          ],
+        details: {
+          ...(previousRuntime?.details || {}),
+          serviceHealthy: false,
+          serviceStatus: "connected",
+          photoshopReady: previousPhotoshopReady,
+          photoshopStatus: "busy",
+          transientStatusError: error?.message || "PS 状态检测暂时未响应",
         },
       };
     }
