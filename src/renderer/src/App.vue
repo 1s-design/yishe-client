@@ -125,14 +125,34 @@ function resolvePhotoshopRuntimeMeta() {
     clientProfile.services?.["ps-automation"] ||
     clientProfile.services?.photoshop ||
     null;
+  const psAutomation = clientProfile.psAutomation ?? null;
   const details = runtime?.details || {};
   const connected = !!runtime?.connected;
   const available = !!runtime?.available;
   const busy = !!(
     runtime?.busy ||
     runtime?.state === "busy" ||
-    runtime?.currentTaskId
+    runtime?.currentTaskId ||
+    psAutomation?.running ||
+    psAutomation?.currentPsSetId
   );
+  const taskId = String(
+    runtime?.currentTaskId || psAutomation?.currentPsSetId || "",
+  ).trim();
+  const psdSetId = String(psAutomation?.currentPsSetId || "").trim();
+  const psdSetName = String(psAutomation?.currentPsSetName || "").trim();
+  const currentStep = String(
+    psAutomation?.currentStep || runtime?.details?.currentStep || runtime?.message || "",
+  ).trim();
+  const progress =
+    typeof psAutomation?.progress === "number"
+      ? Math.max(0, Math.min(100, Math.round(psAutomation.progress)))
+      : null;
+  const profileId = String(psAutomation?.profileId || "").trim();
+  const dispatchToken = String(psAutomation?.dispatchToken || "").trim();
+  const heartbeatAt = String(
+    psAutomation?.lastHeartbeatAt || runtime?.lastCheckedAt || "",
+  ).trim();
   const photoshopRunning = !!(details?.photoshopRunning ?? (available || busy));
   const photoshopReady = !!(details?.photoshopReady ?? available);
   const photoshopStatus = String(
@@ -151,7 +171,7 @@ function resolvePhotoshopRuntimeMeta() {
     runtime?.status === "error" || (!connected && runtime?.state === "error");
 
   const valueText = busy
-    ? "执行中"
+    ? "制作中"
     : photoshopStatus === "ready"
       ? "PS 可用"
       : photoshopStatus === "starting"
@@ -163,7 +183,7 @@ function resolvePhotoshopRuntimeMeta() {
             : "未启动";
 
   const description = busy
-    ? "当前有套图任务正在处理"
+    ? currentStep || "当前有套图任务正在处理"
     : photoshopStatus === "ready"
       ? "PS 服务已连接，可执行"
       : photoshopStatus === "starting"
@@ -184,7 +204,18 @@ function resolvePhotoshopRuntimeMeta() {
           ? "danger"
           : "warning";
 
-  return { connected, available, busy, valueText, description, tone };
+  const detailsList = busy
+    ? [
+        psdSetName || psdSetId ? `套图：${psdSetName || psdSetId}` : "",
+        progress !== null ? `进度：${progress}%` : "",
+        taskId && taskId !== psdSetId ? `任务：${taskId}` : "",
+        profileId ? `实例：${profileId}` : "",
+        dispatchToken ? `令牌：${dispatchToken.slice(0, 8)}` : "",
+        heartbeatAt ? `心跳：${heartbeatAt.replace("T", " ").slice(0, 19)}` : "",
+      ].filter(Boolean)
+    : [];
+
+  return { connected, available, busy, valueText, description, tone, details: detailsList };
 }
 
 const photoshopRuntimeMeta = computed(() => resolvePhotoshopRuntimeMeta());
@@ -802,6 +833,7 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     title: "Photoshop",
     value: photoshopRuntimeMeta.value.valueText,
     description: photoshopRuntimeMeta.value.description,
+    details: photoshopRuntimeMeta.value.details,
     icon: "mdi-image-filter-drama",
     tone: photoshopRuntimeMeta.value.tone,
   },

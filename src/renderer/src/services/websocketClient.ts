@@ -313,7 +313,10 @@ interface ClientInfoPayload {
     queueCount: number;
     currentPsSetId: string | null;
     currentPsSetName: string | null;
+    currentStep: string | null;
     progress: number | null;
+    profileId: string | null;
+    dispatchToken: string | null;
     lastError: string | null;
     lastHeartbeatAt: string | null;
     updatedAt: string | null;
@@ -4903,7 +4906,6 @@ async function syncPsdSetProductionStatus(event: {
   const statusMessage = String(event.message || "").trim();
   const dispatchToken = String(event.dispatchToken || currentProductionDispatchToken || "").trim();
   const profileId = String(event.profileId || currentProductionProfileId || "").trim();
-  let emittedToSocket = false;
 
   try {
     if (socket && socket.connected) {
@@ -4921,7 +4923,6 @@ async function syncPsdSetProductionStatus(event: {
         assignedClientId: identity.clientId,
         assignedMachineCode: identity.machineCode,
       });
-      emittedToSocket = true;
     }
   } catch (error) {
     emitter.emit("log", {
@@ -4932,11 +4933,11 @@ async function syncPsdSetProductionStatus(event: {
 
   const shouldPersistProcessingClaim =
     event.status === "processing" && (event.progress ?? 0) === 0;
+  const shouldPersistTerminalStatus =
+    event.status === "completed" || event.status === "failed";
   const shouldPersistRestStatus =
-    event.status === "processing" ||
-    event.status === "completed" ||
-    event.status === "failed";
-  if (!shouldPersistRestStatus || (emittedToSocket && !shouldPersistProcessingClaim)) {
+    shouldPersistProcessingClaim || shouldPersistTerminalStatus;
+  if (!shouldPersistRestStatus) {
     return;
   }
 
@@ -6117,6 +6118,11 @@ async function handlePsdSetProduction(
       success: false,
       message: error.message || "制作失败",
     });
+    emitter.emit("toast", {
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: `套图制作失败：${error.message || "制作失败"}`,
+    });
     productionEndMessage = error.message || "套图制作失败";
 
     throw error;
@@ -6150,7 +6156,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
   const lastCheckedAt = new Date().toISOString();
   const isBusy = isProductionInProgress;
   const nativeApi = getNativeApi();
-  const previousRuntime =
+  const previousRuntime: Partial<ClientServiceStatus> =
     clientInfo.services?.["ps-automation"] ||
     clientInfo.services?.photoshop ||
     {};

@@ -4,6 +4,7 @@ export interface DashboardStatusCard {
   title: string;
   value: string;
   description: string;
+  details?: string[];
   icon: string;
   tone: "success" | "warning" | "danger" | "muted";
   actions?: DashboardStatusCardAction[];
@@ -64,6 +65,18 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
           </button>
         </span>
       </div>
+      <div v-if="item.description" class="dash-card__description">
+        {{ item.description }}
+      </div>
+      <div v-if="item.details?.length" class="dash-card__details">
+        <span
+          v-for="detail in item.details"
+          :key="detail"
+          class="dash-card__detail"
+        >
+          {{ detail }}
+        </span>
+      </div>
     </article>
   </div>
 </template>
@@ -83,7 +96,7 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
   border: 1px solid var(--theme-border);
   border-radius: 10px;
   background: var(--theme-surface);
-  min-height: 54px;
+  min-height: 76px;
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease;
@@ -141,6 +154,37 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.01em;
+}
+
+.dash-card__description {
+  min-height: 16px;
+  color: var(--theme-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-card__details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 18px;
+}
+
+.dash-card__detail {
+  max-width: 100%;
+  padding: 2px 5px;
+  border: 1px solid var(--theme-border);
+  border-radius: 6px;
+  background: var(--theme-surface-muted);
+  color: var(--theme-text-muted);
+  font-size: 9px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dash-card__actions {
