@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { websocketClient } from "./services/websocketClient";
+import { websocketClient, autoPsdBatchState } from "./services/websocketClient";
 import { getUserInfo, logout, type UserInfo } from "./api/auth";
 import { getTokenFromClient } from "./api/user";
 import { LOCAL_API_BASE, getServiceMode } from "./config/api";
@@ -12,6 +12,7 @@ import LoadingOverlay from "./components/LoadingOverlay.vue";
 import Login from "./views/Login.vue";
 import Dashboard, {
   type DashboardStatusCard,
+  type DashboardStatusCardDetail,
 } from "./views/Dashboard.vue";
 import Settings from "./views/Settings.vue";
 
@@ -142,7 +143,10 @@ function resolvePhotoshopRuntimeMeta() {
   const psdSetId = String(psAutomation?.currentPsSetId || "").trim();
   const psdSetName = String(psAutomation?.currentPsSetName || "").trim();
   const currentStep = String(
-    psAutomation?.currentStep || runtime?.details?.currentStep || runtime?.message || "",
+    psAutomation?.currentStep ||
+      runtime?.details?.currentStep ||
+      runtime?.message ||
+      "",
   ).trim();
   const progress =
     typeof psAutomation?.progress === "number"
@@ -207,18 +211,38 @@ function resolvePhotoshopRuntimeMeta() {
   const detailsList = busy
     ? [
         psdSetName || psdSetId ? `套图：${psdSetName || psdSetId}` : "",
+        currentStep ? `步骤：${currentStep}` : "",
         progress !== null ? `进度：${progress}%` : "",
         taskId && taskId !== psdSetId ? `任务：${taskId}` : "",
         profileId ? `实例：${profileId}` : "",
-        dispatchToken ? `令牌：${dispatchToken.slice(0, 8)}` : "",
-        heartbeatAt ? `心跳：${heartbeatAt.replace("T", " ").slice(0, 19)}` : "",
+        dispatchToken ? `令牌：${dispatchToken}` : "",
+        heartbeatAt
+          ? `心跳：${heartbeatAt.replace("T", " ").slice(0, 19)}`
+          : "",
       ].filter(Boolean)
     : [];
 
-  return { connected, available, busy, valueText, description, tone, details: detailsList };
+  return {
+    connected,
+    available,
+    busy,
+    valueText,
+    description,
+    tone,
+    hoverLines: detailsList,
+  };
 }
 
 const photoshopRuntimeMeta = computed(() => resolvePhotoshopRuntimeMeta());
+const psAutoProductionEnabled = computed(
+  () => autoPsdBatchState.autoDispatchEnabled === true,
+);
+const psAutoProductionDetail = computed<DashboardStatusCardDetail>(() => ({
+  text: psAutoProductionEnabled.value
+    ? "自动制作：已开启"
+    : "自动制作：已关闭",
+  tone: psAutoProductionEnabled.value ? "success" : "muted",
+}));
 
 function resolveVideoTemplateRuntimeMeta() {
   const runtime =
@@ -229,10 +253,17 @@ function resolveVideoTemplateRuntimeMeta() {
   const details = runtime?.details || {};
   const available = !!runtime?.available;
   const hasChecked = !!runtime?.lastCheckedAt;
-  const activeJobsCount = Number(details?.activeJobsCount ?? details?.queueCount ?? 0);
+  const activeJobsCount = Number(
+    details?.activeJobsCount ?? details?.queueCount ?? 0,
+  );
   const queuedJobsCount = Number(details?.queuedJobsCount ?? 0);
-  const isBusy = !!(runtime?.busy || runtime?.state === "busy" || activeJobsCount > 0);
-  const serviceError = runtime?.status === "error" || runtime?.state === "error";
+  const isBusy = !!(
+    runtime?.busy ||
+    runtime?.state === "busy" ||
+    activeJobsCount > 0
+  );
+  const serviceError =
+    runtime?.status === "error" || runtime?.state === "error";
   const valueText = available ? "可用" : hasChecked ? "不可用" : "检测中";
   const tone: ServiceStatusTone = available
     ? "success"
@@ -249,10 +280,20 @@ function resolveVideoTemplateRuntimeMeta() {
           : "有视频任务制作中"
         : "本地渲染服务在线";
 
-  return { connected: !!runtime?.connected, available, busy: isBusy, hasChecked, valueText, description, tone };
+  return {
+    connected: !!runtime?.connected,
+    available,
+    busy: isBusy,
+    hasChecked,
+    valueText,
+    description,
+    tone,
+  };
 }
 
-const videoTemplateRuntimeMeta = computed(() => resolveVideoTemplateRuntimeMeta());
+const videoTemplateRuntimeMeta = computed(() =>
+  resolveVideoTemplateRuntimeMeta(),
+);
 
 function resolveImageProcessingRuntimeMeta() {
   const runtime =
@@ -264,7 +305,11 @@ function resolveImageProcessingRuntimeMeta() {
   const available = !!runtime?.available;
   const hasChecked = !!runtime?.lastCheckedAt;
   const activeJobsCount = Number(details?.activeJobsCount ?? 0);
-  const isBusy = !!(runtime?.busy || runtime?.state === "busy" || activeJobsCount > 0);
+  const isBusy = !!(
+    runtime?.busy ||
+    runtime?.state === "busy" ||
+    activeJobsCount > 0
+  );
   const valueText = available ? "可用" : hasChecked ? "不可用" : "检测中";
   const tone: ServiceStatusTone = available ? "success" : "muted";
   const description = !hasChecked
@@ -275,10 +320,20 @@ function resolveImageProcessingRuntimeMeta() {
         ? `${activeJobsCount} 个图片任务处理中`
         : "图片处理已就绪";
 
-  return { connected: !!runtime?.connected, available, busy: isBusy, hasChecked, valueText, description, tone };
+  return {
+    connected: !!runtime?.connected,
+    available,
+    busy: isBusy,
+    hasChecked,
+    valueText,
+    description,
+    tone,
+  };
 }
 
-const imageProcessingRuntimeMeta = computed(() => resolveImageProcessingRuntimeMeta());
+const imageProcessingRuntimeMeta = computed(() =>
+  resolveImageProcessingRuntimeMeta(),
+);
 
 function websocketTone(status: string): ServiceStatusTone {
   if (status === "connected") return "success";
@@ -289,11 +344,16 @@ function websocketTone(status: string): ServiceStatusTone {
 
 function websocketText(status: string) {
   switch (status) {
-    case "connected": return "已连接";
-    case "connecting": return "连接中";
-    case "reconnecting": return "重连中";
-    case "error": return "连接异常";
-    default: return "未连接";
+    case "connected":
+      return "已连接";
+    case "connecting":
+      return "连接中";
+    case "reconnecting":
+      return "重连中";
+    case "error":
+      return "连接异常";
+    default:
+      return "未连接";
   }
 }
 
@@ -383,18 +443,22 @@ async function checkLocalServiceStatus() {
 
   if (!nativeApi?.checkLocalServiceStatus) {
     localServiceStatus.value = "stopped";
-    websocketClient.updateServiceStatus("localService", {
-      label: "本地服务",
-      connected: false,
-      available: false,
-      status: "disconnected",
-      state: "offline",
-      busy: false,
-      message: "当前为浏览器环境",
-      lastCheckedAt,
-      lastError: null,
-      supportedCommands: ["refreshRuntime", "health"],
-    }, { emitClientInfo: false });
+    websocketClient.updateServiceStatus(
+      "localService",
+      {
+        label: "本地服务",
+        connected: false,
+        available: false,
+        status: "disconnected",
+        state: "offline",
+        busy: false,
+        message: "当前为浏览器环境",
+        lastCheckedAt,
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health"],
+      },
+      { emitClientInfo: false },
+    );
     return;
   }
 
@@ -409,32 +473,40 @@ async function checkLocalServiceStatus() {
     }
     const available = !!(status?.running && status?.available !== false);
     localServiceStatus.value = available ? "running" : "stopped";
-    websocketClient.updateServiceStatus("localService", {
-      label: "本地服务",
-      connected: available,
-      available,
-      status: available ? "connected" : "disconnected",
-      state: available ? "idle" : "offline",
-      busy: false,
-      message: available ? "1519 本地服务可用" : "1519 未响应",
-      lastCheckedAt,
-      lastError: available ? null : "1519 未响应",
-      supportedCommands: ["refreshRuntime", "health"],
-    }, { emitClientInfo: false });
+    websocketClient.updateServiceStatus(
+      "localService",
+      {
+        label: "本地服务",
+        connected: available,
+        available,
+        status: available ? "connected" : "disconnected",
+        state: available ? "idle" : "offline",
+        busy: false,
+        message: available ? "1519 本地服务可用" : "1519 未响应",
+        lastCheckedAt,
+        lastError: available ? null : "1519 未响应",
+        supportedCommands: ["refreshRuntime", "health"],
+      },
+      { emitClientInfo: false },
+    );
   } catch (error: any) {
     localServiceStatus.value = "error";
-    websocketClient.updateServiceStatus("localService", {
-      label: "本地服务",
-      connected: false,
-      available: false,
-      status: "error",
-      state: "error",
-      busy: false,
-      message: error?.message || "1519 本地服务异常",
-      lastCheckedAt,
-      lastError: error?.message || "1519 本地服务异常",
-      supportedCommands: ["refreshRuntime", "health"],
-    }, { emitClientInfo: false });
+    websocketClient.updateServiceStatus(
+      "localService",
+      {
+        label: "本地服务",
+        connected: false,
+        available: false,
+        status: "error",
+        state: "error",
+        busy: false,
+        message: error?.message || "1519 本地服务异常",
+        lastCheckedAt,
+        lastError: error?.message || "1519 本地服务异常",
+        supportedCommands: ["refreshRuntime", "health"],
+      },
+      { emitClientInfo: false },
+    );
   }
 }
 
@@ -472,7 +544,9 @@ async function checkAuthAndGetUserInfo() {
       // 服务端数据库/Redis 抖动会导致 500、超时或连接断开；这不是退出登录。
       // 保留登录态和本地 token，等服务恢复后由前台恢复逻辑重新拉取用户信息。
       if (!userInfo.value) {
-        userInfo.value = JSON.parse(window.localStorage.getItem("userInfo") || "null");
+        userInfo.value = JSON.parse(
+          window.localStorage.getItem("userInfo") || "null",
+        );
       }
       isLoggedIn.value = true;
     }
@@ -500,7 +574,8 @@ async function handleLoginSuccess() {
     showToast({
       color: "error",
       icon: "mdi-alert-circle",
-      message: error?.response?.data?.message || error?.message || "获取用户信息失败",
+      message:
+        error?.response?.data?.message || error?.message || "获取用户信息失败",
     });
   } finally {
     loadingUserInfo.value = false;
@@ -557,9 +632,17 @@ async function connectBrowserAutomationFromDashboard() {
       await websocketClient.syncServiceRuntime("uploader");
     }
     await checkUploaderServiceStatus();
-    showToast({ color: "success", icon: "mdi-robot-outline", message: "浏览器窗口已打开" });
+    showToast({
+      color: "success",
+      icon: "mdi-robot-outline",
+      message: "浏览器窗口已打开",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "打开浏览器窗口失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "打开浏览器窗口失败",
+    });
   } finally {
     browserAutomationActionLoading.value = false;
   }
@@ -580,9 +663,17 @@ async function closeBrowserAutomationFromDashboard() {
       await websocketClient.syncServiceRuntime("uploader");
     }
     await checkUploaderServiceStatus();
-    showToast({ color: "success", icon: "mdi-close-circle-outline", message: "浏览器窗口已关闭" });
+    showToast({
+      color: "success",
+      icon: "mdi-close-circle-outline",
+      message: "浏览器窗口已关闭",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "关闭浏览器窗口失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "关闭浏览器窗口失败",
+    });
   } finally {
     browserAutomationActionLoading.value = false;
   }
@@ -592,9 +683,17 @@ async function refreshBrowserAutomationFromDashboard() {
   browserAutomationActionLoading.value = true;
   try {
     await checkUploaderServiceStatus();
-    showToast({ color: "success", icon: "mdi-refresh", message: "浏览器自动化状态已刷新" });
+    showToast({
+      color: "success",
+      icon: "mdi-refresh",
+      message: "浏览器自动化状态已刷新",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "刷新浏览器自动化状态失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "刷新浏览器自动化状态失败",
+    });
   } finally {
     browserAutomationActionLoading.value = false;
   }
@@ -603,7 +702,11 @@ async function refreshBrowserAutomationFromDashboard() {
 async function startVideoTemplateFromDashboard() {
   const nativeApi = window?.api;
   if (typeof nativeApi?.startVideoTemplateService !== "function") {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "当前客户端不支持启动 Video Template" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "当前客户端不支持启动 Video Template",
+    });
     return;
   }
 
@@ -611,9 +714,17 @@ async function startVideoTemplateFromDashboard() {
   try {
     await nativeApi.startVideoTemplateService();
     await websocketClient.syncServiceRuntime("video-template");
-    showToast({ color: "success", icon: "mdi-filmstrip-box-multiple", message: "Video Template 已启动" });
+    showToast({
+      color: "success",
+      icon: "mdi-filmstrip-box-multiple",
+      message: "Video Template 已启动",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "启动 Video Template 失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "启动 Video Template 失败",
+    });
   } finally {
     videoTemplateActionLoading.value = false;
   }
@@ -622,7 +733,11 @@ async function startVideoTemplateFromDashboard() {
 async function stopVideoTemplateFromDashboard() {
   const nativeApi = window?.api;
   if (typeof nativeApi?.stopVideoTemplateService !== "function") {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "当前客户端不支持关闭 Video Template" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "当前客户端不支持关闭 Video Template",
+    });
     return;
   }
 
@@ -641,9 +756,17 @@ async function stopVideoTemplateFromDashboard() {
       details: { warmed: false },
     });
     await websocketClient.syncServiceRuntime("video-template");
-    showToast({ color: "success", icon: "mdi-stop-circle-outline", message: "Video Template 已关闭" });
+    showToast({
+      color: "success",
+      icon: "mdi-stop-circle-outline",
+      message: "Video Template 已关闭",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "关闭 Video Template 失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "关闭 Video Template 失败",
+    });
   } finally {
     videoTemplateActionLoading.value = false;
   }
@@ -653,9 +776,17 @@ async function refreshVideoTemplateFromDashboard() {
   videoTemplateActionLoading.value = true;
   try {
     await websocketClient.syncServiceRuntime("video-template");
-    showToast({ color: "success", icon: "mdi-refresh", message: "Video Template 状态已刷新" });
+    showToast({
+      color: "success",
+      icon: "mdi-refresh",
+      message: "Video Template 状态已刷新",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "刷新 Video Template 状态失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "刷新 Video Template 状态失败",
+    });
   } finally {
     videoTemplateActionLoading.value = false;
   }
@@ -664,7 +795,11 @@ async function refreshVideoTemplateFromDashboard() {
 async function startImageToolFromDashboard() {
   const nativeApi = window?.api;
   if (typeof nativeApi?.startImageToolService !== "function") {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "当前客户端不支持启动 Image Tool" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "当前客户端不支持启动 Image Tool",
+    });
     return;
   }
 
@@ -672,9 +807,17 @@ async function startImageToolFromDashboard() {
   try {
     await nativeApi.startImageToolService();
     await websocketClient.syncServiceRuntime("image-processing");
-    showToast({ color: "success", icon: "mdi-image-multiple-outline", message: "Image Tool 已启动" });
+    showToast({
+      color: "success",
+      icon: "mdi-image-multiple-outline",
+      message: "Image Tool 已启动",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "启动 Image Tool 失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "启动 Image Tool 失败",
+    });
   } finally {
     imageToolActionLoading.value = false;
   }
@@ -683,7 +826,11 @@ async function startImageToolFromDashboard() {
 async function stopImageToolFromDashboard() {
   const nativeApi = window?.api;
   if (typeof nativeApi?.stopImageToolService !== "function") {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "当前客户端不支持关闭 Image Tool" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: "当前客户端不支持关闭 Image Tool",
+    });
     return;
   }
 
@@ -702,9 +849,17 @@ async function stopImageToolFromDashboard() {
       details: { loaded: false },
     });
     await websocketClient.syncServiceRuntime("image-processing");
-    showToast({ color: "success", icon: "mdi-stop-circle-outline", message: "Image Tool 已关闭" });
+    showToast({
+      color: "success",
+      icon: "mdi-stop-circle-outline",
+      message: "Image Tool 已关闭",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "关闭 Image Tool 失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "关闭 Image Tool 失败",
+    });
   } finally {
     imageToolActionLoading.value = false;
   }
@@ -714,9 +869,17 @@ async function refreshImageToolFromDashboard() {
   imageToolActionLoading.value = true;
   try {
     await websocketClient.syncServiceRuntime("image-processing");
-    showToast({ color: "success", icon: "mdi-refresh", message: "Image Tool 状态已刷新" });
+    showToast({
+      color: "success",
+      icon: "mdi-refresh",
+      message: "Image Tool 状态已刷新",
+    });
   } catch (error: any) {
-    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: error?.message || "刷新 Image Tool 状态失败" });
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "刷新 Image Tool 状态失败",
+    });
   } finally {
     imageToolActionLoading.value = false;
   }
@@ -724,7 +887,10 @@ async function refreshImageToolFromDashboard() {
 
 function handleDashboardCardAction(key: string) {
   if (key === "video-template-toggle") {
-    if (videoTemplateRuntimeMeta.value.connected || videoTemplateRuntimeMeta.value.busy) {
+    if (
+      videoTemplateRuntimeMeta.value.connected ||
+      videoTemplateRuntimeMeta.value.busy
+    ) {
       void stopVideoTemplateFromDashboard();
     } else {
       void startVideoTemplateFromDashboard();
@@ -748,7 +914,10 @@ function handleDashboardCardAction(key: string) {
     return;
   }
   if (key === "image-tool-toggle") {
-    if (imageProcessingRuntimeMeta.value.connected || imageProcessingRuntimeMeta.value.busy) {
+    if (
+      imageProcessingRuntimeMeta.value.connected ||
+      imageProcessingRuntimeMeta.value.busy
+    ) {
       void stopImageToolFromDashboard();
     } else {
       void startImageToolFromDashboard();
@@ -769,10 +938,11 @@ const serviceModeLabel = computed(() =>
   currentServiceMode.value === "local" ? "本地模式" : "远程模式",
 );
 
-const networkLocation = computed(() =>
-  [networkProfile.city, networkProfile.region, networkProfile.country]
-    .filter(Boolean)
-    .join(" / ") || "--"
+const networkLocation = computed(
+  () =>
+    [networkProfile.city, networkProfile.region, networkProfile.country]
+      .filter(Boolean)
+      .join(" / ") || "--",
 );
 
 const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
@@ -817,7 +987,10 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
       {
         key: "browser-automation-toggle",
         label: uploaderServiceStatus.value === "running" ? "关闭" : "打开",
-        icon: uploaderServiceStatus.value === "running" ? "mdi-close-circle-outline" : "mdi-open-in-new",
+        icon:
+          uploaderServiceStatus.value === "running"
+            ? "mdi-close-circle-outline"
+            : "mdi-open-in-new",
         loading: browserAutomationActionLoading.value,
       },
       {
@@ -833,9 +1006,17 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     title: "Photoshop",
     value: photoshopRuntimeMeta.value.valueText,
     description: photoshopRuntimeMeta.value.description,
-    details: photoshopRuntimeMeta.value.details,
+    details: [psAutoProductionDetail.value],
+    hoverTitle: photoshopRuntimeMeta.value.busy ? "PS 制作详情" : undefined,
+    hoverLines: photoshopRuntimeMeta.value.hoverLines,
     icon: "mdi-image-filter-drama",
-    tone: photoshopRuntimeMeta.value.tone,
+    tone: photoshopRuntimeMeta.value.busy
+      ? "warning"
+      : autoPsdBatchState.autoDispatchEnabled
+        ? "success"
+        : photoshopRuntimeMeta.value.tone,
+    highlight:
+      !photoshopRuntimeMeta.value.busy && autoPsdBatchState.autoDispatchEnabled,
   },
   {
     key: "video-template",
@@ -847,8 +1028,16 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     actions: [
       {
         key: "video-template-toggle",
-        label: videoTemplateRuntimeMeta.value.connected || videoTemplateRuntimeMeta.value.busy ? "关闭" : "启动",
-        icon: videoTemplateRuntimeMeta.value.connected || videoTemplateRuntimeMeta.value.busy ? "mdi-stop-circle-outline" : "mdi-play-circle-outline",
+        label:
+          videoTemplateRuntimeMeta.value.connected ||
+          videoTemplateRuntimeMeta.value.busy
+            ? "关闭"
+            : "启动",
+        icon:
+          videoTemplateRuntimeMeta.value.connected ||
+          videoTemplateRuntimeMeta.value.busy
+            ? "mdi-stop-circle-outline"
+            : "mdi-play-circle-outline",
         loading: videoTemplateActionLoading.value,
       },
       {
@@ -869,8 +1058,16 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     actions: [
       {
         key: "image-tool-toggle",
-        label: imageProcessingRuntimeMeta.value.connected || imageProcessingRuntimeMeta.value.busy ? "关闭" : "启动",
-        icon: imageProcessingRuntimeMeta.value.connected || imageProcessingRuntimeMeta.value.busy ? "mdi-stop-circle-outline" : "mdi-play-circle-outline",
+        label:
+          imageProcessingRuntimeMeta.value.connected ||
+          imageProcessingRuntimeMeta.value.busy
+            ? "关闭"
+            : "启动",
+        icon:
+          imageProcessingRuntimeMeta.value.connected ||
+          imageProcessingRuntimeMeta.value.busy
+            ? "mdi-stop-circle-outline"
+            : "mdi-play-circle-outline",
         loading: imageToolActionLoading.value,
       },
       {
@@ -946,7 +1143,8 @@ onMounted(() => {
   void checkAuthAndGetUserInfo();
 
   (window as any).__materialUploadService = downloadImageAndUploadMaterial;
-  (window as any).__crawlerMaterialUploadService = downloadImageAndUploadMaterial;
+  (window as any).__crawlerMaterialUploadService =
+    downloadImageAndUploadMaterial;
   (window as any).__fileResourceUploadService = uploadFileResource;
 
   void checkPsServiceStatus();
@@ -1029,7 +1227,10 @@ onBeforeUnmount(() => {
   window.removeEventListener("service-mode-changed", handleServiceModeChanged);
   window.removeEventListener("focus", handleWindowForegroundRecovery);
   window.removeEventListener("pageshow", handleWindowForegroundRecovery);
-  document.removeEventListener("visibilitychange", handleWindowForegroundRecovery);
+  document.removeEventListener(
+    "visibilitychange",
+    handleWindowForegroundRecovery,
+  );
   disconnectWebsocketIfNeeded();
 });
 </script>
@@ -1067,26 +1268,45 @@ onBeforeUnmount(() => {
           <div class="app-topbar__center">
             <span class="app-topbar__meta">{{ currentUserLabel }}</span>
             <span class="app-topbar__sep">·</span>
-            <span class="app-topbar__meta app-topbar__meta--muted">{{ networkLocation }}</span>
+            <span class="app-topbar__meta app-topbar__meta--muted">{{
+              networkLocation
+            }}</span>
             <span class="app-topbar__sep">·</span>
-            <span class="app-topbar__meta app-topbar__meta--muted">v{{ appVersion || '--' }}</span>
+            <span class="app-topbar__meta app-topbar__meta--muted"
+              >v{{ appVersion || "--" }}</span
+            >
           </div>
 
           <div class="app-topbar__right">
             <el-dropdown trigger="click" placement="bottom-end">
-              <button type="button" class="topbar-btn" :title="themePreferenceLabel">
+              <button
+                type="button"
+                class="topbar-btn"
+                :title="themePreferenceLabel"
+              >
                 <i :class="['mdi', themeToggleIcon]"></i>
               </button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item @click="setThemePreference('auto')">跟随时间</el-dropdown-item>
-                  <el-dropdown-item @click="setThemePreference('light')">浅色模式</el-dropdown-item>
-                  <el-dropdown-item @click="setThemePreference('dark')">深色模式</el-dropdown-item>
+                  <el-dropdown-item @click="setThemePreference('auto')"
+                    >跟随时间</el-dropdown-item
+                  >
+                  <el-dropdown-item @click="setThemePreference('light')"
+                    >浅色模式</el-dropdown-item
+                  >
+                  <el-dropdown-item @click="setThemePreference('dark')"
+                    >深色模式</el-dropdown-item
+                  >
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
 
-            <button type="button" class="topbar-btn" title="刷新连接" @click="reconnectWebsocket">
+            <button
+              type="button"
+              class="topbar-btn"
+              title="刷新连接"
+              @click="reconnectWebsocket"
+            >
               <i class="mdi mdi-rotate-right"></i>
             </button>
 
@@ -1107,7 +1327,12 @@ onBeforeUnmount(() => {
               :disabled="isLoggingOut"
               @click="handleLogout"
             >
-              <i :class="['mdi', isLoggingOut ? 'mdi-loading mdi-spin' : 'mdi-logout']"></i>
+              <i
+                :class="[
+                  'mdi',
+                  isLoggingOut ? 'mdi-loading mdi-spin' : 'mdi-logout',
+                ]"
+              ></i>
             </button>
           </div>
         </header>
@@ -1295,8 +1520,16 @@ onBeforeUnmount(() => {
 }
 
 .topbar-btn--danger:hover {
-  border-color: color-mix(in srgb, var(--theme-danger) 40%, var(--theme-border));
-  background: color-mix(in srgb, var(--theme-danger) 10%, var(--theme-surface-muted));
+  border-color: color-mix(
+    in srgb,
+    var(--theme-danger) 40%,
+    var(--theme-border)
+  );
+  background: color-mix(
+    in srgb,
+    var(--theme-danger) 10%,
+    var(--theme-surface-muted)
+  );
 }
 
 .topbar-btn .mdi-spin {

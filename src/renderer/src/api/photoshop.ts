@@ -23,11 +23,20 @@ psApiClient.interceptors.response.use(
   response => response,
   error => {
     // 统一错误处理
-    const detail = error.response?.data?.detail
-    const rawMessage = detail?.message ||
-                       detail?.error ||
+    const responseData = error.response?.data
+    const detail = responseData?.detail
+    const pickMessage = (value: any): string => {
+      if (!value) return ''
+      if (typeof value === 'string') return value.trim()
+      return String(value.message || value.error || value.msg || value.reason || '').trim()
+    }
+    const rawMessage = pickMessage(detail) ||
+                       pickMessage(responseData) ||
                        (error.code === 'ECONNABORTED'
                          ? `Photoshop 处理请求超时，请检查 PS 自动化端是否仍在执行（${error.config?.timeout || '未知'}ms）`
+                         : null) ||
+                       (!error.response
+                         ? `PS 自动化服务连接失败：${error.message || error.code || '无法连接到 localhost:1595'}`
                          : null) ||
                        error.message ||
                        '请求失败'
@@ -39,8 +48,13 @@ psApiClient.interceptors.response.use(
       console.error('Photoshop API error detail:', detail)
     }
     const normalizedError = new Error(errorMessage)
-    ;(normalizedError as any).detail = detail
+    ;(normalizedError as any).code = error.code
+    ;(normalizedError as any).detail = detail || responseData
     ;(normalizedError as any).status = error.response?.status
+    ;(normalizedError as any).isAxiosError = error.isAxiosError === true
+    ;(normalizedError as any).requestUrl = error.config?.url
+    ;(normalizedError as any).requestMethod = error.config?.method
+    ;(normalizedError as any).requestTimeout = error.config?.timeout
     return Promise.reject(normalizedError)
   }
 )

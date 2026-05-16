@@ -1,7 +1,7 @@
 import { io, type Socket } from "socket.io-client";
 import { reactive } from "vue";
 import mitt from "mitt";
-import { getTokenFromClient, logoutToken } from "../api/user";
+import { getTokenFromClient, logoutToken, getUserSetting } from "../api/user";
 import { stickerPsdSetApi } from "../api/stickerPsdSet";
 import photoshopApi from "../api/photoshop";
 import {
@@ -65,6 +65,7 @@ const WS_STALE_RECONNECT_MS = 75_000;
 const WS_RECOVERY_DEBOUNCE_MS = 5_000;
 const UPLOADER_RUNTIME_SYNC_INTERVAL = 4_000;
 const PHOTOSHOP_RUNTIME_SYNC_INTERVAL = 8_000;
+const PHOTOSHOP_RUNTIME_FAILURE_GRACE_COUNT = 2;
 const IMAGE_PROCESSING_RUNTIME_SYNC_INTERVAL = 8_000;
 const VIDEO_TEMPLATE_RUNTIME_SYNC_INTERVAL = 5_000;
 const IMAGE_PROCESSING_REQUEST_TIMEOUT_MS = 20_000;
@@ -91,6 +92,8 @@ const BROWSER_AUTOMATION_DISPATCH_STORAGE_KEY =
   "yishe.browserAutomation.autoDispatchEnabled";
 const BROWSER_AUTOMATION_MANUAL_CLOSE_STORAGE_KEY =
   "yishe.browserAutomation.manualClosed";
+const PS_AUTOMATION_DISPATCH_STORAGE_KEY =
+  "yishe.psAutomation.autoDispatchEnabled";
 const NETWORK_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const LOCATION_ENDPOINT = "https://ipapi.co/json/";
 const PLUGIN_KEY_ALIASES: Record<string, string> = {
@@ -520,6 +523,7 @@ export type WebsocketEvents = {
   psdSetProgressEnd: { psdSetId: string; success: boolean; message?: string };
   psAutomationToggle: {
     enabled?: boolean | null;
+    autoDispatchEnabled?: boolean | null;
     operator?: { id?: string | number; account?: string };
   };
 };
@@ -561,6 +565,7 @@ let lastClientInfoEmittedAt = 0;
 let lastAuthToken: string | undefined;
 let lastRecoveryAt = 0;
 let recoveryListenersBound = false;
+let photoshopRuntimeProbeFailureCount = 0;
 const transientWsToastCache = new Map<string, number>();
 const lastServiceRuntimeEmitCache = new Map<
   string,
@@ -606,7 +611,7 @@ let currentProductionDispatchToken: string | null = null;
 let currentProductionProfileId: string | null = null;
 const psAutomationControlState = reactive({
   enabled: null as boolean | null,
-  autoDispatchEnabled: null as boolean | null,
+  autoDispatchEnabled: loadPsAutomationAutoDispatchEnabled(),
 });
 
 // 供全局展示的套图制作运行状态
@@ -624,6 +629,7 @@ export const autoPsdBatchState = reactive({
   lastError: null as string | null,
   lastHeartbeatAt: null as string | null,
   updatedAt: null as string | null,
+  autoDispatchEnabled: false,
 });
 
 const browserAutomationDispatchState = reactive({
@@ -902,6 +908,36 @@ async function getCachedUploaderProfiles(
   return requestPromise;
 }
 
+function loadPsAutomationAutoDispatchEnabled(): boolean | null {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return null;
+  }
+
+  try {
+    const stored = storage.getItem(PS_AUTOMATION_DISPATCH_STORAGE_KEY);
+    if (!stored) {
+      return null;
+    }
+    return stored === "true";
+  } catch {
+    return null;
+  }
+}
+
+function persistPsAutomationAutoDispatchEnabled(enabled: boolean) {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return;
+  }
+
+  try {
+    storage.setItem(PS_AUTOMATION_DISPATCH_STORAGE_KEY, String(enabled));
+  } catch {
+    // ignore persistence failures
+  }
+}
+
 function loadBrowserAutomationAutoDispatchEnabled() {
   const storage = getLocalStorage();
   if (!storage) {
@@ -926,7 +962,9 @@ function loadBrowserAutomationManualClosed() {
   }
 
   try {
-    return storage.getItem(BROWSER_AUTOMATION_MANUAL_CLOSE_STORAGE_KEY) === "true";
+    return (
+      storage.getItem(BROWSER_AUTOMATION_MANUAL_CLOSE_STORAGE_KEY) === "true"
+    );
   } catch {
     return false;
   }
@@ -1096,9 +1134,146 @@ function clearPhotoshopProductionBusyState(message = "套图制作已结束") {
     lastError: null,
     details: {
       ...previousDetails,
-      photoshopStatus: photoshopReady ? "ready" : photoshopRunning ? "starting" : previousDetails.photoshopStatus,
+      photoshopStatus: photoshopReady
+        ? "ready"
+        : photoshopRunning
+          ? "starting"
+          : previousDetails.photoshopStatus,
     },
   });
+}
+
+function normalizeErrorMessage(error: unknown, fallback = "操作失败") {
+  if (typeof error === "string") {
+    return error.trim() || fallback;
+  }
+  const source = error as any;
+  const candidates = [
+    source?.detail?.message,
+    source?.detail?.error,
+    source?.response?.data?.message,
+    source?.response?.data?.error,
+    source?.response?.data?.detail?.message,
+    source?.response?.data?.detail?.error,
+    source?.message,
+    source?.data?.message,
+    source?.data?.error,
+    source?.msg,
+    source?.reason,
+  ];
+  for (const candidate of candidates) {
+    const text = String(candidate || "").trim();
+    if (text) return text;
+  }
+  const code = String(source?.code || source?.status || "").trim();
+  if (code) return code;
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== "{}") return serialized;
+  } catch {
+    // ignore stringify failures
+  }
+  const text = String(error || "").trim();
+  if (text && text !== "[object Object]") return text;
+  return fallback;
+}
+
+function isPhotoshopInfrastructureError(error: any) {
+  const detail = error?.detail || error?.response?.data || {};
+  const requestUrl = String(
+    error?.requestUrl || error?.config?.url || "",
+  ).toLowerCase();
+  const isPhotoshopRequest =
+    requestUrl.includes("localhost:1595") ||
+    requestUrl.includes("/processpsd") ||
+    requestUrl.includes("/photoshopstatus") ||
+    requestUrl.includes("/health") ||
+    requestUrl.includes("/startphotoshop") ||
+    requestUrl.includes("/stopphotoshop") ||
+    requestUrl.includes("/restartphotoshop") ||
+    requestUrl.includes("/analyzepsd");
+  const message = String(
+    [
+      normalizeErrorMessage(error, ""),
+      detail?.message,
+      detail?.error,
+      detail?.type,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  ).toLowerCase();
+  const code = String(error?.code || error?.status || "").toLowerCase();
+  const hasPhotoshopSignal = !!(
+    message.includes("ps 自动化") ||
+    message.includes("photoshop") ||
+    message.includes("localhost:1595") ||
+    message.includes("ps 处理服务")
+  );
+  const hasNetworkSignal = !!(
+    code.includes("econn") ||
+    code.includes("err_network") ||
+    code.includes("timeout") ||
+    message.includes("network error") ||
+    message.includes("err_network") ||
+    message.includes("econnrefused") ||
+    message.includes("econnreset") ||
+    message.includes("econnaborted") ||
+    message.includes("etimedout") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("socket hang up") ||
+    message.includes("failed to fetch") ||
+    message.includes("无法连接") ||
+    message.includes("服务连接失败") ||
+    message.includes("ps 处理服务未启动") ||
+    message.includes("photoshop 处理请求超时") ||
+    message.includes("网络") ||
+    message.includes("连接")
+  );
+  return hasNetworkSignal && (hasPhotoshopSignal || isPhotoshopRequest);
+}
+
+async function markPhotoshopRuntimeUnavailable(message: string) {
+  const previous: Partial<ClientServiceStatus> =
+    clientInfo.services?.["ps-automation"] ||
+    clientInfo.services?.photoshop ||
+    {};
+  const supportedCommands = previous?.supportedCommands || [
+    "refreshRuntime",
+    "health",
+    "startPhotoshop",
+    "stopPhotoshop",
+    "restartPhotoshop",
+  ];
+  const runtime = updateServiceStatus(
+    "photoshop",
+    {
+      label: "Photoshop",
+      connected: false,
+      available: false,
+      status: "error",
+      state: "error",
+      busy: false,
+      currentTaskId: null,
+      dispatchToken: null,
+      message,
+      lastError: message,
+      endpoint: previous?.endpoint || "http://localhost:1595",
+      lastCheckedAt: new Date().toISOString(),
+      debugAvailable: true,
+      supportedCommands,
+      details: {
+        ...(previous?.details || {}),
+        serviceHealthy: false,
+        serviceStatus: "error",
+        photoshopReady: false,
+        photoshopStatus: "unknown",
+        transientStatusError: message,
+      },
+    },
+    { emitClientInfo: false },
+  );
+  await emitServiceRuntime("photoshop", runtime);
 }
 
 function buildBrowserAutomationExecutionSnapshot() {
@@ -1211,8 +1386,7 @@ function sanitizeBrowserAutomationConnectionForWs(value: unknown) {
     connected: source.connected === true || source.isConnected === true,
     hasInstance: source.hasInstance === true,
     connecting: source.connecting === true,
-    headless:
-      typeof source.headless === "boolean" ? source.headless : null,
+    headless: typeof source.headless === "boolean" ? source.headless : null,
     pageCount: typeof source.pageCount === "number" ? source.pageCount : null,
     lastActivity: String(source.lastActivity || "").trim() || null,
   };
@@ -1240,8 +1414,7 @@ function sanitizeBrowserAutomationInstanceForWs(instance: unknown) {
     browserVersion: String(source.browserVersion || "").trim() || null,
     hasInstance: source.hasInstance === true,
     connecting: source.connecting === true,
-    headless:
-      typeof source.headless === "boolean" ? source.headless : null,
+    headless: typeof source.headless === "boolean" ? source.headless : null,
     userDataDir: String(source.userDataDir || "").trim() || null,
     isActiveProfile: source.isActiveProfile === true,
   };
@@ -1423,7 +1596,8 @@ function buildClientInfoPayloadForWs() {
     deviceKey: String(clientInfo.deviceKey || "").trim() || undefined,
     source: clientInfo.source,
     appVersion: clientInfo.appVersion,
-    workspaceDirectory: String(clientInfo.workspaceDirectory || "").trim() || undefined,
+    workspaceDirectory:
+      String(clientInfo.workspaceDirectory || "").trim() || undefined,
     services,
   };
 
@@ -2413,6 +2587,19 @@ async function syncServiceRuntime(serviceKey: string) {
       emitClientInfo: false,
     });
     await emitServiceRuntime(pluginKey, nextRuntime);
+    if (
+      pluginKey === "ps-automation" &&
+      nextRuntime.available === true &&
+      !nextRuntime.lastError &&
+      autoPsdBatchState.lastError
+    ) {
+      emitPsAutomationStatus({
+        lastError: null,
+        currentStep: autoPsdBatchState.running
+          ? autoPsdBatchState.currentStep
+          : null,
+      });
+    }
     return nextRuntime;
   } catch (error) {
     const failedRuntime = updateServiceStatus(
@@ -2482,7 +2669,9 @@ async function fetchRemotionJson(
       return nativeApi.listVideoTemplateRenders?.();
     }
     if (path.startsWith("/api/renders/")) {
-      const jobId = decodeURIComponent(path.replace("/api/renders/", "").trim());
+      const jobId = decodeURIComponent(
+        path.replace("/api/renders/", "").trim(),
+      );
       if (!jobId) {
         throw new Error("缺少 jobId");
       }
@@ -2527,10 +2716,10 @@ async function getCachedRemotionTemplates(force = false) {
   const templates = Array.isArray(templatesRes?.templates)
     ? templatesRes.templates
     : Array.isArray(templatesRes?.data)
-    ? templatesRes.data
-    : Array.isArray(templatesRes)
-      ? templatesRes
-      : [];
+      ? templatesRes.data
+      : Array.isArray(templatesRes)
+        ? templatesRes
+        : [];
 
   remotionTemplateCache.items = templates;
   remotionTemplateCache.lastFetchedAt = now;
@@ -2664,12 +2853,12 @@ async function getRemotionQueueSnapshot(targetJobId?: string | null) {
 
       const leftTimestamp =
         left.status === "in-progress"
-          ? left.startedAt ?? left.createdAt ?? 0
-          : left.createdAt ?? 0;
+          ? (left.startedAt ?? left.createdAt ?? 0)
+          : (left.createdAt ?? 0);
       const rightTimestamp =
         right.status === "in-progress"
-          ? right.startedAt ?? right.createdAt ?? 0
-          : right.createdAt ?? 0;
+          ? (right.startedAt ?? right.createdAt ?? 0)
+          : (right.createdAt ?? 0);
 
       return leftTimestamp - rightTimestamp;
     });
@@ -2704,12 +2893,15 @@ function buildRemotionQueuePayload(
   fallbackJob?: any,
 ) {
   const targetJob =
-    snapshot?.targetJob || (fallbackJob ? normalizeRemotionQueueJob(fallbackJob) : null);
+    snapshot?.targetJob ||
+    (fallbackJob ? normalizeRemotionQueueJob(fallbackJob) : null);
 
   return {
     queueStatus: targetJob?.status || null,
     queuePosition:
-      typeof snapshot?.queuePosition === "number" ? snapshot.queuePosition : null,
+      typeof snapshot?.queuePosition === "number"
+        ? snapshot.queuePosition
+        : null,
     queueAheadCount:
       typeof snapshot?.queueAheadCount === "number"
         ? snapshot.queueAheadCount
@@ -2808,7 +3000,13 @@ async function getRemotionRuntime() {
         endpoint: REMOTION_LOCAL_BASE,
         lastCheckedAt: checkedAt,
         lastError: null,
-        supportedCommands: ["refreshRuntime", "health", "start", "stop", "enqueueRender"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "start",
+          "stop",
+          "enqueueRender",
+        ],
         details: {
           templates: Array.isArray(healthPayload?.templates)
             ? healthPayload.templates
@@ -2893,7 +3091,13 @@ async function getRemotionRuntime() {
       lastCheckedAt: checkedAt,
       lastError: null,
       currentTaskId: currentExecution?.id || null,
-      supportedCommands: ["refreshRuntime", "health", "start", "stop", "enqueueRender"],
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "start",
+        "stop",
+        "enqueueRender",
+      ],
       details: {
         templates,
         health: healthPayload,
@@ -2943,7 +3147,13 @@ async function getRemotionRuntime() {
       endpoint: REMOTION_LOCAL_BASE,
       lastCheckedAt: checkedAt,
       lastError: errorMessage,
-      supportedCommands: ["refreshRuntime", "health", "start", "stop", "enqueueRender"],
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "start",
+        "stop",
+        "enqueueRender",
+      ],
       details: {
         templates: Array.isArray(previousDetails.templates)
           ? previousDetails.templates
@@ -3140,8 +3350,14 @@ async function syncRemotionRecordStatus(
       queueStatus: getRemotionPayloadMetaValue(payload, "queueStatus"),
       queuePosition: getRemotionPayloadMetaValue(payload, "queuePosition"),
       queueAheadCount: getRemotionPayloadMetaValue(payload, "queueAheadCount"),
-      queueActiveCount: getRemotionPayloadMetaValue(payload, "queueActiveCount"),
-      queueQueuedCount: getRemotionPayloadMetaValue(payload, "queueQueuedCount"),
+      queueActiveCount: getRemotionPayloadMetaValue(
+        payload,
+        "queueActiveCount",
+      ),
+      queueQueuedCount: getRemotionPayloadMetaValue(
+        payload,
+        "queueQueuedCount",
+      ),
       queueProcessingCount: getRemotionPayloadMetaValue(
         payload,
         "queueProcessingCount",
@@ -3385,7 +3601,8 @@ async function fetchImageProcessingJson(
   path: string,
   init?: RequestInit & { timeoutMs?: number },
 ) {
-  const { timeoutMs = IMAGE_PROCESSING_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
+  const { timeoutMs = IMAGE_PROCESSING_REQUEST_TIMEOUT_MS, ...requestInit } =
+    init || {};
   const nativeApi = getNativeApi() as any;
   if (!nativeApi) {
     throw new Error("当前环境未注入桌面端 image-tool 能力");
@@ -3401,9 +3618,12 @@ async function fetchImageProcessingJson(
   const action = async () => {
     if (path === "/api/health") {
       const status = await nativeApi.getImageToolStatus?.();
-      const processors = Array.isArray(status?.processors) ? status.processors : [];
-      const imageProcessor =
-        processors.find((item: any) => item?.id === status?.defaultProcessorId) ||
+      const processors = Array.isArray(status?.processors)
+        ? status.processors
+        : [];
+      const imageProcessor = processors.find(
+        (item: any) => item?.id === status?.defaultProcessorId,
+      ) ||
         processors[0] || {
           installed: false,
           message: status?.lastError || "未检测到图像处理引擎",
@@ -3503,16 +3723,12 @@ async function getCachedImageProcessingMeta(force = false) {
       : catalogRes?.data?.catalog && typeof catalogRes.data.catalog === "object"
         ? catalogRes.data.catalog
         : null;
-  imageProcessingMetaCache.operations = Array.isArray(
-    operationsRes?.operations,
-  )
+  imageProcessingMetaCache.operations = Array.isArray(operationsRes?.operations)
     ? operationsRes.operations
     : Array.isArray(operationsRes?.data?.operations)
       ? operationsRes.data.operations
       : [];
-  imageProcessingMetaCache.variations = Array.isArray(
-    variationsRes?.variations,
-  )
+  imageProcessingMetaCache.variations = Array.isArray(variationsRes?.variations)
     ? variationsRes.variations
     : Array.isArray(variationsRes?.data?.variations)
       ? variationsRes.data.variations
@@ -3567,11 +3783,18 @@ async function getImageProcessingRuntime() {
         endpoint: IMAGE_PROCESSING_LOCAL_BASE,
         lastCheckedAt: checkedAt,
         lastError: null,
-        supportedCommands: ["refreshRuntime", "health", "start", "stop", "createTask"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "start",
+          "stop",
+          "createTask",
+        ],
         supportedTaskTypes: ["process", "variations"],
         details: {
           catalog:
-            previousDetails.catalog && typeof previousDetails.catalog === "object"
+            previousDetails.catalog &&
+            typeof previousDetails.catalog === "object"
               ? previousDetails.catalog
               : imageProcessingMetaCache.catalog,
           operations: Array.isArray(previousDetails.operations)
@@ -3593,7 +3816,8 @@ async function getImageProcessingRuntime() {
     }
 
     const processorStatusFromHealth =
-      healthPayload?.imageProcessor && typeof healthPayload.imageProcessor === "object"
+      healthPayload?.imageProcessor &&
+      typeof healthPayload.imageProcessor === "object"
         ? healthPayload.imageProcessor
         : null;
     const processorInstalled = processorStatusFromHealth?.installed !== false;
@@ -3620,7 +3844,8 @@ async function getImageProcessingRuntime() {
         ? previousDetails.variations
         : imageProcessingMetaCache.variations,
       processorStatus:
-        previousDetails.processorStatus && typeof previousDetails.processorStatus === "object"
+        previousDetails.processorStatus &&
+        typeof previousDetails.processorStatus === "object"
           ? previousDetails.processorStatus
           : imageProcessingMetaCache.processorStatus,
     };
@@ -3646,7 +3871,8 @@ async function getImageProcessingRuntime() {
       meta.processorStatus ||
       healthPayload?.imageProcessor ||
       null;
-    const runtimeAvailable = processorInstalled && processorStatus?.installed !== false;
+    const runtimeAvailable =
+      processorInstalled && processorStatus?.installed !== false;
     const runtimeStatus: "connected" | "error" = processorInstalled
       ? "connected"
       : "error";
@@ -3656,7 +3882,9 @@ async function getImageProcessingRuntime() {
         ? "busy"
         : "idle";
     const runtimeMessage = !processorInstalled
-      ? String(processorStatus?.message || "图片处理插件已连接，但当前引擎不可执行")
+      ? String(
+          processorStatus?.message || "图片处理插件已连接，但当前引擎不可执行",
+        )
       : activeTaskCount > 0
         ? `图片处理中，当前执行 ${activeTaskCount} 个任务`
         : String(processorStatus?.message || "图片处理能力可用");
@@ -3673,7 +3901,13 @@ async function getImageProcessingRuntime() {
       lastCheckedAt: checkedAt,
       lastError: runtimeAvailable ? null : runtimeMessage,
       currentTaskId: currentTask?.recordId || null,
-      supportedCommands: ["refreshRuntime", "health", "start", "stop", "createTask"],
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "start",
+        "stop",
+        "createTask",
+      ],
       supportedTaskTypes: ["process", "variations"],
       details: {
         health: healthPayload,
@@ -3712,7 +3946,13 @@ async function getImageProcessingRuntime() {
       endpoint: IMAGE_PROCESSING_LOCAL_BASE,
       lastCheckedAt: checkedAt,
       lastError: errorMessage,
-      supportedCommands: ["refreshRuntime", "health", "start", "stop", "createTask"],
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "start",
+        "stop",
+        "createTask",
+      ],
       supportedTaskTypes: ["process", "variations"],
       details: {
         catalog:
@@ -3726,7 +3966,8 @@ async function getImageProcessingRuntime() {
           ? previousDetails.variations
           : imageProcessingMetaCache.variations,
         processorStatus:
-          previousDetails.processorStatus && typeof previousDetails.processorStatus === "object"
+          previousDetails.processorStatus &&
+          typeof previousDetails.processorStatus === "object"
             ? previousDetails.processorStatus
             : imageProcessingMetaCache.processorStatus,
         executable: false,
@@ -3826,7 +4067,10 @@ async function uploadImageProcessingResultFileToCos(
 
   const fileName =
     String(options.outputFile || "").trim() ||
-    localPath.split(/[/\\\\]/).filter(Boolean).pop() ||
+    localPath
+      .split(/[/\\\\]/)
+      .filter(Boolean)
+      .pop() ||
     `image-processing-${Date.now()}.png`;
   const keyResult = await apiBridge.generateCosKey({
     category: "image-processing-record",
@@ -3881,7 +4125,10 @@ async function uploadRemotionResultFileToCos(
   }
 
   const fileName =
-    localPath.split(/[/\\\\]/).filter(Boolean).pop() ||
+    localPath
+      .split(/[/\\\\]/)
+      .filter(Boolean)
+      .pop() ||
     `${String(options.jobId || options.recordId || "video-template").trim() || "video-template"}.mp4`;
 
   const keyResult = await apiBridge.generateCosKey({
@@ -3912,7 +4159,9 @@ async function uploadRemotionResultFileToCos(
   };
 }
 
-function resolveImageProcessingResultStatus(resultFiles: Array<Record<string, any>>) {
+function resolveImageProcessingResultStatus(
+  resultFiles: Array<Record<string, any>>,
+) {
   const successCount = resultFiles.filter((item) => item?.success).length;
   const total = resultFiles.length;
   if (!total || successCount <= 0) {
@@ -4127,7 +4376,11 @@ async function executeImageProcessingTask(command: ServiceCommandEnvelope) {
       status: finalStatus,
       message: finalMessage,
       errorMessage:
-        finalStatus === "failed" ? finalMessage : finalStatus === "partial" ? finalMessage : null,
+        finalStatus === "failed"
+          ? finalMessage
+          : finalStatus === "partial"
+            ? finalMessage
+            : null,
       processorId: archivedPayload.processorId,
       processorLabel: archivedPayload.processorLabel,
       resultFiles: archivedPayload.resultFiles,
@@ -4192,6 +4445,15 @@ async function handleServiceCommand(command: ServiceCommandEnvelope) {
     action,
     service: normalizedCommand.service,
   });
+  if (pluginKey === "ps-automation" && action === "processPsdSet") {
+    psdSetConsoleDebug("service-command.received", {
+      commandId: normalizedCommand.commandId || null,
+      pluginKey,
+      action,
+      payload,
+      target: normalizedCommand.target,
+    });
+  }
   const emitServiceCommandResult = (result: ServiceCommandResult) => {
     const emitStartedAt = Date.now();
     let resultBytes = 0;
@@ -4377,7 +4639,9 @@ function stopHeartbeat() {
 }
 
 function isPageHidden() {
-  return typeof document !== "undefined" && document.visibilityState === "hidden";
+  return (
+    typeof document !== "undefined" && document.visibilityState === "hidden"
+  );
 }
 
 async function refreshSocketAuth() {
@@ -4431,14 +4695,20 @@ async function ensureConnectionFresh(reason: string) {
   const tokenChanged = previousToken !== undefined && previousToken !== token;
   if (!socket || !socket.connected || stale || tokenChanged) {
     recoverConnection(
-      tokenChanged ? `${reason}:token_changed` : stale ? `${reason}:stale` : reason,
+      tokenChanged
+        ? `${reason}:token_changed`
+        : stale
+          ? `${reason}:stale`
+          : reason,
     );
     return;
   }
   emitClientInfo();
   emitPsAutomationStatus();
   void Promise.all(
-    Array.from(localServiceHandlers.keys()).map((key) => syncServiceRuntime(key)),
+    Array.from(localServiceHandlers.keys()).map((key) =>
+      syncServiceRuntime(key),
+    ),
   );
 }
 
@@ -4455,7 +4725,11 @@ function bindConnectionRecoveryListeners() {
     void ensureConnectionFresh("browser_online");
   });
   window.addEventListener("storage", (event) => {
-    if (!event.key || event.key.includes("yishe.ws") || event.key.includes("token")) {
+    if (
+      !event.key ||
+      event.key.includes("yishe.ws") ||
+      event.key.includes("token")
+    ) {
       void ensureConnectionFresh("storage_changed");
     }
   });
@@ -4520,36 +4794,40 @@ function startVideoTemplateRuntimeSyncLoop() {
 
 function scheduleHeartbeatTimeout() {
   clearHeartbeatTimeout();
-  heartbeatTimeout = setTimeout(() => {
-    const isHidden =
-      typeof document !== "undefined" && document.visibilityState !== "visible";
+  heartbeatTimeout = setTimeout(
+    () => {
+      const isHidden =
+        typeof document !== "undefined" &&
+        document.visibilityState !== "visible";
 
-    emitter.emit("log", {
-      level: "warn",
-      message: isHidden
-        ? "[ws] heartbeat timeout while hidden"
-        : "[ws] heartbeat timeout",
-    });
+      emitter.emit("log", {
+        level: "warn",
+        message: isHidden
+          ? "[ws] heartbeat timeout while hidden"
+          : "[ws] heartbeat timeout",
+      });
 
-    if (isHidden) {
-      void ensureConnectionFresh("heartbeat_timeout_hidden");
-      return;
-    }
+      if (isHidden) {
+        void ensureConnectionFresh("heartbeat_timeout_hidden");
+        return;
+      }
 
-    if (!socket || !socket.connected) {
+      if (!socket || !socket.connected) {
+        updateState({
+          status: "error",
+          lastError: "Heartbeat timeout",
+        });
+        recoverConnection("heartbeat_timeout_disconnected");
+        return;
+      }
+
       updateState({
-        status: "error",
         lastError: "Heartbeat timeout",
       });
-      recoverConnection("heartbeat_timeout_disconnected");
-      return;
-    }
-
-    updateState({
-      lastError: "Heartbeat timeout",
-    });
-    recoverConnection("heartbeat_timeout_no_pong");
-  }, isPageHidden() ? HIDDEN_HEARTBEAT_TIMEOUT : HEARTBEAT_TIMEOUT);
+      recoverConnection("heartbeat_timeout_no_pong");
+    },
+    isPageHidden() ? HIDDEN_HEARTBEAT_TIMEOUT : HEARTBEAT_TIMEOUT,
+  );
 }
 
 function emitHeartbeat() {
@@ -4582,6 +4860,9 @@ function cleanupSocket() {
   transientWsToastCache.clear();
   lastServiceRuntimeEmitCache.clear();
   stopHeartbeat();
+  // 断开连接时停止轮询和配置同步
+  stopPsdSetPolling();
+  stopPsConfigSync();
 }
 
 function buildQuery() {
@@ -4595,6 +4876,7 @@ function buildQuery() {
 
 function bindSocketEvents(currentSocket: Socket) {
   currentSocket.on("connect", () => {
+    photoshopRuntimeProbeFailureCount = 0;
     void refreshSocketAuth();
     emitter.emit("log", { level: "info", message: "[ws] connected" });
     logger.info("[ws] connected", {
@@ -4620,6 +4902,8 @@ function bindSocketEvents(currentSocket: Socket) {
     startImageProcessingRuntimeSyncLoop();
     startVideoTemplateRuntimeSyncLoop();
     startHeartbeatLoop();
+    // 连接成功后启动配置定时同步
+    startPsConfigSync();
   });
 
   currentSocket.on("disconnect", (reason) => {
@@ -4683,7 +4967,8 @@ function bindSocketEvents(currentSocket: Socket) {
   });
 
   currentSocket.on("auth-error", (data: any) => {
-    const message = data?.message || data?.reason || "登录状态已失效，请重新登录";
+    const message =
+      data?.message || data?.reason || "登录状态已失效，请重新登录";
     emitter.emit("log", {
       level: "error",
       message: `[ws] auth-error: ${message}`,
@@ -4770,6 +5055,14 @@ function bindSocketEvents(currentSocket: Socket) {
   });
 
   currentSocket.on("service-command", (command: ServiceCommandEnvelope) => {
+    if (resolveCommandPluginKey(command) === "ps-automation") {
+      psdSetConsoleDebug("socket.service-command.received", {
+        commandId: command.commandId || null,
+        action: resolveCommandAction(command),
+        pluginKey: resolveCommandPluginKey(command),
+        payload: command.command?.payload ?? command.payload ?? {},
+      });
+    }
     void handleServiceCommand(command);
   });
 
@@ -4780,26 +5073,82 @@ function bindSocketEvents(currentSocket: Socket) {
       autoDispatchEnabled?: boolean;
       operator?: { id?: string | number; account?: string };
     }) => {
+      const requestedAutoDispatchEnabled =
+        typeof payload?.autoDispatchEnabled === "boolean"
+          ? payload.autoDispatchEnabled
+          : null;
       const enabled =
         typeof payload?.enabled === "boolean"
           ? payload.enabled
           : psAutomationControlState.enabled;
-      const autoDispatchEnabled =
-        typeof payload?.autoDispatchEnabled === "boolean"
-          ? payload.autoDispatchEnabled
-          : psAutomationControlState.autoDispatchEnabled;
+      const previousAutoDispatchEnabled =
+        psAutomationControlState.autoDispatchEnabled;
       psAutomationControlState.enabled = enabled ?? null;
-      psAutomationControlState.autoDispatchEnabled =
-        autoDispatchEnabled ?? null;
+      psdSetConsoleDebug("toggle.received", {
+        payload,
+        enabled,
+        requestedAutoDispatchEnabled,
+        previousAutoDispatchEnabled,
+      });
+
+      if (requestedAutoDispatchEnabled === false) {
+        psAutomationControlState.autoDispatchEnabled = false;
+        autoPsdBatchState.autoDispatchEnabled = false;
+        persistPsAutomationAutoDispatchEnabled(false);
+        stopPsdSetPolling();
+        psdSetConsoleDebug("toggle.auto-dispatch.disabled", {
+          payload,
+        });
+      } else if (requestedAutoDispatchEnabled === true) {
+        psdSetConsoleDebug("toggle.auto-dispatch.enabled", {
+          payload,
+        });
+        void fetchPsAutomationDispatchConfig();
+      }
+
       emitter.emit("log", {
         level: "info",
-        message: `[ws] received ps-automation-toggle: ${enabled}`,
+        message: `[ws] received ps-automation-toggle: enabled=${enabled} autoDispatch=${requestedAutoDispatchEnabled}`,
       });
+
+      // 当服务被禁用时，清除制作状态（避免显示"制作中"但实际未制作）
+      if (enabled === false && isProductionInProgress) {
+        psdSetConsoleDebug("toggle.force-clear-production-state", {
+          payload,
+          currentProductionTaskId,
+          currentProductionPsdSetId,
+          currentProductionDispatchToken,
+          currentProductionProfileId,
+        });
+        isProductionInProgress = false;
+        currentProductionTaskId = null;
+        currentProductionPsdSetId = null;
+        currentProductionDispatchToken = null;
+        currentProductionProfileId = null;
+        emitPsAutomationStatus({
+          running: false,
+          progress: null,
+          queueCount: 0,
+          currentPsSetId: null,
+          currentPsSetName: null,
+          profileId: null,
+          dispatchToken: null,
+          currentStep: "服务已关闭",
+          lastError: null,
+        });
+        clearPhotoshopProductionBusyState("服务已关闭");
+      }
+
       emitter.emit("psAutomationToggle", {
         enabled,
+        autoDispatchEnabled:
+          requestedAutoDispatchEnabled ??
+          psAutomationControlState.autoDispatchEnabled,
         operator: payload?.operator,
       });
-      emitPsAutomationStatus();
+      if (requestedAutoDispatchEnabled !== true) {
+        emitPsAutomationStatus();
+      }
     },
   );
 
@@ -4842,14 +5191,7 @@ function bindSocketEvents(currentSocket: Socket) {
 }
 
 function serializeError(error: unknown) {
-  if (!error) return "Unknown error";
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
+  return normalizeErrorMessage(error, "未知错误");
 }
 
 /**
@@ -4878,7 +5220,9 @@ function normalizeWindowsPath(input: string) {
 }
 
 function buildPsdTestExportDir(workspaceDir: string) {
-  const normalizedWorkspaceDir = normalizeWindowsPath(workspaceDir || "").replace(/[\\/]+$/, "");
+  const normalizedWorkspaceDir = normalizeWindowsPath(
+    workspaceDir || "",
+  ).replace(/[\\/]+$/, "");
   return normalizedWorkspaceDir ? `${normalizedWorkspaceDir}\\psd-test` : "";
 }
 
@@ -4893,6 +5237,135 @@ function writePsdSetFileLog(
   });
 }
 
+function normalizePsdSetDebugValue(
+  value: any,
+  depth = 0,
+  seen = new WeakSet<object>(),
+): any {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") {
+    return value.length > 1200 ? `${value.slice(0, 1200)}...(truncated)` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "bigint") return String(value);
+  if (typeof value === "function") return `[Function ${value.name || "anonymous"}]`;
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+  if (depth >= 5) return "[DepthLimit]";
+  if (typeof value !== "object") return String(value);
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, 30)
+      .map((item) => normalizePsdSetDebugValue(item, depth + 1, seen));
+    if (value.length > items.length) {
+      items.push(`...(truncated ${value.length - items.length} more)`);
+    }
+    return items;
+  }
+
+  const result: Record<string, any> = {};
+  const keys = Object.keys(value).slice(0, 80);
+  for (const key of keys) {
+    result[key] = normalizePsdSetDebugValue(value[key], depth + 1, seen);
+  }
+  if (Object.keys(value).length > keys.length) {
+    result.__truncatedKeys = Object.keys(value).length - keys.length;
+  }
+  return result;
+}
+
+function getPsdSetConsoleDebugRuntime() {
+  const psService =
+    clientInfo.services?.["ps-automation"] ||
+    clientInfo.services?.photoshop ||
+    null;
+  let psReady: boolean | string = "unknown";
+  let runtimeError: boolean | string = "unknown";
+  try {
+    psReady = isPhotoshopReadyForPoll();
+  } catch (error) {
+    psReady = `error:${serializeError(error)}`;
+  }
+  try {
+    runtimeError = hasRuntimeError();
+  } catch (error) {
+    runtimeError = `error:${serializeError(error)}`;
+  }
+
+  return {
+    clientId: identity.clientId || null,
+    machineCode: identity.machineCode || null,
+    wsStatus: wsState.status,
+    socketConnected: !!socket?.connected,
+    autoDispatchEnabled: psAutomationControlState.autoDispatchEnabled,
+    isProductionInProgress,
+    currentProductionTaskId,
+    currentProductionPsdSetId,
+    currentProductionDispatchToken,
+    currentProductionProfileId,
+    pollTimerRunning: !!psdSetPollTimer,
+    pollInFlight: psdSetPollInFlight,
+    psReady,
+    runtimeError,
+    psService: psService
+      ? {
+          status: psService.status || null,
+          state: psService.state || null,
+          available: psService.available ?? null,
+          busy: psService.busy ?? null,
+          message: psService.message || null,
+          lastError: psService.lastError || null,
+          lastCheckedAt: psService.lastCheckedAt || null,
+          details: {
+            photoshopReady: psService.details?.photoshopReady ?? null,
+            rawPhotoshopReady: psService.details?.rawPhotoshopReady ?? null,
+            processBusy: psService.details?.processBusy ?? null,
+          },
+        }
+      : null,
+  };
+}
+
+function psdSetConsoleDebug(
+  stage: string,
+  context?: Record<string, any>,
+  level: "log" | "warn" | "error" = "log",
+) {
+  const payload = normalizePsdSetDebugValue({
+    tag: "PS_AUTO_DEBUG",
+    stage,
+    at: new Date().toISOString(),
+    context: context || {},
+    runtime: getPsdSetConsoleDebugRuntime(),
+  });
+  const line = `[PS_AUTO_DEBUG] ${JSON.stringify(payload)}`;
+  if (level === "error") {
+    console.error(line);
+  } else if (level === "warn") {
+    console.warn(line);
+  } else {
+    console.log(line);
+  }
+  try {
+    void window.api?.writeClientLog?.({
+      level: level === "error" ? "ERROR" : level === "warn" ? "WARN" : "INFO",
+      module: "ps-auto-debug",
+      message: `[PS_AUTO_DEBUG] ${stage}`,
+      context: payload,
+    });
+  } catch {
+    // ignore logging bridge failures
+  }
+}
+
 async function syncPsdSetProductionStatus(event: {
   psdSetId: string;
   status: "pending" | "processing" | "completed" | "failed";
@@ -4904,53 +5377,113 @@ async function syncPsdSetProductionStatus(event: {
   profileId?: string | null;
 }) {
   const statusMessage = String(event.message || "").trim();
-  const dispatchToken = String(event.dispatchToken || currentProductionDispatchToken || "").trim();
-  const profileId = String(event.profileId || currentProductionProfileId || "").trim();
+  const dispatchToken = String(
+    event.dispatchToken || currentProductionDispatchToken || "",
+  ).trim();
+  const profileId = String(
+    event.profileId || currentProductionProfileId || "",
+  ).trim();
+  const payload = {
+    psdSetId: event.psdSetId,
+    status: event.status,
+    message: statusMessage,
+    statusMessage: statusMessage || undefined,
+    progress: event.progress,
+    total: event.total,
+    images: Array.isArray(event.images) ? event.images : undefined,
+    dispatchToken: dispatchToken || undefined,
+    profileId: profileId || undefined,
+    clientId: identity.clientId,
+    machineCode: identity.machineCode,
+    assignedClientId: identity.clientId,
+    assignedMachineCode: identity.machineCode,
+  };
+
+  psdSetConsoleDebug("sync-status.prepare", {
+    event,
+    payload,
+    shouldReportByHttp:
+      event.status === "completed" ||
+      event.status === "failed" ||
+      event.status === "processing",
+  });
 
   try {
     if (socket && socket.connected) {
-      socket.emit("production-status", {
+      socket.emit("production-status", payload);
+      psdSetConsoleDebug("sync-status.socket-emitted", {
         psdSetId: event.psdSetId,
         status: event.status,
-        message: statusMessage,
-        progress: event.progress,
-        total: event.total,
-        images: Array.isArray(event.images) ? event.images : undefined,
-        dispatchToken: dispatchToken || undefined,
-        profileId: profileId || undefined,
-        clientId: identity.clientId,
-        machineCode: identity.machineCode,
-        assignedClientId: identity.clientId,
-        assignedMachineCode: identity.machineCode,
+        dispatchToken,
+        profileId,
       });
     }
   } catch (error) {
+    psdSetConsoleDebug(
+      "sync-status.socket-error",
+      {
+        psdSetId: event.psdSetId,
+        status: event.status,
+        error: serializeError(error),
+      },
+      "error",
+    );
     emitter.emit("log", {
       level: "warn",
       message: `[ws] 发送 production-status 失败: ${serializeError(error)}`,
     });
   }
 
-  const shouldPersistProcessingClaim =
-    event.status === "processing" && (event.progress ?? 0) === 0;
-  const shouldPersistTerminalStatus =
-    event.status === "completed" || event.status === "failed";
-  const shouldPersistRestStatus =
-    shouldPersistProcessingClaim || shouldPersistTerminalStatus;
-  if (!shouldPersistRestStatus) {
+  if (!socket?.connected) {
+    psdSetConsoleDebug(
+      "sync-status.socket-disconnected",
+      {
+        psdSetId: event.psdSetId,
+        status: event.status,
+      },
+      "warn",
+    );
+    emitter.emit("log", {
+      level: "warn",
+      message: `[psd-set] WebSocket 未连接，套图状态暂未上报: ${event.status} ${event.psdSetId}`,
+    });
+  }
+
+  const shouldReportByHttp =
+    event.status === "completed" ||
+    event.status === "failed" ||
+    event.status === "processing";
+  if (!shouldReportByHttp) {
+    psdSetConsoleDebug("sync-status.http-skipped", {
+      psdSetId: event.psdSetId,
+      status: event.status,
+    });
     return;
   }
 
   try {
-    await stickerPsdSetApi.updateStatus(event.psdSetId, {
+    const reportResult = await stickerPsdSetApi.reportProductionStatus(
+      event.psdSetId,
+      payload,
+    );
+    psdSetConsoleDebug("sync-status.http-reported", {
+      psdSetId: event.psdSetId,
       status: event.status,
-      statusMessage: statusMessage || undefined,
-      dispatchToken: dispatchToken || undefined,
+      result: reportResult,
     });
   } catch (error) {
+    psdSetConsoleDebug(
+      "sync-status.http-error",
+      {
+        psdSetId: event.psdSetId,
+        status: event.status,
+        error: serializeError(error),
+      },
+      "error",
+    );
     emitter.emit("log", {
       level: "warn",
-      message: `[psd-set] 同步套图状态到服务器失败: ${serializeError(error)}`,
+      message: `[psd-set] HTTP 同步套图状态失败: ${event.status} ${event.psdSetId} ${serializeError(error)}`,
     });
   }
 }
@@ -4972,8 +5505,16 @@ async function handlePsdSetProduction(
   // 记录制作开始时间
   const productionStartTime = Date.now();
   let productionEndMessage = "套图制作已结束";
+  let productionInfrastructureErrorMessage: string | null = null;
   const normalizedDispatchToken = String(dispatchToken || "").trim() || null;
   const normalizedProfileId = String(profileId || "").trim() || null;
+
+  psdSetConsoleDebug("production.start", {
+    psdSetId,
+    taskId: taskId || null,
+    dispatchToken: normalizedDispatchToken,
+    profileId: normalizedProfileId,
+  });
 
   // 设置制作状态为进行中
   isProductionInProgress = true;
@@ -5040,6 +5581,18 @@ async function handlePsdSetProduction(
     }
 
     const psdSet = psdSetResponse.data;
+    psdSetConsoleDebug("production.psdset-loaded", {
+      psdSetId,
+      taskId: taskId || null,
+      psdSetName: psdSet.name || null,
+      psdTemplateId: psdSet.psdTemplate?.id || null,
+      stickerCount: Array.isArray((psdSet as any).stickers)
+        ? (psdSet as any).stickers.length
+        : psdSet.sticker
+          ? 1
+          : 0,
+      responseStatus: psdSetResponse.status,
+    });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
       currentPsSetName: psdSet.name || null,
@@ -5146,7 +5699,8 @@ async function handlePsdSetProduction(
       progress: 2,
       total: 5,
     });
-    const isHttpUrl = (value: string) => /^https?:\/\//i.test(String(value || "").trim());
+    const isHttpUrl = (value: string) =>
+      /^https?:\/\//i.test(String(value || "").trim());
 
     const downloadSticker = async (url: string) => {
       emitter.emit("log", {
@@ -5194,7 +5748,9 @@ async function handlePsdSetProduction(
           level: "info",
           message: `[psd-set] 检查${label}是否已下载: ${source}`,
         });
-        const checkResult = await (window.api as any).checkFileDownloaded(source);
+        const checkResult = await (window.api as any).checkFileDownloaded(
+          source,
+        );
         if (checkResult.found && checkResult.filePath) {
           const filePath = checkResult.filePath as string;
           emitter.emit("log", {
@@ -5552,6 +6108,13 @@ async function handlePsdSetProduction(
       level: "info",
       message: `[psd-set] 文件下载完成，贴纸: ${stickerLocalPaths.join(", ")}, PSD: ${psdLocalPath}`,
     });
+    psdSetConsoleDebug("production.assets-ready", {
+      psdSetId,
+      taskId: taskId || null,
+      psdLocalPath,
+      psdSourceType,
+      stickerLocalPaths,
+    });
     writePsdSetFileLog("info", "资源文件准备完成", {
       psdSetId,
       commandId: taskId || null,
@@ -5587,6 +6150,12 @@ async function handlePsdSetProduction(
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] 正在调用PS服务处理PSD...`,
+    });
+    psdSetConsoleDebug("production.process-psd.begin", {
+      psdSetId,
+      taskId: taskId || null,
+      dispatchToken: normalizedDispatchToken,
+      profileId: normalizedProfileId,
     });
     emitter.emit("toast", {
       color: "info",
@@ -5724,7 +6293,9 @@ async function handlePsdSetProduction(
       if (typeof (window.api as any).checkLocalFileExists !== "function") {
         return;
       }
-      const checkResult = await (window.api as any).checkLocalFileExists(normalizedPath);
+      const checkResult = await (window.api as any).checkLocalFileExists(
+        normalizedPath,
+      );
       if (!checkResult?.exists || !checkResult?.isFile) {
         throw new Error(
           `${label}文件不存在或不可读取: ${normalizedPath} (${checkResult?.message || "未知原因"})`,
@@ -5742,7 +6313,10 @@ async function handlePsdSetProduction(
       });
     };
 
-    if (!Array.isArray(processPayload.smart_objects) || processPayload.smart_objects.length === 0) {
+    if (
+      !Array.isArray(processPayload.smart_objects) ||
+      processPayload.smart_objects.length === 0
+    ) {
       throw new Error("PSD处理配置缺少 smart_objects，无法替换智能对象");
     }
     let defaultBackgroundImagePath = String(
@@ -5753,8 +6327,9 @@ async function handlePsdSetProduction(
         defaultBackgroundImagePath,
         "默认智能对象背景",
       );
-      defaultBackgroundImagePath =
-        await processImageToPngIfNeeded(defaultBackgroundImagePath);
+      defaultBackgroundImagePath = await processImageToPngIfNeeded(
+        defaultBackgroundImagePath,
+      );
       processPayload.defaults = {
         ...(processPayload.defaults || {}),
         background_image_path: defaultBackgroundImagePath,
@@ -5829,6 +6404,14 @@ async function handlePsdSetProduction(
         2,
       )}`,
     });
+    psdSetConsoleDebug("production.process-psd.payload", {
+      psdSetId,
+      taskId: taskId || null,
+      processPayload: {
+        ...processPayload,
+        smart_objects: logSmartObjects,
+      },
+    });
     writePsdSetFileLog("info", "准备调用 Photoshop processPsd", {
       psdSetId,
       commandId: taskId || null,
@@ -5841,6 +6424,11 @@ async function handlePsdSetProduction(
     });
 
     const processResult = await photoshopApi.processPsd(processPayload);
+    psdSetConsoleDebug("production.process-psd.result", {
+      psdSetId,
+      taskId: taskId || null,
+      result: processResult,
+    });
 
     if (!processResult.success || !processResult.data?.export_files) {
       throw new Error(`PS处理失败: ${processResult.message || "未知错误"}`);
@@ -5865,6 +6453,12 @@ async function handlePsdSetProduction(
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] PSD处理完成，生成 ${successfulFiles.length} 个图片文件`,
+    });
+    psdSetConsoleDebug("production.process-psd.success", {
+      psdSetId,
+      taskId: taskId || null,
+      successfulFiles,
+      exportFiles: processResult.data.export_files,
     });
     writePsdSetFileLog("info", "Photoshop 处理完成", {
       psdSetId,
@@ -5899,6 +6493,15 @@ async function handlePsdSetProduction(
     emitter.emit("log", {
       level: "info",
       message: `[psd-set] 正在上传 ${successfulFiles.length} 个图片到COS...`,
+    });
+    psdSetConsoleDebug("production.upload.begin", {
+      psdSetId,
+      taskId: taskId || null,
+      fileCount: successfulFiles.length,
+      files: successfulFiles.map((file) => ({
+        export_file: file.export_file || null,
+        export_path: file.export_path || null,
+      })),
     });
     emitter.emit("toast", {
       color: "info",
@@ -5949,12 +6552,34 @@ async function handlePsdSetProduction(
         if (!uploadResult.ok || !uploadResult.url) {
           const errorMsg = `上传第 ${i + 1} 个文件失败: ${uploadResult.msg || "未知错误"}`;
           uploadErrors.push(errorMsg);
+          psdSetConsoleDebug(
+            "production.upload.file-failed",
+            {
+              psdSetId,
+              index: i + 1,
+              total: successfulFiles.length,
+              fileName,
+              exportPath: file.export_path,
+              cosKey,
+              result: uploadResult,
+            },
+            "error",
+          );
           emitter.emit("log", {
             level: "error",
             message: `[psd-set] ${errorMsg}`,
           });
         } else {
           uploadedImageUrls.push(uploadResult.url);
+          psdSetConsoleDebug("production.upload.file-success", {
+            psdSetId,
+            index: i + 1,
+            total: successfulFiles.length,
+            fileName,
+            exportPath: file.export_path,
+            cosKey,
+            url: uploadResult.url,
+          });
           emitter.emit("log", {
             level: "info",
             message: `[psd-set] 第 ${i + 1}/${successfulFiles.length} 个文件上传成功: ${uploadResult.url}`,
@@ -5963,6 +6588,17 @@ async function handlePsdSetProduction(
       } catch (error: any) {
         const errorMsg = `上传第 ${i + 1} 个文件时出错: ${error.message || String(error)}`;
         uploadErrors.push(errorMsg);
+        psdSetConsoleDebug(
+          "production.upload.file-error",
+          {
+            psdSetId,
+            index: i + 1,
+            total: successfulFiles.length,
+            exportPath: file.export_path,
+            error: serializeError(error),
+          },
+          "error",
+        );
         emitter.emit("log", {
           level: "error",
           message: `[psd-set] ${errorMsg}`,
@@ -5997,6 +6633,11 @@ async function handlePsdSetProduction(
       level: "info",
       message: `[psd-set] 图片上传完成，成功: ${uploadedImageUrls.length}/${successfulFiles.length} 个`,
     });
+    psdSetConsoleDebug("production.upload.done", {
+      psdSetId,
+      uploadedImageUrls,
+      uploadErrors,
+    });
 
     // 5. 更新套图的images字段和状态
     emitter.emit("psdSetProgress", {
@@ -6024,6 +6665,13 @@ async function handlePsdSetProduction(
       images: updatedImages,
       processingTime: processingTime,
       dispatchToken: normalizedDispatchToken || undefined,
+    });
+    psdSetConsoleDebug("production.update-images.done", {
+      psdSetId,
+      taskId: taskId || null,
+      imageCount: updatedImages.length,
+      processingTime,
+      dispatchToken: normalizedDispatchToken,
     });
 
     await syncPsdSetProductionStatus({
@@ -6056,6 +6704,14 @@ async function handlePsdSetProduction(
       level: "info",
       message: `[psd-set] 套图制作完成，已更新images字段，共 ${updatedImages.length} 张图片`,
     });
+    psdSetConsoleDebug("production.completed", {
+      psdSetId,
+      taskId: taskId || null,
+      dispatchToken: normalizedDispatchToken,
+      profileId: normalizedProfileId,
+      processingTime,
+      uploadedImageUrls,
+    });
     writePsdSetFileLog("info", "套图制作完成", {
       psdSetId,
       commandId: taskId || null,
@@ -6079,26 +6735,54 @@ async function handlePsdSetProduction(
       message: `套图制作完成！已生成并上传图片`,
     });
   } catch (error: any) {
+    const rawErrorMessage = normalizeErrorMessage(error, "制作失败");
+    psdSetConsoleDebug(
+      "production.failed",
+      {
+        psdSetId,
+        taskId: taskId || null,
+        dispatchToken: normalizedDispatchToken,
+        profileId: normalizedProfileId,
+        rawErrorMessage,
+        error: serializeError(error),
+      },
+      "error",
+    );
     emitter.emit("log", {
       level: "error",
-      message: `[psd-set] 套图制作失败: ${error.message || String(error)}`,
+      message: `[psd-set] 套图制作失败: ${rawErrorMessage}`,
     });
     writePsdSetFileLog("error", "套图制作失败", {
       psdSetId,
       commandId: taskId || null,
       dispatchToken: normalizedDispatchToken,
       profileId: normalizedProfileId,
-      errorMessage: error?.message || String(error),
+      errorMessage: rawErrorMessage,
+      errorCode: error?.code || null,
       errorName: error?.name || null,
       errorStack: error?.stack || null,
       errorDetail: error?.detail || null,
       errorStatus: error?.status || null,
     });
+    const infrastructureError = isPhotoshopInfrastructureError(error);
+    if (infrastructureError) {
+      productionInfrastructureErrorMessage = `PS 自动化连接异常：${rawErrorMessage || "网络连接错误"}`;
+      const runtimeErrorMessage = `${productionInfrastructureErrorMessage}，已暂停自动制作`;
+      await markPhotoshopRuntimeUnavailable(runtimeErrorMessage).catch(
+        (runtimeError) => {
+          emitter.emit("log", {
+            level: "warn",
+            message: `[psd-set] 标记 Photoshop runtime 不可用失败: ${serializeError(runtimeError)}`,
+          });
+        },
+      );
+    }
 
     await syncPsdSetProductionStatus({
       psdSetId,
       status: "failed",
-      message: error.message || "制作失败",
+      message:
+        productionInfrastructureErrorMessage || rawErrorMessage || "制作失败",
       dispatchToken: normalizedDispatchToken,
       profileId: normalizedProfileId,
     });
@@ -6107,26 +6791,36 @@ async function handlePsdSetProduction(
       currentPsSetId: psdSetId,
       profileId: normalizedProfileId,
       dispatchToken: normalizedDispatchToken,
-      currentStep: error.message || "制作失败",
+      currentStep:
+        productionInfrastructureErrorMessage || rawErrorMessage || "制作失败",
       progress: null,
-      lastError: error.message || "制作失败",
+      lastError:
+        productionInfrastructureErrorMessage || rawErrorMessage || "制作失败",
     });
 
     // 发送失败事件
     emitter.emit("psdSetProgressEnd", {
       psdSetId,
       success: false,
-      message: error.message || "制作失败",
+      message:
+        productionInfrastructureErrorMessage || rawErrorMessage || "制作失败",
     });
     emitter.emit("toast", {
       color: "error",
       icon: "mdi-alert-circle-outline",
-      message: `套图制作失败：${error.message || "制作失败"}`,
+      message: `套图制作失败：${productionInfrastructureErrorMessage || rawErrorMessage || "制作失败"}`,
     });
-    productionEndMessage = error.message || "套图制作失败";
+    productionEndMessage =
+      productionInfrastructureErrorMessage || rawErrorMessage || "套图制作失败";
 
     throw error;
   } finally {
+    psdSetConsoleDebug("production.finally.before-reset", {
+      psdSetId,
+      taskId: taskId || null,
+      productionEndMessage,
+      productionInfrastructureErrorMessage,
+    });
     // 清除制作状态
     isProductionInProgress = false;
     currentProductionTaskId = null;
@@ -6141,10 +6835,21 @@ async function handlePsdSetProduction(
       currentPsSetName: null,
       profileId: null,
       dispatchToken: null,
-      currentStep: null,
+      currentStep: productionInfrastructureErrorMessage,
+      ...(productionInfrastructureErrorMessage
+        ? { lastError: productionInfrastructureErrorMessage }
+        : {}),
     });
-    clearPhotoshopProductionBusyState(productionEndMessage);
-    void syncServiceRuntime("photoshop");
+    if (!productionInfrastructureErrorMessage) {
+      clearPhotoshopProductionBusyState(productionEndMessage);
+      void syncServiceRuntime("photoshop");
+    }
+    psdSetConsoleDebug("production.finally.after-reset", {
+      psdSetId,
+      taskId: taskId || null,
+      productionEndMessage,
+      productionInfrastructureErrorMessage,
+    });
   }
 }
 
@@ -6196,8 +6901,11 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
   try {
     const health = await photoshopApi.checkHealth();
     const psStatus = await photoshopApi.checkPhotoshopStatus(false);
+    photoshopRuntimeProbeFailureCount = 0;
     const photoshopRunning = !!psStatus.is_running;
-    const reportedPhotoshopReady = !!(psStatus.is_available && photoshopRunning);
+    const reportedPhotoshopReady = !!(
+      psStatus.is_available && photoshopRunning
+    );
     const photoshopReady = !!(
       reportedPhotoshopReady ||
       (isBusy && photoshopRunning && previousPhotoshopReady)
@@ -6253,10 +6961,64 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
       },
     };
   } catch (error: any) {
+    photoshopRuntimeProbeFailureCount += 1;
+    const errorMessage = normalizeErrorMessage(error, "PS 状态检测失败");
     const networkError =
+      isPhotoshopInfrastructureError(error) ||
       error?.code === "ECONNREFUSED" ||
       error?.message?.includes("Network Error") ||
       error?.message?.includes("fetch");
+
+    const canUsePreviousReadyState = !!(
+      networkError &&
+      previousConnected &&
+      previousPhotoshopReady &&
+      photoshopRuntimeProbeFailureCount < PHOTOSHOP_RUNTIME_FAILURE_GRACE_COUNT
+    );
+    if (canUsePreviousReadyState) {
+      const previousDetails =
+        previousRuntime?.details && typeof previousRuntime.details === "object"
+          ? previousRuntime.details
+          : {};
+      return {
+        label: "Photoshop",
+        connected: true,
+        available: true,
+        status: "connected",
+        state: isBusy ? "busy" : "idle",
+        busy: isBusy,
+        currentTaskId: currentProductionTaskId,
+        dispatchToken: currentProductionDispatchToken,
+        message: isBusy
+          ? "正在执行 Photoshop 任务，状态检测暂时未响应"
+          : "PS 服务已连接，状态检测短暂未响应",
+        version: previousRuntime?.version,
+        endpoint: previousRuntime?.endpoint || "http://localhost:1595",
+        lastCheckedAt,
+        lastError: null,
+        debugAvailable: true,
+        supportedCommands: previousRuntime?.supportedCommands || [
+          "refreshRuntime",
+          "health",
+          "startPhotoshop",
+          "stopPhotoshop",
+          "restartPhotoshop",
+          "processPsdSet",
+          "analyzePsd",
+          "runtimeAnalyzePsd",
+          "debugProcess",
+        ],
+        details: {
+          ...previousDetails,
+          serviceHealthy: false,
+          serviceStatus: "connected",
+          photoshopReady: true,
+          photoshopStatus: isBusy ? "busy" : "ready",
+          transientStatusError: errorMessage,
+          transientFailureCount: photoshopRuntimeProbeFailureCount,
+        },
+      };
+    }
 
     if (networkError && !(isBusy && previousConnected)) {
       return {
@@ -6296,27 +7058,26 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
         message: "正在执行 Photoshop 任务，状态检测暂时未响应",
         endpoint: "http://localhost:1595",
         lastCheckedAt,
-        lastError: error?.message || "PS 状态检测暂时未响应",
+        lastError: errorMessage,
         debugAvailable: true,
-        supportedCommands:
-          previousRuntime?.supportedCommands || [
-            "refreshRuntime",
-            "health",
-            "startPhotoshop",
-            "stopPhotoshop",
-            "restartPhotoshop",
-            "processPsdSet",
-            "analyzePsd",
-            "runtimeAnalyzePsd",
-            "debugProcess",
-          ],
+        supportedCommands: previousRuntime?.supportedCommands || [
+          "refreshRuntime",
+          "health",
+          "startPhotoshop",
+          "stopPhotoshop",
+          "restartPhotoshop",
+          "processPsdSet",
+          "analyzePsd",
+          "runtimeAnalyzePsd",
+          "debugProcess",
+        ],
         details: {
           ...(previousRuntime?.details || {}),
           serviceHealthy: false,
           serviceStatus: "connected",
           photoshopReady: previousPhotoshopReady,
           photoshopStatus: "busy",
-          transientStatusError: error?.message || "PS 状态检测暂时未响应",
+          transientStatusError: errorMessage,
         },
       };
     }
@@ -6329,10 +7090,10 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
       state: "error",
       busy: false,
       currentTaskId: null,
-      message: error?.message || "PS 处理服务异常",
+      message: errorMessage || "PS 处理服务异常",
       endpoint: "http://localhost:1595",
       lastCheckedAt,
-      lastError: error?.message || "PS 处理服务异常",
+      lastError: errorMessage || "PS 处理服务异常",
       debugAvailable: true,
       supportedCommands: ["refreshRuntime", "health"],
       details: {
@@ -6670,25 +7431,42 @@ function registerBuiltInLocalServices() {
             "",
         ).trim();
         const profileId =
-          String(
-            command.payload?.profileId ||
-              command.command?.payload?.profileId ||
-              "",
-          ).trim() || null;
+            String(
+              command.payload?.profileId ||
+                command.command?.payload?.profileId ||
+                "",
+            ).trim() || null;
+        psdSetConsoleDebug("service-command.processPsdSet.start", {
+          psdSetId: psdSetId || null,
+          commandId: command.commandId || null,
+          dispatchToken: dispatchToken || null,
+          profileId,
+        });
         if (!psdSetId) {
           throw new Error("缺少 psdSetId");
         }
         if (isProductionInProgress) {
           const incomingCommandId = String(command.commandId || "").trim();
           const currentTaskId = String(currentProductionTaskId || "").trim();
-          const currentPsdSetId = String(currentProductionPsdSetId || "").trim();
+          const currentPsdSetId = String(
+            currentProductionPsdSetId || "",
+          ).trim();
           const isSameProduction = !!(
             (currentPsdSetId && currentPsdSetId === psdSetId) ||
-            (incomingCommandId && currentTaskId && incomingCommandId === currentTaskId)
+            (incomingCommandId &&
+              currentTaskId &&
+              incomingCommandId === currentTaskId)
           );
 
           if (isSameProduction) {
             writePsdSetFileLog("info", "忽略重复套图制作指令", {
+              psdSetId,
+              commandId: incomingCommandId || null,
+              currentTaskId: currentTaskId || null,
+              dispatchToken: dispatchToken || null,
+              profileId,
+            });
+            psdSetConsoleDebug("service-command.processPsdSet.duplicate", {
               psdSetId,
               commandId: incomingCommandId || null,
               currentTaskId: currentTaskId || null,
@@ -6721,6 +7499,18 @@ function registerBuiltInLocalServices() {
               busyTaskId: currentTaskId || null,
             });
           }
+          psdSetConsoleDebug(
+            "service-command.processPsdSet.busy",
+            {
+              psdSetId,
+              commandId: command.commandId || null,
+              dispatchToken: dispatchToken || null,
+              profileId,
+              busyPsdSetId: currentPsdSetId || null,
+              busyTaskId: currentTaskId || null,
+            },
+            "warn",
+          );
 
           return {
             success: false,
@@ -6732,7 +7522,18 @@ function registerBuiltInLocalServices() {
             },
           };
         }
-        await handlePsdSetProduction(psdSetId, command.commandId, dispatchToken || null, profileId);
+        await handlePsdSetProduction(
+          psdSetId,
+          command.commandId,
+          dispatchToken || null,
+          profileId,
+        );
+        psdSetConsoleDebug("service-command.processPsdSet.done", {
+          psdSetId,
+          commandId: command.commandId || null,
+          dispatchToken: dispatchToken || null,
+          profileId,
+        });
         return {
           success: true,
           message: "套图制作完成",
@@ -7150,22 +7951,44 @@ function registerBuiltInLocalServices() {
           featureKey === "temu-api-action"
             ? String(
                 command.payload?.actionKey ||
-                  (command.payload?.payload as Record<string, unknown> | undefined)?.actionKey ||
+                  (
+                    command.payload?.payload as
+                      | Record<string, unknown>
+                      | undefined
+                  )?.actionKey ||
                   "",
               ).trim()
             : "";
         const featureSubActionKey =
           featureKey === "temu-api-action"
             ? String(
-                (command.payload?.payload as Record<string, unknown> | undefined)?.detailType ||
-                  ((command.payload?.payload as Record<string, unknown> | undefined)?.payload as Record<string, unknown> | undefined)?.detailType ||
+                (
+                  command.payload?.payload as
+                    | Record<string, unknown>
+                    | undefined
+                )?.detailType ||
+                  (
+                    (
+                      command.payload?.payload as
+                        | Record<string, unknown>
+                        | undefined
+                    )?.payload as Record<string, unknown> | undefined
+                  )?.detailType ||
                   "",
               ).trim()
             : "";
-        const featureSlotKey = [featureActionKey, featureSubActionKey].filter(Boolean).join(":");
+        const featureSlotKey = [featureActionKey, featureSubActionKey]
+          .filter(Boolean)
+          .join(":");
         const profileId =
           String(command.payload?.profileId || "").trim() || undefined;
-        if (isBrowserAutomationExecutionSlotRunning(profileId, featureKey, featureSlotKey)) {
+        if (
+          isBrowserAutomationExecutionSlotRunning(
+            profileId,
+            featureKey,
+            featureSlotKey,
+          )
+        ) {
           return {
             success: false,
             message: featureSlotKey
@@ -7187,7 +8010,9 @@ function registerBuiltInLocalServices() {
           featureKey,
           featureSlotKey,
         );
-        const featureTaskType = featureSlotKey ? `${featureKey}:${featureSlotKey}` : featureKey;
+        const featureTaskType = featureSlotKey
+          ? `${featureKey}:${featureSlotKey}`
+          : featureKey;
         upsertBrowserAutomationExecutionSlot(slotKey, {
           slotKey,
           running: true,
@@ -7210,7 +8035,9 @@ function registerBuiltInLocalServices() {
           lastError: null,
         });
 
-        let response: Awaited<ReturnType<typeof runUploaderBrowserSmallFeature>>;
+        let response: Awaited<
+          ReturnType<typeof runUploaderBrowserSmallFeature>
+        >;
         try {
           response = await runUploaderBrowserSmallFeature(
             featureKey,
@@ -7433,13 +8260,16 @@ function registerBuiltInLocalServices() {
         if (browserAutomationDispatchState.manualClosed) {
           const manualClosedMessage =
             "浏览器窗口已被用户手动关闭，自动任务已回退待调度";
-          logger.warn("[browser-automation] publish task skipped by manual close guard", {
-            taskId,
-            taskType,
-            queue,
-            profileId: profileId || null,
-            dispatchToken: dispatchToken || null,
-          });
+          logger.warn(
+            "[browser-automation] publish task skipped by manual close guard",
+            {
+              taskId,
+              taskType,
+              queue,
+              profileId: profileId || null,
+              dispatchToken: dispatchToken || null,
+            },
+          );
           await emitPublishTaskRuntime({
             taskId,
             taskType,
@@ -7746,7 +8576,9 @@ function registerBuiltInLocalServices() {
       available: !!getNativeApi()?.queryClientLog,
       status: getNativeApi()?.queryClientLog ? "connected" : "error",
       state: getNativeApi()?.queryClientLog ? "idle" : "error",
-      message: getNativeApi()?.queryClientLog ? "客户端日志可读取" : "客户端日志能力未注入",
+      message: getNativeApi()?.queryClientLog
+        ? "客户端日志可读取"
+        : "客户端日志能力未注入",
       supportedCommands: ["list", "tail", "search", "delete"],
       lastCheckedAt: new Date().toISOString(),
     }),
@@ -7756,7 +8588,10 @@ function registerBuiltInLocalServices() {
         throw new Error("当前环境未注入客户端日志能力");
       }
       const action = command.action || "tail";
-      const data = await nativeApi.queryClientLog(action, command.payload || {});
+      const data = await nativeApi.queryClientLog(
+        action,
+        command.payload || {},
+      );
       return {
         success: true,
         message: action === "delete" ? "客户端日志已删除" : "客户端日志已读取",
@@ -8065,4 +8900,401 @@ export function getCurrentPsdSetProductionTaskId() {
 
 export function getCurrentPsdSetProductionDispatchToken() {
   return currentProductionDispatchToken;
+}
+
+const PSD_SET_POLL_INTERVAL_MS = 4000;
+let psdSetPollTimer: ReturnType<typeof setInterval> | null = null;
+let psdSetPollInFlight = false;
+
+function pickFirstNonEmptyString(...values: unknown[]) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function normalizePsAutomationDispatchConfig(setting: unknown) {
+  const root =
+    setting && typeof setting === "object"
+      ? (setting as Record<string, any>)
+      : {};
+  const source =
+    root.psAutomation && typeof root.psAutomation === "object"
+      ? (root.psAutomation as Record<string, any>)
+      : root;
+  const binding =
+    source.autoDispatchBinding && typeof source.autoDispatchBinding === "object"
+      ? (source.autoDispatchBinding as Record<string, any>)
+      : {};
+  const autoSchedulingEnabled =
+    source.autoSchedulingEnabled === true || source.autoDispatchEnabled === true;
+  const autoDispatchMachineCode = pickFirstNonEmptyString(
+    source.autoDispatchMachineCode,
+    binding.machineCode,
+  );
+  const autoDispatchClientId = pickFirstNonEmptyString(
+    source.autoDispatchClientId,
+    binding.clientId,
+  );
+  const currentMachineCode = pickFirstNonEmptyString(identity.machineCode);
+  const currentClientId = pickFirstNonEmptyString(identity.clientId);
+  const targetMode = autoDispatchMachineCode
+    ? ("machineCode" as const)
+    : autoDispatchClientId
+      ? ("clientId" as const)
+      : null;
+  const targetValue =
+    targetMode === "machineCode"
+      ? autoDispatchMachineCode
+      : targetMode === "clientId"
+        ? autoDispatchClientId
+        : "";
+  const currentValue =
+    targetMode === "machineCode"
+      ? currentMachineCode
+      : targetMode === "clientId"
+        ? currentClientId
+        : "";
+  const isMatch =
+    autoSchedulingEnabled && !!targetValue && targetValue === currentValue;
+
+  return {
+    autoSchedulingEnabled,
+    autoDispatchMachineCode,
+    autoDispatchClientId,
+    currentMachineCode,
+    currentClientId,
+    targetMode,
+    targetValue,
+    currentValue,
+    isMatch,
+  };
+}
+
+function isPhotoshopReadyForPoll(): boolean {
+  const service = clientInfo.services?.["ps-automation"];
+  if (!service) return false;
+  const state = String(service?.state || service?.status || "").toLowerCase();
+  if (state === "error" || state === "offline" || state === "disconnected") {
+    return false;
+  }
+  return !!(
+    service?.available === true || service?.details?.photoshopReady === true
+  );
+}
+
+function hasRuntimeError(): boolean {
+  const service = clientInfo.services?.["ps-automation"];
+  if (!service) return false;
+  const lastError = String(service?.lastError || "").toLowerCase();
+  if (!lastError) return false;
+  return (
+    lastError.includes("ps 自动化连接异常") ||
+    lastError.includes("network error") ||
+    lastError.includes("econnrefused") ||
+    lastError.includes("econnreset") ||
+    lastError.includes("etimedout") ||
+    lastError.includes("timeout") ||
+    lastError.includes("socket hang up") ||
+    lastError.includes("ps 处理服务未启动")
+  );
+}
+
+// 检查是否应该尝试领取任务（不检查 PS 就绪状态）
+function canClaimNextTask(): boolean {
+  if (!identity.clientId) return false;
+  if (wsState.status !== "connected") return false;
+  // 明确检查 autoDispatchEnabled === true，null 或 false 都不允许
+  if (psAutomationControlState.autoDispatchEnabled !== true) return false;
+  if (isProductionInProgress) return false;
+  return true;
+}
+
+function canPollNextPsdSetTask(): boolean {
+  if (!canClaimNextTask()) return false;
+  if (!isPhotoshopReadyForPoll()) return false;
+  if (hasRuntimeError()) return false;
+  return true;
+}
+
+async function pollNextPsdSetTask() {
+  if (psdSetPollInFlight) {
+    psdSetConsoleDebug("poll.skip-in-flight", {
+      reason: "psdSetPollInFlight=true",
+    });
+    return;
+  }
+
+  psdSetPollInFlight = true;
+  psdSetConsoleDebug("poll.tick.start", {
+    canClaim: canClaimNextTask(),
+    canPoll: canPollNextPsdSetTask(),
+  });
+
+  // 只有满足基本条件才尝试领取任务
+  try {
+    if (!canClaimNextTask()) {
+      const reasons: string[] = [];
+      if (!identity.clientId) reasons.push("clientId为空");
+      if (wsState.status !== "connected")
+        reasons.push(`ws状态=${wsState.status}`);
+      if (psAutomationControlState.autoDispatchEnabled !== true)
+        reasons.push(
+          `autoDispatchEnabled=${psAutomationControlState.autoDispatchEnabled}`,
+        );
+      if (isProductionInProgress) reasons.push("制作进行中");
+      psdSetConsoleDebug(
+        "poll.skip-cannot-claim",
+        {
+          reasons,
+        },
+        "warn",
+      );
+      emitter.emit("log", {
+        level: "warn",
+        message: `[psd-set] 无法领取任务: ${reasons.join(", ")}`,
+      });
+      return;
+    }
+
+    // 如果 PS 未就绪，跳过本次轮询（但不停止定时器）
+    if (!isPhotoshopReadyForPoll()) {
+      psdSetConsoleDebug(
+        "poll.skip-ps-not-ready",
+        {
+          psService: clientInfo.services?.["ps-automation"] || null,
+        },
+        "warn",
+      );
+      emitter.emit("log", {
+        level: "warn",
+        message: `[psd-set] PS 未就绪，跳过本次轮询`,
+      });
+      return;
+    }
+    if (hasRuntimeError()) {
+      psdSetConsoleDebug(
+        "poll.skip-runtime-error",
+        {
+          psService: clientInfo.services?.["ps-automation"] || null,
+        },
+        "warn",
+      );
+      emitter.emit("log", {
+        level: "warn",
+        message: `[psd-set] 存在运行时错误，跳过本次轮询`,
+      });
+      return;
+    }
+
+    emitter.emit("log", {
+      level: "info",
+      message: `[psd-set] 开始领取任务...`,
+    });
+
+    const res = await stickerPsdSetApi.claimNext({
+      clientId: identity.clientId,
+      machineCode: identity.machineCode,
+    });
+
+    psdSetConsoleDebug("poll.claim.response", {
+      request: {
+        clientId: identity.clientId,
+        machineCode: identity.machineCode,
+      },
+      response: res,
+    });
+    emitter.emit("log", {
+      level: "info",
+      message: `[psd-set] 领取任务响应: success=${res?.success}, claimed=${res?.claimed}, reason=${res?.reason}, message=${res?.message}`,
+    });
+
+    if (!res?.success) {
+      return;
+    }
+
+    if (!res?.claimed) {
+      psdSetConsoleDebug("poll.claim.not-claimed", {
+        response: res,
+      });
+      return;
+    }
+
+    const task = res.data;
+    if (!task) {
+      psdSetConsoleDebug(
+        "poll.claim.missing-task",
+        {
+          response: res,
+        },
+        "warn",
+      );
+      return;
+    }
+
+    emitter.emit("log", {
+      level: "info",
+      message: `[psd-set] 自动领取任务成功: ${task.psdSetId}`,
+    });
+    psdSetConsoleDebug("poll.claim.accepted", {
+      task,
+    });
+
+    await handlePsdSetProduction(
+      task.psdSetId,
+      `client-claim-${task.psdSetId}`,
+      task.dispatchToken,
+      task.profileId || null,
+    );
+    psdSetConsoleDebug("poll.production.finished", {
+      psdSetId: task.psdSetId,
+      dispatchToken: task.dispatchToken || null,
+      profileId: task.profileId || null,
+    });
+  } catch (error) {
+    psdSetConsoleDebug(
+      "poll.error",
+      {
+        error: serializeError(error),
+      },
+      "error",
+    );
+    emitter.emit("log", {
+      level: "warn",
+      message: `[psd-set] 轮询领取任务失败: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  } finally {
+    psdSetPollInFlight = false;
+  }
+}
+
+// 从服务器查询自动制作配置状态
+async function fetchPsAutomationDispatchConfig() {
+  try {
+    psdSetConsoleDebug("config.fetch.start", {
+      identity: {
+        clientId: identity.clientId || null,
+        machineCode: identity.machineCode || null,
+      },
+    });
+    // 从用户设置中获取 psAutomation 配置
+    const setting = await getUserSetting("psAutomation");
+    const dispatchConfig = normalizePsAutomationDispatchConfig(setting);
+    psdSetConsoleDebug("config.fetch.result", {
+      setting,
+      dispatchConfig,
+    });
+
+    psAutomationControlState.autoDispatchEnabled = dispatchConfig.isMatch;
+    autoPsdBatchState.autoDispatchEnabled = dispatchConfig.isMatch;
+
+    // 持久化到本地存储
+    persistPsAutomationAutoDispatchEnabled(dispatchConfig.isMatch);
+
+    emitter.emit("log", {
+      level: "info",
+      message: `[psd-set] 配置同步: 开启=${dispatchConfig.autoSchedulingEnabled}, 目标机器码=${dispatchConfig.autoDispatchMachineCode || "-"}, 目标客户端=${dispatchConfig.autoDispatchClientId || "-"}, 当前机器码=${dispatchConfig.currentMachineCode}, 当前客户端=${dispatchConfig.currentClientId}, 匹配=${dispatchConfig.isMatch}`,
+    });
+    psdSetConsoleDebug("config.fetch.decision", {
+      autoSchedulingEnabled: dispatchConfig.autoSchedulingEnabled,
+      autoDispatchMachineCode: dispatchConfig.autoDispatchMachineCode,
+      autoDispatchClientId: dispatchConfig.autoDispatchClientId,
+      currentMachineCode: dispatchConfig.currentMachineCode,
+      currentClientId: dispatchConfig.currentClientId,
+      targetMode: dispatchConfig.targetMode,
+      targetValue: dispatchConfig.targetValue,
+      currentValue: dispatchConfig.currentValue,
+      isMatch: dispatchConfig.isMatch,
+    });
+
+    emitPsAutomationStatus();
+
+    // 根据状态启动或停止轮询
+    if (dispatchConfig.isMatch) {
+      startPsdSetPolling();
+    } else {
+      stopPsdSetPolling();
+    }
+  } catch (error) {
+    psAutomationControlState.autoDispatchEnabled = false;
+    autoPsdBatchState.autoDispatchEnabled = false;
+    persistPsAutomationAutoDispatchEnabled(false);
+    stopPsdSetPolling();
+    emitPsAutomationStatus();
+
+    emitter.emit("log", {
+      level: "warn",
+      message: `[psd-set] 获取配置失败: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    psdSetConsoleDebug(
+      "config.fetch.error",
+      {
+        error: serializeError(error),
+      },
+      "warn",
+    );
+  }
+}
+
+// 定时同步配置的间隔（30秒）
+const PS_CONFIG_SYNC_INTERVAL_MS = 30000;
+let psConfigSyncTimer: ReturnType<typeof setInterval> | null = null;
+
+function startPsConfigSync() {
+  if (psConfigSyncTimer) return;
+  // 立即执行一次
+  void fetchPsAutomationDispatchConfig();
+  // 定时执行
+  psConfigSyncTimer = setInterval(() => {
+    void fetchPsAutomationDispatchConfig();
+  }, PS_CONFIG_SYNC_INTERVAL_MS);
+}
+
+function stopPsConfigSync() {
+  if (psConfigSyncTimer) {
+    clearInterval(psConfigSyncTimer);
+    psConfigSyncTimer = null;
+  }
+}
+
+function startPsdSetPolling() {
+  if (psdSetPollTimer) {
+    psdSetConsoleDebug("poll.timer.already-running", {
+      intervalMs: PSD_SET_POLL_INTERVAL_MS,
+    });
+    return;
+  }
+  psdSetConsoleDebug("poll.timer.start", {
+    intervalMs: PSD_SET_POLL_INTERVAL_MS,
+  });
+  emitter.emit("log", {
+    level: "info",
+    message: `[psd-set] 启动轮询定时器，间隔 ${PSD_SET_POLL_INTERVAL_MS}ms`,
+  });
+  psdSetPollTimer = setInterval(() => {
+    void pollNextPsdSetTask();
+  }, PSD_SET_POLL_INTERVAL_MS);
+  void pollNextPsdSetTask();
+}
+
+export function stopPsdSetPolling() {
+  if (psdSetPollTimer) {
+    psdSetConsoleDebug("poll.timer.stop", {
+      intervalMs: PSD_SET_POLL_INTERVAL_MS,
+    });
+    clearInterval(psdSetPollTimer);
+    psdSetPollTimer = null;
+  } else {
+    psdSetConsoleDebug("poll.timer.stop-noop", {
+      intervalMs: PSD_SET_POLL_INTERVAL_MS,
+    });
+  }
+}
+
+export function getPsdSetPollingStatus() {
+  return {
+    running: !!psdSetPollTimer,
+    canPoll: canPollNextPsdSetTask(),
+  };
 }

@@ -4,10 +4,19 @@ export interface DashboardStatusCard {
   title: string;
   value: string;
   description: string;
-  details?: string[];
+  details?: DashboardStatusCardDetail[];
+  hoverTitle?: string;
+  hoverLines?: string[];
   icon: string;
   tone: "success" | "warning" | "danger" | "muted";
   actions?: DashboardStatusCardAction[];
+  highlight?: boolean;
+  busy?: boolean;
+}
+
+export interface DashboardStatusCardDetail {
+  text: string;
+  tone?: DashboardStatusCard["tone"];
 }
 
 export interface DashboardStatusCardAction {
@@ -37,9 +46,20 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
       v-for="item in props.statusCards"
       :key="item.key"
       class="dash-card"
-      :class="toneClass(item.tone)"
-      :title="item.description"
+      :class="[
+        toneClass(item.tone),
+        { 'is-highlight': item.highlight, 'is-busy': item.busy },
+      ]"
+      :title="item.hoverLines?.length ? undefined : item.description"
     >
+      <div
+        v-if="item.hoverLines?.length"
+        class="dash-card__hover"
+        role="tooltip"
+      >
+        <strong v-if="item.hoverTitle">{{ item.hoverTitle }}</strong>
+        <span v-for="line in item.hoverLines" :key="line">{{ line }}</span>
+      </div>
       <div class="dash-card__head">
         <span class="dash-card__dot" :class="toneClass(item.tone)"></span>
         <span class="dash-card__title">{{ item.title }}</span>
@@ -71,10 +91,11 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
       <div v-if="item.details?.length" class="dash-card__details">
         <span
           v-for="detail in item.details"
-          :key="detail"
+          :key="detail.text"
           class="dash-card__detail"
+          :class="detail.tone ? toneClass(detail.tone) : undefined"
         >
-          {{ detail }}
+          {{ detail.text }}
         </span>
       </div>
     </article>
@@ -89,6 +110,7 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
 }
 
 .dash-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -100,6 +122,104 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease;
+}
+
+.dash-card.is-highlight {
+  border-color: var(--theme-success);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--theme-success) 6%, transparent),
+    transparent 60%
+  );
+  box-shadow: 0 0 12px color-mix(in srgb, var(--theme-success) 15%, transparent);
+}
+
+.dash-card.is-highlight .dash-card__value {
+  color: var(--theme-success);
+}
+
+.dash-card.is-highlight .dash-card__description {
+  color: var(--theme-success);
+  font-weight: 600;
+}
+
+.dash-card.is-busy {
+  border-color: var(--theme-warning);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--theme-warning) 6%, transparent),
+    transparent 60%
+  );
+  box-shadow: 0 0 12px color-mix(in srgb, var(--theme-warning) 15%, transparent);
+}
+
+.dash-card.is-busy .dash-card__value {
+  color: var(--theme-warning);
+}
+
+.dash-card.is-busy .dash-card__description {
+  color: var(--theme-warning);
+  font-weight: 500;
+}
+
+.dash-card__hover {
+  position: absolute;
+  z-index: 20;
+  left: 10px;
+  right: 10px;
+  top: calc(100% + 2px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 8px 9px;
+  border: 1px solid var(--theme-border);
+  border-radius: 8px;
+  background: var(--theme-surface);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+  color: var(--theme-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: auto;
+  user-select: text;
+  cursor: text;
+  visibility: hidden;
+  transform: translateY(-3px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease,
+    visibility 0.14s ease;
+}
+
+.dash-card__hover::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
+}
+
+.dash-card__hover strong {
+  color: var(--theme-text);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.dash-card__hover span {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.dash-card:hover {
+  z-index: 30;
+}
+
+.dash-card:hover .dash-card__hover {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
 }
 
 .dash-card__head {
@@ -185,6 +305,24 @@ function toneClass(tone: DashboardStatusCard["tone"]) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.dash-card__detail.is-success {
+  border-color: color-mix(in srgb, var(--theme-success) 42%, var(--theme-border));
+  background: color-mix(in srgb, var(--theme-success) 10%, var(--theme-surface-muted));
+  color: var(--theme-success);
+}
+
+.dash-card__detail.is-warning {
+  border-color: color-mix(in srgb, var(--theme-warning) 42%, var(--theme-border));
+  background: color-mix(in srgb, var(--theme-warning) 10%, var(--theme-surface-muted));
+  color: var(--theme-warning);
+}
+
+.dash-card__detail.is-danger {
+  border-color: color-mix(in srgb, var(--theme-danger) 42%, var(--theme-border));
+  background: color-mix(in srgb, var(--theme-danger) 10%, var(--theme-surface-muted));
+  color: var(--theme-danger);
 }
 
 .dash-card__actions {

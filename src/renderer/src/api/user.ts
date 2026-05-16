@@ -100,11 +100,39 @@ export function getPlatformSessions(data?: UserPlatformSessionsQuery) {
   });
 }
 
-export function updatePlatformSessions(data: UserPlatformSessionsUpdatePayload) {
+export function updatePlatformSessions(
+  data: UserPlatformSessionsUpdatePayload,
+) {
   return request.post<Record<string, any>>({
     url: "/user/updatePlatformSessions",
     data,
   });
+}
+
+function unwrapApiData<T>(response: any, fallback: T): T {
+  if (
+    response &&
+    typeof response === "object" &&
+    "data" in response &&
+    ("code" in response || "status" in response || "message" in response)
+  ) {
+    return (response.data ?? fallback) as T;
+  }
+
+  return (response ?? fallback) as T;
+}
+
+// 获取用户设置
+export function getUserSetting(key?: string | { key?: string }) {
+  const payload =
+    typeof key === "string" ? { key } : key || {};
+
+  return request
+    .post<Record<string, any>>({
+    url: "/user/getSetting",
+    data: payload,
+  })
+    .then((response) => unwrapApiData<Record<string, any>>(response, {}));
 }
 
 // 社交媒体登录状态检测
