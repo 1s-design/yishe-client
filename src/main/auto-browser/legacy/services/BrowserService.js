@@ -84,6 +84,9 @@ let lastConnectError = null;
 let currentBrowserOptions = {};
 let currentBrowserOpenedAt = null;
 let hasLoggedLegacyModeFallback = false;
+let isClosingBrowser = false;
+const lifecycleBoundBrowsers = new WeakSet();
+const lifecycleBoundContexts = new WeakSet();
 // 浏览器状态管理
 let browserStatus = {
     isInitialized: false,
@@ -535,10 +538,65 @@ async function killPids(pids = []) {
 
 /** 是否为「浏览器/上下文已关闭」类错误（用户关闭了由本服务启动的窗口后仍用旧引用会报此错） */
 function isBrowserClosedError(err) {
-    const msg = (err && err.message) ? String(err.message) : '';
+    const msg = (err && err.message) ? String(err.message) : String(err || '');
     return /Target page, context or browser has been closed/i.test(msg) ||
         /Browser has been closed/i.test(msg) ||
-        /Context has been closed/i.test(msg);
+        /Context has been closed/i.test(msg) ||
+        /browserContext\.newPage/i.test(msg);
+}
+
+function markBrowserConnectionClosed(source, reason, refs = {}) {
+    if (isClosingBrowser) {
+        return;
+    }
+
+    const browserRef = refs.browser || null;
+    const contextRef = refs.context || null;
+    const hasBrowserRef = !!browserRef;
+    const hasContextRef = !!contextRef;
+    const browserMatches = hasBrowserRef ? browserInstance === browserRef : !hasContextRef;
+    const contextMatches = hasContextRef ? contextInstance === contextRef : !hasBrowserRef;
+
+    if (!browserMatches && !contextMatches) {
+        return;
+    }
+
+    const message = reason?.message || String(reason || source || '浏览器连接已关闭');
+    logger.warn(`浏览器连接已失效(${source}): ${message}`);
+
+    if (browserMatches) {
+        browserInstance = null;
+        contextInstance = null;
+    } else if (contextMatches) {
+        contextInstance = null;
+    }
+
+    connectPromise = null;
+    browserStatus.isInitialized = false;
+    browserStatus.isConnected = false;
+    browserStatus.pageCount = 0;
+    currentBrowserOpenedAt = null;
+    lastConnectError = message;
+}
+
+function bindBrowserLifecycle(browser, context) {
+    if (browser && typeof browser.on === 'function' && !lifecycleBoundBrowsers.has(browser)) {
+        lifecycleBoundBrowsers.add(browser);
+        browser.on('disconnected', () => {
+            markBrowserConnectionClosed('browser.disconnected', '浏览器连接断开', {
+                browser
+            });
+        });
+    }
+
+    if (context && typeof context.on === 'function' && !lifecycleBoundContexts.has(context)) {
+        lifecycleBoundContexts.add(context);
+        context.on('close', () => {
+            markBrowserConnectionClosed('context.close', '浏览器上下文已关闭', {
+                context
+            });
+        });
+    }
 }
 
 /**
@@ -583,10 +641,45 @@ async function newPageWithReconnect(options = {}, pageOptions = {}) {
         }
         await getOrCreateBrowser(currentBrowserOptions);
         if (!contextInstance) throw new Error('重新连接后仍无法获取浏览器上下文');
-        const page = await contextInstance.newPage(pageOptions);
+        const finalPageOptions = withDefaultActivatedPageOptions(pageOptions);
+        const page = await contextInstance.newPage(finalPageOptions);
         await installBrowserPageRuntimeForPage(page, buildBrowserRuntimePayload());
         return page;
     }
+}
+
+async function recoverNewPageFromPatchedContext(error, pageOptions = {}) {
+    if (!isBrowserClosedError(error)) {
+        throw error;
+    }
+
+    logger.warn('检测到浏览器上下文已关闭，统一清理后重新创建页面:', error?.message || error);
+    const staleBrowser = browserInstance;
+    const staleContext = contextInstance;
+    contextInstance = null;
+    browserInstance = null;
+    connectPromise = null;
+    browserStatus.isInitialized = false;
+    browserStatus.isConnected = false;
+    browserStatus.pageCount = 0;
+    currentBrowserOpenedAt = null;
+    try { await staleContext?.close?.(); } catch {}
+    try { await staleBrowser?.close?.(); } catch {
+      try { staleBrowser?.disconnect?.(); } catch {}
+    }
+
+    await getOrCreateBrowser(currentBrowserOptions);
+    if (!contextInstance) {
+        throw new Error('重新连接后仍无法获取浏览器上下文');
+    }
+
+    const finalPageOptions = withDefaultActivatedPageOptions({
+        ...pageOptions,
+        __yisheSkipNewPageRecovery: true
+    });
+    const page = await contextInstance.newPage(finalPageOptions);
+    await installBrowserPageRuntimeForPage(page, buildBrowserRuntimePayload());
+    return page;
 }
 
 function tryListProfiles(userDataDir) {
@@ -1207,15 +1300,33 @@ export async function getBrowserStatus(options = {}) {
 }
 
 function getPagesInternal() {
-    return contextInstance ? contextInstance.pages() : (browserInstance ? browserInstance.pages() : []);
+    if (contextInstance && typeof contextInstance.pages === 'function') {
+        return contextInstance.pages();
+    }
+
+    if (browserInstance && typeof browserInstance.contexts === 'function') {
+        return browserInstance.contexts().flatMap((context) => {
+            try {
+                return typeof context?.pages === 'function' ? context.pages() : [];
+            } catch {
+                return [];
+            }
+        });
+    }
+
+    return [];
 }
 
 async function installBrowserContextPatches(context) {
     if (!context) return;
 
+    bindBrowserLifecycle(browserInstance, context);
     patchContextNewPage(context, {
         background: true,
-        headless: isHeadlessConnection()
+        headless: isHeadlessConnection(),
+        onClosedNewPageError: async ({ error, pageOptions }) => (
+            recoverNewPageFromPatchedContext(error, pageOptions)
+        )
     });
     await installBrowserPageRuntime(context, () => buildBrowserRuntimePayload(), {
         logger,
@@ -1437,6 +1548,7 @@ export async function closeBrowser(options = {}) {
         await closeManagedProfileBrowser();
     }
 
+    isClosingBrowser = true;
     try {
         if (contextInstance) {
             try {
@@ -1470,6 +1582,8 @@ export async function closeBrowser(options = {}) {
         currentBrowserOpenedAt = null;
     } catch (error) {
         logger.error('清理浏览器资源时出错:', error);
+    } finally {
+        isClosingBrowser = false;
     }
 }
 

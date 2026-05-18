@@ -26,6 +26,21 @@ function mergePageOptions(defaultOptions = {}, pageOptions = {}) {
     };
 }
 
+function isBrowserClosedError(error) {
+    const message = error?.message ? String(error.message) : String(error || '');
+    return /Target page, context or browser has been closed/i.test(message) ||
+        /Browser has been closed/i.test(message) ||
+        /Context has been closed/i.test(message) ||
+        /browserContext\.newPage/i.test(message);
+}
+
+function sanitizePageOptions(options = {}) {
+    const sanitized = { ...(isPlainObject(options) ? options : {}) };
+    delete sanitized.onClosedNewPageError;
+    delete sanitized.__yisheSkipNewPageRecovery;
+    return sanitized;
+}
+
 export function withDefaultActivatedPageOptions(pageOptions = {}) {
     const finalOptions = mergePageOptions({}, pageOptions);
     const hasActivate = Object.prototype.hasOwnProperty.call(finalOptions, 'activate');
@@ -283,7 +298,25 @@ export function patchContextNewPage(context, defaultOptions = {}) {
     getOriginalNewPage(context);
     context.newPage = async (pageOptions = {}) => {
         const finalOptions = mergePageOptions(defaultOptions, pageOptions);
-        return await createContextPage(context, finalOptions);
+        try {
+            return await createContextPage(context, sanitizePageOptions(finalOptions));
+        } catch (error) {
+            const recoveryHandler = finalOptions.onClosedNewPageError;
+            if (
+                finalOptions.__yisheSkipNewPageRecovery === true ||
+                !isBrowserClosedError(error) ||
+                typeof recoveryHandler !== 'function'
+            ) {
+                throw error;
+            }
+
+            logger.warn(`创建浏览器页面时发现上下文已失效，准备执行统一恢复: ${error?.message || error}`);
+            return await recoveryHandler({
+                context,
+                error,
+                pageOptions: sanitizePageOptions(finalOptions)
+            });
+        }
     };
     patchedContexts.add(context);
     return context;

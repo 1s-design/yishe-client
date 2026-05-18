@@ -30,6 +30,8 @@ import http from "http";
 import https from "https";
 
 const sessions = new Map();
+const lifecycleBoundBrowsers = new WeakSet();
+const lifecycleBoundContexts = new WeakSet();
 const CONNECT_PROMISE_WAIT_TIMEOUT_MS = 45_000;
 const CONNECT_TOTAL_TIMEOUT_MS = 120_000;
 const POST_CONNECT_STEP_TIMEOUT_MS = 10_000;
@@ -212,6 +214,117 @@ function wrapBrowserHandle(profileId) {
     profileId,
     newPage: async (pageOptions = {}) => createProfileBrowserPage(profileId, pageOptions),
   };
+}
+
+function isBrowserClosedError(error) {
+  const message = error?.message ? String(error.message) : String(error || "");
+  return (
+    /Target page, context or browser has been closed/i.test(message) ||
+    /Browser has been closed/i.test(message) ||
+    /Context has been closed/i.test(message) ||
+    /browserContext\.newPage/i.test(message)
+  );
+}
+
+function markSessionConnectionClosed(session, source, reason, refs = {}) {
+  if (!session || session.isClosing) {
+    return;
+  }
+
+  const browserRef = refs.browser || null;
+  const contextRef = refs.context || null;
+  const hasBrowserRef = !!browserRef;
+  const hasContextRef = !!contextRef;
+  const browserMatches = hasBrowserRef ? session.browserInstance === browserRef : !hasContextRef;
+  const contextMatches = hasContextRef ? session.contextInstance === contextRef : !hasBrowserRef;
+
+  if (!browserMatches && !contextMatches) {
+    return;
+  }
+
+  const message = reason?.message || String(reason || source || "浏览器连接已关闭");
+  logger.warn(`环境 ${session.profileId} 浏览器连接已失效(${source}): ${message}`);
+
+  if (browserMatches) {
+    session.browserInstance = null;
+    session.contextInstance = null;
+    session.chromePid = null;
+  } else if (contextMatches) {
+    session.contextInstance = null;
+  }
+
+  session.connectPromise = null;
+  session.connectStartedAt = null;
+  session.browserStatus.isInitialized = false;
+  session.browserStatus.isConnected = false;
+  session.browserStatus.pageCount = 0;
+  session.lastConnectError = message;
+  session.updatedAt = new Date().toISOString();
+}
+
+function bindSessionLifecycle(session) {
+  if (!session) {
+    return;
+  }
+
+  const browser = session.browserInstance;
+  if (browser && typeof browser.on === "function" && !lifecycleBoundBrowsers.has(browser)) {
+    lifecycleBoundBrowsers.add(browser);
+    browser.on("disconnected", () => {
+      markSessionConnectionClosed(session, "browser.disconnected", "浏览器连接断开", {
+        browser,
+      });
+    });
+  }
+
+  const context = session.contextInstance;
+  if (context && typeof context.on === "function" && !lifecycleBoundContexts.has(context)) {
+    lifecycleBoundContexts.add(context);
+    context.on("close", () => {
+      markSessionConnectionClosed(session, "context.close", "浏览器上下文已关闭", {
+        context,
+      });
+    });
+  }
+}
+
+async function recoverSessionNewPage(session, profileId, error, pageOptions = {}) {
+  if (!isBrowserClosedError(error)) {
+    throw error;
+  }
+
+  const targetProfile = resolveProfile(profileId || session?.profileId);
+  const targetSession = session || getSession(targetProfile.id);
+  if (targetSession) {
+    targetSession.lastConnectError = error?.message || String(error);
+    logger.warn(
+      `环境 ${targetProfile.id} 浏览器上下文已关闭，统一清理后重新创建页面: ${error?.message || error}`,
+    );
+    await closeSession(targetSession, {
+      preserveError: true,
+      killProcess: true,
+    }).catch((closeError) => {
+      logger.warn(`环境 ${targetProfile.id} 清理失效浏览器失败（继续重试）:`, closeError?.message || closeError);
+    });
+  }
+
+  await getOrCreateManagedProfileBrowser({ profileId: targetProfile.id });
+  const nextSession = getSession(targetProfile.id);
+  if (!nextSession?.contextInstance) {
+    throw new Error("浏览器上下文不可用");
+  }
+
+  bindSessionLifecycle(nextSession);
+  const finalPageOptions = withDefaultActivatedPageOptions({
+    ...pageOptions,
+    __yisheSkipNewPageRecovery: true,
+  });
+  const page = await nextSession.contextInstance.newPage(finalPageOptions);
+  await installBrowserPageRuntimeForPage(page, buildProfileRuntimePayload(targetProfile));
+  nextSession.browserStatus.lastActivity = Date.now();
+  nextSession.browserStatus.pageCount = nextSession.contextInstance.pages().length;
+  nextSession.updatedAt = new Date().toISOString();
+  return page;
 }
 
 function buildProfileRuntimePayload(profile) {
@@ -877,6 +990,7 @@ async function closeSession(session, { preserveError = false, killProcess = true
   const chromePid = session.chromePid;
   const debugPort = session.debugPort;
 
+  session.isClosing = true;
   try {
     if (browserInstance) {
       try {
@@ -897,6 +1011,7 @@ async function closeSession(session, { preserveError = false, killProcess = true
         await killPortProcesses(debugPort).catch(() => {});
       }
     }
+    session.isClosing = false;
     resetSession(session, { preserveError });
   }
 }
@@ -966,9 +1081,13 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
   session.currentBrowserOptions = nextOptions;
 
   if (await isSessionAvailable(session)) {
+    bindSessionLifecycle(session);
     patchContextNewPage(session.contextInstance, {
       background: true,
       headless,
+      onClosedNewPageError: async ({ error, pageOptions }) => (
+        recoverSessionNewPage(session, profile.id, error, pageOptions)
+      ),
     });
     if (!skipWindowMaximize) {
       await withTimeout(
@@ -1102,9 +1221,13 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
       }
 
       session.chromePid = session.chromePid || (await resolveListeningPid(debugPort));
+      bindSessionLifecycle(session);
       patchContextNewPage(session.contextInstance, {
         background: true,
         headless,
+        onClosedNewPageError: async ({ error, pageOptions }) => (
+          recoverSessionNewPage(session, profile.id, error, pageOptions)
+        ),
       });
       if (!skipWindowMaximize) {
         await withTimeout(
@@ -1230,18 +1353,50 @@ export async function getManagedProfileBrowserPage(profileId, pageIndex = 0) {
 
 export async function createProfileBrowserPage(profileId, pageOptions = {}) {
   const targetProfile = resolveProfile(profileId);
-  await getOrCreateManagedProfileBrowser({ profileId: targetProfile.id });
-  const session = getSession(targetProfile.id);
-  if (!session?.contextInstance) {
-    throw new Error("浏览器上下文不可用");
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let session = null;
+    try {
+      await getOrCreateManagedProfileBrowser({ profileId: targetProfile.id });
+      session = getSession(targetProfile.id);
+      if (!session?.contextInstance) {
+        throw new Error("浏览器上下文不可用");
+      }
+
+      bindSessionLifecycle(session);
+      const finalPageOptions = withDefaultActivatedPageOptions(pageOptions);
+      const page = await session.contextInstance.newPage(finalPageOptions);
+      await installBrowserPageRuntimeForPage(page, buildProfileRuntimePayload(targetProfile));
+      session.browserStatus.lastActivity = Date.now();
+      session.browserStatus.pageCount = session.contextInstance.pages().length;
+      session.updatedAt = new Date().toISOString();
+      return page;
+    } catch (error) {
+      lastError = error;
+      if (!isBrowserClosedError(error) || attempt > 0) {
+        throw error;
+      }
+
+      session = session || getSession(targetProfile.id);
+      if (session) {
+        session.lastConnectError = error?.message || String(error);
+        logger.warn(
+          `环境 ${targetProfile.id} 创建页面时检测到旧浏览器/上下文已关闭，清理后重试一次: ${
+            error?.message || error
+          }`,
+        );
+        await closeSession(session, {
+          preserveError: true,
+          killProcess: true,
+        }).catch((closeError) => {
+          logger.warn(`环境 ${targetProfile.id} 清理失效浏览器失败（继续重试）:`, closeError?.message || closeError);
+        });
+      }
+    }
   }
-  const finalPageOptions = withDefaultActivatedPageOptions(pageOptions);
-  const page = await session.contextInstance.newPage(finalPageOptions);
-  await installBrowserPageRuntimeForPage(page, buildProfileRuntimePayload(targetProfile));
-  session.browserStatus.lastActivity = Date.now();
-  session.browserStatus.pageCount = session.contextInstance.pages().length;
-  session.updatedAt = new Date().toISOString();
-  return page;
+
+  throw lastError || new Error("创建浏览器页面失败");
 }
 
 export function updateManagedProfileBrowserActivity(profileId) {
