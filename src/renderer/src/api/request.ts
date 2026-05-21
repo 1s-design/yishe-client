@@ -140,16 +140,6 @@ const service = axios.create({
   timeout: 10000
 })
 
-function isAuthExpiredResponse(error: any) {
-  if (error?.response?.status !== 401) {
-    return false
-  }
-  const message = String(error?.response?.data?.message || error?.response?.data?.error || '')
-  if (!message) {
-    return true
-  }
-  return /token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(message)
-}
 
 // 导出更新baseURL的方法（用于服务切换）
 export function updateApiBaseUrl(newBaseUrl: string) {
@@ -223,20 +213,32 @@ service.interceptors.response.use(
     return response
   },
   async error => {
-    // 如果 token 失效，清除本地 token 并触发重新登录
-    // 但登录接口的 401 不应该触发清除 token（可能是账号密码错误）
-    if (isAuthExpiredResponse(error) && !error.config?.url?.includes('/auth/login')) {
-      try {
-        await fetch(`${LOCAL_API_BASE}/logoutToken`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
+    if (!error.config?.url?.includes('/auth/login')) {
+      // 先区分是网络不可达还是 API 401
+      if (!error.response) {
+        // 网络不可达（超时、断网）→ 不登出，只报错
+        console.warn('[Request] 网络不可达:', error.config?.url, error.message)
+        return Promise.reject(error)
+      }
+
+      // API 返回了 401
+      if (error.response.status === 401) {
+        const msg = String(error.response?.data?.message || error.response?.data?.error || '')
+        // 只有明确提示 token 过期/失效才登出
+        if (/token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(msg)) {
+          try {
+            await fetch(`${LOCAL_API_BASE}/logoutToken`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' }
+            })
+            window.dispatchEvent(new CustomEvent('auth:logout'))
+          } catch (e) {
+            console.error('清除 token 失败:', e)
           }
-        })
-        // 触发登录事件
-        window.dispatchEvent(new CustomEvent('auth:logout'))
-      } catch (e) {
-        console.error('清除 token 失败:', e)
+        } else if (!msg) {
+          // 401 无消息体 → 可能是服务重启/维护，不登出
+          console.warn('[Request] 收到空消息 401，可能是服务维护中，不登出:', error.config?.url)
+        }
       }
     }
     return Promise.reject(error)

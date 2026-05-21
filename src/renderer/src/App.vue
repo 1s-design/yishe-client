@@ -528,7 +528,11 @@ async function checkAuthAndGetUserInfo() {
     userInfo.value = info;
     isLoggedIn.value = true;
   } catch (error: any) {
-    if (error?.response?.status === 401) {
+    const status = error?.response?.status;
+    const msg = String(error?.response?.data?.message || error?.response?.data?.error || '');
+    const isAuthExpired = status === 401 && /token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(msg);
+
+    if (isAuthExpired) {
       isLoggedIn.value = false;
       userInfo.value = null;
       try {

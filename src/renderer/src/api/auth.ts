@@ -63,10 +63,14 @@ const validateToken = async (): Promise<boolean> => {
     await getUserInfo();
     return true;
   } catch (error: any) {
-    // 如果是 401 错误，说明 token 无效
     if (error?.response?.status === 401) {
-      console.log("Token 验证失败：401 Unauthorized");
-      return false;
+      const msg = String(error?.response?.data?.message || error?.response?.data?.error || '');
+      if (/token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(msg)) {
+        console.log("Token 验证失败：token 已过期");
+        return false;
+      }
+      console.warn("Token 验证返回 401 但无明确过期信息，保留 token:", msg || '(空消息)');
+      throw error;
     }
     // 网络、数据库、Redis 等服务端临时异常不能当成 token 无效，否则会误清登录态。
     console.warn("Token 验证暂时不可用，保留本地 token:", error);
