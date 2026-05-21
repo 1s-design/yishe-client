@@ -1,24 +1,24 @@
-import { getOrCreateBrowser } from '../../services/BrowserService.js';
-import { logger } from '../../utils/logger.js';
+import { getOrCreateBrowser } from "../../services/BrowserService.js";
+import { logger } from "../../utils/logger.js";
 import {
   createTemuLiveRequestCapture,
-  resolveTemuRealtimeSessionContext
-} from './imageUpload.js';
-import { uploadTemuRealPictureImagesToCloud } from './realPictureImageUpload.js';
+  resolveTemuRealtimeSessionContext,
+} from "./imageUpload.js";
+import { uploadTemuRealPictureImagesToCloud } from "./realPictureImageUpload.js";
 
 const TEMU_GOODS_STATUS_LABEL_MAP = {
-  1: '在售中',
-  2: '未发布到站点',
-  3: '已下架',
-  4: '已终止',
-  5: '已删除'
+  1: "在售中",
+  2: "未发布到站点",
+  3: "已下架",
+  4: "已终止",
+  5: "已删除",
 };
 
 const REGION_ORIGIN_MAP = {
-  global: 'https://agentseller.temu.com',
-  seller: 'https://agentseller.temu.com',
-  us: 'https://agentseller-us.temu.com',
-  eu: 'https://agentseller-eu.temu.com'
+  global: "https://agentseller.temu.com",
+  seller: "https://agentseller.temu.com",
+  us: "https://agentseller-us.temu.com",
+  eu: "https://agentseller-eu.temu.com",
 };
 const TEMU_STORED_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
 const TEMU_API_REQUEST_TIMEOUT_MS = 45 * 1000;
@@ -26,7 +26,9 @@ const temuStoredSessionCache = new Map();
 let temuApiRequestSeq = 0;
 
 function asPlainObject(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
 }
 
 function toNumberArray(value) {
@@ -37,59 +39,71 @@ function toNumberArray(value) {
 
 function toStringArray(value) {
   return Array.isArray(value)
-    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean)
     : [];
 }
 
 function normalizeRegion(region) {
-  return REGION_ORIGIN_MAP[region] ? region : 'global';
+  return REGION_ORIGIN_MAP[region] ? region : "global";
 }
 
 function normalizeText(value) {
-  return String(value || '').trim();
+  return String(value || "").trim();
 }
 
 function buildCookieHeader(cookies = {}) {
   return Object.entries(asPlainObject(cookies))
-    .filter(([name, value]) => normalizeText(name) && value !== undefined && value !== null)
+    .filter(
+      ([name, value]) =>
+        normalizeText(name) && value !== undefined && value !== null,
+    )
     .map(([name, value]) => `${name}=${value}`)
-    .join('; ');
+    .join("; ");
 }
 
-function pickTemuSessionCookies(sessionContext = {}, region = 'global') {
+function pickTemuSessionCookies(sessionContext = {}, region = "global") {
   const normalizedRegion = normalizeRegion(region);
-  const regionCookies = normalizedRegion === 'us'
-    ? sessionContext.cookies_us
-    : normalizedRegion === 'eu'
-      ? sessionContext.cookies_eu
-      : sessionContext.cookies_global;
+  const regionCookies =
+    normalizedRegion === "us"
+      ? sessionContext.cookies_us
+      : normalizedRegion === "eu"
+        ? sessionContext.cookies_eu
+        : sessionContext.cookies_global;
   const candidates = [
     regionCookies,
     sessionContext.cookies_global,
-    sessionContext.cookies
+    sessionContext.cookies,
   ];
-  return candidates.find((item) => Object.keys(asPlainObject(item)).length) || {};
+  return (
+    candidates.find((item) => Object.keys(asPlainObject(item)).length) || {}
+  );
 }
 
-function pickTemuSessionHeaders(sessionContext = {}, region = 'global') {
+function pickTemuSessionHeaders(sessionContext = {}, region = "global") {
   const normalizedRegion = normalizeRegion(region);
   const regionHeaders = asPlainObject(sessionContext.regionHeaders);
   const candidates = [
-    normalizedRegion === 'us' ? regionHeaders.us : normalizedRegion === 'eu' ? regionHeaders.eu : regionHeaders.global,
+    normalizedRegion === "us"
+      ? regionHeaders.us
+      : normalizedRegion === "eu"
+        ? regionHeaders.eu
+        : regionHeaders.global,
     sessionContext.headersTemplate,
-    sessionContext.headers
+    sessionContext.headers,
   ];
-  return candidates.find((item) => Object.keys(asPlainObject(item)).length) || {};
+  return (
+    candidates.find((item) => Object.keys(asPlainObject(item)).length) || {}
+  );
 }
 
-async function getCachedTemuSessionContext(profileId = '', options = {}) {
-  const cacheKey = normalizeText(profileId) || '__default__';
+async function getCachedTemuSessionContext(profileId = "", options = {}) {
+  const cacheKey = normalizeText(profileId) || "__default__";
   const cached = temuStoredSessionCache.get(cacheKey);
   const now = Date.now();
   if (!options.forceRefresh && cached && cached.expiresAt > now) {
     return {
       sessionContext: cached.sessionContext,
-      cacheHit: true
+      cacheHit: true,
     };
   }
 
@@ -97,38 +111,41 @@ async function getCachedTemuSessionContext(profileId = '', options = {}) {
   if (sessionContext?.success) {
     temuStoredSessionCache.set(cacheKey, {
       sessionContext,
-      expiresAt: now + TEMU_STORED_SESSION_CACHE_TTL_MS
+      expiresAt: now + TEMU_STORED_SESSION_CACHE_TTL_MS,
     });
   } else {
     temuStoredSessionCache.delete(cacheKey);
   }
-  logger.info('[temu-api-action] 已从服务端读取 Temu 已存会话', {
+  logger.info("[temu-api-action] 已从服务端读取 Temu 已存会话", {
     profileId,
     success: !!sessionContext?.success,
     cookieCount: sessionContext?.cookieCount || 0,
-    mallId: sessionContext?.mallId || '',
-    antiContentReady: !!sessionContext?.antiContent
+    mallId: sessionContext?.mallId || "",
+    antiContentReady: !!sessionContext?.antiContent,
   });
   return {
     sessionContext,
-    cacheHit: false
+    cacheHit: false,
   };
 }
 
-function clearCachedTemuSessionContext(profileId = '') {
-  temuStoredSessionCache.delete(normalizeText(profileId) || '__default__');
+function clearCachedTemuSessionContext(profileId = "") {
+  temuStoredSessionCache.delete(normalizeText(profileId) || "__default__");
 }
 
 function buildUrl(region, path) {
-  if (/^https?:\/\//i.test(String(path || ''))) {
+  if (/^https?:\/\//i.test(String(path || ""))) {
     return String(path);
   }
-  const origin = REGION_ORIGIN_MAP[normalizeRegion(region)] || REGION_ORIGIN_MAP.global;
-  const normalizedPath = String(path || '').startsWith('/') ? String(path || '') : `/${path || ''}`;
+  const origin =
+    REGION_ORIGIN_MAP[normalizeRegion(region)] || REGION_ORIGIN_MAP.global;
+  const normalizedPath = String(path || "").startsWith("/")
+    ? String(path || "")
+    : `/${path || ""}`;
   return `${origin}${normalizedPath}`;
 }
 
-function normalizeTemuApiMessage(payload, fallback = '') {
+function normalizeTemuApiMessage(payload, fallback = "") {
   const source = asPlainObject(payload);
   return String(
     source.message ||
@@ -137,26 +154,38 @@ function normalizeTemuApiMessage(payload, fallback = '') {
       source.error_msg ||
       asPlainObject(source.result).message ||
       fallback ||
-      ''
+      "",
   ).trim();
 }
 
-function buildFeatureResponse({ action, profileId, region, requestResult, result, successMessage, failureMessage, raw }) {
+function buildFeatureResponse({
+  action,
+  profileId,
+  region,
+  requestResult,
+  result,
+  successMessage,
+  failureMessage,
+  raw,
+}) {
   const success = !!requestResult?.success;
   return {
     success,
     action,
     message: success
       ? successMessage
-      : normalizeTemuApiMessage(requestResult?.payload, requestResult?.message || failureMessage) || failureMessage,
+      : normalizeTemuApiMessage(
+          requestResult?.payload,
+          requestResult?.message || failureMessage,
+        ) || failureMessage,
     profileId,
     region,
     request: {
       url: requestResult?.url,
-      status: requestResult?.status
+      status: requestResult?.status,
     },
     result,
-    raw: raw === undefined ? requestResult?.payload ?? null : raw
+    raw: raw === undefined ? (requestResult?.payload ?? null) : raw,
   };
 }
 
@@ -173,27 +202,27 @@ function pickDefinedFields(source, keys) {
 
 function slimPriceReviewSku(value) {
   return pickDefinedFields(value, [
-    'skuId',
-    'productSkuId',
-    'extCode',
-    'skuExtCode',
-    'skuPreviewImage',
-    'priceReviewStatus',
-    'productPropertyList'
+    "skuId",
+    "productSkuId",
+    "extCode",
+    "skuExtCode",
+    "skuPreviewImage",
+    "priceReviewStatus",
+    "productPropertyList",
   ]);
 }
 
 function slimPriceReviewReview(value) {
   const source = asPlainObject(value);
   const result = pickDefinedFields(source, [
-    'priceOrderId',
-    'suggestSupplyPrice',
-    'supplyPrice',
-    'priceDifference',
-    'priceDifferenceRatio',
-    'times',
-    'priceReviewStatus',
-    'supplierResult'
+    "priceOrderId",
+    "suggestSupplyPrice",
+    "supplyPrice",
+    "priceDifference",
+    "priceDifferenceRatio",
+    "times",
+    "priceReviewStatus",
+    "supplierResult",
   ]);
   result.productSkuList = Array.isArray(source.productSkuList)
     ? source.productSkuList.map(slimPriceReviewSku)
@@ -204,13 +233,15 @@ function slimPriceReviewReview(value) {
 function slimPriceReviewSkc(value) {
   const source = asPlainObject(value);
   const result = pickDefinedFields(source, [
-    'skcId',
-    'productSkcId',
-    'extCode',
-    'skcExtCode',
-    'previewImgUrlList'
+    "skcId",
+    "productSkcId",
+    "extCode",
+    "skcExtCode",
+    "previewImgUrlList",
   ]);
-  result.supplierPriceReviewInfoList = Array.isArray(source.supplierPriceReviewInfoList)
+  result.supplierPriceReviewInfoList = Array.isArray(
+    source.supplierPriceReviewInfoList,
+  )
     ? source.supplierPriceReviewInfoList.map(slimPriceReviewReview)
     : [];
   return result;
@@ -219,13 +250,13 @@ function slimPriceReviewSkc(value) {
 function slimPriceReviewItem(value) {
   const source = asPlainObject(value);
   const result = pickDefinedFields(source, [
-    'productId',
-    'spuId',
-    'productName',
-    'spuName',
-    'leafCategoryName',
-    'fullCategoryName',
-    'carouselImageUrlList'
+    "productId",
+    "spuId",
+    "productName",
+    "spuName",
+    "leafCategoryName",
+    "fullCategoryName",
+    "carouselImageUrlList",
   ]);
   result.skcList = Array.isArray(source.skcList)
     ? source.skcList.map(slimPriceReviewSkc)
@@ -236,14 +267,14 @@ function slimPriceReviewItem(value) {
 function slimConfirmationSkc(value) {
   const source = asPlainObject(value);
   const result = pickDefinedFields(source, [
-    'skcId',
-    'productSkcId',
-    'extCode',
-    'skcExtCode',
-    'previewImgUrlList',
-    'applyJitStatus',
-    'secondarySelectStatus',
-    'supplierTodoStatus'
+    "skcId",
+    "productSkcId",
+    "extCode",
+    "skcExtCode",
+    "previewImgUrlList",
+    "applyJitStatus",
+    "secondarySelectStatus",
+    "supplierTodoStatus",
   ]);
   const skuIdList = Array.isArray(source.productSkuIdList)
     ? source.productSkuIdList.map(Number).filter(Boolean)
@@ -257,17 +288,17 @@ function slimConfirmationSkc(value) {
 function slimConfirmationItem(value) {
   const source = asPlainObject(value);
   const result = pickDefinedFields(source, [
-    'productId',
-    'spuId',
-    'goodsId',
-    'productName',
-    'spuName',
-    'leafCategoryName',
-    'fullCategoryName',
-    'carouselImageUrlList',
-    'createTime',
-    'updateTime',
-    'siteVersion'
+    "productId",
+    "spuId",
+    "goodsId",
+    "productName",
+    "spuName",
+    "leafCategoryName",
+    "fullCategoryName",
+    "carouselImageUrlList",
+    "createTime",
+    "updateTime",
+    "siteVersion",
   ]);
   result.skcList = Array.isArray(source.skcList)
     ? source.skcList.map(slimConfirmationSkc)
@@ -276,7 +307,10 @@ function slimConfirmationItem(value) {
 }
 
 function filterConfirmationListResponse(response) {
-  if (!asPlainObject(response).action || response.action !== 'goods.confirmation.list') {
+  if (
+    !asPlainObject(response).action ||
+    response.action !== "goods.confirmation.list"
+  ) {
     return response;
   }
   const result = asPlainObject(response.result);
@@ -297,23 +331,27 @@ function filterConfirmationListResponse(response) {
       items,
       skcSpuList: Array.isArray(result.skcSpuList)
         ? result.skcSpuList
-        : extractLifecycleSkcSpuPairs({ result: { dataList: items } })
+        : extractLifecycleSkcSpuPairs({ result: { dataList: items } }),
     },
-    raw: rawPayload && rawResult
-      ? {
-          success: rawPayload.success,
-          errorCode: rawPayload.errorCode,
-          errorMsg: rawPayload.errorMsg,
-          result: {
-            total: rawResult.total,
+    raw:
+      rawPayload && rawResult
+        ? {
+            success: rawPayload.success,
+            errorCode: rawPayload.errorCode,
+            errorMsg: rawPayload.errorMsg,
+            result: {
+              total: rawResult.total,
+            },
           }
-        }
-      : response.raw
+        : response.raw,
   };
 }
 
 function filterPriceReviewListResponse(response) {
-  if (!asPlainObject(response).action || response.action !== 'goods.price-review.list') {
+  if (
+    !asPlainObject(response).action ||
+    response.action !== "goods.price-review.list"
+  ) {
     return response;
   }
   const result = asPlainObject(response.result);
@@ -334,32 +372,33 @@ function filterPriceReviewListResponse(response) {
       items,
       skcSpuList: Array.isArray(result.skcSpuList)
         ? result.skcSpuList
-        : extractLifecycleSkcSpuPairs({ result: { dataList: items } })
+        : extractLifecycleSkcSpuPairs({ result: { dataList: items } }),
     },
-    raw: rawPayload && rawResult
-      ? {
-          success: rawPayload.success,
-          errorCode: rawPayload.errorCode,
-          errorMsg: rawPayload.errorMsg,
-          result: {
-            total: rawResult.total,
+    raw:
+      rawPayload && rawResult
+        ? {
+            success: rawPayload.success,
+            errorCode: rawPayload.errorCode,
+            errorMsg: rawPayload.errorMsg,
+            result: {
+              total: rawResult.total,
+            },
           }
-        }
-      : response.raw
+        : response.raw,
   };
 }
 
 function measureJsonPayload(value) {
   const startedAt = Date.now();
-  let text = '';
+  let text = "";
   try {
     text = JSON.stringify(value ?? null);
   } catch {
-    text = JSON.stringify(String(value ?? ''));
+    text = JSON.stringify(String(value ?? ""));
   }
   return {
-    bytes: Buffer.byteLength(text, 'utf8'),
-    elapsedMs: Date.now() - startedAt
+    bytes: Buffer.byteLength(text, "utf8"),
+    elapsedMs: Date.now() - startedAt,
   };
 }
 
@@ -367,14 +406,14 @@ function summarizeTemuApiRequestPayload(payload) {
   const source = asPlainObject(payload);
   const summary = {};
   [
-    'pageNum',
-    'pageSize',
-    'priceOrderId',
-    'supplierResult',
-    'productSkuId',
-    'skcId',
-    'spuId',
-    'goodsId'
+    "pageNum",
+    "pageSize",
+    "priceOrderId",
+    "supplierResult",
+    "productSkuId",
+    "skcId",
+    "spuId",
+    "goodsId",
   ].forEach((key) => {
     if (source[key] !== undefined && source[key] !== null) {
       summary[key] = source[key];
@@ -385,7 +424,7 @@ function summarizeTemuApiRequestPayload(payload) {
     summary.firstItem = source.items[0]
       ? {
           productSkuId: source.items[0].productSkuId,
-          price: source.items[0].price
+          price: source.items[0].price,
         }
       : null;
   }
@@ -403,27 +442,32 @@ function summarizeTemuApiRequestPayload(payload) {
       } catch {
         return 0;
       }
-    })()
+    })(),
   };
 }
 
 async function requestTemuJson(region, path, json = {}, options = {}) {
   const requestId = `temu-api-${Date.now()}-${++temuApiRequestSeq}`;
   const url = buildUrl(region, path);
-  const method = String(options.method || 'POST').toUpperCase();
+  const method = String(options.method || "POST").toUpperCase();
   const requestTimeoutMs = Math.max(
     5_000,
     Math.min(
       3 * 60 * 1000,
-      Number(options.timeoutMs || options.requestTimeoutMs || TEMU_API_REQUEST_TIMEOUT_MS) ||
-        TEMU_API_REQUEST_TIMEOUT_MS
-    )
+      Number(
+        options.timeoutMs ||
+          options.requestTimeoutMs ||
+          TEMU_API_REQUEST_TIMEOUT_MS,
+      ) || TEMU_API_REQUEST_TIMEOUT_MS,
+    ),
   );
-  const { sessionContext, cacheHit } = await getCachedTemuSessionContext(options.profileId);
+  const { sessionContext, cacheHit } = await getCachedTemuSessionContext(
+    options.profileId,
+  );
   const sessionCookies = pickTemuSessionCookies(sessionContext || {}, region);
   const sessionHeaders = pickTemuSessionHeaders(sessionContext || {}, region);
   const cookieHeader = normalizeText(
-    buildCookieHeader(sessionCookies) || sessionContext?.cookieHeader
+    buildCookieHeader(sessionCookies) || sessionContext?.cookieHeader,
   );
   if (!sessionContext?.success || !cookieHeader) {
     return {
@@ -431,63 +475,73 @@ async function requestTemuJson(region, path, json = {}, options = {}) {
       status: 0,
       payload: {
         success: false,
-        error_msg: '当前 Temu 已存会话缺失，无法直接调用 Temu 接口，请先重新采集会话'
+        error_msg:
+          "当前 Temu 已存会话缺失，无法直接调用 Temu 接口，请先重新采集会话",
       },
-      rawText: '',
+      rawText: "",
       url,
-      message: '当前 Temu 已存会话缺失，无法直接调用 Temu 接口，请先重新采集会话'
+      message:
+        "当前 Temu 已存会话缺失，无法直接调用 Temu 接口，请先重新采集会话",
     };
   }
   const origin = new URL(url).origin;
   const headers = {
-    accept: sessionHeaders.accept || 'application/json, text/plain, */*',
-    'content-type': sessionHeaders['content-type'] || 'application/json',
+    accept: sessionHeaders.accept || "application/json, text/plain, */*",
+    "content-type": sessionHeaders["content-type"] || "application/json",
     origin: sessionHeaders.origin || origin,
-    referer: sessionHeaders.referer || sessionContext.currentUrl || `${origin}/`,
+    referer:
+      sessionHeaders.referer || sessionContext.currentUrl || `${origin}/`,
     cookie: cookieHeader,
-    ...(sessionHeaders['user-agent'] ? { 'user-agent': sessionHeaders['user-agent'] } : {}),
-    ...(sessionContext.mallId || sessionHeaders.mallid ? { mallid: sessionContext.mallId || sessionHeaders.mallid } : {}),
-    ...(sessionContext.antiContent || sessionHeaders['anti-content']
-      ? { 'anti-content': sessionContext.antiContent || sessionHeaders['anti-content'] }
+    ...(sessionHeaders["user-agent"]
+      ? { "user-agent": sessionHeaders["user-agent"] }
       : {}),
-    ...(options.headers || {})
+    ...(sessionContext.mallId || sessionHeaders.mallid
+      ? { mallid: sessionContext.mallId || sessionHeaders.mallid }
+      : {}),
+    ...(sessionContext.antiContent || sessionHeaders["anti-content"]
+      ? {
+          "anti-content":
+            sessionContext.antiContent || sessionHeaders["anti-content"],
+        }
+      : {}),
+    ...(options.headers || {}),
   };
   const retryCount = Math.max(0, Number(options.retryCount ?? 2) || 0);
   let lastResult = null;
-  logger.debug?.('[temu-api-action] 使用已存会话直接请求 Temu 接口', {
-    profileId: options.profileId || '',
+  logger.debug?.("[temu-api-action] 使用已存会话直接请求 Temu 接口", {
+    profileId: options.profileId || "",
     region: normalizeRegion(region),
     method,
     url,
     sessionCacheHit: cacheHit,
     cookieCount: Object.keys(sessionCookies).length,
-    mallId: headers.mallid || '',
-    antiContentReady: !!headers['anti-content']
+    mallId: headers.mallid || "",
+    antiContentReady: !!headers["anti-content"],
   });
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
     const attemptStartedAt = Date.now();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
-      logger.info('[temu-api-action] Temu API 请求开始', {
+      logger.info("[temu-api-action] Temu API 请求开始", {
         requestId,
-        traceId: options.traceId || '',
-        actionKey: options.actionKey || '',
-        step: options.step || '',
-        profileId: options.profileId || '',
+        traceId: options.traceId || "",
+        actionKey: options.actionKey || "",
+        step: options.step || "",
+        profileId: options.profileId || "",
         region: normalizeRegion(region),
         method,
         url,
         attempt: attempt + 1,
         retryCount,
         requestTimeoutMs,
-        payloadSummary: summarizeTemuApiRequestPayload(json)
+        payloadSummary: summarizeTemuApiRequestPayload(json),
       });
       const response = await fetch(url, {
         method,
         headers,
-        body: method === 'GET' ? undefined : JSON.stringify(json || {}),
-        signal: controller.signal
+        body: method === "GET" ? undefined : JSON.stringify(json || {}),
+        signal: controller.signal,
       });
       const rawText = await response.text();
       let payload = null;
@@ -501,13 +555,13 @@ async function requestTemuJson(region, path, json = {}, options = {}) {
         status: response.status,
         payload,
         rawText,
-        url
+        url,
       };
       if ([401, 403].includes(response.status)) {
         clearCachedTemuSessionContext(options.profileId);
       }
     } catch (error) {
-      const aborted = error?.name === 'AbortError';
+      const aborted = error?.name === "AbortError";
       lastResult = {
         success: false,
         status: 0,
@@ -515,35 +569,35 @@ async function requestTemuJson(region, path, json = {}, options = {}) {
           success: false,
           error_msg: aborted
             ? `Temu API 请求超时 (${requestTimeoutMs}ms)`
-            : error?.message || String(error)
+            : error?.message || String(error),
         },
         rawText: error?.stack || error?.message || String(error),
         url,
         message: aborted
           ? `Temu API 请求超时 (${requestTimeoutMs}ms)`
-          : error?.message || String(error)
+          : error?.message || String(error),
       };
-      logger.warn('[temu-api-action] Temu API 请求异常', {
+      logger.warn("[temu-api-action] Temu API 请求异常", {
         requestId,
-        traceId: options.traceId || '',
-        actionKey: options.actionKey || '',
-        step: options.step || '',
-        profileId: options.profileId || '',
+        traceId: options.traceId || "",
+        actionKey: options.actionKey || "",
+        step: options.step || "",
+        profileId: options.profileId || "",
         region: normalizeRegion(region),
         method,
         url,
         attempt: attempt + 1,
         aborted,
-        message: lastResult.message
+        message: lastResult.message,
       });
     } finally {
       clearTimeout(timeoutId);
-      logger.info('[temu-api-action] Temu API 请求结束', {
+      logger.info("[temu-api-action] Temu API 请求结束", {
         requestId,
-        traceId: options.traceId || '',
-        actionKey: options.actionKey || '',
-        step: options.step || '',
-        profileId: options.profileId || '',
+        traceId: options.traceId || "",
+        actionKey: options.actionKey || "",
+        step: options.step || "",
+        profileId: options.profileId || "",
         region: normalizeRegion(region),
         method,
         url,
@@ -551,7 +605,9 @@ async function requestTemuJson(region, path, json = {}, options = {}) {
         status: lastResult?.status ?? null,
         success: !!lastResult?.success,
         elapsedMs: Date.now() - attemptStartedAt,
-        message: lastResult?.message || normalizeTemuApiMessage(lastResult?.payload, '')
+        message:
+          lastResult?.message ||
+          normalizeTemuApiMessage(lastResult?.payload, ""),
       });
     }
     if (lastResult?.status !== 0 || attempt >= retryCount) {
@@ -563,7 +619,9 @@ async function requestTemuJson(region, path, json = {}, options = {}) {
 }
 
 function extractLifecycleSkcSpuPairs(payload) {
-  const dataList = Array.isArray(payload?.result?.dataList) ? payload.result.dataList : [];
+  const dataList = Array.isArray(payload?.result?.dataList)
+    ? payload.result.dataList
+    : [];
   const seen = new Set();
   const result = [];
   dataList.forEach((item) => {
@@ -582,16 +640,19 @@ function extractLifecycleSkcSpuPairs(payload) {
 }
 
 function extractGoodsRelations(payload) {
-  const pageItems = Array.isArray(payload?.result?.pageItems) ? payload.result.pageItems : [];
+  const pageItems = Array.isArray(payload?.result?.pageItems)
+    ? payload.result.pageItems
+    : [];
   return pageItems.map((item) => ({
     spuId: Number(item?.productId || 0) || null,
     skcId: Number(item?.productSkcId || 0) || null,
     skuList: Array.isArray(item?.productSkuSummaries)
       ? item.productSkuSummaries.map((sku) => ({
           skuId: Number(sku?.productSkuId || 0) || null,
-          virtualStock: sku?.virtualStock == null ? null : Number(sku.virtualStock)
+          virtualStock:
+            sku?.virtualStock == null ? null : Number(sku.virtualStock),
         }))
-      : []
+      : [],
   }));
 }
 
@@ -600,9 +661,12 @@ function buildJitStockUpdatePayload({ goodsRelations, skcId, finalNum }) {
   if (!target?.spuId || !target.skcId) {
     return null;
   }
-  const skuVirtualStockChangeList = (Array.isArray(target.skuList) ? target.skuList : [])
+  const skuVirtualStockChangeList = (
+    Array.isArray(target.skuList) ? target.skuList : []
+  )
     .map((sku) => {
-      const currentStock = sku.virtualStock === null ? 0 : Number(sku.virtualStock || 0);
+      const currentStock =
+        sku.virtualStock === null ? 0 : Number(sku.virtualStock || 0);
       const virtualStockDiff = Number(finalNum) - currentStock;
       if (!sku.skuId || virtualStockDiff === 0) {
         return null;
@@ -610,12 +674,17 @@ function buildJitStockUpdatePayload({ goodsRelations, skcId, finalNum }) {
       return {
         productSkuId: sku.skuId,
         currentStockAvailable: currentStock,
-        virtualStockDiff
+        virtualStockDiff,
       };
     })
     .filter(Boolean);
   if (!skuVirtualStockChangeList.length) {
-    return { skipped: true, productId: target.spuId, productSkcId: target.skcId, skuVirtualStockChangeList: [] };
+    return {
+      skipped: true,
+      productId: target.spuId,
+      productSkcId: target.skcId,
+      skuVirtualStockChangeList: [],
+    };
   }
   return {
     productId: target.spuId,
@@ -623,9 +692,9 @@ function buildJitStockUpdatePayload({ goodsRelations, skcId, finalNum }) {
       {
         productSkcId: target.skcId,
         stockUpdateSource: 1,
-        skuVirtualStockChangeList
-      }
-    ]
+        skuVirtualStockChangeList,
+      },
+    ],
   };
 }
 
@@ -637,11 +706,11 @@ function normalizeRealPicturePositionMap(value) {
   const result = {};
   const payloadMap = asPlainObject(value);
   Object.entries(payloadMap).forEach(([position, urls]) => {
-    const normalizedPosition = String(position || '').trim();
+    const normalizedPosition = String(position || "").trim();
     if (!normalizedPosition) return;
     const normalized = Array.isArray(urls)
       ? normalizeRemoteUrlList(urls)
-      : /^https?:\/\//i.test(String(urls || '').trim())
+      : /^https?:\/\//i.test(String(urls || "").trim())
         ? [String(urls).trim()]
         : [];
     if (normalized.length) {
@@ -653,15 +722,17 @@ function normalizeRealPicturePositionMap(value) {
 
 function normalizeRequiredRealPicturePositionMap(value) {
   const inputMap = normalizeRealPicturePositionMap(value);
-  const allImageUrls = Array.from(new Set(
-    Object.values(inputMap).flatMap((urls) => normalizeRemoteUrlList(urls))
-  ));
+  const allImageUrls = Array.from(
+    new Set(
+      Object.values(inputMap).flatMap((urls) => normalizeRemoteUrlList(urls)),
+    ),
+  );
   if (!allImageUrls.length) {
     return {};
   }
   return {
     1: allImageUrls,
-    2: allImageUrls
+    2: allImageUrls,
   };
 }
 
@@ -678,46 +749,60 @@ function mergePositionImages(...maps) {
 }
 
 function groupExistingLabelImages(labelImageList) {
-  return (Array.isArray(labelImageList) ? labelImageList : []).reduce((result, item) => {
-    const position = String(item?.position ?? '').trim();
-    const imageUrl = String(item?.image || item?.image_url || '').trim();
-    if (position && imageUrl) {
-      if (!result[position]) result[position] = [];
-      result[position].push(imageUrl);
-    }
-    return result;
-  }, {});
+  return (Array.isArray(labelImageList) ? labelImageList : []).reduce(
+    (result, item) => {
+      const position = String(item?.position ?? "").trim();
+      const imageUrl = String(item?.image || item?.image_url || "").trim();
+      if (position && imageUrl) {
+        if (!result[position]) result[position] = [];
+        result[position].push(imageUrl);
+      }
+      return result;
+    },
+    {},
+  );
 }
 
 function extractRealPictureItems(payload) {
-  const items = Array.isArray(payload?.result?.items) ? payload.result.items : [];
+  const items = Array.isArray(payload?.result?.items)
+    ? payload.result.items
+    : [];
   return items.map((item) => {
     const skuInfo = Array.isArray(item?.sku_info)
       ? item.sku_info
-      : asPlainObject(item?.same_sku_vo) && Array.isArray(item.same_sku_vo?.sku_list)
+      : asPlainObject(item?.same_sku_vo) &&
+          Array.isArray(item.same_sku_vo?.sku_list)
         ? item.same_sku_vo.sku_list
         : [];
     return {
       raw: item,
       spuId: Number(item?.spu_id || 0) || null,
       goodsId: Number(item?.goods_id || 0) || null,
-      isSameSku: item?.is_same_sku === true || Number(item?.is_same_sku || 0) === 1,
-      skuIdList: skuInfo.map((sku) => Number(sku?.sku_id || 0)).filter((skuId) => skuId > 0),
-      labelImageList: Array.isArray(item?.label_image_list) ? item.label_image_list : []
+      isSameSku:
+        item?.is_same_sku === true || Number(item?.is_same_sku || 0) === 1,
+      skuIdList: skuInfo
+        .map((sku) => Number(sku?.sku_id || 0))
+        .filter((skuId) => skuId > 0),
+      labelImageList: Array.isArray(item?.label_image_list)
+        ? item.label_image_list
+        : [],
     };
   });
 }
 
 function extractRealPictureListItems(payload) {
-  const items = Array.isArray(payload?.result?.items) ? payload.result.items : [];
+  const items = Array.isArray(payload?.result?.items)
+    ? payload.result.items
+    : [];
   return items.map((item) => {
     const skuInfo = Array.isArray(item?.skuInfo)
       ? item.skuInfo
       : Array.isArray(item?.sku_info)
-      ? item.sku_info
-      : asPlainObject(item?.same_sku_vo) && Array.isArray(item.same_sku_vo?.sku_list)
-        ? item.same_sku_vo.sku_list
-        : [];
+        ? item.sku_info
+        : asPlainObject(item?.same_sku_vo) &&
+            Array.isArray(item.same_sku_vo?.sku_list)
+          ? item.same_sku_vo.sku_list
+          : [];
     const labelImageList = Array.isArray(item?.labelImageList)
       ? item.labelImageList
       : Array.isArray(item?.label_image_list)
@@ -733,52 +818,77 @@ function extractRealPictureListItems(payload) {
       : Array.isArray(item?.position_detail)
         ? item.position_detail
         : [];
-    const goodsStatus = (item?.goodsStatus ?? item?.goods_status) === undefined ||
+    const goodsStatus =
+      (item?.goodsStatus ?? item?.goods_status) === undefined ||
       (item?.goodsStatus ?? item?.goods_status) === null
-      ? null
-      : Number(item?.goodsStatus ?? item?.goods_status);
+        ? null
+        : Number(item?.goodsStatus ?? item?.goods_status);
 
     return {
       spuId: Number(item?.spuId ?? item?.spu_id ?? 0) || null,
-      spuName: String(item?.spuName ?? item?.spu_name ?? item?.product_name ?? '').trim(),
+      spuName: String(
+        item?.spuName ?? item?.spu_name ?? item?.product_name ?? "",
+      ).trim(),
       goodsId: Number(item?.goodsId ?? item?.goods_id ?? 0) || null,
       goodsStatus,
-      goodsStatusLabel: String(item?.goodsStatusLabel || '').trim() ||
-        (goodsStatus === null ? '' : TEMU_GOODS_STATUS_LABEL_MAP[goodsStatus] || ''),
-      uploadStatus: (item?.uploadStatus ?? item?.upload_status) === undefined ||
+      goodsStatusLabel:
+        String(item?.goodsStatusLabel || "").trim() ||
+        (goodsStatus === null
+          ? ""
+          : TEMU_GOODS_STATUS_LABEL_MAP[goodsStatus] || ""),
+      uploadStatus:
+        (item?.uploadStatus ?? item?.upload_status) === undefined ||
         (item?.uploadStatus ?? item?.upload_status) === null
-        ? null
-        : Number(item?.uploadStatus ?? item?.upload_status),
-      buttonStatus: (item?.buttonStatus ?? item?.button_status) === undefined ||
+          ? null
+          : Number(item?.uploadStatus ?? item?.upload_status),
+      buttonStatus:
+        (item?.buttonStatus ?? item?.button_status) === undefined ||
         (item?.buttonStatus ?? item?.button_status) === null
-        ? null
-        : Number(item?.buttonStatus ?? item?.button_status),
+          ? null
+          : Number(item?.buttonStatus ?? item?.button_status),
       canAudit: item?.canAudit === true || item?.can_audit === true,
       canEdit: item?.canEdit === true || item?.can_edit === true,
       noHavePack: item?.noHavePack === true || item?.no_have_pack === true,
-      materialImgUrl: String(item?.materialImgUrl ?? item?.material_img_url ?? '').trim(),
-      isSameSku: item?.isSameSku === true ||
+      materialImgUrl: String(
+        item?.materialImgUrl ?? item?.material_img_url ?? "",
+      ).trim(),
+      isSameSku:
+        item?.isSameSku === true ||
         item?.is_same_sku === true ||
         Number(item?.isSameSku ?? item?.is_same_sku ?? 0) === 1,
       skuInfo: skuInfo.map((sku) => ({
         skuId: Number(sku?.skuId ?? sku?.sku_id ?? 0) || null,
-        skuCode: String(sku?.skuCode ?? sku?.sku_code ?? sku?.ext_code ?? '').trim(),
-        skuName: String(sku?.skuName ?? sku?.sku_name ?? sku?.name ?? '').trim()
+        skuCode: String(
+          sku?.skuCode ?? sku?.sku_code ?? sku?.ext_code ?? "",
+        ).trim(),
+        skuName: String(
+          sku?.skuName ?? sku?.sku_name ?? sku?.name ?? "",
+        ).trim(),
       })),
       skuIdList: skuInfo
         .map((sku) => Number(sku?.skuId ?? sku?.sku_id ?? 0))
         .filter((skuId) => skuId > 0),
       labelImageList: labelImageList.map((image) => ({
-        position: image?.position === undefined || image?.position === null ? null : Number(image.position),
-        image: String(image?.image ?? image?.imageUrl ?? image?.image_url ?? '').trim(),
-        positionType: (image?.positionType ?? image?.position_type) === undefined ||
+        position:
+          image?.position === undefined || image?.position === null
+            ? null
+            : Number(image.position),
+        image: String(
+          image?.image ?? image?.imageUrl ?? image?.image_url ?? "",
+        ).trim(),
+        positionType:
+          (image?.positionType ?? image?.position_type) === undefined ||
           (image?.positionType ?? image?.position_type) === null
-          ? null
-          : Number(image?.positionType ?? image?.position_type)
+            ? null
+            : Number(image?.positionType ?? image?.position_type),
       })),
       positionDetail: positionDetail.map((detail) => ({
-        position: detail?.position === undefined || detail?.position === null ? null : Number(detail.position),
-        isSameSku: detail?.isSameSku === true ||
+        position:
+          detail?.position === undefined || detail?.position === null
+            ? null
+            : Number(detail.position),
+        isSameSku:
+          detail?.isSameSku === true ||
           detail?.is_same_sku === true ||
           Number(detail?.isSameSku ?? detail?.is_same_sku ?? 0) === 1,
         skuPhotoInfoList: (Array.isArray(detail?.skuPhotoInfoList)
@@ -787,34 +897,43 @@ function extractRealPictureListItems(payload) {
             ? detail.sku_photo_info_list
             : []
         ).map((skuPhoto) => ({
-              skuId: Number(skuPhoto?.skuId ?? skuPhoto?.sku_id ?? 0) || null,
-              imageList: (Array.isArray(skuPhoto?.imageList)
-                ? skuPhoto.imageList
-                : Array.isArray(skuPhoto?.image_list)
-                  ? skuPhoto.image_list
-                  : []
-              ).map((image) => ({
-                    imageUrl: String(image?.imageUrl ?? image?.image_url ?? image?.image ?? '').trim(),
-                    positionType: (image?.positionType ?? image?.position_type) === undefined ||
-                      (image?.positionType ?? image?.position_type) === null
-                      ? null
-                      : Number(image?.positionType ?? image?.position_type)
-                  }))
-            }))
+          skuId: Number(skuPhoto?.skuId ?? skuPhoto?.sku_id ?? 0) || null,
+          imageList: (Array.isArray(skuPhoto?.imageList)
+            ? skuPhoto.imageList
+            : Array.isArray(skuPhoto?.image_list)
+              ? skuPhoto.image_list
+              : []
+          ).map((image) => ({
+            imageUrl: String(
+              image?.imageUrl ?? image?.image_url ?? image?.image ?? "",
+            ).trim(),
+            positionType:
+              (image?.positionType ?? image?.position_type) === undefined ||
+              (image?.positionType ?? image?.position_type) === null
+                ? null
+                : Number(image?.positionType ?? image?.position_type),
+          })),
+        })),
       })),
       ruleCheckResultList: ruleCheckResultList.map((rule) => ({
-        checkType: (rule?.checkType ?? rule?.check_type) === undefined ||
+        checkType:
+          (rule?.checkType ?? rule?.check_type) === undefined ||
           (rule?.checkType ?? rule?.check_type) === null
-          ? null
-          : Number(rule?.checkType ?? rule?.check_type),
-        checkTypeName: String(rule?.checkTypeName ?? rule?.check_type_name ?? '').trim(),
-        ruleName: String(rule?.ruleName ?? rule?.rule_name ?? '').trim(),
-        ruleStatus: (rule?.ruleStatus ?? rule?.rule_status) === undefined ||
+            ? null
+            : Number(rule?.checkType ?? rule?.check_type),
+        checkTypeName: String(
+          rule?.checkTypeName ?? rule?.check_type_name ?? "",
+        ).trim(),
+        ruleName: String(rule?.ruleName ?? rule?.rule_name ?? "").trim(),
+        ruleStatus:
+          (rule?.ruleStatus ?? rule?.rule_status) === undefined ||
           (rule?.ruleStatus ?? rule?.rule_status) === null
-          ? null
-          : Number(rule?.ruleStatus ?? rule?.rule_status),
-        ruleStatusToast: String(rule?.ruleStatusToast ?? rule?.rule_status_toast ?? '').trim()
-      }))
+            ? null
+            : Number(rule?.ruleStatus ?? rule?.rule_status),
+        ruleStatusToast: String(
+          rule?.ruleStatusToast ?? rule?.rule_status_toast ?? "",
+        ).trim(),
+      })),
     };
   });
 }
@@ -827,19 +946,21 @@ function summarizeRealPictureListResult(result = {}) {
     page: Number(result.page || 1) || 1,
     pageSize: Number(result.pageSize || result.page_size || 0) || 0,
     fetchedAll: result.fetchedAll === true,
-    fetchedPages: Number(result.fetchedPages || 0) || 0
+    fetchedPages: Number(result.fetchedPages || 0) || 0,
   };
 }
 
 function buildRealPictureSubmitPayload(target, uploadImgUrls, confirmType = 4) {
-  const requiredImageMap = normalizeRequiredRealPicturePositionMap(uploadImgUrls);
+  const requiredImageMap =
+    normalizeRequiredRealPicturePositionMap(uploadImgUrls);
   const positions = [1, 2];
   return {
     confirm_type: Number(confirmType || 4),
     spu_id: target.spuId,
     goods_id: target.goodsId,
     real_picture_info_list: positions.map((position) => {
-      const imageUrls = requiredImageMap[String(position)] || requiredImageMap[position] || [];
+      const imageUrls =
+        requiredImageMap[String(position)] || requiredImageMap[position] || [];
       if (!imageUrls.length) {
         throw new Error(`position ${position} 至少需要一张图片`);
       }
@@ -850,36 +971,58 @@ function buildRealPictureSubmitPayload(target, uploadImgUrls, confirmType = 4) {
           sku_id: skuId,
           image_list: imageUrls.map((imageUrl) => ({
             image_url: imageUrl,
-            position_type: 2
-          }))
-        }))
+            position_type: 2,
+          })),
+        })),
       };
-    })
+    }),
   };
 }
 
 function buildRealPictureListPayload(payload = {}) {
-  const fetchAll = !!(payload.fetchAll || payload.fetch_all || payload.allPages || payload.all_pages);
+  const fetchAll = !!(
+    payload.fetchAll ||
+    payload.fetch_all ||
+    payload.allPages ||
+    payload.all_pages
+  );
   const pageSize = fetchAll
-    ? Math.min(50, Math.max(1, Number(payload.pageSize || payload.page_size || 50) || 50))
+    ? Math.min(
+        50,
+        Math.max(1, Number(payload.pageSize || payload.page_size || 50) || 50),
+      )
     : Math.max(1, Number(payload.pageSize || payload.page_size || 20) || 20);
   const result = {
-    page: Math.max(1, Number(payload.page || payload.pageNum || payload.page_num || 1) || 1),
-    page_size: pageSize
+    page: Math.max(
+      1,
+      Number(payload.page || payload.pageNum || payload.page_num || 1) || 1,
+    ),
+    page_size: pageSize,
   };
-  const checkTypeList = toNumberArray(payload.checkTypeList || payload.check_type_list);
-  const hasCheckTypeStatusList = Object.prototype.hasOwnProperty.call(payload, 'checkTypeStatusList') ||
-    Object.prototype.hasOwnProperty.call(payload, 'check_type_status_list');
-  const checkTypeStatusList = toNumberArray(
-    payload.checkTypeStatusList || payload.check_type_status_list
+  const checkTypeList = toNumberArray(
+    payload.checkTypeList || payload.check_type_list,
   );
-  const rapidScreenStatusList = toNumberArray(payload.rapidScreenStatusList || payload.rapid_screen_status_list);
-  const goodsStatusList = toNumberArray(payload.goodsStatusList || payload.goods_status_list || [1, 2]);
-  const blackWordTypeList = toNumberArray(payload.blackWordTypeList || payload.black_word_type_list);
+  const hasCheckTypeStatusList =
+    Object.prototype.hasOwnProperty.call(payload, "checkTypeStatusList") ||
+    Object.prototype.hasOwnProperty.call(payload, "check_type_status_list");
+  const checkTypeStatusList = toNumberArray(
+    payload.checkTypeStatusList || payload.check_type_status_list,
+  );
+  const rapidScreenStatusList = toNumberArray(
+    payload.rapidScreenStatusList || payload.rapid_screen_status_list,
+  );
+  const goodsStatusList = toNumberArray(
+    payload.goodsStatusList || payload.goods_status_list || [1, 2],
+  );
+  const blackWordTypeList = toNumberArray(
+    payload.blackWordTypeList || payload.black_word_type_list,
+  );
   const spuIdList = toStringArray(payload.spuIdList || payload.spu_id_list);
   if (checkTypeList.length) result.check_type_list = checkTypeList;
-  if (hasCheckTypeStatusList) result.check_type_status_list = checkTypeStatusList;
-  if (rapidScreenStatusList.length) result.rapid_screen_status_list = rapidScreenStatusList;
+  if (hasCheckTypeStatusList)
+    result.check_type_status_list = checkTypeStatusList;
+  if (rapidScreenStatusList.length)
+    result.rapid_screen_status_list = rapidScreenStatusList;
   result.goods_status_list = goodsStatusList.length ? goodsStatusList : [1, 2];
   if (blackWordTypeList.length) result.black_word_type_list = blackWordTypeList;
   if (spuIdList.length) result.spu_id_list = spuIdList;
@@ -887,22 +1030,39 @@ function buildRealPictureListPayload(payload = {}) {
 }
 
 function buildCompliancePageQueryPayload(payload = {}) {
-  const fetchAll = !!(payload.fetchAll || payload.fetch_all || payload.allPages || payload.all_pages);
+  const fetchAll = !!(
+    payload.fetchAll ||
+    payload.fetch_all ||
+    payload.allPages ||
+    payload.all_pages
+  );
   const pageSize = fetchAll
-    ? Math.min(50, Math.max(1, Number(payload.pageSize ?? payload.page_size ?? 50) || 50))
+    ? Math.min(
+        50,
+        Math.max(1, Number(payload.pageSize ?? payload.page_size ?? 50) || 50),
+      )
     : Math.max(1, Number(payload.pageSize ?? payload.page_size ?? 10) || 10);
-  const goodsStatusList = toNumberArray(payload.goodsStatusList ?? payload.goods_status_list ?? [1, 2]);
-  const taskStatusList = toNumberArray(payload.taskStatusList ?? payload.task_status_list ?? [2]);
-  const spuIdList = toNumberArray(payload.spuIdList ?? payload.spu_id_list)
-    .map((item) => String(item));
+  const goodsStatusList = toNumberArray(
+    payload.goodsStatusList ?? payload.goods_status_list ?? [1, 2],
+  );
+  const taskStatusList = toNumberArray(
+    payload.taskStatusList ?? payload.task_status_list ?? [2],
+  );
+  const spuIdList = toNumberArray(payload.spuIdList ?? payload.spu_id_list).map(
+    (item) => String(item),
+  );
   const result = {
-    page_num: Math.max(1, Number(payload.pageNum ?? payload.page_num ?? 1) || 1),
+    page_num: Math.max(
+      1,
+      Number(payload.pageNum ?? payload.page_num ?? 1) || 1,
+    ),
     page_size: pageSize,
-    type: payload.type === undefined || payload.type === null || payload.type === ''
-      ? 2
-      : Number(payload.type),
+    type:
+      payload.type === undefined || payload.type === null || payload.type === ""
+        ? 2
+        : Number(payload.type),
     goods_status_list: goodsStatusList.length ? goodsStatusList : [1, 2],
-    task_status_list: taskStatusList.length ? taskStatusList : [2]
+    task_status_list: taskStatusList.length ? taskStatusList : [2],
   };
   if (spuIdList.length) {
     result.spu_id_list = spuIdList;
@@ -957,7 +1117,9 @@ function normalizeComplianceItem(item) {
   nextItem.waitTaskDtoList = filteredTaskList;
   nextItem.wait_task_show_dtolist = filteredShowTaskList;
   nextItem.waitTaskShowDtoList = filteredShowTaskList;
-  const visibleTaskList = filteredShowTaskList.length ? filteredShowTaskList : filteredTaskList;
+  const visibleTaskList = filteredShowTaskList.length
+    ? filteredShowTaskList
+    : filteredTaskList;
   const hasPendingTask = visibleTaskList.some((task) => {
     const status = Number(task?.status);
     const childList = Array.isArray(task?.wait_task_dtolist)
@@ -965,35 +1127,50 @@ function normalizeComplianceItem(item) {
       : Array.isArray(task?.waitTaskDtoList)
         ? task.waitTaskDtoList
         : [];
-    return isActionableComplianceStatus(status) || childList.some((child) => isActionableComplianceStatus(child?.status));
+    return (
+      isActionableComplianceStatus(status) ||
+      childList.some((child) => isActionableComplianceStatus(child?.status))
+    );
   });
   return hasPendingTask ? nextItem : null;
 }
 
-async function uploadRealPicturePositionImages(profileId, region, positionImageUrls) {
-  const requiredPositionImageUrls = normalizeRequiredRealPicturePositionMap(positionImageUrls);
+async function uploadRealPicturePositionImages(
+  profileId,
+  region,
+  positionImageUrls,
+) {
+  const requiredPositionImageUrls =
+    normalizeRequiredRealPicturePositionMap(positionImageUrls);
   const sourceEntries = [];
   Object.entries(requiredPositionImageUrls).forEach(([position, urls]) => {
     normalizeRemoteUrlList(urls).forEach((sourceUrl) => {
       sourceEntries.push({ position, sourceUrl });
     });
   });
-  const sources = Array.from(new Set(sourceEntries.map((item) => item.sourceUrl)));
-  logger.info('[temu-api-action] 实拍图上传图片归一化', {
+  const sources = Array.from(
+    new Set(sourceEntries.map((item) => item.sourceUrl)),
+  );
+  logger.info("[temu-api-action] 实拍图上传图片归一化", {
     inputPositions: Object.keys(asPlainObject(positionImageUrls)),
     requiredPositions: Object.keys(requiredPositionImageUrls),
     uniqueSourceCount: sources.length,
     positionImageCount: Object.fromEntries(
-      Object.entries(requiredPositionImageUrls).map(([position, urls]) => [position, urls.length])
-    )
+      Object.entries(requiredPositionImageUrls).map(([position, urls]) => [
+        position,
+        urls.length,
+      ]),
+    ),
   });
-  const storedSessionContext = await resolveTemuRealtimeSessionContext({ profileId });
-  logger.info('[temu-api-action] 实拍图上传服务端会话检查', {
+  const storedSessionContext = await resolveTemuRealtimeSessionContext({
+    profileId,
+  });
+  logger.info("[temu-api-action] 实拍图上传服务端会话检查", {
     hasStoredSession: !!storedSessionContext?.success,
     cookieCount: storedSessionContext?.cookieCount || 0,
-    mallId: storedSessionContext?.mallId || '',
+    mallId: storedSessionContext?.mallId || "",
     antiContentReady: !!storedSessionContext?.antiContent,
-    source: storedSessionContext?.source || ''
+    source: storedSessionContext?.source || "",
   });
 
   let page = null;
@@ -1001,36 +1178,58 @@ async function uploadRealPicturePositionImages(profileId, region, positionImageU
   try {
     if (!storedSessionContext?.success) {
       const browser = await getOrCreateBrowser({ profileId });
-      const context = typeof browser.contexts === 'function' ? browser.contexts()[0] : null;
-      page = context && typeof context.newPage === 'function'
-        ? await context.newPage()
-        : await browser.newPage({ background: true, activate: false });
-      logger.info('[temu-api-action] 实拍图上传服务端会话不可用，创建页面兜底采集', {
-        reusedContext: !!context,
-        sourceCount: sources.length
-      });
+      const context =
+        typeof browser.contexts === "function" ? browser.contexts()[0] : null;
+      page =
+        context && typeof context.newPage === "function"
+          ? await context.newPage()
+          : await browser.newPage({ background: true, activate: false });
+      logger.info(
+        "[temu-api-action] 实拍图上传服务端会话不可用，创建页面兜底采集",
+        {
+          reusedContext: !!context,
+          sourceCount: sources.length,
+        },
+      );
       requestCapture = createTemuLiveRequestCapture(page.context());
-      const origin = REGION_ORIGIN_MAP[normalizeRegion(region)] || REGION_ORIGIN_MAP.global;
-      await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
+      const origin =
+        REGION_ORIGIN_MAP[normalizeRegion(region)] || REGION_ORIGIN_MAP.global;
+      await page
+        .goto(`${origin}/`, { waitUntil: "domcontentloaded", timeout: 30_000 })
+        .catch(() => undefined);
       if (!requestCapture.state.antiContent || !requestCapture.state.mallId) {
-        await page.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => undefined);
+        await page
+          .reload({ waitUntil: "domcontentloaded", timeout: 20_000 })
+          .catch(() => undefined);
         await page.waitForTimeout(2500).catch(() => undefined);
       }
     }
-    const uploadResult = await uploadTemuRealPictureImagesToCloud(page, sources, {
-      resourceLabel: '实拍图',
-      emptyMessage: '未提供实拍图图片，跳过上传',
-      sessionContext: storedSessionContext?.success ? storedSessionContext : null,
-      requestCaptureState: requestCapture?.state || {},
-      allowAllCookiesFallback: true
-    });
+    const uploadResult = await uploadTemuRealPictureImagesToCloud(
+      page,
+      sources,
+      {
+        resourceLabel: "实拍图",
+        emptyMessage: "未提供实拍图图片，跳过上传",
+        sessionContext: storedSessionContext?.success
+          ? storedSessionContext
+          : null,
+        requestCaptureState: requestCapture?.state || {},
+        allowAllCookiesFallback: true,
+      },
+    );
     if (!uploadResult?.success) {
-      throw new Error(uploadResult?.message || '实拍图上传 Temu 云文件失败');
+      throw new Error(uploadResult?.message || "实拍图上传 Temu 云文件失败");
     }
     const sourceUrlMap = new Map(
-      (Array.isArray(uploadResult.uploadedImages) ? uploadResult.uploadedImages : [])
-        .map((item) => [String(item?.source || '').trim(), String(item?.url || '').trim()])
-        .filter(([source, url]) => source && /^https?:\/\//i.test(url))
+      (Array.isArray(uploadResult.uploadedImages)
+        ? uploadResult.uploadedImages
+        : []
+      )
+        .map((item) => [
+          String(item?.source || "").trim(),
+          String(item?.url || "").trim(),
+        ])
+        .filter(([source, url]) => source && /^https?:\/\//i.test(url)),
     );
     const uploadedPositionMap = {};
     sourceEntries.forEach(({ position, sourceUrl }) => {
@@ -1040,7 +1239,9 @@ async function uploadRealPicturePositionImages(profileId, region, positionImageU
       uploadedPositionMap[position].push(uploadedUrl);
     });
     Object.keys(uploadedPositionMap).forEach((position) => {
-      uploadedPositionMap[position] = Array.from(new Set(uploadedPositionMap[position]));
+      uploadedPositionMap[position] = Array.from(
+        new Set(uploadedPositionMap[position]),
+      );
     });
     return {
       uploadedPositionMap,
@@ -1048,9 +1249,9 @@ async function uploadRealPicturePositionImages(profileId, region, positionImageU
         .map(({ position, sourceUrl }) => ({
           position,
           sourceUrl,
-          uploadedUrl: sourceUrlMap.get(sourceUrl) || ''
+          uploadedUrl: sourceUrlMap.get(sourceUrl) || "",
         }))
-        .filter((item) => item.uploadedUrl)
+        .filter((item) => item.uploadedUrl),
     };
   } finally {
     requestCapture?.dispose?.();
@@ -1060,23 +1261,43 @@ async function uploadRealPicturePositionImages(profileId, region, positionImageU
   }
 }
 
-async function runPagedSearchForChainSupplier({ action, profileId, region, payload, pageSize, successMessage, failureMessage }) {
-  const fetchAll = !!(payload.fetchAll || payload.fetch_all || payload.allPages || payload.all_pages);
+async function runPagedSearchForChainSupplier({
+  action,
+  profileId,
+  region,
+  payload,
+  pageSize,
+  successMessage,
+  failureMessage,
+}) {
+  const fetchAll = !!(
+    payload.fetchAll ||
+    payload.fetch_all ||
+    payload.allPages ||
+    payload.all_pages
+  );
   const basePayload = { ...payload, pageSize };
   delete basePayload.fetchAll;
   delete basePayload.fetch_all;
   delete basePayload.allPages;
   delete basePayload.all_pages;
   const requestPage = (pageNum) =>
-    requestTemuJson(region, '/api/kiana/mms/robin/searchForChainSupplier', {
-      ...basePayload,
-      pageNum,
-      pageSize
-    }, { profileId });
+    requestTemuJson(
+      region,
+      "/api/kiana/mms/robin/searchForChainSupplier",
+      {
+        ...basePayload,
+        pageNum,
+        pageSize,
+      },
+      { profileId },
+    );
   const response = await requestPage(Number(basePayload.pageNum || 1) || 1);
   const firstResult = response.payload?.result || {};
   const total = Number(firstResult.total || 0) || 0;
-  const items = Array.isArray(firstResult.dataList) ? [...firstResult.dataList] : [];
+  const items = Array.isArray(firstResult.dataList)
+    ? [...firstResult.dataList]
+    : [];
   let fetchedPages = 1;
   if (fetchAll && total > items.length) {
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -1104,16 +1325,19 @@ async function runPagedSearchForChainSupplier({ action, profileId, region, paylo
       items,
       fetchedAll: fetchAll,
       fetchedPages,
-      skcSpuList: extractLifecycleSkcSpuPairs({ result: { total, dataList: items } })
-    }
+      skcSpuList: extractLifecycleSkcSpuPairs({
+        result: { total, dataList: items },
+      }),
+    },
   });
 }
 
 async function executeAction(actionKey, profileId, region, payload) {
-  const traceId = String(payload.traceId || payload.batchTraceId || '').trim() ||
+  const traceId =
+    String(payload.traceId || payload.batchTraceId || "").trim() ||
     `temu-action-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const rowTrace = asPlainObject(payload.rowTrace);
-  if (actionKey === 'goods.price-review.list') {
+  if (actionKey === "goods.price-review.list") {
     return runPagedSearchForChainSupplier({
       action: actionKey,
       profileId,
@@ -1124,15 +1348,18 @@ async function executeAction(actionKey, profileId, region, payload) {
         removeStatus: 0,
         secondarySelectStatusList: [7],
         supplierTodoTypeList: [1],
-        ...payload
+        ...payload,
       },
-      pageSize: Math.min(1000, Math.max(1, Number(payload.pageSize || 1000) || 1000)),
-      successMessage: '获取待核价商品列表成功',
-      failureMessage: '获取待核价商品列表失败'
+      pageSize: Math.min(
+        1000,
+        Math.max(1, Number(payload.pageSize || 1000) || 1000),
+      ),
+      successMessage: "获取待核价商品列表成功",
+      failureMessage: "获取待核价商品列表失败",
     });
   }
 
-  if (actionKey === 'jit.list') {
+  if (actionKey === "jit.list") {
     return runPagedSearchForChainSupplier({
       action: actionKey,
       profileId,
@@ -1141,15 +1368,18 @@ async function executeAction(actionKey, profileId, region, payload) {
         removeStatus: 0,
         supplierTodoTypeList: [],
         secondarySelectStatusList: [10],
-        ...payload
+        ...payload,
       },
-      pageSize: Math.min(1000, Math.max(1, Number(payload.pageSize || 1000) || 1000)),
-      successMessage: '获取 JIT 列表成功',
-      failureMessage: '获取 JIT 列表失败'
+      pageSize: Math.min(
+        1000,
+        Math.max(1, Number(payload.pageSize || 1000) || 1000),
+      ),
+      successMessage: "获取 JIT 列表成功",
+      failureMessage: "获取 JIT 列表失败",
     });
   }
 
-  if (actionKey === 'goods.confirmation.list') {
+  if (actionKey === "goods.confirmation.list") {
     return runPagedSearchForChainSupplier({
       action: actionKey,
       profileId,
@@ -1157,38 +1387,46 @@ async function executeAction(actionKey, profileId, region, payload) {
       payload: {
         removeStatus: 0,
         supplierTodoTypeList: [6],
-        ...payload
+        ...payload,
       },
-      pageSize: Math.min(1000, Math.max(1, Number(payload.pageSize || 100) || 100)),
-      successMessage: '获取商品确认列表成功',
-      failureMessage: '获取商品确认列表失败'
+      pageSize: Math.min(
+        1000,
+        Math.max(1, Number(payload.pageSize || 100) || 100),
+      ),
+      successMessage: "获取商品确认列表成功",
+      failureMessage: "获取商品确认列表失败",
     });
   }
 
-  if (actionKey === 'goods.confirmation.confirm') {
+  if (actionKey === "goods.confirmation.confirm") {
     const goodsId = Number(payload.goodsId || 0);
     const siteVersion = Number(payload.siteVersion || 0);
-    const priceConfirmKeyStr = String(payload.priceConfirmKeyStr || '1');
+    const priceConfirmKeyStr = String(payload.priceConfirmKeyStr || "1");
     const goodsSkuIdList = Array.isArray(payload.goodsSkuIdList)
       ? payload.goodsSkuIdList.map((id) => Number(id)).filter((id) => id > 0)
       : [];
-    logger.info('[temu-api-action] 商品确认动作开始', {
+    logger.info("[temu-api-action] 商品确认动作开始", {
       traceId,
       profileId,
       region,
       goodsId,
       siteVersion,
       skuCount: goodsSkuIdList.length,
-      rowTrace
+      rowTrace,
     });
     const startedAt = Date.now();
-    const response = await requestTemuJson(region, '/bg-brando-mms/goods/bindSiteConfirmForPrice', {
-      goodsId,
-      siteVersion,
-      priceConfirmKeyStr,
-      goodsSkuIdList
-    }, { profileId, traceId, actionKey, step: 'confirmation-confirm' });
-    logger.info('[temu-api-action] 商品确认动作结束', {
+    const response = await requestTemuJson(
+      region,
+      "/bg-brando-mms/goods/bindSiteConfirmForPrice",
+      {
+        goodsId,
+        siteVersion,
+        priceConfirmKeyStr,
+        goodsSkuIdList,
+      },
+      { profileId, traceId, actionKey, step: "confirmation-confirm" },
+    );
+    logger.info("[temu-api-action] 商品确认动作结束", {
       traceId,
       profileId,
       region,
@@ -1197,23 +1435,31 @@ async function executeAction(actionKey, profileId, region, payload) {
       success: !!response?.success,
       status: response?.status ?? null,
       elapsedMs: Date.now() - startedAt,
-      message: response?.message || normalizeTemuApiMessage(response?.payload, '')
+      message:
+        response?.message || normalizeTemuApiMessage(response?.payload, ""),
     });
     return buildFeatureResponse({
       action: actionKey,
       profileId,
       region,
       requestResult: response,
-      successMessage: '商品确认成功',
-      failureMessage: '商品确认失败',
-      result: { goodsId, siteVersion, priceConfirmKeyStr, goodsSkuIdList, traceId, rowTrace }
+      successMessage: "商品确认成功",
+      failureMessage: "商品确认失败",
+      result: {
+        goodsId,
+        siteVersion,
+        priceConfirmKeyStr,
+        goodsSkuIdList,
+        traceId,
+        rowTrace,
+      },
     });
   }
 
-  if (actionKey === 'goods.modify-price') {
+  if (actionKey === "goods.modify-price") {
     const supplierResult = Number(payload.supplierResult || 0);
     const priceOrderId = Number(payload.priceOrderId || 0);
-    logger.info('[temu-api-action] 核价动作开始', {
+    logger.info("[temu-api-action] 核价动作开始", {
       traceId,
       profileId,
       region,
@@ -1221,26 +1467,47 @@ async function executeAction(actionKey, profileId, region, payload) {
       priceOrderId,
       rowTrace,
       itemCount: Array.isArray(payload.items) ? payload.items.length : 0,
-      firstItem: Array.isArray(payload.items) && payload.items[0]
-        ? {
-            productSkuId: payload.items[0].productSkuId,
-            price: payload.items[0].price
-          }
-        : null
+      firstItem:
+        Array.isArray(payload.items) && payload.items[0]
+          ? {
+              productSkuId: payload.items[0].productSkuId,
+              price: payload.items[0].price,
+            }
+          : null,
     });
     const startedAt = Date.now();
     const response =
       supplierResult === 3
-        ? await requestTemuJson(region, '/api/kiana/mms/magneto/api/price-review-order/no-bom/review', {
-            priceOrderId
-          }, { profileId, traceId, actionKey, step: 'price-review-abandon' })
-        : await requestTemuJson(region, '/api/kiana/mms/magneto/price/bargain-no-bom', {
-            supplierResult,
-            priceOrderId,
-            items: Array.isArray(payload.items) ? payload.items : [],
-            bargainReasonList: Array.isArray(payload.bargainReasonList) ? payload.bargainReasonList : []
-          }, { profileId, traceId, actionKey, step: supplierResult === 2 ? 'price-review-reprice' : 'price-review-confirm' });
-    logger.info('[temu-api-action] 核价动作结束', {
+        ? await requestTemuJson(
+            region,
+            "/api/kiana/mms/magneto/api/price-review-order/no-bom/review",
+            {
+              priceOrderId,
+            },
+            { profileId, traceId, actionKey, step: "price-review-abandon" },
+          )
+        : await requestTemuJson(
+            region,
+            "/api/kiana/mms/magneto/price/bargain-no-bom",
+            {
+              supplierResult,
+              priceOrderId,
+              items: Array.isArray(payload.items) ? payload.items : [],
+              bargainReasonList: Array.isArray(payload.bargainReasonList)
+                ? payload.bargainReasonList
+                : [],
+            },
+            {
+              profileId,
+              traceId,
+              actionKey,
+              step:
+                supplierResult === 2
+                  ? "price-review-reprice"
+                  : "price-review-confirm",
+            },
+          );
+    logger.info("[temu-api-action] 核价动作结束", {
       traceId,
       profileId,
       region,
@@ -1250,240 +1517,417 @@ async function executeAction(actionKey, profileId, region, payload) {
       success: !!response?.success,
       status: response?.status ?? null,
       elapsedMs: Date.now() - startedAt,
-      message: response?.message || normalizeTemuApiMessage(response?.payload, '')
+      message:
+        response?.message || normalizeTemuApiMessage(response?.payload, ""),
     });
     return buildFeatureResponse({
       action: actionKey,
       profileId,
       region,
       requestResult: response,
-      successMessage: supplierResult === 3 ? '提交放弃报价成功' : supplierResult === 2 ? '提交重新报价成功' : '提交确认报价成功',
-      failureMessage: supplierResult === 3 ? '提交放弃报价失败' : supplierResult === 2 ? '提交重新报价失败' : '提交确认报价失败',
-      result: { priceOrderId, supplierResult, traceId, rowTrace }
+      successMessage:
+        supplierResult === 3
+          ? "提交放弃报价成功"
+          : supplierResult === 2
+            ? "提交重新报价成功"
+            : "提交确认报价成功",
+      failureMessage:
+        supplierResult === 3
+          ? "提交放弃报价失败"
+          : supplierResult === 2
+            ? "提交重新报价失败"
+            : "提交确认报价失败",
+      result: { priceOrderId, supplierResult, traceId, rowTrace },
     });
   }
 
-  if (actionKey === 'jit.open') {
-    const skcSpuList = Array.isArray(payload.skcSpuList) ? payload.skcSpuList : [];
+  if (actionKey === "jit.open") {
+    const skcSpuList = Array.isArray(payload.skcSpuList)
+      ? payload.skcSpuList
+      : [];
     const productSkcSubSellModeReqList = skcSpuList
       .map((item) => ({
         productSkcId: Number(item?.skcId || item?.productSkcId || 0),
-        productId: Number(item?.spuId || item?.productId || 0)
+        productId: Number(item?.spuId || item?.productId || 0),
       }))
       .filter((item) => item.productSkcId > 0 && item.productId > 0);
-    logger.info('[temu-api-action] JIT 开通请求汇总', {
+    logger.info("[temu-api-action] JIT 开通请求汇总", {
       profileId,
       region,
       requestedCount: skcSpuList.length,
       validCount: productSkcSubSellModeReqList.length,
-      firstPair: productSkcSubSellModeReqList[0] || null
+      firstPair: productSkcSubSellModeReqList[0] || null,
     });
-    const response = await requestTemuJson(region, '/visage-agent-seller/product/skc/batchOpenJit', {
-      productSkcSubSellModeReqList
-    }, { profileId });
-    const failedSkcList = Array.isArray(response.payload?.result?.handleProductFailedMsgList)
-      ? response.payload.result.handleProductFailedMsgList
-      : [];
+    const batchSize = 100;
+    let totalSuccessCount = 0;
+    const allFailedSkcList = [];
+    let firstBatchErrorRes = null;
+    let lastBatchRes = null;
+
+    for (
+      let index = 0;
+      index < productSkcSubSellModeReqList.length;
+      index += batchSize
+    ) {
+      const batch = productSkcSubSellModeReqList.slice(
+        index,
+        index + batchSize,
+      );
+      lastBatchRes = await requestTemuJson(
+        region,
+        "/visage-agent-seller/product/skc/batchOpenJit",
+        {
+          productSkcSubSellModeReqList: batch,
+        },
+        { profileId },
+      );
+
+      if (!lastBatchRes.success) {
+        firstBatchErrorRes = lastBatchRes;
+        break;
+      }
+
+      const failedList = Array.isArray(
+        lastBatchRes.payload?.result?.handleProductFailedMsgList,
+      )
+        ? lastBatchRes.payload.result.handleProductFailedMsgList
+        : [];
+      totalSuccessCount += batch.length - failedList.length;
+      allFailedSkcList.push(...failedList);
+    }
+
     const requestedCount = productSkcSubSellModeReqList.length;
-    const failedCount = failedSkcList.length;
-    const actualSuccess = !!response.success && requestedCount > 0 && failedCount < requestedCount;
-    const firstFailureMessage = normalizeText(
-      failedSkcList[0]?.msg ||
-        failedSkcList[0]?.message ||
-        failedSkcList[0]?.errorMsg ||
-        ''
-    );
-    logger.info('[temu-api-action] JIT 开通结果汇总', {
+    const failedCount = allFailedSkcList.length;
+    const actualSuccess =
+      !firstBatchErrorRes && requestedCount > 0 && failedCount < requestedCount;
+    const firstFailureMessage = firstBatchErrorRes
+      ? normalizeTemuApiMessage(
+          firstBatchErrorRes.payload,
+          firstBatchErrorRes.message || "开通 JIT 失败",
+        ) || "开通 JIT 失败"
+      : normalizeText(
+          allFailedSkcList[0]?.msg ||
+            allFailedSkcList[0]?.message ||
+            allFailedSkcList[0]?.errorMsg ||
+            "",
+        );
+    logger.info("[temu-api-action] JIT 开通结果汇总", {
       profileId,
       region,
-      httpSuccess: !!response.success,
+      httpSuccess: !firstBatchErrorRes,
       requestedCount,
       failedCount,
-      successCount: Math.max(0, requestedCount - failedCount),
-      firstFailedSkc: failedSkcList[0] || null,
-      firstFailureMessage
+      successCount:
+        totalSuccessCount || Math.max(0, requestedCount - failedCount),
+      firstFailedSkc: allFailedSkcList[0] || null,
+      firstFailureMessage,
     });
     const message = actualSuccess
       ? failedCount
         ? `开通 JIT 部分成功：成功 ${requestedCount - failedCount} 个，失败 ${failedCount} 个`
-        : '开通 JIT 成功'
-      : firstFailureMessage || normalizeTemuApiMessage(response.payload, response.message || '开通 JIT 失败') || '开通 JIT 失败';
+        : "开通 JIT 成功"
+      : firstFailureMessage || "开通 JIT 失败";
     return buildFeatureResponse({
       action: actionKey,
       profileId,
       region,
       requestResult: {
-        ...response,
+        ...(lastBatchRes || {}),
         success: actualSuccess,
-        message
+        message,
       },
       successMessage: message,
-      failureMessage: '开通 JIT 失败',
+      failureMessage: "开通 JIT 失败",
       result: {
         requestedCount,
-        successCount: Math.max(0, requestedCount - failedCount),
+        successCount:
+          totalSuccessCount || Math.max(0, requestedCount - failedCount),
         failedCount,
-        failedSkcList
-      }
+        failedSkcList: allFailedSkcList,
+      },
     });
   }
 
-  if (actionKey === 'jit.stock.update') {
+  if (actionKey === "jit.stock.update") {
     const skcId = Number(payload.skcId || 0);
     const finalNum = Number(payload.finalNum || 500);
-    const goodsResponse = await requestTemuJson(region, '/visage-agent-seller/product/skc/pageQuery', {
-      page: 1,
-      pageSize: 50,
-      productSkcIds: [skcId]
-    }, { profileId });
+    const goodsResponse = await requestTemuJson(
+      region,
+      "/visage-agent-seller/product/skc/pageQuery",
+      {
+        page: 1,
+        pageSize: 50,
+        productSkcIds: [skcId],
+      },
+      { profileId },
+    );
     const stockPayload = buildJitStockUpdatePayload({
       goodsRelations: extractGoodsRelations(goodsResponse.payload),
       skcId,
-      finalNum
+      finalNum,
     });
     if (!stockPayload) {
-      return { success: false, action: actionKey, message: '未找到对应的 SKC 商品信息', profileId, region, request: {}, result: { skcId, finalNum }, raw: goodsResponse.payload ?? null };
+      return {
+        success: false,
+        action: actionKey,
+        message: "未找到对应的 SKC 商品信息",
+        profileId,
+        region,
+        request: {},
+        result: { skcId, finalNum },
+        raw: goodsResponse.payload ?? null,
+      };
     }
     if (stockPayload.skipped) {
-      return { success: true, action: actionKey, message: '当前库存已满足目标数量，无需调整', profileId, region, request: {}, result: { skcId, finalNum, skipped: true }, raw: goodsResponse.payload ?? null };
+      return {
+        success: true,
+        action: actionKey,
+        message: "当前库存已满足目标数量，无需调整",
+        profileId,
+        region,
+        request: {},
+        result: { skcId, finalNum, skipped: true },
+        raw: goodsResponse.payload ?? null,
+      };
     }
-    const response = await requestTemuJson(region, '/darwin-mms/api/kiana/foredawn/sales/stock/updateMmsProductSalesStock', stockPayload, { profileId });
+    const response = await requestTemuJson(
+      region,
+      "/darwin-mms/api/kiana/foredawn/sales/stock/updateMmsProductSalesStock",
+      stockPayload,
+      { profileId },
+    );
     return buildFeatureResponse({
       action: actionKey,
       profileId,
       region,
       requestResult: response,
-      successMessage: '更新 JIT 库存成功',
-      failureMessage: '更新 JIT 库存失败',
-      result: { skcId, finalNum, requestPayload: stockPayload }
+      successMessage: "更新 JIT 库存成功",
+      failureMessage: "更新 JIT 库存失败",
+      result: { skcId, finalNum, requestPayload: stockPayload },
     });
   }
 
-  if (actionKey === 'goods.real-picture.submit') {
+  if (actionKey === "goods.real-picture.submit") {
     const spuId = Number(payload.spuId || payload.spu_id || 0);
     if (!spuId) {
-      throw new Error('spuId 不能为空');
+      throw new Error("spuId 不能为空");
     }
-    const listResponse = await requestTemuJson(region, '/api/flash/real_picture/list', {
-      page: 1,
-      page_size: 20,
-      check_type_status_list: [1],
-      goods_status_list: [1, 2],
-      spu_id_list: [String(spuId)]
-    }, { profileId });
-    const fallbackItem = extractRealPictureItems(listResponse.payload)
-      .find((item) => Number(item.spuId || 0) === spuId);
+    const listResponse = await requestTemuJson(
+      region,
+      "/api/flash/real_picture/list",
+      {
+        page: 1,
+        page_size: 20,
+        check_type_status_list: [1],
+        goods_status_list: [1, 2],
+        spu_id_list: [String(spuId)],
+      },
+      { profileId },
+    );
+    const fallbackItem = extractRealPictureItems(listResponse.payload).find(
+      (item) => Number(item.spuId || 0) === spuId,
+    );
     const target = {
       spuId,
-      goodsId: Number(payload.goodsId || payload.goods_id || fallbackItem?.goodsId || 0),
-      isSameSku: payload.isSameSku !== undefined && payload.isSameSku !== null
-        ? !!payload.isSameSku
-        : !!fallbackItem?.isSameSku,
+      goodsId: Number(
+        payload.goodsId || payload.goods_id || fallbackItem?.goodsId || 0,
+      ),
+      isSameSku:
+        payload.isSameSku !== undefined && payload.isSameSku !== null
+          ? !!payload.isSameSku
+          : !!fallbackItem?.isSameSku,
       skuIdList: toNumberArray(
         Array.isArray(payload.skuIdList) && payload.skuIdList.length
           ? payload.skuIdList
-          : fallbackItem?.skuIdList || []
+          : fallbackItem?.skuIdList || [],
       ),
       labelImageList: Array.isArray(payload.existingLabelImageList)
         ? payload.existingLabelImageList
-        : fallbackItem?.labelImageList || []
+        : fallbackItem?.labelImageList || [],
     };
-    if (!target.goodsId) throw new Error('未能自动解析 goodsId，请手动传入 goodsId 后重试');
-    if (!target.skuIdList.length) throw new Error('未能自动解析 skuIdList，请手动传入 skuIdList 后重试');
+    if (!target.goodsId)
+      throw new Error("未能自动解析 goodsId，请手动传入 goodsId 后重试");
+    if (!target.skuIdList.length)
+      throw new Error("未能自动解析 skuIdList，请手动传入 skuIdList 后重试");
 
     const uploadedReusableMap = normalizeRequiredRealPicturePositionMap(
-      payload.uploadedPositionImageUrls || payload.uploaded_position_image_urls
+      payload.uploadedPositionImageUrls || payload.uploaded_position_image_urls,
     );
-    const positionImageUrls = normalizeRequiredRealPicturePositionMap(payload.positionImageUrls || payload.position_image_urls);
+    const positionImageUrls = normalizeRequiredRealPicturePositionMap(
+      payload.positionImageUrls || payload.position_image_urls,
+    );
     const uploadResult = Object.keys(uploadedReusableMap).length
       ? {
           uploadedPositionMap: uploadedReusableMap,
-          uploadedImages: Object.entries(uploadedReusableMap).flatMap(([position, urls]) =>
-            normalizeRemoteUrlList(urls).map((imageUrl) => ({
-              position,
-              sourceUrl: imageUrl,
-              uploadedUrl: imageUrl,
-              cacheHit: true
-            }))
-          )
+          uploadedImages: Object.entries(uploadedReusableMap).flatMap(
+            ([position, urls]) =>
+              normalizeRemoteUrlList(urls).map((imageUrl) => ({
+                position,
+                sourceUrl: imageUrl,
+                uploadedUrl: imageUrl,
+                cacheHit: true,
+              })),
+          ),
         }
-      : await uploadRealPicturePositionImages(profileId, region, positionImageUrls);
-    const existingMap = payload.appendToExisting === false ? {} : groupExistingLabelImages(target.labelImageList);
-    const finalImageMap = mergePositionImages(existingMap, uploadResult.uploadedPositionMap);
-    const submitPayload = buildRealPictureSubmitPayload(target, finalImageMap, Number(payload.confirmType || 4));
-    logger.info('[temu-api-action] 实拍图提交 payload 汇总', {
+      : await uploadRealPicturePositionImages(
+          profileId,
+          region,
+          positionImageUrls,
+        );
+    const existingMap =
+      payload.appendToExisting === false
+        ? {}
+        : groupExistingLabelImages(target.labelImageList);
+    const finalImageMap = mergePositionImages(
+      existingMap,
+      uploadResult.uploadedPositionMap,
+    );
+    const submitPayload = buildRealPictureSubmitPayload(
+      target,
+      finalImageMap,
+      Number(payload.confirmType || 4),
+    );
+    logger.info("[temu-api-action] 实拍图提交 payload 汇总", {
       spuId: target.spuId,
       goodsId: target.goodsId,
       skuCount: target.skuIdList.length,
-      positions: submitPayload.real_picture_info_list.map((item) => item.position),
+      positions: submitPayload.real_picture_info_list.map(
+        (item) => item.position,
+      ),
       positionImageCount: Object.fromEntries(
         submitPayload.real_picture_info_list.map((item) => [
           item.position,
-          item.sku_photo_info_list?.[0]?.image_list?.length || 0
-        ])
+          item.sku_photo_info_list?.[0]?.image_list?.length || 0,
+        ]),
       ),
-      totalImageReferences: submitPayload.real_picture_info_list.reduce((total, item) => (
-        total + (Array.isArray(item.sku_photo_info_list) ? item.sku_photo_info_list : [])
-          .reduce((skuTotal, skuItem) => skuTotal + (Array.isArray(skuItem.image_list) ? skuItem.image_list.length : 0), 0)
-      ), 0)
+      totalImageReferences: submitPayload.real_picture_info_list.reduce(
+        (total, item) =>
+          total +
+          (Array.isArray(item.sku_photo_info_list)
+            ? item.sku_photo_info_list
+            : []
+          ).reduce(
+            (skuTotal, skuItem) =>
+              skuTotal +
+              (Array.isArray(skuItem.image_list)
+                ? skuItem.image_list.length
+                : 0),
+            0,
+          ),
+        0,
+      ),
     });
-    const response = await requestTemuJson(region, '/api/flash/real_picture/upload_new', submitPayload, { profileId });
+    const response = await requestTemuJson(
+      region,
+      "/api/flash/real_picture/upload_new",
+      submitPayload,
+      { profileId },
+    );
     return buildFeatureResponse({
       action: actionKey,
       profileId,
       region,
       requestResult: response,
-      successMessage: '提交实拍图成功',
-      failureMessage: '提交实拍图失败',
+      successMessage: "提交实拍图成功",
+      failureMessage: "提交实拍图失败",
       result: {
         spuId: target.spuId,
         goodsId: target.goodsId,
         skuIdList: target.skuIdList,
         uploadedImages: uploadResult.uploadedImages,
         finalPositionImageCount: Object.fromEntries(
-          Object.entries(finalImageMap).map(([position, urls]) => [position, urls.length])
+          Object.entries(finalImageMap).map(([position, urls]) => [
+            position,
+            urls.length,
+          ]),
         ),
         usedExistingImages: payload.appendToExisting !== false,
-        autoResolvedFromList: !!fallbackItem
-      }
+        autoResolvedFromList: !!fallbackItem,
+      },
     });
   }
 
   const genericMap = {
-    'compliance.page-query': ['/ms/bg-flux-ms/compliance_property/page_query', '获取合规分页数据成功', '获取合规分页数据失败'],
-    'compliance.detail': [payload.detailType === 'detail' ? '/ms/bg-flux-ms/compliance_property/query_detail' : '/ms/bg-flux-ms/compliance_property/query_template', '获取合规详情成功', '获取合规详情失败'],
-    'compliance.submit': ['/ms/bg-flux-ms/compliance_property/edit_compliance', '提交合规信息成功', '提交合规信息失败'],
-    'goods.real-picture.list': ['/api/flash/real_picture/list', '获取实拍图列表成功', '获取实拍图列表失败']
+    "compliance.page-query": [
+      "/ms/bg-flux-ms/compliance_property/page_query",
+      "获取合规分页数据成功",
+      "获取合规分页数据失败",
+    ],
+    "compliance.detail": [
+      payload.detailType === "detail"
+        ? "/ms/bg-flux-ms/compliance_property/query_detail"
+        : "/ms/bg-flux-ms/compliance_property/query_template",
+      "获取合规详情成功",
+      "获取合规详情失败",
+    ],
+    "compliance.submit": [
+      "/ms/bg-flux-ms/compliance_property/edit_compliance",
+      "提交合规信息成功",
+      "提交合规信息失败",
+    ],
+    "goods.real-picture.list": [
+      "/api/flash/real_picture/list",
+      "获取实拍图列表成功",
+      "获取实拍图列表失败",
+    ],
   };
   const generic = genericMap[actionKey];
   if (generic) {
     const [path, successMessage, failureMessage] = generic;
-    if (actionKey === 'compliance.page-query') {
+    if (actionKey === "compliance.page-query") {
       const requestPayload = buildCompliancePageQueryPayload(payload);
-      const fetchAll = !!(payload.fetchAll || payload.fetch_all || payload.allPages || payload.all_pages);
-      const requestPage = (pageNum) => requestTemuJson(region, path, {
-        ...requestPayload,
-        page_num: pageNum,
-        page_size: requestPayload.page_size
-      }, { profileId });
-      const response = await requestPage(Number(requestPayload.page_num || 1) || 1);
+      const fetchAll = !!(
+        payload.fetchAll ||
+        payload.fetch_all ||
+        payload.allPages ||
+        payload.all_pages
+      );
+      const requestPage = (pageNum) =>
+        requestTemuJson(
+          region,
+          path,
+          {
+            ...requestPayload,
+            page_num: pageNum,
+            page_size: requestPayload.page_size,
+          },
+          { profileId },
+        );
+      const response = await requestPage(
+        Number(requestPayload.page_num || 1) || 1,
+      );
       const firstResult = response.payload?.result || {};
       const total = Number(firstResult.total || 0) || 0;
       const items = (Array.isArray(firstResult.data) ? firstResult.data : [])
         .map(normalizeComplianceItem)
         .filter(Boolean);
       let fetchedPages = 1;
-      if (fetchAll && total > (Array.isArray(firstResult.data) ? firstResult.data.length : items.length)) {
-        const totalPages = Math.max(1, Math.ceil(total / requestPayload.page_size));
+      if (
+        fetchAll &&
+        total >
+          (Array.isArray(firstResult.data)
+            ? firstResult.data.length
+            : items.length)
+      ) {
+        const totalPages = Math.max(
+          1,
+          Math.ceil(total / requestPayload.page_size),
+        );
         for (let pageNum = 2; pageNum <= totalPages; pageNum += 1) {
           const pageResponse = await requestPage(pageNum);
           const pageRawItems = Array.isArray(pageResponse.payload?.result?.data)
             ? pageResponse.payload.result.data
             : [];
-          const pageItems = pageRawItems.map(normalizeComplianceItem).filter(Boolean);
+          const pageItems = pageRawItems
+            .map(normalizeComplianceItem)
+            .filter(Boolean);
           items.push(...pageItems);
           fetchedPages = pageNum;
-          if (!pageRawItems.length || pageRawItems.length < requestPayload.page_size) break;
+          if (
+            !pageRawItems.length ||
+            pageRawItems.length < requestPayload.page_size
+          )
+            break;
         }
       }
       return buildFeatureResponse({
@@ -1500,62 +1944,88 @@ async function executeAction(actionKey, profileId, region, payload) {
           pageNum: Number(requestPayload.page_num || 1) || 1,
           pageSize: requestPayload.page_size,
           fetchedAll: fetchAll,
-          fetchedPages
-        }
+          fetchedPages,
+        },
       });
     }
-    if (actionKey === 'goods.real-picture.list') {
+    if (actionKey === "goods.real-picture.list") {
       const requestPayload = buildRealPictureListPayload(payload);
-      const fetchAll = !!(payload.fetchAll || payload.fetch_all || payload.allPages || payload.all_pages);
-      const requestPage = (page) => requestTemuJson(region, path, {
-        ...requestPayload,
-        page,
-        page_size: requestPayload.page_size
-      }, { profileId });
-      logger.info('[temu-api-action] 实拍图列表开始获取', {
+      const fetchAll = !!(
+        payload.fetchAll ||
+        payload.fetch_all ||
+        payload.allPages ||
+        payload.all_pages
+      );
+      const requestPage = (page) =>
+        requestTemuJson(
+          region,
+          path,
+          {
+            ...requestPayload,
+            page,
+            page_size: requestPayload.page_size,
+          },
+          { profileId },
+        );
+      logger.info("[temu-api-action] 实拍图列表开始获取", {
         profileId,
         region,
         fetchAll,
-        requestPayload
+        requestPayload,
       });
       const response = await requestPage(Number(requestPayload.page || 1) || 1);
       const firstResult = response.payload?.result || {};
-      const firstRawItems = Array.isArray(firstResult.items) ? firstResult.items : [];
-      const items = extractRealPictureListItems({ result: { items: firstRawItems } });
+      const firstRawItems = Array.isArray(firstResult.items)
+        ? firstResult.items
+        : [];
+      const items = extractRealPictureListItems({
+        result: { items: firstRawItems },
+      });
       const total = Number(firstResult.total || items.length || 0) || 0;
       let fetchedPages = 1;
-      logger.info('[temu-api-action] 实拍图列表第 1 页完成', {
+      logger.info("[temu-api-action] 实拍图列表第 1 页完成", {
         status: response.status,
         success: response.success,
         total,
         rawItemCount: firstRawItems.length,
         slimItemCount: items.length,
-        pageSize: requestPayload.page_size
+        pageSize: requestPayload.page_size,
       });
       if (fetchAll && total > items.length) {
-        const totalPages = Math.max(1, Math.ceil(total / requestPayload.page_size));
+        const totalPages = Math.max(
+          1,
+          Math.ceil(total / requestPayload.page_size),
+        );
         for (let page = 2; page <= totalPages; page += 1) {
-          logger.info('[temu-api-action] 实拍图列表继续获取分页', {
+          logger.info("[temu-api-action] 实拍图列表继续获取分页", {
             page,
             totalPages,
-            currentItemCount: items.length
+            currentItemCount: items.length,
           });
           const pageResponse = await requestPage(page);
-          const pageRawItems = Array.isArray(pageResponse.payload?.result?.items)
+          const pageRawItems = Array.isArray(
+            pageResponse.payload?.result?.items,
+          )
             ? pageResponse.payload.result.items
             : [];
-          const pageItems = extractRealPictureListItems({ result: { items: pageRawItems } });
+          const pageItems = extractRealPictureListItems({
+            result: { items: pageRawItems },
+          });
           items.push(...pageItems);
           fetchedPages = page;
-          logger.info('[temu-api-action] 实拍图列表分页完成', {
+          logger.info("[temu-api-action] 实拍图列表分页完成", {
             page,
             status: pageResponse.status,
             success: pageResponse.success,
             rawItemCount: pageRawItems.length,
             slimItemCount: pageItems.length,
-            accumulatedItemCount: items.length
+            accumulatedItemCount: items.length,
           });
-          if (!pageRawItems.length || pageRawItems.length < requestPayload.page_size) break;
+          if (
+            !pageRawItems.length ||
+            pageRawItems.length < requestPayload.page_size
+          )
+            break;
         }
       }
       const result = {
@@ -1564,9 +2034,12 @@ async function executeAction(actionKey, profileId, region, payload) {
         page: Number(requestPayload.page || 1) || 1,
         pageSize: requestPayload.page_size,
         fetchedAll: fetchAll,
-        fetchedPages
+        fetchedPages,
       };
-      logger.info('[temu-api-action] 实拍图列表获取完成，准备回传', summarizeRealPictureListResult(result));
+      logger.info(
+        "[temu-api-action] 实拍图列表获取完成，准备回传",
+        summarizeRealPictureListResult(result),
+      );
       return buildFeatureResponse({
         action: actionKey,
         profileId,
@@ -1581,16 +2054,18 @@ async function executeAction(actionKey, profileId, region, payload) {
           error_msg: response.payload?.error_msg,
           result: {
             total,
-            items
-          }
-        }
+            items,
+          },
+        },
       });
     }
     const requestPayload =
-      actionKey === 'compliance.detail' || actionKey === 'compliance.submit'
+      actionKey === "compliance.detail" || actionKey === "compliance.submit"
         ? asPlainObject(payload.payload)
         : payload;
-    const response = await requestTemuJson(region, path, requestPayload, { profileId });
+    const response = await requestTemuJson(region, path, requestPayload, {
+      profileId,
+    });
     return buildFeatureResponse({
       action: actionKey,
       profileId,
@@ -1598,7 +2073,7 @@ async function executeAction(actionKey, profileId, region, payload) {
       requestResult: response,
       successMessage,
       failureMessage,
-      result: response.payload?.result ?? {}
+      result: response.payload?.result ?? {},
     });
   }
 
@@ -1607,111 +2082,122 @@ async function executeAction(actionKey, profileId, region, payload) {
 
 export async function runTemuApiActionSmallFeature(input = {}) {
   const root = asPlainObject(input);
-  const nestedCommandPayload = asPlainObject(asPlainObject(root.command).payload);
+  const nestedCommandPayload = asPlainObject(
+    asPlainObject(root.command).payload,
+  );
   const nestedData = asPlainObject(root.data);
   const actionEnvelope = {
     ...nestedCommandPayload,
     ...nestedData,
-    ...root
+    ...root,
   };
   const rawPayload = asPlainObject(actionEnvelope.payload);
   const innerPayload = asPlainObject(rawPayload.payload);
   const payload = {
     ...rawPayload,
-    ...innerPayload
+    ...innerPayload,
   };
   const actionKey = String(
     actionEnvelope.actionKey ||
       rawPayload.actionKey ||
       innerPayload.actionKey ||
-      ''
+      "",
   ).trim();
   const profileId = String(
     actionEnvelope.profileId ||
       rawPayload.profileId ||
       innerPayload.profileId ||
-      ''
+      "",
   ).trim();
   const region = normalizeRegion(
     actionEnvelope.region ||
       rawPayload.region ||
       innerPayload.region ||
-      'global'
+      "global",
   );
   if (!actionKey) {
-    throw new Error('缺少 actionKey');
+    throw new Error("缺少 actionKey");
   }
   if (!profileId) {
-    throw new Error('缺少 profileId');
+    throw new Error("缺少 profileId");
   }
-  logger.info('[temu-api-action] 开始执行 Temu 动作', {
+  logger.info("[temu-api-action] 开始执行 Temu 动作", {
     actionKey,
     profileId,
-    region
+    region,
   });
   let result;
   try {
     result = await executeAction(actionKey, profileId, region, {
       ...payload,
       profileId,
-      region
+      region,
     });
   } catch (error) {
-    logger.error('[temu-api-action] Temu 动作执行异常', {
+    logger.error("[temu-api-action] Temu 动作执行异常", {
       actionKey,
       profileId,
       region,
-      message: error?.message || String(error)
+      message: error?.message || String(error),
     });
     throw error;
   }
-  let filteredResult = actionKey === 'goods.price-review.list'
-    ? filterPriceReviewListResponse(result)
-    : result;
-  if (actionKey === 'goods.confirmation.list') {
+  let filteredResult =
+    actionKey === "goods.price-review.list"
+      ? filterPriceReviewListResponse(result)
+      : result;
+  if (actionKey === "goods.confirmation.list") {
     filteredResult = filterConfirmationListResponse(result);
   }
-  if (actionKey === 'goods.price-review.list') {
-    logger.info('[temu-api-action] 核价列表结果已精简，准备回传', {
+  if (actionKey === "goods.price-review.list") {
+    logger.info("[temu-api-action] 核价列表结果已精简，准备回传", {
       actionKey,
       success: !!filteredResult.success,
       resultSummary: {
         total: Number(filteredResult?.result?.total || 0) || 0,
-        itemCount: Array.isArray(filteredResult?.result?.items) ? filteredResult.result.items.length : 0,
+        itemCount: Array.isArray(filteredResult?.result?.items)
+          ? filteredResult.result.items.length
+          : 0,
         fetchedAll: filteredResult?.result?.fetchedAll === true,
         fetchedPages: Number(filteredResult?.result?.fetchedPages || 0) || 0,
-        payloadBytes: measureJsonPayload(filteredResult).bytes
-      }
+        payloadBytes: measureJsonPayload(filteredResult).bytes,
+      },
     });
-  } else if (actionKey === 'goods.real-picture.list') {
-    logger.info('[temu-api-action] Temu 动作执行完成', {
+  } else if (actionKey === "goods.real-picture.list") {
+    logger.info("[temu-api-action] Temu 动作执行完成", {
       actionKey,
       success: !!filteredResult.success,
-      message: filteredResult.message || '',
-      resultSummary: summarizeRealPictureListResult(filteredResult.result || {})
+      message: filteredResult.message || "",
+      resultSummary: summarizeRealPictureListResult(
+        filteredResult.result || {},
+      ),
     });
-  } else if (actionKey === 'goods.confirmation.list') {
-    logger.info('[temu-api-action] 商品确认列表结果已精简，准备回传', {
+  } else if (actionKey === "goods.confirmation.list") {
+    logger.info("[temu-api-action] 商品确认列表结果已精简，准备回传", {
       actionKey,
       success: !!filteredResult.success,
       resultSummary: {
         total: Number(filteredResult?.result?.total || 0) || 0,
-        itemCount: Array.isArray(filteredResult?.result?.items) ? filteredResult.result.items.length : 0,
+        itemCount: Array.isArray(filteredResult?.result?.items)
+          ? filteredResult.result.items.length
+          : 0,
         fetchedAll: filteredResult?.result?.fetchedAll === true,
         fetchedPages: Number(filteredResult?.result?.fetchedPages || 0) || 0,
-        payloadBytes: measureJsonPayload(filteredResult).bytes
-      }
+        payloadBytes: measureJsonPayload(filteredResult).bytes,
+      },
     });
   } else {
-    logger.info('[temu-api-action] Temu 动作执行完成', {
+    logger.info("[temu-api-action] Temu 动作执行完成", {
       actionKey,
       success: !!filteredResult.success,
-      message: filteredResult.message || ''
+      message: filteredResult.message || "",
     });
   }
   return {
     success: !!filteredResult.success,
-    message: filteredResult.message || (filteredResult.success ? 'Temu 动作执行成功' : 'Temu 动作执行失败'),
-    data: filteredResult
+    message:
+      filteredResult.message ||
+      (filteredResult.success ? "Temu 动作执行成功" : "Temu 动作执行失败"),
+    data: filteredResult,
   };
 }
