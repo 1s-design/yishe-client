@@ -1400,7 +1400,7 @@ async function executeAction(actionKey, profileId, region, payload) {
 
   if (actionKey === "goods.confirmation.confirm") {
     const goodsId = Number(payload.goodsId || 0);
-    const siteVersion = Number(payload.siteVersion || 0);
+    const siteVersion = Number(payload.siteVersion || 10003);
     const priceConfirmKeyStr = String(payload.priceConfirmKeyStr || "1");
     const goodsSkuIdList = Array.isArray(payload.goodsSkuIdList)
       ? payload.goodsSkuIdList.map((id) => Number(id)).filter((id) => id > 0)

@@ -111,6 +111,7 @@ const LEGACY_SERVICE_KEYS: Record<string, string> = {
   "image-processing": "images",
   "local-service": "localService",
   "video-template": "video-template",
+  "file-download": "fileDownload",
 };
 
 function getNativeApi() {
@@ -7416,6 +7417,84 @@ function registerBuiltInLocalServices() {
   if (localServiceHandlers.size > 0) {
     return;
   }
+
+  registerLocalService({
+    key: "fileDownload",
+    pluginKey: "file-download",
+    label: "文件下载",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi();
+      const hasDownloadApi = !!nativeApi?.downloadFile;
+
+      return {
+        label: "文件下载",
+        connected: true,
+        available: hasDownloadApi,
+        status: hasDownloadApi ? "connected" : "disconnected",
+        state: hasDownloadApi ? "idle" : "offline",
+        busy: false,
+        message: hasDownloadApi
+          ? "文件下载服务可用"
+          : "当前环境未注入桌面端文件下载能力",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health", "download-file", "check-file-downloaded"],
+      };
+    },
+    execute: async (command) => {
+      if (command.action === "download-file") {
+        const url = command.payload?.url;
+        const nativeApi = getNativeApi();
+
+        if (!url) {
+          throw new Error("缺少文件 URL");
+        }
+        if (!nativeApi?.downloadFile) {
+          throw new Error("当前环境未注入桌面端文件下载能力");
+        }
+
+        const result = await nativeApi.downloadFile(url);
+        await syncServiceRuntime("file-download");
+
+        return {
+          success: !!result?.success,
+          message: result?.message || (result?.success ? "下载完成" : "下载失败"),
+          data: {
+            filePath: result?.filePath,
+            fileSize: result?.fileSize,
+            cacheKey: result?.cacheKey,
+            skipped: result?.skipped,
+          },
+        };
+      }
+
+      if (command.action === "check-file-downloaded") {
+        const url = command.payload?.url;
+        const nativeApi = getNativeApi();
+
+        if (!url) {
+          throw new Error("缺少文件 URL");
+        }
+        if (!nativeApi?.checkFileDownloaded) {
+          throw new Error("当前环境未注入桌面端文件下载能力");
+        }
+
+        const result = await nativeApi.checkFileDownloaded(url);
+        await syncServiceRuntime("file-download");
+
+        return {
+          success: true,
+          message: result?.found ? "文件已缓存" : "文件未缓存",
+          data: {
+            found: result?.found,
+            entry: result?.entry,
+          },
+        };
+      }
+
+      throw new Error(`未支持的文件下载命令: ${command.action}`);
+    },
+  });
 
   registerLocalService({
     key: "photoshop",

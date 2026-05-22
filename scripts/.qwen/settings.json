@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(d:\\workspace\\yishe-server/**)",
+      "Read(D:\\work\\erp_web/**)"
+    ]
+  },
+  "$version": 3
+}
