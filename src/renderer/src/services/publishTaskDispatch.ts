@@ -44,6 +44,7 @@ type ExecutePublishTaskOptions = {
 
 const PUBLISH_TASK_HEARTBEAT_INTERVAL_MS = 10_000;
 const PUBLISH_TASK_RUNTIME_UPDATE_MIN_INTERVAL_MS = 5_000;
+const PUBLISH_TASK_STATUS_FALLBACK_RETRY_DELAYS_MS = [800, 2000, 5000];
 
 class PublishTaskRetryableError extends Error {
   constructor(message: string) {
@@ -84,17 +85,34 @@ function resolveQueueName(task: QueueMessage | null, fallbackQueue: string) {
   return String(task?.queue || fallbackQueue || "").trim();
 }
 
+function resolveTaskProfileId(
+  task: QueueMessage | null | undefined,
+  fallback?: string | null,
+) {
+  return (
+    String(
+      fallback ||
+        task?.metadata?.profileId ||
+        task?.metadata?.browserAutomationProfileId ||
+        task?.metadata?.publishDispatch?.profileId ||
+        task?.data?.meta?.profileId ||
+        task?.data?.meta?.browserAutomationProfileId ||
+        task?.data?.meta?.publishDispatch?.profileId ||
+        task?.data?.publishData?.profileId ||
+        task?.data?.publishData?.browserAutomationProfileId ||
+        task?.data?.publishData?.meta?.profileId ||
+        "",
+    ).trim() || null
+  );
+}
+
 function stringifyRuntimeError(value: any): string {
   if (!value) return "";
   if (typeof value === "string") return value.trim();
   if (value instanceof Error) return value.message || String(value);
   if (typeof value === "object") {
     return String(
-      value.message ||
-        value.errorMessage ||
-        value.reason ||
-        value.detail ||
-        "",
+      value.message || value.errorMessage || value.reason || value.detail || "",
     ).trim();
   }
   return String(value).trim();
@@ -106,7 +124,8 @@ function resolveFailedRuntimeMessage(task: any, runtime: any): string {
     const platformReasons = result.results
       .filter((item: any) => item?.success === false)
       .map((item: any) => {
-        const platform = String(item?.platform || "未知平台").trim() || "未知平台";
+        const platform =
+          String(item?.platform || "未知平台").trim() || "未知平台";
         const reason =
           stringifyRuntimeError(item?.message) ||
           stringifyRuntimeError(item?.error) ||
@@ -147,22 +166,22 @@ function upsertExecutionControl(
     throw new Error("缺少 taskId");
   }
 
-  const current =
-    publishTaskExecutionControls.get(normalizedTaskId) || {
-      taskId: normalizedTaskId,
-      taskType: String(patch.taskType || "").trim(),
-      queue: String(patch.queue || "").trim(),
-      profileId: String(patch.profileId || "").trim() || null,
-      dispatchToken: String(patch.dispatchToken || "").trim() || null,
-      stopRequested: false,
-      stopReason: null,
-    };
+  const current = publishTaskExecutionControls.get(normalizedTaskId) || {
+    taskId: normalizedTaskId,
+    taskType: String(patch.taskType || "").trim(),
+    queue: String(patch.queue || "").trim(),
+    profileId: String(patch.profileId || "").trim() || null,
+    dispatchToken: String(patch.dispatchToken || "").trim() || null,
+    stopRequested: false,
+    stopReason: null,
+  };
   const next: PublishTaskExecutionControl = {
     ...current,
     ...patch,
     taskId: normalizedTaskId,
     taskType:
-      String(patch.taskType ?? current.taskType ?? "").trim() || current.taskType,
+      String(patch.taskType ?? current.taskType ?? "").trim() ||
+      current.taskType,
     queue: String(patch.queue ?? current.queue ?? "").trim() || current.queue,
     profileId:
       patch.profileId !== undefined
@@ -214,7 +233,10 @@ async function performStopCleanup(control: PublishTaskExecutionControl) {
   const reason = control.stopReason || "任务已停止";
 
   try {
-    await cancelUploaderTasksBySource([control.taskId as UploaderTaskSourceId], reason);
+    await cancelUploaderTasksBySource(
+      [control.taskId as UploaderTaskSourceId],
+      reason,
+    );
   } catch (error) {
     console.warn("[publish-task] cancel uploader task failed:", error);
   }
@@ -286,7 +308,7 @@ async function emitRuntime(
       dispatchToken:
         snapshot.dispatchToken !== undefined
           ? snapshot.dispatchToken
-          : (String(options?.dispatchToken || "").trim() || null),
+          : String(options?.dispatchToken || "").trim() || null,
     });
   } catch (error) {
     console.warn("[publish-task] runtime callback failed:", error);
@@ -312,7 +334,9 @@ function startPublishTaskHeartbeat(
   return () => window.clearInterval(timer);
 }
 
-function buildRuntimeSnapshotFingerprint(snapshot: PublishTaskRuntimeSnapshot | null) {
+function buildRuntimeSnapshotFingerprint(
+  snapshot: PublishTaskRuntimeSnapshot | null,
+) {
   if (!snapshot) {
     return "";
   }
@@ -331,7 +355,9 @@ function buildRuntimeSnapshotFingerprint(snapshot: PublishTaskRuntimeSnapshot | 
   });
 }
 
-function createRuntimeUpdateEmitter(options: ExecutePublishTaskOptions | undefined) {
+function createRuntimeUpdateEmitter(
+  options: ExecutePublishTaskOptions | undefined,
+) {
   let lastFingerprint = "";
   let lastEmittedAt = 0;
 
@@ -356,6 +382,38 @@ function createRuntimeUpdateEmitter(options: ExecutePublishTaskOptions | undefin
   };
 }
 
+async function retryFallbackTaskStatusUpdate(
+  type: string,
+  taskId: string,
+  status: "pending" | "failed",
+  errorMessage: string,
+  dispatchToken?: string | null,
+) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= PUBLISH_TASK_STATUS_FALLBACK_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await updateTaskStatus(
+        type,
+        taskId,
+        status,
+        errorMessage,
+        dispatchToken || undefined,
+      );
+      return true;
+    } catch (error) {
+      lastError = error;
+      const delay = PUBLISH_TASK_STATUS_FALLBACK_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) {
+        break;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, delay));
+    }
+  }
+
+  console.warn("[publish-task] fallback status update failed:", lastError);
+  return false;
+}
+
 class PublishTaskStoppedError extends Error {
   constructor(message: string) {
     super(message);
@@ -373,7 +431,10 @@ type PublishTaskExecutionControl = {
   stopReason: string | null;
 };
 
-const publishTaskExecutionControls = new Map<string, PublishTaskExecutionControl>();
+const publishTaskExecutionControls = new Map<
+  string,
+  PublishTaskExecutionControl
+>();
 
 export async function executePublishQueueTask(
   taskId: string,
@@ -467,10 +528,7 @@ export async function executePublishQueueTask(
       };
     }
 
-    executionControl.profileId =
-      forcedProfileId ||
-      String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
-      null;
+    executionControl.profileId = resolveTaskProfileId(detail, forcedProfileId);
     await ensureExecutionActive(executionControl);
 
     if (detail.status === "waiting") {
@@ -494,7 +552,8 @@ export async function executePublishQueueTask(
       dispatchToken,
       throwIfStopped: async (payload) => {
         if (payload?.profileId) {
-          executionControl.profileId = String(payload.profileId || "").trim() || null;
+          executionControl.profileId =
+            String(payload.profileId || "").trim() || null;
         }
         await ensureExecutionActive(executionControl);
       },
@@ -504,10 +563,7 @@ export async function executePublishQueueTask(
           taskType: detail!.type,
           queue: resolveQueueName(detail, normalizedQueue),
           dispatchToken,
-          profileId:
-            forcedProfileId ||
-            String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
-            null,
+          profileId: resolveTaskProfileId(detail, forcedProfileId),
           status:
             status === "failed"
               ? "failed"
@@ -541,10 +597,7 @@ export async function executePublishQueueTask(
           taskType: detail!.type,
           queue: resolveQueueName(detail, normalizedQueue),
           dispatchToken,
-          profileId:
-            forcedProfileId ||
-            String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
-            null,
+          profileId: resolveTaskProfileId(detail, forcedProfileId),
           status:
             mappedStatus === "failed"
               ? "failed"
@@ -568,10 +621,7 @@ export async function executePublishQueueTask(
                 ? runtime.progress
                 : null,
           runtime: runtime || null,
-          error:
-            mappedStatus === "failed"
-              ? failureMessage
-              : null,
+          error: mappedStatus === "failed" ? failureMessage : null,
         };
         await emitRuntimeUpdate(lastRuntimeSnapshot);
       },
@@ -583,10 +633,7 @@ export async function executePublishQueueTask(
       queue: resolveQueueName(detail, normalizedQueue),
       status: "running",
       dispatchToken,
-      profileId:
-        forcedProfileId ||
-        String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
-        null,
+      profileId: resolveTaskProfileId(detail, forcedProfileId),
       message: `开始执行 ${getTaskLabel(detail.type)}`,
       currentStep: "开始执行",
       progress: 0,
@@ -601,10 +648,7 @@ export async function executePublishQueueTask(
       queue: resolveQueueName(detail, normalizedQueue),
       status: "completed",
       dispatchToken,
-      profileId:
-        forcedProfileId ||
-        String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
-        null,
+      profileId: resolveTaskProfileId(detail, forcedProfileId),
       message: `执行完成：${getTaskLabel(detail.type)}`,
       currentStep: "执行完成",
       progress: 100,
@@ -618,21 +662,17 @@ export async function executePublishQueueTask(
     }
 
     const errorMessage = error?.message || String(error);
-    const fallbackStatus: PublishTaskRuntimeStatus =
+    const fallbackStatus: "pending" | "failed" =
       error instanceof PublishTaskRetryableError ? "pending" : "failed";
 
-    try {
-      if (detail) {
-        await updateTaskStatus(
-          detail.type,
-          detail.id,
-          fallbackStatus,
-          errorMessage,
-          dispatchToken || undefined,
-        );
-      }
-    } catch {
-      // 忽略兜底状态回写异常，主流程错误优先向上抛出
+    if (detail) {
+      await retryFallbackTaskStatusUpdate(
+        detail.type,
+        detail.id,
+        fallbackStatus,
+        errorMessage,
+        dispatchToken,
+      );
     }
 
     lastRuntimeSnapshot = {
@@ -641,10 +681,7 @@ export async function executePublishQueueTask(
       queue: resolveQueueName(detail, normalizedQueue),
       status: fallbackStatus,
       dispatchToken,
-      profileId:
-        forcedProfileId ||
-        String(detail?.metadata?.profileId || detail?.data?.meta?.profileId || "").trim() ||
-        null,
+      profileId: resolveTaskProfileId(detail, forcedProfileId),
       message: errorMessage,
       currentStep: fallbackStatus === "pending" ? "等待重新调度" : "执行失败",
       error: errorMessage,

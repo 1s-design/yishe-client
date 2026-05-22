@@ -769,71 +769,115 @@ function buildTemuStoredSessionUpdatePayload(
   const hasFreshUserInfo = !!accountId || mallList.length > 0;
 
   return {
-    profiles: {
-      [profileId]: {
-        account: nextCredentials.account,
-        password: nextCredentials.password,
-        mallId,
-        mallName,
-        accountId,
-        accountType,
-        mallList,
-        headersTemplate: nextGlobalHeaders,
-        userInfo: {
-          status: hasFreshUserInfo
-            ? "success"
-            : normalizeText(currentUserInfo?.status || "missing") || "missing",
-          message: hasFreshUserInfo
-            ? "发布时实时采集会话并同步用户信息"
-            : normalizeText(
-                currentUserInfo?.message || "暂无用户信息，可手动获取",
-              ) || "暂无用户信息，可手动获取",
-          fetchedAt: hasFreshUserInfo
-            ? collectedAt
-            : normalizeText(currentUserInfo?.fetchedAt || ""),
-          accountId,
-          accountType,
-          mallId,
-          mallName,
-          mallList,
-          mallCount: mallList.length,
-        },
-        updatedAt: collectedAt,
-        validation: {
-          status: "fresh",
-          message: "发布时已完成全量会话采集，建议重新校验",
-          checkedAt: collectedAt,
-        },
-        session: {
-          global: buildMergedRegionSession(
-            isPlainObject(sessionBundle?.cookies_global)
-              ? sessionBundle.cookies_global
-              : isPlainObject(sessionBundle?.cookies)
-                ? sessionBundle.cookies
-                : {},
-            nextGlobalHeaders,
-            currentSession?.global,
-            collectedAt,
-          ),
-          us: buildMergedRegionSession(
-            isPlainObject(sessionBundle?.cookies_us)
-              ? sessionBundle.cookies_us
-              : {},
-            isPlainObject(regionHeaders?.us) ? regionHeaders.us : {},
-            currentSession?.us,
-            collectedAt,
-          ),
-          eu: buildMergedRegionSession(
-            isPlainObject(sessionBundle?.cookies_eu)
-              ? sessionBundle.cookies_eu
-              : {},
-            isPlainObject(regionHeaders?.eu) ? regionHeaders.eu : {},
-            currentSession?.eu,
-            collectedAt,
-          ),
-        },
-      },
+    account: nextCredentials.account,
+    password: nextCredentials.password,
+    mallId,
+    mallName,
+    accountId,
+    accountType,
+    mallList,
+    headersTemplate: nextGlobalHeaders,
+    userInfo: {
+      status: hasFreshUserInfo
+        ? "success"
+        : normalizeText(currentUserInfo?.status || "missing") || "missing",
+      message: hasFreshUserInfo
+        ? "发布时实时采集会话并同步用户信息"
+        : normalizeText(currentUserInfo?.message || "暂无用户信息，可手动获取") ||
+          "暂无用户信息，可手动获取",
+      fetchedAt: hasFreshUserInfo
+        ? collectedAt
+        : normalizeText(currentUserInfo?.fetchedAt || ""),
+      accountId,
+      accountType,
+      mallId,
+      mallName,
+      mallList,
+      mallCount: mallList.length,
     },
+    updatedAt: collectedAt,
+    validation: {
+      status: "fresh",
+      message: "发布时已完成全量会话采集，建议重新校验",
+      checkedAt: collectedAt,
+    },
+    session: {
+      global: buildMergedRegionSession(
+        isPlainObject(sessionBundle?.cookies_global)
+          ? sessionBundle.cookies_global
+          : isPlainObject(sessionBundle?.cookies)
+            ? sessionBundle.cookies
+            : {},
+        nextGlobalHeaders,
+        currentSession?.global,
+        collectedAt,
+      ),
+      us: buildMergedRegionSession(
+        isPlainObject(sessionBundle?.cookies_us) ? sessionBundle.cookies_us : {},
+        isPlainObject(regionHeaders?.us) ? regionHeaders.us : {},
+        currentSession?.us,
+        collectedAt,
+      ),
+      eu: buildMergedRegionSession(
+        isPlainObject(sessionBundle?.cookies_eu) ? sessionBundle.cookies_eu : {},
+        isPlainObject(regionHeaders?.eu) ? regionHeaders.eu : {},
+        currentSession?.eu,
+        collectedAt,
+      ),
+    },
+    profileId,
+  };
+}
+
+function summarizeTemuSessionPayloadForLog(payload = {}) {
+  const session = isPlainObject(payload?.session) ? payload.session : {};
+  const globalSession = isPlainObject(session.global) ? session.global : {};
+  const usSession = isPlainObject(session.us) ? session.us : {};
+  const euSession = isPlainObject(session.eu) ? session.eu : {};
+  return {
+    mallId: normalizeText(payload?.mallId),
+    mallName: normalizeText(payload?.mallName),
+    accountId: normalizeText(payload?.accountId),
+    accountType: normalizeText(payload?.accountType),
+    globalCookieCount: Object.keys(
+      isPlainObject(globalSession.cookies) ? globalSession.cookies : {},
+    ).length,
+    usCookieCount: Object.keys(
+      isPlainObject(usSession.cookies) ? usSession.cookies : {},
+    ).length,
+    euCookieCount: Object.keys(
+      isPlainObject(euSession.cookies) ? euSession.cookies : {},
+    ).length,
+    globalHeaderKeys: Object.keys(
+      isPlainObject(globalSession.headers) ? globalSession.headers : {},
+    ),
+    updatedAt: normalizeText(payload?.updatedAt),
+  };
+}
+
+async function parseTemuPersistResponse(response) {
+  const rawText = await response.text().catch(() => "");
+  let payload = null;
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText);
+    } catch {
+      payload = null;
+    }
+  }
+  return {
+    rawText,
+    payload,
+    message:
+      normalizeText(payload?.message || payload?.error || payload?.msg) ||
+      rawText.slice(0, 300),
+    businessOk:
+      payload == null ||
+      !(
+        payload.status === false ||
+        payload.success === false ||
+        (typeof payload.code === "number" && payload.code >= 400)
+      ),
   };
 }
 
@@ -862,6 +906,16 @@ async function persistTemuCollectedSessionToServer(
         (await fetchTemuRealtimeStoredSessionProfile(normalizedProfileId)) ||
         {};
     }
+    const updatePayload = buildTemuStoredSessionUpdatePayload(
+      sessionBundle,
+      normalizedProfileId,
+      currentProfile,
+      credentialPair,
+    );
+    logger.info(`${PLATFORM_NAME}准备回写现场采集会话到服务端`, {
+      profileId: normalizedProfileId,
+      payload: summarizeTemuSessionPayloadForLog(updatePayload),
+    });
 
     const response = await fetch(
       `${TEMU_REMOTE_API_BASE}/user/updatePlatformSessions`,
@@ -873,20 +927,30 @@ async function persistTemuCollectedSessionToServer(
         },
         body: JSON.stringify({
           platform: "temu",
-          data: buildTemuStoredSessionUpdatePayload(
-            sessionBundle,
-            normalizedProfileId,
-            currentProfile,
-            credentialPair,
-          ),
+          profileId: normalizedProfileId,
+          data: updatePayload,
         }),
       },
     );
+    const parsedResponse = await parseTemuPersistResponse(response);
     if (!response.ok) {
       return {
         success: false,
         skipped: false,
-        message: `回写 Temu 会话失败，状态码 ${response.status}`,
+        message:
+          parsedResponse.message ||
+          `回写 Temu 会话失败，状态码 ${response.status}`,
+        status: response.status,
+        response: parsedResponse.payload,
+      };
+    }
+    if (!parsedResponse.businessOk) {
+      return {
+        success: false,
+        skipped: false,
+        message: parsedResponse.message || "回写 Temu 会话失败",
+        status: response.status,
+        response: parsedResponse.payload,
       };
     }
 
@@ -894,6 +958,8 @@ async function persistTemuCollectedSessionToServer(
       success: true,
       skipped: false,
       message: "Temu 会话已回写服务端",
+      status: response.status,
+      response: parsedResponse.payload,
     };
   } catch (error) {
     return {
@@ -948,29 +1014,28 @@ export async function resolveTemuValidatedSessionContext(
           requireIdentity: true,
         },
       );
-      if (completeness.success) {
-        logger.info(`${PLATFORM_NAME}实时会话校验通过`, {
+      if (!completeness.success) {
+        logger.warn(`${PLATFORM_NAME}实时会话校验通过但信息不完整，继续复用服务端会话`, {
           profileId: profileId || "",
           source: realtimeSession.source || "stored_platform_session",
-          accountId: validationResult.accountId || "",
-          mallCount: Array.isArray(validationResult.mallList)
-            ? validationResult.mallList.length
-            : 0,
+          missing: completeness.missing,
         });
-        return {
-          success: true,
-          source: realtimeSession.source || "stored_platform_session",
-          sessionContext: validatedSessionContext,
-          validationResult,
-          persisted: false,
-        };
       }
-
-      logger.warn(`${PLATFORM_NAME}实时会话信息不完整，准备回退现场采集`, {
+      logger.info(`${PLATFORM_NAME}实时会话校验通过`, {
         profileId: profileId || "",
         source: realtimeSession.source || "stored_platform_session",
-        missing: completeness.missing,
+        accountId: validationResult.accountId || "",
+        mallCount: Array.isArray(validationResult.mallList)
+          ? validationResult.mallList.length
+          : 0,
       });
+      return {
+        success: true,
+        source: realtimeSession.source || "stored_platform_session",
+        sessionContext: validatedSessionContext,
+        validationResult,
+        persisted: false,
+      };
     } else {
       logger.warn(`${PLATFORM_NAME}实时会话校验失败，准备回退现场采集`, {
         profileId: profileId || "",
@@ -1086,9 +1151,21 @@ export async function resolveTemuValidatedSessionContext(
     if (persistResult?.success) {
       logger.info(`${PLATFORM_NAME}现场采集会话已回写服务端`, {
         profileId: profileId || "",
+        status: persistResult.status || null,
+        responseMessage:
+          normalizeText(
+            persistResult.response?.message || persistResult.response?.msg,
+          ) || persistResult.message,
       });
     } else if (!persistResult?.skipped) {
       logger.warn(`${PLATFORM_NAME}现场采集会话回写服务端失败`, {
+        profileId: profileId || "",
+        message: persistMessage,
+        status: persistResult?.status || null,
+        response: persistResult?.response || null,
+      });
+    } else {
+      logger.warn(`${PLATFORM_NAME}现场采集会话未回写服务端`, {
         profileId: profileId || "",
         message: persistMessage,
       });

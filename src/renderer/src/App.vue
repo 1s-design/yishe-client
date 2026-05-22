@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { websocketClient, autoPsdBatchState } from "./services/websocketClient";
+import {
+  platformTaskAutoState,
+  startPlatformTaskPolling,
+  stopPlatformTaskPolling,
+} from "./services/platformTaskPolling";
+import { getExecutableTaskDisplayList } from "./config/executable-tasks";
 import { getUserInfo, logout, type UserInfo } from "./api/auth";
 import { getTokenFromClient } from "./api/user";
 import { LOCAL_API_BASE, getServiceMode } from "./config/api";
@@ -238,11 +244,111 @@ const psAutoProductionEnabled = computed(
   () => autoPsdBatchState.autoDispatchEnabled === true,
 );
 const psAutoProductionDetail = computed<DashboardStatusCardDetail>(() => ({
-  text: psAutoProductionEnabled.value
-    ? "自动制作：已开启"
-    : "自动制作：已关闭",
+  text: psAutoProductionEnabled.value ? "自动制作：已开启" : "自动制作：已关闭",
   tone: psAutoProductionEnabled.value ? "success" : "muted",
 }));
+
+function resolvePlatformTaskLabel(taskType: string) {
+  const normalizedTaskType = String(taskType || "").trim();
+  if (!normalizedTaskType) {
+    return "";
+  }
+  const matched = getExecutableTaskDisplayList().find(
+    (item) => item.value === normalizedTaskType,
+  );
+  return matched?.label || normalizedTaskType;
+}
+
+function normalizePlatformTaskStep(step: string, taskType: string) {
+  const rawStep = String(step || "").trim();
+  const normalizedStep = rawStep.toLowerCase();
+  const taskLabel = resolvePlatformTaskLabel(taskType);
+
+  if (
+    !rawStep ||
+    normalizedStep === "dispatch" ||
+    normalizedStep === "running" ||
+    normalizedStep === "processing" ||
+    normalizedStep === "in-progress"
+  ) {
+    return taskLabel ? `正在执行${taskLabel}` : "正在执行发布任务";
+  }
+  if (normalizedStep === "assigned" || normalizedStep === "pending") {
+    return "准备执行发布任务";
+  }
+  return rawStep;
+}
+
+function resolvePlatformTaskMeta() {
+  const enabled = platformTaskAutoState.enabled === true;
+  const running = platformTaskAutoState.running === true;
+  const step = platformTaskAutoState.currentStep || "";
+  const taskId = platformTaskAutoState.currentTaskId || "";
+  const taskType = platformTaskAutoState.currentTaskType || "";
+  const progress = platformTaskAutoState.progress;
+  const taskLabel = resolvePlatformTaskLabel(taskType);
+  const readableStep = normalizePlatformTaskStep(step, taskType);
+
+  const valueText = running ? "执行中" : enabled ? "自动领取就绪" : "未开启";
+
+  const description = running
+    ? readableStep
+    : enabled
+      ? "自动领取待处理任务"
+      : "等待管理端开启自动执行";
+
+  const tone: ServiceStatusTone = running
+    ? "warning"
+    : enabled
+      ? "success"
+      : "muted";
+
+  const details: DashboardStatusCardDetail[] = [
+    {
+      text: enabled ? "自动执行：已开启" : "自动执行：已关闭",
+      tone: enabled ? "success" : "muted",
+    },
+  ];
+  if (running && progress !== null) {
+    details.push({
+      text: `进度：${progress}%`,
+      tone: "warning",
+    });
+  }
+  if (running && taskLabel) {
+    details.push({
+      text: `任务：${taskLabel}`,
+      tone: "muted",
+    });
+  }
+  const hoverLines = running
+    ? [
+        taskLabel ? `任务：${taskLabel}` : "",
+        readableStep ? `步骤：${readableStep}` : "",
+        progress !== null ? `进度：${progress}%` : "",
+        taskId ? `任务ID：${taskId}` : "",
+      ].filter(Boolean)
+    : enabled
+      ? ["客户端定期轮询领取待发布任务", "执行完成后自动领取下一个"]
+      : [];
+
+  return {
+    valueText,
+    description,
+    tone,
+    details,
+    hoverTitle: running
+      ? "平台任务执行详情"
+      : enabled
+        ? "客户端自动领取模式"
+        : undefined,
+    hoverLines,
+    running,
+    enabled,
+  };
+}
+
+const platformTaskMeta = computed(() => resolvePlatformTaskMeta());
 
 function resolveVideoTemplateRuntimeMeta() {
   const runtime =
@@ -529,8 +635,12 @@ async function checkAuthAndGetUserInfo() {
     isLoggedIn.value = true;
   } catch (error: any) {
     const status = error?.response?.status;
-    const msg = String(error?.response?.data?.message || error?.response?.data?.error || '');
-    const isAuthExpired = status === 401 && /token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(msg);
+    const msg = String(
+      error?.response?.data?.message || error?.response?.data?.error || "",
+    );
+    const isAuthExpired =
+      status === 401 &&
+      /token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(msg);
 
     if (isAuthExpired) {
       isLoggedIn.value = false;
@@ -1008,11 +1118,27 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
   {
     key: "ps",
     title: "Photoshop",
-    value: photoshopRuntimeMeta.value.valueText,
-    description: photoshopRuntimeMeta.value.description,
+    value: photoshopRuntimeMeta.value.busy
+      ? "制作中"
+      : autoPsdBatchState.autoDispatchEnabled
+        ? "自动制作已开启"
+        : photoshopRuntimeMeta.value.valueText,
+    description: photoshopRuntimeMeta.value.busy
+      ? photoshopRuntimeMeta.value.description || "处理中"
+      : autoPsdBatchState.autoDispatchEnabled
+        ? "等待领取任务，完成后自动领取下一个"
+        : photoshopRuntimeMeta.value.description,
     details: [psAutoProductionDetail.value],
-    hoverTitle: photoshopRuntimeMeta.value.busy ? "PS 制作详情" : undefined,
-    hoverLines: photoshopRuntimeMeta.value.hoverLines,
+    hoverTitle: photoshopRuntimeMeta.value.busy
+      ? "PS 制作详情"
+      : autoPsdBatchState.autoDispatchEnabled
+        ? "客户端自动领取模式"
+        : undefined,
+    hoverLines: photoshopRuntimeMeta.value.busy
+      ? photoshopRuntimeMeta.value.hoverLines
+      : autoPsdBatchState.autoDispatchEnabled
+        ? ["客户端定期轮询领取待制作任务", "制作完成后自动领取下一个"]
+        : undefined,
     icon: "mdi-image-filter-drama",
     tone: photoshopRuntimeMeta.value.busy
       ? "warning"
@@ -1020,7 +1146,22 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
         ? "success"
         : photoshopRuntimeMeta.value.tone,
     highlight:
-      !photoshopRuntimeMeta.value.busy && autoPsdBatchState.autoDispatchEnabled,
+      autoPsdBatchState.autoDispatchEnabled && !photoshopRuntimeMeta.value.busy,
+    busy: photoshopRuntimeMeta.value.busy,
+  },
+  {
+    key: "platform-task",
+    title: "平台任务",
+    value: platformTaskMeta.value.valueText,
+    description: platformTaskMeta.value.description,
+    details: platformTaskMeta.value.details,
+    hoverTitle: platformTaskMeta.value.hoverTitle,
+    hoverLines: platformTaskMeta.value.hoverLines,
+    icon: "mdi-clipboard-text-clock-outline",
+    tone: platformTaskMeta.value.tone,
+    highlight:
+      platformTaskMeta.value.enabled && !platformTaskMeta.value.running,
+    busy: platformTaskMeta.value.running,
   },
   {
     key: "video-template",
@@ -1111,6 +1252,7 @@ onMounted(() => {
   const nativeApi = getNativeApi();
 
   startServerPolling();
+  startPlatformTaskPolling();
   websocketClient.events.on("toast", showToast);
   websocketClient.events.on("log", logHandler);
 
@@ -1225,6 +1367,7 @@ onBeforeUnmount(() => {
     extensionStatusTimer = null;
   }
 
+  stopPlatformTaskPolling();
   websocketClient.events.off("toast", showToast);
   websocketClient.events.off("log", logHandler);
   window.removeEventListener("auth:logout", handleAuthLogout);

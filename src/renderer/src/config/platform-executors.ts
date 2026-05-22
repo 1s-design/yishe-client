@@ -3,10 +3,15 @@ import {
   createUploaderExecutionTask,
   queryUploaderTaskLogsBySource,
   queryUploaderTasksBySource,
+  runUploaderBrowserSmallFeature,
   type UploaderTaskSourceId,
   type UploaderTaskSummary,
 } from "../api/uploader";
-import { getPlatformSessions, getTokenFromClient } from "../api/user";
+import {
+  getPlatformSessions,
+  getTokenFromClient,
+  updatePlatformSessions,
+} from "../api/user";
 
 const IMAGE_LIMITS_DEFAULT = {
   maxSide: 2000,
@@ -22,6 +27,8 @@ const DEFAULT_IMAGE_PROCESS_RULE = {
   position: "centre",
   background: "#ffffff",
 };
+
+const temuStoredSessionCache = new Map<string, Record<string, any>>();
 
 export type PlatformExecutionBackend = "uploader_api" | "server_managed";
 
@@ -381,6 +388,95 @@ function buildTemuStoredSessionBundle(
   });
 }
 
+function hasUsableTemuStoredSession(value: any) {
+  return !!(
+    isPlainObject(value) &&
+    normalizeTextValue(value.cookieHeader) &&
+    isPlainObject(value.cookies) &&
+    Object.keys(value.cookies).length > 0
+  );
+}
+
+function getCachedTemuStoredSession(profileId: string) {
+  const cacheKey = normalizeTextValue(profileId);
+  if (!cacheKey) {
+    return null;
+  }
+  const cached = temuStoredSessionCache.get(cacheKey);
+  if (hasUsableTemuStoredSession(cached)) {
+    return cloneSerializable(cached) || cached;
+  }
+  if (cached) {
+    temuStoredSessionCache.delete(cacheKey);
+  }
+  return null;
+}
+
+function setCachedTemuStoredSession(
+  profileId: string,
+  session?: Record<string, any>,
+) {
+  const cacheKey = normalizeTextValue(profileId);
+  if (!cacheKey || !hasUsableTemuStoredSession(session)) {
+    return;
+  }
+  const normalizedSession = session as Record<string, any>;
+  temuStoredSessionCache.set(
+    cacheKey,
+    cloneSerializable(normalizedSession) || normalizedSession,
+  );
+}
+
+function clearCachedTemuStoredSession(profileId?: string | null) {
+  const cacheKey = normalizeTextValue(profileId);
+  if (cacheKey) {
+    temuStoredSessionCache.delete(cacheKey);
+  }
+}
+
+async function acquireAndSyncTemuStoredSession(profileId: string) {
+  const response = await runUploaderBrowserSmallFeature("temu-session-acquire", {
+    profileId,
+    keepPageOpen: true,
+    collectRegionCookies: true,
+    timeoutMs: 4 * 60 * 1000,
+  });
+  const sessionBundle = response?.data?.sessionBundle;
+  if (!response.success || !hasUsableTemuStoredSession(sessionBundle)) {
+    throw new Error(response.message || "Temu 会话采集失败");
+  }
+
+  const normalizedSession = sessionBundle as Record<string, any>;
+  await updatePlatformSessions({
+    platform: "temu",
+    profileId,
+    data: normalizedSession,
+  });
+  setCachedTemuStoredSession(profileId, normalizedSession);
+  return cloneSerializable(normalizedSession) || normalizedSession;
+}
+
+function isTemuStoredSessionInvalidError(error: any) {
+  const message = String(
+    error?.message ||
+      error?.error?.message ||
+      error?.response?.data?.message ||
+      error?.response?.data?.error ||
+      error ||
+      "",
+  ).trim();
+  if (!message) {
+    return false;
+  }
+
+  return (
+    /cookie|cookies|session|auth|authorization|unauthorized|login|logged|401|403/i.test(
+      message,
+    ) ||
+    /未登录|登录|会话|授权|鉴权|认证|过期|失效/.test(message)
+  );
+}
+
 function resolvePublishConfigData(row: any): Record<string, any> {
   const candidates = [
     row?.data?.configData,
@@ -510,8 +606,17 @@ function resolveBrowserProfileId(row: any): string | undefined {
     row?.metadata?.publishDispatch?.profileId,
     row?.data?.meta?.browserAutomationProfileId,
     row?.data?.meta?.profileId,
+    row?.data?.meta?.publishDispatch?.profileId,
     row?.data?.publishData?.profileId,
+    row?.data?.publishData?.browserAutomationProfileId,
     row?.data?.publishData?.meta?.profileId,
+    row?.data?.publishData?.meta?.browserAutomationProfileId,
+    row?.data?.publishData?.platformOptions?.profileId,
+    row?.data?.publishData?.publishOptions?.profileId,
+    row?.data?.publishData?.platformSettings?.temu?.profileId,
+    row?.data?.platformOptions?.profileId,
+    row?.data?.publishOptions?.profileId,
+    row?.data?.platformSettings?.temu?.profileId,
   ];
 
   for (const candidate of candidates) {
@@ -541,12 +646,21 @@ async function enrichTemuStoredSession(
   }
 
   if (
-    isPlainObject(publishData?.temuStoredSession) &&
-    Object.keys(publishData.temuStoredSession).length > 0
+    hasUsableTemuStoredSession(publishData?.temuStoredSession)
   ) {
+    setCachedTemuStoredSession(profileId, publishData.temuStoredSession);
     return compactObject({
       ...publishData,
       profileId,
+    });
+  }
+
+  const cachedSession = getCachedTemuStoredSession(profileId);
+  if (cachedSession) {
+    return compactObject({
+      ...publishData,
+      profileId,
+      temuStoredSession: cachedSession,
     });
   }
 
@@ -557,6 +671,7 @@ async function enrichTemuStoredSession(
       profileId,
     });
     const temuStoredSession = buildTemuStoredSessionBundle(profileSession);
+    setCachedTemuStoredSession(profileId, temuStoredSession);
 
     return compactObject({
       ...publishData,
@@ -564,14 +679,11 @@ async function enrichTemuStoredSession(
       ...(temuStoredSession ? { temuStoredSession } : {}),
     });
   } catch (error) {
-    console.warn("preparePublishTask: 加载 Temu 已存储会话失败", {
+    console.warn("preparePublishTask: 加载 Temu 已存储会话失败，本次不主动采集", {
       profileId,
       error,
     });
-    return compactObject({
-      ...publishData,
-      profileId,
-    });
+    return compactObject({ ...publishData, profileId });
   }
 }
 
@@ -1408,20 +1520,36 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
     row: any,
     context?: PlatformTaskExecutionContext,
   ): Promise<void> {
-    const task = await preparePublishTask(row, this.platform);
-    const body = buildPublishRequestBody(task);
-    const sourceId = buildUploaderTaskSourceId(row, this.platform);
+    const initialSourceId = buildUploaderTaskSourceId(row, this.platform);
     const profileId = resolveBrowserProfileId(row);
+    const createUploaderTask = async (sourceId: UploaderTaskSourceId) => {
+      const task = await preparePublishTask(row, this.platform);
+      const body = buildPublishRequestBody(task);
+
+      return createUploaderExecutionTask({
+        kind: "publish",
+        action: "publish",
+        platform: this.platform,
+        platforms: [this.platform],
+        sourceId,
+        metadata: {
+          clientTaskType: row?.type,
+          ...(profileId ? { profileId } : {}),
+        },
+        ...(profileId ? { profileId } : {}),
+        ...body,
+      });
+    };
 
     await context?.throwIfStopped?.({
-      sourceId,
+      sourceId: initialSourceId,
       profileId: profileId || null,
     });
-    await this.updateTaskRuntime(row, buildRuntimeSnapshot(sourceId), context);
+    await this.updateTaskRuntime(row, buildRuntimeSnapshot(initialSourceId), context);
     await this.appendTaskRuntimeLogs(
       row,
       {
-        sourceId,
+        sourceId: initialSourceId,
         platform: this.platform,
         logs: [],
       },
@@ -1429,29 +1557,66 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
       { allowEmpty: true },
     );
 
-    const createResult = await createUploaderExecutionTask({
-      kind: "publish",
-      action: "publish",
-      platform: this.platform,
-      platforms: [this.platform],
-      sourceId,
-      metadata: {
-        clientTaskType: row?.type,
-        ...(profileId ? { profileId } : {}),
-      },
-      ...(profileId ? { profileId } : {}),
-      ...body,
-    });
-
+    const createResult = await createUploaderTask(initialSourceId);
     if (!createResult.success || !createResult.data) {
       throw new Error(createResult.message || "创建发布端任务失败");
     }
 
     await context?.throwIfStopped?.({
-      sourceId,
+      sourceId: initialSourceId,
       profileId: profileId || null,
     });
-    await this.pollUploaderTaskUntilFinished(row, sourceId, context);
+    try {
+      await this.pollUploaderTaskUntilFinished(row, initialSourceId, context);
+    } catch (error) {
+      if (
+        this.platform !== "temu" ||
+        !profileId ||
+        !isTemuStoredSessionInvalidError(error)
+      ) {
+        throw error;
+      }
+
+      console.warn("Temu 发布会话不可用，重新采集并同步服务端后重试一次", {
+        profileId,
+        message: (error as any)?.message || String(error || ""),
+      });
+      await this.appendTaskRuntimeLogs(
+        row,
+        {
+          sourceId: initialSourceId,
+          platform: this.platform,
+          logs: [
+            normalizeRuntimeLogItem({
+              level: "warn",
+              message: "Temu 会话不可用，正在重新采集 cookie 并同步服务端后重试",
+              timestamp: new Date().toISOString(),
+            }),
+          ],
+        },
+        context,
+      );
+
+      clearCachedTemuStoredSession(profileId);
+      await acquireAndSyncTemuStoredSession(profileId);
+
+      const retrySourceId =
+        `${initialSourceId}:retry-session-${Date.now()}` as UploaderTaskSourceId;
+      await context?.throwIfStopped?.({
+        sourceId: retrySourceId,
+        profileId: profileId || null,
+      });
+      await this.updateTaskRuntime(
+        row,
+        buildRuntimeSnapshot(retrySourceId),
+        context,
+      );
+      const retryCreateResult = await createUploaderTask(retrySourceId);
+      if (!retryCreateResult.success || !retryCreateResult.data) {
+        throw new Error(retryCreateResult.message || "重新创建发布端任务失败");
+      }
+      await this.pollUploaderTaskUntilFinished(row, retrySourceId, context);
+    }
   }
 
   protected async pollUploaderTaskUntilFinished(

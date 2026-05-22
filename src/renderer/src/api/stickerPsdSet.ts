@@ -200,4 +200,17 @@ export const stickerPsdSetApi = {
       message: "领取任务响应为空",
     });
   },
+
+  async recoverClientOrphans(data: {
+    clientId: string;
+    machineCode?: string;
+    profileId?: string;
+    reason?: string;
+  }): Promise<any> {
+    return request.post({
+      url: "/sticker-psd-set/recover-client-orphans",
+      data,
+      timeout: 15000,
+    });
+  },
 };

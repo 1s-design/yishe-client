@@ -43,6 +43,13 @@ import {
   stopPublishQueueTaskExecution,
   type PublishTaskRuntimeSnapshot,
 } from "./publishTaskDispatch";
+import {
+  platformTaskAutoState,
+  setPlatformTaskClientRuntimeProvider,
+  setPlatformTaskRuntimeCallback,
+  syncPlatformAutoDispatchConfig,
+  stopPlatformTaskPolling,
+} from "./platformTaskPolling";
 import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
 import { getRemoteApiBase, getWsEndpoint, setServiceMode } from "../config/api";
 import { logger } from "./logger";
@@ -2044,6 +2051,45 @@ async function emitPublishTaskRuntime(snapshot: PublishTaskRuntimeSnapshot) {
     lastError: browserAutomationExecutionState.lastError,
   });
 }
+
+setPlatformTaskRuntimeCallback(emitPublishTaskRuntime);
+setPlatformTaskClientRuntimeProvider(() => {
+  const service =
+    clientInfo.services?.["browser-automation"] ||
+    clientInfo.services?.uploader ||
+    null;
+  const runtime = service?.details?.currentExecution || {};
+  const connection = service?.details?.connection || {};
+  const profileId =
+    String(
+      service?.details?.activeProfileId ||
+        connection?.activeProfileId ||
+        connection?.profileId ||
+        browserAutomationExecutionState.profileId ||
+        "",
+    ).trim() || null;
+  return {
+    clientId: identity.clientId,
+    machineCode: identity.machineCode,
+    profileId,
+    wsConnected: wsState.status === "connected",
+    browserAutomationReady: !!(service?.available || service?.connected),
+    browserAutomationAutoDispatchEnabled:
+      service?.autoDispatchEnabled ??
+      service?.details?.autoDispatchEnabled ??
+      browserAutomationDispatchState.autoDispatchEnabled,
+    browserAutomationManualClosed:
+      service?.details?.manualClosed ??
+      browserAutomationDispatchState.manualClosed,
+    browserAutomationBusy:
+      browserAutomationExecutionState.running === true ||
+      service?.busy === true ||
+      runtime?.running === true,
+    browserAutomationLastError:
+      String(service?.lastError || browserAutomationExecutionState.lastError || "")
+        .trim() || null,
+  };
+});
 
 async function uploadEcomSnapshotsToCos(
   command: ServiceCommandEnvelope,
@@ -4905,6 +4951,8 @@ function bindSocketEvents(currentSocket: Socket) {
     startHeartbeatLoop();
     // 连接成功后启动配置定时同步
     startPsConfigSync();
+    // WebSocket 重连后重新拉取平台任务自动执行配置，避免断连期间遗漏事件
+    void syncPlatformAutoDispatchConfig();
   });
 
   currentSocket.on("disconnect", (reason) => {
@@ -5189,6 +5237,24 @@ function bindSocketEvents(currentSocket: Socket) {
       originalData: data,
     });
   });
+
+  currentSocket.on(
+    "browser-automation-auto-dispatch",
+    (payload: { clientId?: string; autoDispatchEnabled?: boolean }) => {
+      const enabled = payload?.autoDispatchEnabled === true;
+      emitter.emit("log", {
+        level: "info",
+        message: `[ws] received browser-automation-auto-dispatch: ${enabled ? "enabled" : "disabled"}`,
+      });
+      if (enabled) {
+        void syncPlatformAutoDispatchConfig();
+      } else {
+        platformTaskAutoState.enabled = false;
+        stopPlatformTaskPolling();
+        platformTaskAutoState.running = false;
+      }
+    },
+  );
 }
 
 function serializeError(error: unknown) {
@@ -5245,11 +5311,14 @@ function normalizePsdSetDebugValue(
 ): any {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") {
-    return value.length > 1200 ? `${value.slice(0, 1200)}...(truncated)` : value;
+    return value.length > 1200
+      ? `${value.slice(0, 1200)}...(truncated)`
+      : value;
   }
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "bigint") return String(value);
-  if (typeof value === "function") return `[Function ${value.name || "anonymous"}]`;
+  if (typeof value === "function")
+    return `[Function ${value.name || "anonymous"}]`;
   if (value instanceof Error) {
     return {
       name: value.name,
@@ -7438,7 +7507,12 @@ function registerBuiltInLocalServices() {
           : "当前环境未注入桌面端文件下载能力",
         lastCheckedAt: new Date().toISOString(),
         lastError: null,
-        supportedCommands: ["refreshRuntime", "health", "download-file", "check-file-downloaded"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "download-file",
+          "check-file-downloaded",
+        ],
       };
     },
     execute: async (command) => {
@@ -7458,7 +7532,8 @@ function registerBuiltInLocalServices() {
 
         return {
           success: !!result?.success,
-          message: result?.message || (result?.success ? "下载完成" : "下载失败"),
+          message:
+            result?.message || (result?.success ? "下载完成" : "下载失败"),
           data: {
             filePath: result?.filePath,
             fileSize: result?.fileSize,
@@ -7487,7 +7562,9 @@ function registerBuiltInLocalServices() {
           message: result?.found ? "文件已缓存" : "文件未缓存",
           data: {
             found: result?.found,
-            entry: result?.entry,
+            filePath: result?.filePath,
+            fileSize: result?.fileSize,
+            cacheKey: result?.cacheKey,
           },
         };
       }
@@ -7510,11 +7587,11 @@ function registerBuiltInLocalServices() {
             "",
         ).trim();
         const profileId =
-            String(
-              command.payload?.profileId ||
-                command.command?.payload?.profileId ||
-                "",
-            ).trim() || null;
+          String(
+            command.payload?.profileId ||
+              command.command?.payload?.profileId ||
+              "",
+          ).trim() || null;
         psdSetConsoleDebug("service-command.processPsdSet.start", {
           psdSetId: psdSetId || null,
           commandId: command.commandId || null,
@@ -8982,8 +9059,10 @@ export function getCurrentPsdSetProductionDispatchToken() {
 }
 
 const PSD_SET_POLL_INTERVAL_MS = 4000;
+const PSD_SET_RECOVERY_INTERVAL_MS = 30000;
 let psdSetPollTimer: ReturnType<typeof setInterval> | null = null;
 let psdSetPollInFlight = false;
+let lastPsdSetRecoveryAt = 0;
 
 function pickFirstNonEmptyString(...values: unknown[]) {
   for (const value of values) {
@@ -9002,20 +9081,9 @@ function normalizePsAutomationDispatchConfig(setting: unknown) {
     root.psAutomation && typeof root.psAutomation === "object"
       ? (root.psAutomation as Record<string, any>)
       : root;
-  const binding =
-    source.autoDispatchBinding && typeof source.autoDispatchBinding === "object"
-      ? (source.autoDispatchBinding as Record<string, any>)
-      : {};
-  const autoSchedulingEnabled =
-    source.autoSchedulingEnabled === true || source.autoDispatchEnabled === true;
-  const autoDispatchMachineCode = pickFirstNonEmptyString(
-    source.autoDispatchMachineCode,
-    binding.machineCode,
-  );
-  const autoDispatchClientId = pickFirstNonEmptyString(
-    source.autoDispatchClientId,
-    binding.clientId,
-  );
+  const autoSchedulingEnabled = source.autoSchedulingEnabled === true;
+  const autoDispatchMachineCode = pickFirstNonEmptyString(source.autoDispatchMachineCode);
+  const autoDispatchClientId = pickFirstNonEmptyString(source.autoDispatchClientId);
   const currentMachineCode = pickFirstNonEmptyString(identity.machineCode);
   const currentClientId = pickFirstNonEmptyString(identity.clientId);
   const targetMode = autoDispatchMachineCode
@@ -9165,6 +9233,40 @@ async function pollNextPsdSetTask() {
         message: `[psd-set] 存在运行时错误，跳过本次轮询`,
       });
       return;
+    }
+
+    if (
+      !isProductionInProgress &&
+      Date.now() - lastPsdSetRecoveryAt > PSD_SET_RECOVERY_INTERVAL_MS
+    ) {
+      lastPsdSetRecoveryAt = Date.now();
+      try {
+        const recovery = await stickerPsdSetApi.recoverClientOrphans({
+          clientId: identity.clientId,
+          machineCode: identity.machineCode,
+          reason: "客户端本地空闲，释放遗留套图任务",
+        });
+        const releasedCount = Number(
+          recovery?.data?.releasedCount ?? recovery?.releasedCount ?? 0,
+        );
+        if (releasedCount > 0) {
+          psdSetConsoleDebug(
+            "poll.recovery.released",
+            { recovery },
+            "warn",
+          );
+          emitter.emit("log", {
+            level: "warn",
+            message: `[psd-set] 已释放 ${releasedCount} 个遗留执行态，继续领取任务`,
+          });
+        }
+      } catch (error) {
+        psdSetConsoleDebug(
+          "poll.recovery.error",
+          { error: serializeError(error) },
+          "warn",
+        );
+      }
     }
 
     emitter.emit("log", {
