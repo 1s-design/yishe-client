@@ -414,6 +414,19 @@ async function retryFallbackTaskStatusUpdate(
   return false;
 }
 
+async function emitTerminalRuntimeBestEffort(
+  options: ExecutePublishTaskOptions | undefined,
+  snapshot: PublishTaskRuntimeSnapshot,
+) {
+  try {
+    await emitRuntime(options, snapshot);
+    return true;
+  } catch (error) {
+    console.warn("[publish-task] terminal runtime emit failed:", error);
+    return false;
+  }
+}
+
 class PublishTaskStoppedError extends Error {
   constructor(message: string) {
     super(message);
@@ -657,10 +670,6 @@ export async function executePublishQueueTask(
 
     return detail;
   } catch (error: any) {
-    if (error instanceof PublishTaskStoppedError) {
-      throw error;
-    }
-
     const errorMessage = error?.message || String(error);
     const fallbackStatus: "pending" | "failed" =
       error instanceof PublishTaskRetryableError ? "pending" : "failed";
@@ -686,10 +695,23 @@ export async function executePublishQueueTask(
       currentStep: fallbackStatus === "pending" ? "等待重新调度" : "执行失败",
       error: errorMessage,
     };
-    await emitRuntime(options, lastRuntimeSnapshot);
+    await emitTerminalRuntimeBestEffort(options, lastRuntimeSnapshot);
     throw error;
   } finally {
     stopHeartbeat();
+    if (
+      lastRuntimeSnapshot &&
+      !["completed", "failed", "pending"].includes(lastRuntimeSnapshot.status)
+    ) {
+      const finalSnapshot: PublishTaskRuntimeSnapshot = {
+        ...lastRuntimeSnapshot,
+        status: "failed",
+        message: lastRuntimeSnapshot.message || "任务已停止或执行中断",
+        currentStep: "执行中断",
+        error: lastRuntimeSnapshot.error || "任务已停止或执行中断",
+      };
+      await emitTerminalRuntimeBestEffort(options, finalSnapshot);
+    }
     publishTaskExecutionControls.delete(normalizedTaskId);
   }
 }

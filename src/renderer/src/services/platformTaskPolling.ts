@@ -251,6 +251,9 @@ function resolvePollReadiness() {
   if (runtime.browserAutomationReady !== true) {
     reasons.push("browser-automation-not-ready");
   }
+  if (runtime.browserAutomationBusy === true) {
+    reasons.push("browser-automation-busy");
+  }
 
   return {
     ok: reasons.length === 0,
