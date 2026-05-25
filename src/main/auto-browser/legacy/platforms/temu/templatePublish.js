@@ -469,41 +469,20 @@ function assignTemplateImages(payload = {}, uploadedImageUrls = []) {
     return nextPayload;
 }
 
-const GOODS_LAYER_DECORATION_IMAGE_BINDING_KEYS = [
-    'goodsLayerDecorationReqs[].contentList[].imageUrl',
-    'goodsLayerDecorationReqs[].contentList[].imgUrl',
-    'goodsLayerDecorationReqs[].imageUrl',
-    'goodsLayerDecorationReqs[].imgUrl'
-];
-
-function resolveGoodsLayerDecorationImageBinding(bindings = null) {
-    if (!isPlainObject(bindings)) {
-        return undefined;
-    }
-
-    for (const key of GOODS_LAYER_DECORATION_IMAGE_BINDING_KEYS) {
-        if (hasExplicitImageBindingValue(bindings[key])) {
-            return bindings[key];
-        }
-    }
-
-    return undefined;
-}
-
-function assignGoodsLayerDecorationImagesByBindings(payload = {}, imageUrls = [], bindings = null) {
+function assignGoodsLayerDecorationImages(payload = {}, imageUrls = [], options = {}) {
     const nextPayload = isPlainObject(payload) ? { ...payload } : {};
-    const decorationBinding = resolveGoodsLayerDecorationImageBinding(bindings);
-    const decorationImageUrls = hasExplicitImageBindingValue(decorationBinding)
-        ? pickImageUrlsByIndexes(imageUrls, decorationBinding)
-        : imageUrls.map((item) => normalizeText(item)).filter(Boolean);
+    const decorationImageUrls = Array.isArray(imageUrls)
+        ? imageUrls.map((item) => normalizeText(item)).filter(Boolean)
+        : [];
     if (!decorationImageUrls.length || !Array.isArray(nextPayload.goodsLayerDecorationReqs)) {
         return nextPayload;
     }
 
     let decorationImageIndex = 0;
     let replacedCount = 0;
+    const replacementDetails = [];
 
-    nextPayload.goodsLayerDecorationReqs = nextPayload.goodsLayerDecorationReqs.map((decoration) => {
+    nextPayload.goodsLayerDecorationReqs = nextPayload.goodsLayerDecorationReqs.map((decoration, decorationIndex) => {
         const nextDecoration = isPlainObject(decoration) ? { ...decoration } : decoration;
         if (
             !isPlainObject(nextDecoration) ||
@@ -513,7 +492,7 @@ function assignGoodsLayerDecorationImagesByBindings(payload = {}, imageUrls = []
             return nextDecoration;
         }
 
-        nextDecoration.contentList = nextDecoration.contentList.map((contentItem) => {
+        nextDecoration.contentList = nextDecoration.contentList.map((contentItem, contentIndex) => {
             const nextContentItem = isPlainObject(contentItem) ? { ...contentItem } : contentItem;
             if (!isPlainObject(nextContentItem)) {
                 return nextContentItem;
@@ -528,6 +507,15 @@ function assignGoodsLayerDecorationImagesByBindings(payload = {}, imageUrls = []
             replacedCount += 1;
             const hasImageUrl = Object.prototype.hasOwnProperty.call(nextContentItem, 'imageUrl');
             const hasImgUrl = Object.prototype.hasOwnProperty.call(nextContentItem, 'imgUrl');
+            const targetPath = hasImageUrl
+                ? `goodsLayerDecorationReqs[${decorationIndex}].contentList[${contentIndex}].imageUrl`
+                : `goodsLayerDecorationReqs[${decorationIndex}].contentList[${contentIndex}].imgUrl`;
+            replacementDetails.push({
+                decorationIndex,
+                contentIndex,
+                targetPath,
+                url: decorationImageUrl
+            });
             return {
                 ...nextContentItem,
                 ...(hasImageUrl ? { imageUrl: decorationImageUrl } : {}),
@@ -542,7 +530,9 @@ function assignGoodsLayerDecorationImagesByBindings(payload = {}, imageUrls = []
         logger.info(`${PLATFORM_NAME}模板详情图片已替换`, {
             replacedCount,
             decorationImageCount: decorationImageUrls.length,
-            bindingMode: hasExplicitImageBindingValue(decorationBinding) ? 'explicit' : 'imageSources'
+            bindingKey: options.bindingKey || 'productSkcReqs[].previewImgUrls',
+            rawBindingValue: options.rawBindingValue ?? null,
+            replacementDetails
         });
     }
 
@@ -646,11 +636,7 @@ function buildImageBindingDebugInfo(imageUrls = [], bindings = null, options = {
         'materialImgUrl',
         'carouselImageUrls',
         'productSkcReqs[].previewImgUrls',
-        'productSkcReqs[].productSkuReqs[].thumbUrl',
-        'goodsLayerDecorationReqs[].contentList[].imageUrl',
-        'goodsLayerDecorationReqs[].contentList[].imgUrl',
-        'goodsLayerDecorationReqs[].imageUrl',
-        'goodsLayerDecorationReqs[].imgUrl'
+        'productSkcReqs[].productSkuReqs[].thumbUrl'
     ];
 
     return fieldKeys.reduce((acc, fieldKey) => {
@@ -677,6 +663,41 @@ function buildImageBindingDebugInfo(imageUrls = [], bindings = null, options = {
         };
         return acc;
     }, {});
+}
+
+function buildImageSelectionDebug(imageUrls = [], sourceImageUrls = [], bindingValue) {
+    const normalizedImageUrls = Array.isArray(imageUrls)
+        ? imageUrls.map((item) => normalizeText(item))
+        : [];
+    const normalizedSourceImageUrls = Array.isArray(sourceImageUrls)
+        ? sourceImageUrls.map((item) => normalizeText(item))
+        : [];
+    const indexes = normalizeImageBindingIndexes(bindingValue);
+    const selectedImages = [];
+    const missingIndexes = [];
+
+    indexes.forEach((zeroBasedIndex, orderIndex) => {
+        const url = normalizeText(normalizedImageUrls[zeroBasedIndex]);
+        const source = normalizeText(normalizedSourceImageUrls[zeroBasedIndex]);
+        const item = {
+            order: orderIndex + 1,
+            suiteIndex: zeroBasedIndex + 1,
+            source: limitLogText(source, 240),
+            url
+        };
+
+        if (url) {
+            selectedImages.push(item);
+        } else {
+            missingIndexes.push(item);
+        }
+    });
+
+    return {
+        requestedSuiteIndexes: indexes.map((index) => index + 1),
+        selectedImages,
+        missingIndexes
+    };
 }
 
 function pickImageUrlsByIndexes(imageUrls = [], bindingValue, { fallbackToAll = false } = {}) {
@@ -748,9 +769,6 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
         imageUrls,
         bindings['productSkcReqs[].previewImgUrls']
     );
-    GOODS_LAYER_DECORATION_IMAGE_BINDING_KEYS.forEach((fieldKey) => {
-        assertExplicitImageBindingCanResolve(fieldKey, imageUrls, bindings[fieldKey]);
-    });
 
     const carouselUrls = pickImageUrlsByIndexes(
         imageUrls,
@@ -777,6 +795,28 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
     const hasSkuThumbBinding = hasExplicitImageBindingValue(
         bindings['productSkcReqs[].productSkuReqs[].thumbUrl']
     );
+    const previewBinding = bindings['productSkcReqs[].previewImgUrls'];
+    const previewBindingDebug = buildImageSelectionDebug(
+        imageUrls,
+        options.bindingSourceImageUrls || [],
+        previewBinding
+    );
+    const previewUrls = pickImageUrlsByIndexes(imageUrls, previewBinding);
+    logger.info(`${PLATFORM_NAME}模板详情图绑定明细`, {
+        suiteImageCount: imageUrls.length,
+        sourceImageCount: Array.isArray(options.bindingSourceImageUrls)
+            ? options.bindingSourceImageUrls.length
+            : 0,
+        productSkcReqCount: Array.isArray(nextPayload.productSkcReqs)
+            ? nextPayload.productSkcReqs.length
+            : 0,
+        bindingKey: 'productSkcReqs[].previewImgUrls',
+        rawBindingValue: previewBinding ?? null,
+        requestedSuiteIndexes: previewBindingDebug.requestedSuiteIndexes,
+        selectedImages: previewBindingDebug.selectedImages,
+        missingIndexes: previewBindingDebug.missingIndexes,
+        resolvedPreviewUrls: previewUrls
+    });
     let skuImageIndex = 0;
 
     nextPayload.productSkcReqs = nextPayload.productSkcReqs.map((skc) => {
@@ -804,8 +844,6 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
             return nextSku;
         });
 
-        const previewBinding = bindings['productSkcReqs[].previewImgUrls'];
-        const previewUrls = pickImageUrlsByIndexes(imageUrls, previewBinding);
         if (previewUrls.length) {
             nextSkc.previewImgUrls = previewUrls;
         } else if (skcPreviewUrl) {
@@ -942,6 +980,9 @@ function normalizeTemuTemplateProductTitle(payload = {}) {
 
 function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
     const templatePayload = cloneSerializable(productTemplate) || {};
+    const bindingImageUrls = options.templateBindingImageUrls || options.uploadedImageUrls || [];
+    const detailImageBinding = options.templateImageBindings?.['productSkcReqs[].previewImgUrls'];
+    const detailImageUrls = pickImageUrlsByIndexes(bindingImageUrls, detailImageBinding);
     const titleAppliedPayload = fillTemplateTitle(templatePayload, options.title);
     const imageAppliedPayload = assignTemplateImagesByBindings(
         titleAppliedPayload,
@@ -953,13 +994,18 @@ function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
             bindingSource: options.templateBindingSource || 'uploadedImageUrls'
         }
     );
-    const decorationImageAppliedPayload = assignGoodsLayerDecorationImagesByBindings(
+    const detailImageAppliedPayload = assignGoodsLayerDecorationImages(
         imageAppliedPayload,
-        options.templateBindingImageUrls || options.uploadedImageUrls || [],
-        options.templateImageBindings || null
+        detailImageUrls.length
+            ? detailImageUrls
+            : bindingImageUrls,
+        {
+            bindingKey: 'productSkcReqs[].previewImgUrls',
+            rawBindingValue: detailImageBinding ?? null
+        }
     );
     const extCodeAppliedPayload = normalizeTemuTemplateExtCodes(
-        decorationImageAppliedPayload,
+        detailImageAppliedPayload,
         options.codeInfo || {}
     );
     const normalizedSkuPayload = normalizeTemuTemplateSkuFields(extCodeAppliedPayload);
@@ -1339,6 +1385,23 @@ export async function publishTemuByProductTemplate(
         bindingMatchedCount: templateBindingImageContext.matchedCount,
         missingSources: templateBindingImageContext.missingSources,
         firstSuiteImageSource: limitLogText(templateBindingImageContext.sourceImageUrls?.[0] || '')
+    });
+    logger.info(`${PLATFORM_NAME}模板图片绑定套图完整映射`, {
+        suiteImageCount: templateBindingImageContext.sourceImageUrls.length,
+        uploadedImageCount: uploadedImageUrls.length,
+        bindingImageCount: templateBindingImageContext.imageUrls.length,
+        images: templateBindingImageContext.sourceImageUrls.map((source, index) => ({
+            suiteIndex: index + 1,
+            source,
+            uploadedUrl: templateBindingImageContext.imageUrls[index] || '',
+            uploadedImageSource: normalizeText(uploadedImages[index]?.source),
+            uploadedImageUrl: normalizeText(uploadedImages[index]?.url)
+        })),
+        templateImageBindings: templateImageBindings || null,
+        detailImageBinding: {
+            key: 'productSkcReqs[].previewImgUrls',
+            value: templateImageBindings?.['productSkcReqs[].previewImgUrls'] ?? null
+        }
     });
     const buildPayloadResult = buildTemuTemplatePublishPayload(productTemplate, {
         title: resolvedTitle,
