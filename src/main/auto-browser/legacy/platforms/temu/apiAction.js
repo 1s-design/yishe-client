@@ -1048,6 +1048,13 @@ function buildCompliancePageQueryPayload(payload = {}) {
   const taskStatusList = toNumberArray(
     payload.taskStatusList ?? payload.task_status_list ?? [2],
   );
+  const rapidScreenTypeValue =
+    payload.rapidScreenTypeList ?? payload.rapid_screen_type_list;
+  const rapidScreenTypeList = toNumberArray(
+    Array.isArray(rapidScreenTypeValue)
+      ? rapidScreenTypeValue
+      : [rapidScreenTypeValue],
+  ).filter((item) => item === 1 || item === 2);
   const spuIdList = toNumberArray(payload.spuIdList ?? payload.spu_id_list).map(
     (item) => String(item),
   );
@@ -1066,6 +1073,9 @@ function buildCompliancePageQueryPayload(payload = {}) {
   };
   if (spuIdList.length) {
     result.spu_id_list = spuIdList;
+  }
+  if (rapidScreenTypeList.length) {
+    result.rapid_screen_type_list = [rapidScreenTypeList[0]];
   }
   return result;
 }
