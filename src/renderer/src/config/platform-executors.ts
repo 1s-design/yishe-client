@@ -1155,6 +1155,10 @@ async function preparePublishTask(
       processedAssets.images.push(processed);
     }
     nextPublishData.imageSources = localizedImages;
+    if (platform === "temu") {
+      nextPublishData.images = [...localizedImages];
+      nextPublishData.imageUrls = [...localizedImages];
+    }
   }
 
   if (
