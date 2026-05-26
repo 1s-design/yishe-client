@@ -54,6 +54,13 @@ const TEMU_CAPTURE_HEADER_KEYS = [
 const TEMU_CAPTURE_WARMUP_URLS = [
     'https://agentseller.temu.com/newon/product-select'
 ];
+const TEMU_SESSION_HOME_GOTO_TIMEOUT_MS = 35_000;
+const TEMU_SESSION_HOME_SETTLE_MS = 1_500;
+const TEMU_SESSION_AUTH_SETTLE_MS = 2_000;
+const TEMU_SESSION_CAPTURE_WARMUP_TIMEOUT_MS = 4_000;
+const TEMU_SESSION_CAPTURE_WARMUP_SETTLE_MS = 1_500;
+const TEMU_REGION_COOKIE_GOTO_TIMEOUT_MS = 25_000;
+const TEMU_REGION_COOKIE_SETTLE_MS = 1_500;
 
 function isTemuSessionProbePage(pageUrl = '') {
     const currentUrl = String(pageUrl || '').trim();
@@ -531,7 +538,7 @@ function createTemuRequestCapture(context) {
     };
 }
 
-async function waitForCaptureWarmup(captureState, timeoutMs = 8_000) {
+async function waitForCaptureWarmup(captureState, timeoutMs = TEMU_SESSION_CAPTURE_WARMUP_TIMEOUT_MS) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         if (captureState.requestCount > 0 && (captureState.antiContent || captureState.origin || captureState.referer)) {
@@ -547,10 +554,10 @@ async function warmupTemuTrafficCapture(page, captureState) {
         try {
             await page.goto(warmupUrl, {
                 waitUntil: 'domcontentloaded',
-                timeout: 45_000
+                timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
             });
-            await page.waitForTimeout(2_500);
-            await waitForCaptureWarmup(captureState, 2_500);
+            await page.waitForTimeout(TEMU_SESSION_CAPTURE_WARMUP_SETTLE_MS);
+            await waitForCaptureWarmup(captureState, TEMU_SESSION_CAPTURE_WARMUP_SETTLE_MS);
 
             if (captureState.antiContent || captureState.mallId) {
                 return {
@@ -827,19 +834,34 @@ async function attemptRegionSelectionClick(page, regionKey) {
     };
 }
 
-async function collectRegionCookies(context, regionKey) {
+async function collectRegionCookies(context, regionKey, options = {}) {
     const regionHost = TEMU_REGION_HOSTS[regionKey];
     const regionUrl = TEMU_REGION_URLS[regionKey];
     const regionCookieDomains = TEMU_REGION_COOKIE_DOMAINS[regionKey] || [regionHost];
+    const gotoTimeoutMs = Number(options.gotoTimeoutMs) || TEMU_REGION_COOKIE_GOTO_TIMEOUT_MS;
+    const settleMs = Number(options.settleMs) || TEMU_REGION_COOKIE_SETTLE_MS;
     let page = null;
 
     try {
+        const existingCookies = normalizeCookieEntries(await context.cookies(), regionCookieDomains);
+        if (Object.keys(existingCookies).length) {
+            return {
+                success: true,
+                region: regionKey,
+                currentUrl: '',
+                strategy: 'existing_context_cookies',
+                cookieCount: Object.keys(existingCookies).length,
+                cookies: existingCookies,
+                warning: ''
+            };
+        }
+
         page = await context.newPage();
         await page.goto(regionUrl, {
             waitUntil: 'domcontentloaded',
-            timeout: 60_000
+            timeout: gotoTimeoutMs
         });
-        await page.waitForTimeout(3_000);
+        await page.waitForTimeout(settleMs);
 
         let strategy = 'direct_url';
         let regionCookies = normalizeCookieEntries(await context.cookies(), regionCookieDomains);
@@ -848,7 +870,7 @@ async function collectRegionCookies(context, regionKey) {
             const clickResult = await attemptRegionSelectionClick(page, regionKey);
             if (clickResult.clicked) {
                 strategy = clickResult.strategy;
-                await page.waitForTimeout(3_000);
+                await page.waitForTimeout(settleMs);
                 regionCookies = normalizeCookieEntries(await context.cookies(), regionCookieDomains);
             }
         }
@@ -964,9 +986,9 @@ export async function collectTemuSessionBundle(page, options = {}) {
         });
         await page.goto(TEMU_SELLER_HOME_URL, {
             waitUntil: 'domcontentloaded',
-            timeout: 60_000
+            timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
         });
-        await page.waitForTimeout(3_000);
+        await page.waitForTimeout(TEMU_SESSION_HOME_SETTLE_MS);
 
         const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
         if (!authorizationResult.success) {
@@ -981,9 +1003,9 @@ export async function collectTemuSessionBundle(page, options = {}) {
 
         await page.goto(TEMU_SELLER_HOME_URL, {
             waitUntil: 'domcontentloaded',
-            timeout: 60_000
+            timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
         });
-        await page.waitForTimeout(4_000);
+        await page.waitForTimeout(TEMU_SESSION_AUTH_SETTLE_MS);
 
         let currentUrl = String(page.url() || '');
         if (/\/auth\/authentication/i.test(currentUrl)) {
@@ -1018,7 +1040,10 @@ export async function collectTemuSessionBundle(page, options = {}) {
             };
         }
 
-        let captureReady = await waitForCaptureWarmup(trafficCapture.state, 8_000);
+        let captureReady = await waitForCaptureWarmup(
+            trafficCapture.state,
+            TEMU_SESSION_CAPTURE_WARMUP_TIMEOUT_MS
+        );
         if (!captureReady || !trafficCapture.state.antiContent) {
             const warmupResult = await warmupTemuTrafficCapture(page, trafficCapture.state);
             if (warmupResult.success) {
@@ -1096,19 +1121,18 @@ export async function collectTemuSessionBundle(page, options = {}) {
         };
 
         if (options.collectRegionCookies !== false) {
-            logger.info(`${PLATFORM_NAME}会话采集步骤：开始采集美区 Cookie`);
-            const usRegion = await collectRegionCookies(context, 'us');
-            logger.info(`${PLATFORM_NAME}会话采集步骤：美区 Cookie 采集完成`, {
-                success: !!usRegion.success,
-                cookieCount: usRegion.cookieCount || 0,
-                warning: usRegion.warning || ''
-            });
-            logger.info(`${PLATFORM_NAME}会话采集步骤：开始采集欧区 Cookie`);
-            const euRegion = await collectRegionCookies(context, 'eu');
-            logger.info(`${PLATFORM_NAME}会话采集步骤：欧区 Cookie 采集完成`, {
-                success: !!euRegion.success,
-                cookieCount: euRegion.cookieCount || 0,
-                warning: euRegion.warning || ''
+            logger.info(`${PLATFORM_NAME}会话采集步骤：并行采集美区/欧区 Cookie`);
+            const [usRegion, euRegion] = await Promise.all([
+                collectRegionCookies(context, 'us'),
+                collectRegionCookies(context, 'eu')
+            ]);
+            logger.info(`${PLATFORM_NAME}会话采集步骤：区域 Cookie 采集完成`, {
+                usSuccess: !!usRegion.success,
+                usCookieCount: usRegion.cookieCount || 0,
+                usWarning: usRegion.warning || '',
+                euSuccess: !!euRegion.success,
+                euCookieCount: euRegion.cookieCount || 0,
+                euWarning: euRegion.warning || ''
             });
             regionCollection.us = usRegion;
             regionCollection.eu = euRegion;

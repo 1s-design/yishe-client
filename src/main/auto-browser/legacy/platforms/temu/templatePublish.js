@@ -469,76 +469,6 @@ function assignTemplateImages(payload = {}, uploadedImageUrls = []) {
     return nextPayload;
 }
 
-function assignGoodsLayerDecorationImages(payload = {}, imageUrls = [], options = {}) {
-    const nextPayload = isPlainObject(payload) ? { ...payload } : {};
-    const decorationImageUrls = Array.isArray(imageUrls)
-        ? imageUrls.map((item) => normalizeText(item)).filter(Boolean)
-        : [];
-    if (!decorationImageUrls.length || !Array.isArray(nextPayload.goodsLayerDecorationReqs)) {
-        return nextPayload;
-    }
-
-    let decorationImageIndex = 0;
-    let replacedCount = 0;
-    const replacementDetails = [];
-
-    nextPayload.goodsLayerDecorationReqs = nextPayload.goodsLayerDecorationReqs.map((decoration, decorationIndex) => {
-        const nextDecoration = isPlainObject(decoration) ? { ...decoration } : decoration;
-        if (
-            !isPlainObject(nextDecoration) ||
-            normalizeText(nextDecoration.type).toLowerCase() !== 'image' ||
-            !Array.isArray(nextDecoration.contentList)
-        ) {
-            return nextDecoration;
-        }
-
-        nextDecoration.contentList = nextDecoration.contentList.map((contentItem, contentIndex) => {
-            const nextContentItem = isPlainObject(contentItem) ? { ...contentItem } : contentItem;
-            if (!isPlainObject(nextContentItem)) {
-                return nextContentItem;
-            }
-
-            const decorationImageUrl = decorationImageUrls[decorationImageIndex];
-            if (!decorationImageUrl) {
-                return nextContentItem;
-            }
-
-            decorationImageIndex += 1;
-            replacedCount += 1;
-            const hasImageUrl = Object.prototype.hasOwnProperty.call(nextContentItem, 'imageUrl');
-            const hasImgUrl = Object.prototype.hasOwnProperty.call(nextContentItem, 'imgUrl');
-            const targetPath = hasImageUrl
-                ? `goodsLayerDecorationReqs[${decorationIndex}].contentList[${contentIndex}].imageUrl`
-                : `goodsLayerDecorationReqs[${decorationIndex}].contentList[${contentIndex}].imgUrl`;
-            replacementDetails.push({
-                decorationIndex,
-                contentIndex,
-                targetPath,
-                url: decorationImageUrl
-            });
-            return {
-                ...nextContentItem,
-                ...(hasImageUrl ? { imageUrl: decorationImageUrl } : {}),
-                ...(hasImgUrl || !hasImageUrl ? { imgUrl: decorationImageUrl } : {})
-            };
-        });
-
-        return nextDecoration;
-    });
-
-    if (replacedCount > 0) {
-        logger.info(`${PLATFORM_NAME}模板详情图片已替换`, {
-            replacedCount,
-            decorationImageCount: decorationImageUrls.length,
-            bindingKey: options.bindingKey || 'productSkcReqs[].previewImgUrls',
-            rawBindingValue: options.rawBindingValue ?? null,
-            replacementDetails
-        });
-    }
-
-    return nextPayload;
-}
-
 function normalizeImageBindingIndexes(value) {
     if (value === undefined || value === null || value === '') {
         return [];
@@ -980,9 +910,6 @@ function normalizeTemuTemplateProductTitle(payload = {}) {
 
 function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
     const templatePayload = cloneSerializable(productTemplate) || {};
-    const bindingImageUrls = options.templateBindingImageUrls || options.uploadedImageUrls || [];
-    const detailImageBinding = options.templateImageBindings?.['productSkcReqs[].previewImgUrls'];
-    const detailImageUrls = pickImageUrlsByIndexes(bindingImageUrls, detailImageBinding);
     const titleAppliedPayload = fillTemplateTitle(templatePayload, options.title);
     const imageAppliedPayload = assignTemplateImagesByBindings(
         titleAppliedPayload,
@@ -994,18 +921,8 @@ function buildTemuTemplatePublishPayload(productTemplate = {}, options = {}) {
             bindingSource: options.templateBindingSource || 'uploadedImageUrls'
         }
     );
-    const detailImageAppliedPayload = assignGoodsLayerDecorationImages(
-        imageAppliedPayload,
-        detailImageUrls.length
-            ? detailImageUrls
-            : bindingImageUrls,
-        {
-            bindingKey: 'productSkcReqs[].previewImgUrls',
-            rawBindingValue: detailImageBinding ?? null
-        }
-    );
     const extCodeAppliedPayload = normalizeTemuTemplateExtCodes(
-        detailImageAppliedPayload,
+        imageAppliedPayload,
         options.codeInfo || {}
     );
     const normalizedSkuPayload = normalizeTemuTemplateSkuFields(extCodeAppliedPayload);
