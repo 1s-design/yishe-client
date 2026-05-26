@@ -565,6 +565,7 @@ function buildImageBindingDebugInfo(imageUrls = [], bindings = null, options = {
     const fieldKeys = [
         'materialImgUrl',
         'carouselImageUrls',
+        'goodsLayerDecorationReqs[].contentList[].imgUrl',
         'productSkcReqs[].previewImgUrls',
         'productSkcReqs[].productSkuReqs[].thumbUrl'
     ];
@@ -660,6 +661,57 @@ function assertExplicitImageBindingCanResolve(fieldKey, imageUrls = [], bindingV
     }
 }
 
+function assignGoodsLayerDecorationImages(payload = {}, detailImageUrls = []) {
+    const normalizedDetailImageUrls = Array.isArray(detailImageUrls)
+        ? detailImageUrls.map((item) => normalizeText(item)).filter(Boolean)
+        : [];
+    if (!normalizedDetailImageUrls.length) {
+        return payload;
+    }
+
+    if (!Array.isArray(payload.goodsLayerDecorationReqs)) {
+        return payload;
+    }
+
+    let imageIndex = 0;
+    const nextPayload = {
+        ...payload,
+        goodsLayerDecorationReqs: payload.goodsLayerDecorationReqs.map((layer) => {
+            if (!isPlainObject(layer) || layer.type !== 'image' || !Array.isArray(layer.contentList)) {
+                return layer;
+            }
+
+            return {
+                ...layer,
+                contentList: layer.contentList.map((content) => {
+                    if (!isPlainObject(content)) {
+                        return content;
+                    }
+
+                    const assignedUrl = normalizeText(normalizedDetailImageUrls[imageIndex]);
+                    if (!assignedUrl) {
+                        return content;
+                    }
+
+                    imageIndex += 1;
+                    return {
+                        ...content,
+                        imgUrl: assignedUrl
+                    };
+                })
+            };
+        })
+    };
+
+    logger.info(`${PLATFORM_NAME}模板详情装修图已按绑定替换`, {
+        bindingKey: 'goodsLayerDecorationReqs[].contentList[].imgUrl',
+        resolvedCount: normalizedDetailImageUrls.length,
+        replacedCount: imageIndex
+    });
+
+    return nextPayload;
+}
+
 function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bindings = null, options = {}) {
     if (!isPlainObject(bindings)) {
         return assignTemplateImages(payload, uploadedImageUrls);
@@ -695,6 +747,11 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
         bindings['productSkcReqs[].productSkuReqs[].thumbUrl']
     );
     assertExplicitImageBindingCanResolve(
+        'goodsLayerDecorationReqs[].contentList[].imgUrl',
+        imageUrls,
+        bindings['goodsLayerDecorationReqs[].contentList[].imgUrl']
+    );
+    assertExplicitImageBindingCanResolve(
         'productSkcReqs[].previewImgUrls',
         imageUrls,
         bindings['productSkcReqs[].previewImgUrls']
@@ -715,9 +772,32 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
         nextPayload.materialImgUrl = materialUrl;
     }
 
-    if (!Array.isArray(nextPayload.productSkcReqs)) {
-        return nextPayload;
-    }
+    const decorationBinding = bindings['goodsLayerDecorationReqs[].contentList[].imgUrl'];
+    const decorationBindingDebug = buildImageSelectionDebug(
+        imageUrls,
+        options.bindingSourceImageUrls || [],
+        decorationBinding
+    );
+    const decorationUrls = pickImageUrlsByIndexes(imageUrls, decorationBinding);
+    logger.info(`${PLATFORM_NAME}模板详情装修图绑定明细`, {
+        suiteImageCount: imageUrls.length,
+        sourceImageCount: Array.isArray(options.bindingSourceImageUrls)
+            ? options.bindingSourceImageUrls.length
+            : 0,
+        decorationImageLayerCount: Array.isArray(nextPayload.goodsLayerDecorationReqs)
+            ? nextPayload.goodsLayerDecorationReqs.filter((item) => item?.type === 'image').length
+            : 0,
+        bindingKey: 'goodsLayerDecorationReqs[].contentList[].imgUrl',
+        rawBindingValue: decorationBinding ?? null,
+        requestedSuiteIndexes: decorationBindingDebug.requestedSuiteIndexes,
+        selectedImages: decorationBindingDebug.selectedImages,
+        missingIndexes: decorationBindingDebug.missingIndexes,
+        resolvedDecorationUrls: decorationUrls
+    });
+    const decorationImageAppliedPayload = assignGoodsLayerDecorationImages(
+        nextPayload,
+        decorationUrls
+    );
 
     const skuThumbIndexes = normalizeImageBindingIndexes(
         bindings['productSkcReqs[].productSkuReqs[].thumbUrl']
@@ -747,9 +827,14 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
         missingIndexes: previewBindingDebug.missingIndexes,
         resolvedPreviewUrls: previewUrls
     });
+
+    if (!Array.isArray(decorationImageAppliedPayload.productSkcReqs)) {
+        return decorationImageAppliedPayload;
+    }
+
     let skuImageIndex = 0;
 
-    nextPayload.productSkcReqs = nextPayload.productSkcReqs.map((skc) => {
+    decorationImageAppliedPayload.productSkcReqs = decorationImageAppliedPayload.productSkcReqs.map((skc) => {
         const nextSkc = isPlainObject(skc) ? { ...skc } : {};
         const skuList = Array.isArray(nextSkc.productSkuReqs) ? nextSkc.productSkuReqs : [];
         let skcPreviewUrl = '';
@@ -785,7 +870,7 @@ function assignTemplateImagesByBindings(payload = {}, uploadedImageUrls = [], bi
         return nextSkc;
     });
 
-    return nextPayload;
+    return decorationImageAppliedPayload;
 }
 
 function buildTemuSkuSuggestedPriceReq(sku = {}) {
@@ -1318,6 +1403,10 @@ export async function publishTemuByProductTemplate(
         detailImageBinding: {
             key: 'productSkcReqs[].previewImgUrls',
             value: templateImageBindings?.['productSkcReqs[].previewImgUrls'] ?? null
+        },
+        decorationImageBinding: {
+            key: 'goodsLayerDecorationReqs[].contentList[].imgUrl',
+            value: templateImageBindings?.['goodsLayerDecorationReqs[].contentList[].imgUrl'] ?? null
         }
     });
     const buildPayloadResult = buildTemuTemplatePublishPayload(productTemplate, {
