@@ -5251,7 +5251,23 @@ function bindSocketEvents(currentSocket: Socket) {
 
   currentSocket.on(
     "browser-automation-auto-dispatch",
-    (payload: { clientId?: string; autoDispatchEnabled?: boolean }) => {
+    (payload: {
+      clientId?: string;
+      machineCode?: string | null;
+      autoDispatchEnabled?: boolean;
+    }) => {
+      const targetClientId = String(payload?.clientId || "").trim();
+      const targetMachineCode = String(payload?.machineCode || "").trim();
+      if (
+        (targetClientId && targetClientId !== identity.clientId) ||
+        (targetMachineCode && targetMachineCode !== identity.machineCode)
+      ) {
+        emitter.emit("log", {
+          level: "info",
+          message: `[ws] ignored browser-automation-auto-dispatch for another client: clientId=${targetClientId || "-"} machineCode=${targetMachineCode || "-"}`,
+        });
+        return;
+      }
       const enabled = payload?.autoDispatchEnabled === true;
       emitter.emit("log", {
         level: "info",

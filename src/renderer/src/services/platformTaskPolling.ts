@@ -141,8 +141,8 @@ function normalizePlatformAutoDispatchConfig(
   const isMatch = !!targetValue && targetValue === currentValue;
   const reason = !autoSchedulingEnabled
     ? "auto-scheduling-disabled"
-    : !targetClientId
-      ? "target-client-missing"
+    : !targetValue
+      ? "target-missing"
       : !isMatch
         ? "target-mismatch"
         : null;
@@ -205,12 +205,10 @@ export async function syncPlatformAutoDispatchConfig() {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    platformTaskAutoState.enabled = false;
     platformTaskAutoState.lastReason = "config-error";
     platformTaskAutoState.lastError = message;
     platformTaskAutoState.lastSyncedAt = new Date().toISOString();
     lastConfigSyncAt = Date.now();
-    stopTimer();
     console.warn("[platform-task] 配置同步失败:", error);
   }
 }
