@@ -13,6 +13,7 @@ type PlatformTaskClientRuntime = {
   clientId?: string | null;
   machineCode?: string | null;
   profileId?: string | null;
+  profileExists?: boolean | null;
   wsConnected?: boolean;
   browserAutomationReady?: boolean;
   browserAutomationAutoDispatchEnabled?: boolean | null;
@@ -114,7 +115,9 @@ function normalizePlatformAutoDispatchConfig(
       : root;
   const autoSchedulingEnabled = source.autoSchedulingEnabled === true;
   const targetClientId = pickFirstNonEmptyString(source.autoDispatchClientId);
-  const targetMachineCode = pickFirstNonEmptyString(source.autoDispatchMachineCode);
+  const targetMachineCode = pickFirstNonEmptyString(
+    source.autoDispatchMachineCode,
+  );
   const currentProfileId = pickFirstNonEmptyString(runtime.profileId);
   const currentClientId = pickFirstNonEmptyString(runtime.clientId);
   const currentMachineCode = pickFirstNonEmptyString(runtime.machineCode);
@@ -138,8 +141,8 @@ function normalizePlatformAutoDispatchConfig(
   const isMatch = !!targetValue && targetValue === currentValue;
   const reason = !autoSchedulingEnabled
     ? "auto-scheduling-disabled"
-    : !targetClientId
-      ? "target-client-missing"
+    : !targetValue
+      ? "target-missing"
       : !isMatch
         ? "target-mismatch"
         : null;
@@ -202,12 +205,10 @@ export async function syncPlatformAutoDispatchConfig() {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    platformTaskAutoState.enabled = false;
     platformTaskAutoState.lastReason = "config-error";
     platformTaskAutoState.lastError = message;
     platformTaskAutoState.lastSyncedAt = new Date().toISOString();
     lastConfigSyncAt = Date.now();
-    stopTimer();
     console.warn("[platform-task] 配置同步失败:", error);
   }
 }
@@ -251,6 +252,9 @@ function resolvePollReadiness() {
   if (runtime.browserAutomationReady !== true) {
     reasons.push("browser-automation-not-ready");
   }
+  if (runtime.profileId && runtime.profileExists === false) {
+    reasons.push("browser-profile-missing");
+  }
   if (runtime.browserAutomationBusy === true) {
     reasons.push("browser-automation-busy");
   }
@@ -286,6 +290,7 @@ function logPollSkip(reason: string, runtime: PlatformTaskClientRuntime) {
       clientId: runtime.clientId || null,
       machineCode: runtime.machineCode || null,
       profileId: runtime.profileId || null,
+      profileExists: runtime.profileExists ?? null,
       wsConnected: runtime.wsConnected === true,
       browserAutomationReady: runtime.browserAutomationReady === true,
       browserAutomationAutoDispatchEnabled:
@@ -337,9 +342,9 @@ async function pollPlatformTask() {
       try {
         const recovery = await recoverClientPublishTaskOrphans({
           clientId: readiness.runtime.clientId || undefined,
-      machineCode: readiness.runtime.machineCode || undefined,
-      profileId: readiness.runtime.profileId || undefined,
-      reason: "客户端本地空闲，释放遗留发布任务",
+          machineCode: readiness.runtime.machineCode || undefined,
+          profileId: readiness.runtime.profileId || undefined,
+          reason: "客户端本地空闲，释放遗留发布任务",
         });
         const releasedCount = Number(
           (recovery as any)?.data?.releasedCount ??

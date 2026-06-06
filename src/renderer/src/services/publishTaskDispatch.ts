@@ -6,6 +6,7 @@ import {
 import {
   cancelUploaderTasksBySource,
   closeUploaderBrowser,
+  getUploaderProfiles,
   type UploaderTaskSourceId,
 } from "../api/uploader";
 import {
@@ -45,6 +46,7 @@ type ExecutePublishTaskOptions = {
 const PUBLISH_TASK_HEARTBEAT_INTERVAL_MS = 10_000;
 const PUBLISH_TASK_RUNTIME_UPDATE_MIN_INTERVAL_MS = 5_000;
 const PUBLISH_TASK_STATUS_FALLBACK_RETRY_DELAYS_MS = [800, 2000, 5000];
+const MISSING_PROFILE_ERROR_PREFIX = "指定环境不存在";
 
 class PublishTaskRetryableError extends Error {
   constructor(message: string) {
@@ -72,6 +74,32 @@ function resolveResponseData<T>(response: any): T {
     return innerData as T;
   }
   return response as T;
+}
+
+async function ensureLocalBrowserProfileExists(profileId?: string | null) {
+  const normalizedProfileId = String(profileId || "").trim();
+  if (!normalizedProfileId) {
+    return;
+  }
+
+  const profilesResponse = await getUploaderProfiles();
+  if (!profilesResponse.success) {
+    return;
+  }
+
+  const profileItems = Array.isArray(profilesResponse.data?.items)
+    ? profilesResponse.data.items
+    : [];
+  if (
+    profileItems.length > 0 &&
+    !profileItems.some(
+      (item) => String(item?.id || "").trim() === normalizedProfileId,
+    )
+  ) {
+    throw new PublishTaskRetryableError(
+      `${MISSING_PROFILE_ERROR_PREFIX}: ${normalizedProfileId}`,
+    );
+  }
 }
 
 function getTaskLabel(taskType: string) {
@@ -390,7 +418,11 @@ async function retryFallbackTaskStatusUpdate(
   dispatchToken?: string | null,
 ) {
   let lastError: unknown = null;
-  for (let attempt = 0; attempt <= PUBLISH_TASK_STATUS_FALLBACK_RETRY_DELAYS_MS.length; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt <= PUBLISH_TASK_STATUS_FALLBACK_RETRY_DELAYS_MS.length;
+    attempt += 1
+  ) {
     try {
       await updateTaskStatus(
         type,
@@ -542,6 +574,7 @@ export async function executePublishQueueTask(
     }
 
     executionControl.profileId = resolveTaskProfileId(detail, forcedProfileId);
+    await ensureLocalBrowserProfileExists(executionControl.profileId);
     await ensureExecutionActive(executionControl);
 
     if (detail.status === "waiting") {

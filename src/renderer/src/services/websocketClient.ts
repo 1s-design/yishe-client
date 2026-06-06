@@ -2060,6 +2060,9 @@ setPlatformTaskClientRuntimeProvider(() => {
     null;
   const runtime = service?.details?.currentExecution || {};
   const connection = service?.details?.connection || {};
+  const profiles = Array.isArray(service?.details?.profiles)
+    ? service.details.profiles
+    : [];
   const profileId =
     String(
       service?.details?.activeProfileId ||
@@ -2068,10 +2071,17 @@ setPlatformTaskClientRuntimeProvider(() => {
         browserAutomationExecutionState.profileId ||
         "",
     ).trim() || null;
+  const profileExists =
+    profileId && profiles.length > 0
+      ? profiles.some(
+          (item: any) => String(item?.id || "").trim() === profileId,
+        )
+      : null;
   return {
     clientId: identity.clientId,
     machineCode: identity.machineCode,
     profileId,
+    profileExists,
     wsConnected: wsState.status === "connected",
     browserAutomationReady: !!(service?.available || service?.connected),
     browserAutomationAutoDispatchEnabled:
@@ -2086,8 +2096,9 @@ setPlatformTaskClientRuntimeProvider(() => {
       service?.busy === true ||
       runtime?.running === true,
     browserAutomationLastError:
-      String(service?.lastError || browserAutomationExecutionState.lastError || "")
-        .trim() || null,
+      String(
+        service?.lastError || browserAutomationExecutionState.lastError || "",
+      ).trim() || null,
   };
 });
 
@@ -5240,7 +5251,23 @@ function bindSocketEvents(currentSocket: Socket) {
 
   currentSocket.on(
     "browser-automation-auto-dispatch",
-    (payload: { clientId?: string; autoDispatchEnabled?: boolean }) => {
+    (payload: {
+      clientId?: string;
+      machineCode?: string | null;
+      autoDispatchEnabled?: boolean;
+    }) => {
+      const targetClientId = String(payload?.clientId || "").trim();
+      const targetMachineCode = String(payload?.machineCode || "").trim();
+      if (
+        (targetClientId && targetClientId !== identity.clientId) ||
+        (targetMachineCode && targetMachineCode !== identity.machineCode)
+      ) {
+        emitter.emit("log", {
+          level: "info",
+          message: `[ws] ignored browser-automation-auto-dispatch for another client: clientId=${targetClientId || "-"} machineCode=${targetMachineCode || "-"}`,
+        });
+        return;
+      }
       const enabled = payload?.autoDispatchEnabled === true;
       emitter.emit("log", {
         level: "info",
@@ -9082,8 +9109,12 @@ function normalizePsAutomationDispatchConfig(setting: unknown) {
       ? (root.psAutomation as Record<string, any>)
       : root;
   const autoSchedulingEnabled = source.autoSchedulingEnabled === true;
-  const autoDispatchMachineCode = pickFirstNonEmptyString(source.autoDispatchMachineCode);
-  const autoDispatchClientId = pickFirstNonEmptyString(source.autoDispatchClientId);
+  const autoDispatchMachineCode = pickFirstNonEmptyString(
+    source.autoDispatchMachineCode,
+  );
+  const autoDispatchClientId = pickFirstNonEmptyString(
+    source.autoDispatchClientId,
+  );
   const currentMachineCode = pickFirstNonEmptyString(identity.machineCode);
   const currentClientId = pickFirstNonEmptyString(identity.clientId);
   const targetMode = autoDispatchMachineCode
@@ -9165,6 +9196,56 @@ function canPollNextPsdSetTask(): boolean {
   return true;
 }
 
+async function recoverPsdSetClientOrphans(
+  reason = "客户端本地空闲，释放遗留套图任务",
+) {
+  if (!identity.clientId && !identity.machineCode) {
+    return 0;
+  }
+
+  lastPsdSetRecoveryAt = Date.now();
+  try {
+    const recovery = await stickerPsdSetApi.recoverClientOrphans({
+      clientId: identity.clientId,
+      machineCode: identity.machineCode,
+      reason,
+    });
+    const releasedCount = Number(
+      recovery?.data?.releasedCount ?? recovery?.releasedCount ?? 0,
+    );
+    if (releasedCount > 0) {
+      psdSetConsoleDebug("poll.recovery.released", { recovery }, "warn");
+      emitter.emit("log", {
+        level: "warn",
+        message: `[psd-set] 已释放 ${releasedCount} 个遗留执行态，继续领取任务`,
+      });
+      isProductionInProgress = false;
+      currentProductionTaskId = null;
+      currentProductionPsdSetId = null;
+      currentProductionDispatchToken = null;
+      currentProductionProfileId = null;
+      emitPsAutomationStatus({
+        running: false,
+        progress: null,
+        queueCount: 0,
+        currentPsSetId: null,
+        currentPsSetName: null,
+        profileId: null,
+        dispatchToken: null,
+        currentStep: reason,
+      });
+    }
+    return releasedCount;
+  } catch (error) {
+    psdSetConsoleDebug(
+      "poll.recovery.error",
+      { error: serializeError(error) },
+      "warn",
+    );
+    return 0;
+  }
+}
+
 async function pollNextPsdSetTask() {
   if (psdSetPollInFlight) {
     psdSetConsoleDebug("poll.skip-in-flight", {
@@ -9181,6 +9262,14 @@ async function pollNextPsdSetTask() {
 
   // 只有满足基本条件才尝试领取任务
   try {
+    if (
+      psAutomationControlState.autoDispatchEnabled === true &&
+      wsState.status === "connected" &&
+      Date.now() - lastPsdSetRecoveryAt > PSD_SET_RECOVERY_INTERVAL_MS
+    ) {
+      await recoverPsdSetClientOrphans();
+    }
+
     if (!canClaimNextTask()) {
       const reasons: string[] = [];
       if (!identity.clientId) reasons.push("clientId为空");
@@ -9233,40 +9322,6 @@ async function pollNextPsdSetTask() {
         message: `[psd-set] 存在运行时错误，跳过本次轮询`,
       });
       return;
-    }
-
-    if (
-      !isProductionInProgress &&
-      Date.now() - lastPsdSetRecoveryAt > PSD_SET_RECOVERY_INTERVAL_MS
-    ) {
-      lastPsdSetRecoveryAt = Date.now();
-      try {
-        const recovery = await stickerPsdSetApi.recoverClientOrphans({
-          clientId: identity.clientId,
-          machineCode: identity.machineCode,
-          reason: "客户端本地空闲，释放遗留套图任务",
-        });
-        const releasedCount = Number(
-          recovery?.data?.releasedCount ?? recovery?.releasedCount ?? 0,
-        );
-        if (releasedCount > 0) {
-          psdSetConsoleDebug(
-            "poll.recovery.released",
-            { recovery },
-            "warn",
-          );
-          emitter.emit("log", {
-            level: "warn",
-            message: `[psd-set] 已释放 ${releasedCount} 个遗留执行态，继续领取任务`,
-          });
-        }
-      } catch (error) {
-        psdSetConsoleDebug(
-          "poll.recovery.error",
-          { error: serializeError(error) },
-          "warn",
-        );
-      }
     }
 
     emitter.emit("log", {
@@ -9456,6 +9511,7 @@ function startPsdSetPolling() {
   psdSetPollTimer = setInterval(() => {
     void pollNextPsdSetTask();
   }, PSD_SET_POLL_INTERVAL_MS);
+  void recoverPsdSetClientOrphans("客户端开启自动制作，释放遗留套图任务");
   void pollNextPsdSetTask();
 }
 
