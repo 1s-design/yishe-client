@@ -71,6 +71,34 @@ def _safe_get_active_layer_name(doc) -> str:
     return "未知"
 
 
+def _smart_object_identity(smart_object: dict) -> tuple:
+    """Return a stable-ish identity for deduping Photoshop COM layer records."""
+    layer = smart_object.get("layer")
+    path = smart_object.get("path")
+    name = smart_object.get("name")
+    try:
+        layer_id = getattr(layer, "id", None)
+        if layer_id is not None:
+            return ("id", str(layer_id))
+    except Exception:
+        pass
+
+    # COM wrappers can be recreated while still pointing at the same PSD layer.
+    return ("path", str(path or ""), str(name or ""))
+
+
+def _dedupe_smart_objects(smart_objects: list[dict]) -> list[dict]:
+    unique_smart_objects = []
+    seen = set()
+    for smart_object in smart_objects:
+        identity = _smart_object_identity(smart_object)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique_smart_objects.append(smart_object)
+    return unique_smart_objects
+
+
 def replace_and_export_psd_multi(
     psd_path: Path,
     export_dir: Path,
@@ -114,6 +142,14 @@ def replace_and_export_psd_multi(
             if not all_smart_objects:
                 doc.close()
                 raise ValueError("PSD 文件中没有找到任何智能对象图层")
+
+            deduped_smart_objects = _dedupe_smart_objects(all_smart_objects)
+            if len(deduped_smart_objects) != len(all_smart_objects):
+                print(
+                    f"ℹ️ 已去重智能对象: 原始 {len(all_smart_objects)} 个，"
+                    f"去重后 {len(deduped_smart_objects)} 个"
+                )
+                all_smart_objects = deduped_smart_objects
 
             # ========== 过滤掉包含忽略标志的智能对象 ==========
             total_count = len(all_smart_objects)
@@ -170,64 +206,62 @@ def replace_and_export_psd_multi(
         
         # ========== 匹配配置和智能对象 ==========
         # 匹配策略：
-        # 1. 如果配置指定了 smart_object_name，优先按名称模糊匹配（PS中的名字包含参数中的关键字即可）
+        # 1. 以配置数组为主，每条配置最多只处理一个智能对象
+        # 2. 如果配置指定了 smart_object_name，优先按名称匹配（先精确，再包含关键字）
         # 2. 如果名称无法匹配，再按顺序匹配
-        # 3. 如果配置数量少于智能对象数量，复用配置
+        # 3. 配置用完后不再复用，避免一个请求意外替换多个同名/额外智能对象
         
         matched_pairs = []  # [(smart_object, config), ...]
-        used_config_indices = set()  # 已使用的配置索引
         used_smart_object_indices = set()  # 已使用的智能对象索引
 
         if smart_objects_config:
-            # 第一轮：按名称模糊匹配（包含关键字即可，不区分大小写）
             for config_idx, so_config in enumerate(smart_objects_config):
-                if so_config.get('smart_object_name'):
-                    target_keyword = so_config['smart_object_name'].strip()
-                    matched = False
+                target_name = str(so_config.get('smart_object_name') or "").strip()
+                matched_index = None
+                match_reason = "按顺序"
+
+                if target_name:
+                    target_name_lower = target_name.lower()
+
                     for so_idx, so in enumerate(all_smart_objects):
                         if so_idx in used_smart_object_indices:
                             continue
-                        # 模糊匹配：PS中的名字包含参数中的关键字（不区分大小写）
-                        so_name = so['name']
-                        if target_keyword.lower() in so_name.lower():
-                            matched_pairs.append((so, so_config))
-                            used_config_indices.add(config_idx)
-                            used_smart_object_indices.add(so_idx)
-                            print(f"✅ 匹配: 智能对象 '{so_name}' <-> 配置[{config_idx}] (关键字: '{target_keyword}')")
-                            matched = True
+                        if str(so.get('name', '')).strip().lower() == target_name_lower:
+                            matched_index = so_idx
+                            match_reason = f"名称精确匹配: '{target_name}'"
                             break
 
-                    if not matched:
-                        print(f"⚠️  警告: 配置[{config_idx}] 的关键字 '{target_keyword}' 未匹配到任何智能对象，将按顺序匹配")
+                    if matched_index is None:
+                        for so_idx, so in enumerate(all_smart_objects):
+                            if so_idx in used_smart_object_indices:
+                                continue
+                            so_name = str(so.get('name', ''))
+                            if target_name_lower in so_name.lower():
+                                matched_index = so_idx
+                                match_reason = f"名称包含匹配: '{target_name}'"
+                                break
 
-            # 第二轮：按顺序匹配剩余的配置和智能对象
-            config_idx = 0
-            for so_idx, so in enumerate(all_smart_objects):
-                if so_idx in used_smart_object_indices:
+                    if matched_index is None:
+                        print(f"⚠️  警告: 配置[{config_idx}] 的名称 '{target_name}' 未匹配到任何未处理智能对象，将按顺序匹配")
+
+                if matched_index is None:
+                    for so_idx, _so in enumerate(all_smart_objects):
+                        if so_idx not in used_smart_object_indices:
+                            matched_index = so_idx
+                            break
+
+                if matched_index is None:
+                    print(f"⚠️  警告: 配置[{config_idx}] 没有可用的未处理智能对象，已跳过")
                     continue
 
-                # 找到下一个未使用的配置
-                while config_idx < len(smart_objects_config) and config_idx in used_config_indices:
-                    config_idx += 1
+                so = all_smart_objects[matched_index]
+                matched_pairs.append((so, so_config))
+                used_smart_object_indices.add(matched_index)
+                print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[{config_idx}] ({match_reason})")
 
-                if config_idx < len(smart_objects_config):
-                    so_config = smart_objects_config[config_idx]
-                    matched_pairs.append((so, so_config))
-                    used_config_indices.add(config_idx)
-                    used_smart_object_indices.add(so_idx)
-                    # 检查配置是否指定了名称但未匹配到
-                    if so_config.get('smart_object_name'):
-                        print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[{config_idx}] (按顺序，配置中的关键字 '{so_config['smart_object_name']}' 未匹配到)")
-                    else:
-                        print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[{config_idx}] (按顺序)")
-                    config_idx += 1
-                else:
-                    # 配置用完了，复用第一个配置
-                    if len(smart_objects_config) > 0:
-                        so_config = smart_objects_config[0]
-                        matched_pairs.append((so, so_config))
-                        used_smart_object_indices.add(so_idx)
-                        print(f"✅ 匹配: 智能对象 '{so['name']}' <-> 配置[0] (复用)")
+            skipped_count = len(all_smart_objects) - len(used_smart_object_indices)
+            if skipped_count > 0:
+                print(f"ℹ️ 未处理 {skipped_count} 个额外智能对象：配置数组已用完，不再复用配置")
 
         if smart_objects_config and not matched_pairs:
             doc.close()
