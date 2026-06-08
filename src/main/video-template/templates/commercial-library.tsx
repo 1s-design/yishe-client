@@ -90,6 +90,27 @@ const barSchema = z.object({
   color: z.string().optional(),
 });
 
+const gradientImageSlideSchema = z.object({
+  image: mediaSchema,
+  caption: z.string().optional(),
+  durationSeconds: z.number().min(0.2).max(60).optional(),
+});
+
+const gradientImageSlidesSchema = z.preprocess((value) => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : value;
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}, z.array(gradientImageSlideSchema).min(1).max(20));
+
 const leftRightPanelSchema = z.object({
   eyebrow: z.string(),
   title: z.string(),
@@ -118,6 +139,259 @@ const formatTimecode = (seconds: number) => {
   const minutes = Math.floor(safeSeconds / 60);
   const remainder = safeSeconds % 60;
   return `${pad2(minutes)}:${pad2(remainder)}`;
+};
+
+export const gradientImageTransitionSchema = z.object({
+  palette: paletteSchema,
+  title: z.string(),
+  subtitle: z.string(),
+  images: gradientImageSlidesSchema,
+  showCaptions: z.boolean(),
+  transitionFrames: z.number().min(8).max(60),
+  width: z.number(),
+  height: z.number(),
+  fps: z.number(),
+  durationInFrames: z.number(),
+});
+
+export type GradientImageTransitionProps = z.infer<
+  typeof gradientImageTransitionSchema
+>;
+
+export const GradientImageTransitionTemplate: React.FC<
+  GradientImageTransitionProps
+> = ({
+  palette,
+  title,
+  subtitle,
+  images,
+  showCaptions,
+  transitionFrames,
+  width,
+  height,
+  fps,
+}) => {
+  const frame = useCurrentFrame();
+  const normalizedImages = Array.isArray(images)
+    ? images
+    : typeof images === "string"
+      ? (() => {
+          try {
+            const parsed = JSON.parse(images);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+  const slides = normalizedImages.length
+    ? normalizedImages.map((item, index) => {
+        if (typeof item === "string") {
+          return {
+            image: { type: "image" as const, src: item },
+            caption: `Image ${String(index + 1).padStart(2, "0")}`,
+            durationSeconds: 3,
+          };
+        }
+        const slide = item as {
+          image?: { type?: "image" | "video"; src?: string; alt?: string };
+          caption?: string;
+          durationSeconds?: number;
+        };
+        return {
+          image: {
+            type: slide.image?.type || "image",
+            src: slide.image?.src || "",
+            alt: slide.image?.alt,
+          },
+          caption: slide.caption || `Image ${String(index + 1).padStart(2, "0")}`,
+          durationSeconds: Number(slide.durationSeconds || 3),
+        };
+      })
+    : [
+        {
+          image: {
+            type: "image" as const,
+            src: "https://picsum.photos/seed/fallback-gallery/1600/2000",
+          },
+          caption: "Image 01",
+          durationSeconds: 3,
+        },
+      ];
+  const slideDurations = slides.map((slide) =>
+    Math.max(1, Math.round(Number(slide.durationSeconds || 3) * fps)),
+  );
+  const slideStarts = slideDurations.reduce<number[]>((starts, duration, index) => {
+    starts[index] = index === 0 ? 0 : starts[index - 1] + slideDurations[index - 1];
+    return starts;
+  }, []);
+  const computedDurationInFrames = Math.max(
+    1,
+    slideDurations.reduce((sum, duration) => sum + duration, 0),
+  );
+  const activeIndex = Math.min(
+    slides.length - 1,
+    Math.max(
+      0,
+      slideStarts.findIndex((start, index) => {
+        const end = start + slideDurations[index];
+        return frame >= start && frame < end;
+      }),
+    ),
+  );
+
+  return (
+    <AbsoluteFill
+      style={{
+        width,
+        height,
+        overflow: "hidden",
+        background: `linear-gradient(135deg, ${palette.background} 0%, ${palette.backgroundAlt} 48%, ${palette.surface} 100%)`,
+        fontFamily:
+          "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+      }}
+    >
+      {slides.map((slide, index) => {
+        const start = slideStarts[index];
+        const slideDuration = slideDurations[index];
+        const end = start + slideDuration;
+        const opacity = sceneWindow({
+          frame,
+          start,
+          end,
+          fadeIn: transitionFrames,
+          fadeOut: transitionFrames,
+        });
+        const localProgress = clamp01((frame - start) / slideDuration);
+        const scale = mix(1.04, 1.12, localProgress);
+        const shift = mix(-18, 18, localProgress) * (index % 2 === 0 ? 1 : -1);
+
+        return (
+          <AbsoluteFill key={`${slide.image.src}-${index}`} style={{ opacity }}>
+            <AbsoluteFill
+              style={{
+                background: `linear-gradient(135deg, ${palette.accent} 0%, ${palette.accentAlt} 100%)`,
+              }}
+            />
+            <img
+              src={slide.image.src}
+              alt={slide.image.alt || slide.caption || `slide-${index + 1}`}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                transform: `scale(${mix(0.96, 1, localProgress)}) translate3d(${shift * 0.2}px, 0, 0)`,
+                filter: "saturate(1.04) contrast(1.02)",
+              }}
+            />
+            <AbsoluteFill
+              style={{
+                background: `linear-gradient(180deg, ${alpha(palette.background, 0.16)} 0%, transparent 42%, ${alpha(palette.background, 0.58)} 100%)`,
+              }}
+            />
+          </AbsoluteFill>
+        );
+      })}
+
+      <AbsoluteFill
+        style={{
+          background: `radial-gradient(circle at 20% 12%, ${alpha(palette.glow, 0.28)} 0%, transparent 32%), radial-gradient(circle at 82% 78%, ${alpha(palette.accentAlt, 0.2)} 0%, transparent 34%)`,
+          mixBlendMode: "screen",
+        }}
+      />
+      <AbsoluteFill
+        style={{
+          background: `linear-gradient(115deg, ${alpha(palette.accent, 0.2)} 0%, transparent 26%, transparent 68%, ${alpha(palette.accentAlt, 0.16)} 100%)`,
+        }}
+      />
+
+      <div
+        style={{
+          position: "absolute",
+          left: 56,
+          right: 56,
+          bottom: 58,
+          display: "grid",
+          gap: 14,
+          color: palette.text,
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            height: 2,
+            overflow: "hidden",
+            borderRadius: 2,
+            background: alpha("#ffffff", 0.18),
+          }}
+        >
+          <div
+            style={{
+              width: `${clamp01(frame / computedDurationInFrames) * 100}%`,
+              height: "100%",
+              background: `linear-gradient(90deg, ${palette.accent} 0%, ${palette.accentAlt} 100%)`,
+            }}
+          />
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            gap: 24,
+          }}
+        >
+          <div style={{ display: "grid", gap: 8, maxWidth: "74%" }}>
+            <div
+              style={{
+                fontSize: 54,
+                lineHeight: 1,
+                fontWeight: 760,
+                letterSpacing: 0,
+                textShadow: `0 10px 34px ${alpha("#000000", 0.36)}`,
+              }}
+            >
+              {title}
+            </div>
+            <div
+              style={{
+                fontSize: 22,
+                lineHeight: 1.45,
+                color: alpha(palette.text, 0.78),
+                textShadow: `0 8px 26px ${alpha("#000000", 0.32)}`,
+              }}
+            >
+              {showCaptions && slides[activeIndex]?.caption
+                ? slides[activeIndex].caption
+                : subtitle}
+            </div>
+          </div>
+          <div
+            style={{
+              color: alpha(palette.text, 0.76),
+              fontSize: 18,
+              fontWeight: 700,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+            }}
+          >
+            {String(activeIndex + 1).padStart(2, "0")} /{" "}
+            {String(slides.length).padStart(2, "0")}
+          </div>
+        </div>
+        <div
+          style={{
+            color: alpha(palette.text, 0.56),
+            fontSize: 14,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+          }}
+        >
+          {formatDurationLabel({ fps, durationInFrames: computedDurationInFrames })}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
 };
 
 const extractLeadingNumber = (value: string) => {

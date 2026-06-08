@@ -8,6 +8,7 @@ import {
   DataInsightTemplate,
   EditorialMontageTemplate,
   FlashSaleBurstTemplate,
+  GradientImageTransitionTemplate,
   KnowledgeCardsTemplate,
   LaunchKeynoteTemplate,
   LuxurySpotlightTemplate,
@@ -22,6 +23,7 @@ import {
   dataInsightSchema,
   editorialMontageSchema,
   flashSaleBurstSchema,
+  gradientImageTransitionSchema,
   knowledgeCardsSchema,
   launchKeynoteSchema,
   luxurySpotlightSchema,
@@ -45,6 +47,9 @@ export type TemplateInputField = {
   description: string;
   required?: boolean;
   example?: unknown;
+  placeholder?: string;
+  helperText?: string;
+  rows?: number;
 };
 
 export type TemplateScene = {
@@ -10059,6 +10064,97 @@ export const templateCatalog = assertTemplateCatalogIntegrity([
       title: "日食科学拆解短片",
       copy: ["真正值得理解的，不是太阳为什么突然缺了一块，而是月球阴影如何扫过地球表面。", "Alignment / Umbra / Path Matters / Protected View", "Save This Eclipse Breakdown"],
       media: [seedImage("solar-eclipse-science").src],
+    },
+  }),
+  defineTemplate({
+    id: "gradient-image-transition",
+    compositionId: "GradientImageTransition",
+    name: "图片渐变过渡视频",
+    description: "根据一组任意数量的图片自动生成普通、干净的渐变过渡视频，适合相册、商品图、案例图轮播。",
+    category: "通用",
+    style: "极简相册 / 渐变过渡 / 干净展示",
+    useCase: "适合把多张位置图、商品图、效果图、案例图快速生成一支平滑过渡视频。",
+    durationLabel: shortVideo(15),
+    tags: ["图片", "相册", "渐变", "过渡", "轮播", "通用"],
+    scenes: [
+      { title: "Scene 1", summary: "按图片数量自动分配镜头时长，第一张图淡入开场。" },
+      { title: "Scene 2", summary: "每张图片使用轻微缩放和位移，避免静态图过于生硬。" },
+      { title: "Scene 3", summary: "图片之间用渐变淡入淡出衔接，底部显示标题、说明和进度。" },
+    ],
+    animationHighlights: [
+      "图片数量自适应，2 张到 20 张都可以直接生成。",
+      "每张图有轻微 Ken Burns 缩放位移，画面更自然。",
+      "过渡帧数可配置，支持更快或更柔和的淡入淡出。",
+    ],
+    component: GradientImageTransitionTemplate,
+    schema: gradientImageTransitionSchema,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    durationInFrames: 450,
+    defaultInputProps: {
+      palette: palettes.pearlSkin,
+      title: "Image Flow",
+      subtitle: "一组图片自动生成平滑渐变过渡视频",
+      images: [
+        { image: seedImage("gradient-gallery-01"), caption: "Image 01", durationSeconds: 3 },
+        { image: seedImage("gradient-gallery-02"), caption: "Image 02", durationSeconds: 3 },
+        { image: seedImage("gradient-gallery-03"), caption: "Image 03", durationSeconds: 4 },
+        { image: seedImage("gradient-gallery-04"), caption: "Image 04", durationSeconds: 3 },
+        { image: seedImage("gradient-gallery-05"), caption: "Image 05", durationSeconds: 5 },
+      ],
+      showCaptions: true,
+      transitionFrames: 24,
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      durationInFrames: 450,
+    },
+    editableFields: [
+      "palette",
+      "title",
+      "subtitle",
+      "images",
+      "showCaptions",
+      "transitionFrames",
+    ],
+    assetSummary: "1组图片数组 + 标题说明 + 每张图片显示秒数 + 可配置过渡帧数，总时长自动计算。",
+    assets: [
+      { key: "images", type: "array", label: "图片列表", description: "支持多张图片，每项包含 image 和可选 caption。" },
+      { key: "title", type: "text", label: "标题" },
+      { key: "subtitle", type: "text", label: "副标题" },
+      { key: "showCaptions", type: "boolean", label: "显示图片说明" },
+      { key: "transitionFrames", type: "number", label: "过渡帧数" },
+    ],
+    inputSchema: [
+      { key: "title", type: "text", label: "标题", description: "显示在视频底部的主标题。", required: true, example: "Image Flow" },
+      { key: "subtitle", type: "text", label: "副标题", description: "没有图片说明时显示的底部描述。", example: "一组图片自动生成平滑渐变过渡视频" },
+      {
+        key: "images",
+        type: "array",
+        label: "图片列表",
+        description: "图片数组，按顺序播放。每项格式为 { image: { type: 'image', src: '图片地址' }, caption: '说明', durationSeconds: 3 }。",
+        required: true,
+        rows: 10,
+        placeholder: "直接替换 image.src，按需修改 durationSeconds 控制这一张图出现的秒数。",
+        helperText: "每一项是一张图片：image.src 是图片地址，caption 是说明，durationSeconds 是这张图显示秒数；总时长会自动相加。",
+        example: [
+          { image: seedImage("gradient-gallery-01"), caption: "Image 01", durationSeconds: 3 },
+          { image: seedImage("gradient-gallery-02"), caption: "Image 02", durationSeconds: 3 },
+          { image: seedImage("gradient-gallery-03"), caption: "Image 03", durationSeconds: 4 },
+        ],
+      },
+      { key: "showCaptions", type: "boolean", label: "显示图片说明", description: "开启后底部副标题区域显示当前图片 caption。", example: true },
+      { key: "transitionFrames", type: "number", label: "过渡帧数", description: "控制图片之间淡入淡出的柔和程度，建议 16-30。", example: 24 },
+    ],
+    example: {
+      title: "多图渐变过渡视频",
+      copy: ["Image Flow", "一组图片自动生成平滑渐变过渡视频", "2-20 张图片自适应播放"],
+      media: [
+        seedImage("gradient-gallery-01").src,
+        seedImage("gradient-gallery-02").src,
+        seedImage("gradient-gallery-03").src,
+      ],
     },
   }),
   ]);

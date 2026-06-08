@@ -24,11 +24,46 @@ export const RemotionRoot: React.FC = () => {
             defaultProps={defaultProps}
             calculateMetadata={async ({ props }) => {
               const safeProps = props as Record<string, unknown>;
+              const fps = Number(safeProps.fps || template.fps || 30);
+              const imageItems = Array.isArray(safeProps.images)
+                ? safeProps.images
+                : typeof safeProps.images === "string"
+                  ? (() => {
+                      try {
+                        const parsed = JSON.parse(safeProps.images);
+                        return Array.isArray(parsed) ? parsed : [];
+                      } catch {
+                        return [];
+                      }
+                    })()
+                  : [];
+              const imageDurationInFrames =
+                imageItems.length
+                  ? imageItems.reduce((sum, item) => {
+                      const durationSeconds = Number(
+                        (item as Record<string, unknown>)?.durationSeconds || 3,
+                      );
+                      return (
+                        sum +
+                        Math.max(
+                          1,
+                          Math.round(
+                            (Number.isFinite(durationSeconds)
+                              ? durationSeconds
+                              : 3) * fps,
+                          ),
+                        )
+                      );
+                    }, 0)
+                  : 0;
               return {
                 durationInFrames: Number(
-                  safeProps.durationInFrames || template.durationInFrames || 240,
+                  imageDurationInFrames ||
+                    safeProps.durationInFrames ||
+                    template.durationInFrames ||
+                    240,
                 ),
-                fps: Number(safeProps.fps || template.fps || 30),
+                fps,
                 width: Number(safeProps.width || template.width || 1080),
                 height: Number(safeProps.height || template.height || 1920),
                 props: safeProps,
