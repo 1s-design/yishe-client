@@ -2771,13 +2771,18 @@ async function getCachedRemotionTemplates(force = false) {
   const templatesRes = await fetchRemotionJson("/api/templates", {
     timeoutMs: REMOTION_TEMPLATE_REQUEST_TIMEOUT_MS,
   });
-  const templates = Array.isArray(templatesRes?.templates)
-    ? templatesRes.templates
-    : Array.isArray(templatesRes?.data)
-      ? templatesRes.data
-      : Array.isArray(templatesRes)
-        ? templatesRes
-        : [];
+  const templatesPayload = templatesRes?.data || templatesRes;
+  const templates = Array.isArray(templatesPayload?.templates)
+    ? templatesPayload.templates
+    : Array.isArray(templatesPayload?.list)
+      ? templatesPayload.list
+      : Array.isArray(templatesPayload?.records)
+        ? templatesPayload.records
+        : Array.isArray(templatesPayload?.data)
+          ? templatesPayload.data
+          : Array.isArray(templatesPayload)
+            ? templatesPayload
+            : [];
 
   remotionTemplateCache.items = templates;
   remotionTemplateCache.lastFetchedAt = now;
@@ -3047,6 +3052,13 @@ async function getRemotionRuntime() {
       healthPayload?.status === "idle" || healthPayload?.warmed === false;
 
     if (isIdleNotLoaded) {
+      const templates = await getCachedRemotionTemplates(true).catch(() =>
+        Array.isArray(healthPayload?.templates)
+          ? healthPayload.templates
+          : Array.isArray(previousDetails.templates)
+            ? previousDetails.templates
+            : remotionTemplateCache.items,
+      );
       return {
         label: "Video Template 视频引擎",
         connected: false,
@@ -3066,17 +3078,13 @@ async function getRemotionRuntime() {
           "enqueueRender",
         ],
         details: {
-          templates: Array.isArray(healthPayload?.templates)
-            ? healthPayload.templates
-            : Array.isArray(previousDetails.templates)
-              ? previousDetails.templates
-              : remotionTemplateCache.items,
+          templates,
           health: healthPayload,
           processStatus: "stopped",
           serviceHealthy: false,
           warmed: false,
           lastHeartbeatAt: checkedAt,
-          templateCount: Number(healthPayload?.templateCount || 0),
+          templateCount: templates.length || Number(healthPayload?.templateCount || 0),
           queueCount: 0,
           activeJobsCount: 0,
           queuedJobsCount: 0,
@@ -3103,8 +3111,12 @@ async function getRemotionRuntime() {
       );
     }
 
+    const healthTemplates = Array.isArray(healthPayload?.templates)
+      ? healthPayload.templates
+      : [];
     const templateCount = Number(
       healthPayload?.templateCount ??
+        (healthTemplates.length > 0 ? healthTemplates.length : undefined) ??
         previousDetails.templateCount ??
         remotionTemplateCache.items.length,
     );
@@ -3112,13 +3124,19 @@ async function getRemotionRuntime() {
       ? previousDetails.templates
       : remotionTemplateCache.items;
     const shouldRefreshTemplates =
+      !healthTemplates.length ||
       !previousTemplates.length ||
       (Number.isFinite(templateCount) &&
         templateCount >= 0 &&
         templateCount !== previousTemplates.length);
-    const templates = await getCachedRemotionTemplates(
-      shouldRefreshTemplates,
-    ).catch(() => previousTemplates);
+    const catalogTemplates = await getCachedRemotionTemplates(shouldRefreshTemplates).catch(
+      () => [],
+    );
+    const templates = catalogTemplates.length
+      ? catalogTemplates
+      : healthTemplates.length
+        ? healthTemplates
+        : previousTemplates;
     const queueSnapshot = await getRemotionQueueSnapshot().catch(() => null);
     const heartbeatLatencyMs = Date.now() - startedAt;
     const activeJobsCount =
@@ -3163,9 +3181,7 @@ async function getRemotionRuntime() {
         serviceHealthy: true,
         heartbeatLatencyMs,
         lastHeartbeatAt: checkedAt,
-        templateCount: Number.isFinite(templateCount)
-          ? templateCount
-          : templates.length,
+        templateCount: templates.length || (Number.isFinite(templateCount) ? templateCount : 0),
         queueCount: activeJobsCount,
         activeJobsCount,
         queuedJobsCount,
