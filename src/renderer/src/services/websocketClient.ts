@@ -3480,121 +3480,148 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
     { persist: "always" },
   );
 
-  const createRes = await fetchRemotionJson("/api/renders", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      templateId,
-      inputProps: command.payload?.inputProps || {},
-    }),
-  }).then((result) =>
-    ensureRemotionResponseOk(result, "本地 Video Template 创建渲染任务失败"),
-  );
-
-  const jobId = String(createRes?.data?.jobId || createRes?.jobId || "").trim();
-  if (!jobId) {
-    throw new Error("本地 Video Template 未返回 jobId");
-  }
-
-  const initialQueueSnapshot = await getRemotionQueueSnapshot(jobId).catch(
-    () => null,
-  );
-  const initialQueuePayload = buildRemotionQueuePayload(
-    initialQueueSnapshot,
-    createRes?.data || createRes,
-  );
-
-  await syncRemotionRecordStatus(
-    recordId,
-    {
-      status: "queued",
-      remotionJobId: jobId,
-      message: buildRemotionQueuedMessage(initialQueueSnapshot),
-      ...initialQueuePayload,
-      responseData: {
-        commandId: command.commandId,
-        jobCreatedAt: new Date().toISOString(),
-        ...initialQueuePayload,
+  try {
+    const createRes = await fetchRemotionJson("/api/renders", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    },
-    { persist: "always" },
-  );
-  void syncServiceRuntime("video-template");
-
-  while (true) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    const jobRes = ensureRemotionResponseOk(
-      await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`),
-      "查询本地视频渲染任务失败",
+      body: JSON.stringify({
+        templateId,
+        inputProps: command.payload?.inputProps || {},
+      }),
+    }).then((result) =>
+      ensureRemotionResponseOk(result, "本地 Video Template 创建渲染任务失败"),
     );
-    const payload = jobRes?.data || jobRes || {};
-    const status = normalizeRemotionQueueJobStatus(payload?.status);
-    const progress = Number.isFinite(Number(payload?.progress))
-      ? Math.round(Number(payload.progress) * 100)
-      : null;
 
-    if (status === "completed") {
-      const completedQueuePayload = buildRemotionQueuePayload(null, payload);
-      try {
-        const uploadedVideo = await uploadRemotionResultFileToCos(command, {
-          recordId,
-          jobId,
-          localPath: payload?.localPath || null,
-          serviceUrl: payload?.videoUrl || null,
-        });
-        await syncRemotionRecordStatus(
-          recordId,
-          {
-            status: "success",
-            progress: 100,
-            message: "视频渲染完成",
-            remotionJobId: jobId,
-            remotionVideoUrl: uploadedVideo.url,
-            resultUrl: uploadedVideo.url,
-            url: uploadedVideo.url,
-            ...completedQueuePayload,
-            responseData: {
-              ...payload,
-              ...completedQueuePayload,
-              cosUrl: uploadedVideo.url,
-              cosKey: uploadedVideo.key,
-              localPath: uploadedVideo.localPath,
-              serviceUrl: uploadedVideo.serviceUrl,
-            },
-          },
-          { persist: "always" },
-        );
-        void syncServiceRuntime("video-template");
-        return {
-          success: true,
-          message: "Video Template 视频渲染完成",
-          data: {
+    const jobId = String(createRes?.data?.jobId || createRes?.jobId || "").trim();
+    if (!jobId) {
+      throw new Error("本地 Video Template 未返回 jobId");
+    }
+
+    const initialQueueSnapshot = await getRemotionQueueSnapshot(jobId).catch(
+      () => null,
+    );
+    const initialQueuePayload = buildRemotionQueuePayload(
+      initialQueueSnapshot,
+      createRes?.data || createRes,
+    );
+
+    await syncRemotionRecordStatus(
+      recordId,
+      {
+        status: "queued",
+        remotionJobId: jobId,
+        message: buildRemotionQueuedMessage(initialQueueSnapshot),
+        ...initialQueuePayload,
+        responseData: {
+          commandId: command.commandId,
+          jobCreatedAt: new Date().toISOString(),
+          ...initialQueuePayload,
+        },
+      },
+      { persist: "always" },
+    );
+    void syncServiceRuntime("video-template");
+
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const jobRes = ensureRemotionResponseOk(
+        await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`),
+        "查询本地视频渲染任务失败",
+      );
+      const payload = jobRes?.data || jobRes || {};
+      const status = normalizeRemotionQueueJobStatus(payload?.status);
+      const progress = Number.isFinite(Number(payload?.progress))
+        ? Math.round(Number(payload.progress) * 100)
+        : null;
+
+      if (status === "completed") {
+        const completedQueuePayload = buildRemotionQueuePayload(null, payload);
+        try {
+          const uploadedVideo = await uploadRemotionResultFileToCos(command, {
             recordId,
             jobId,
-            videoUrl: uploadedVideo.url,
-            localPath: uploadedVideo.localPath,
-            cosKey: uploadedVideo.key,
-          },
-        };
-      } catch (error) {
-        const errorMessage = `视频渲染完成，但上传 COS 失败: ${serializeError(error)}`;
+            localPath: payload?.localPath || null,
+            serviceUrl: payload?.videoUrl || null,
+          });
+          await syncRemotionRecordStatus(
+            recordId,
+            {
+              status: "success",
+              progress: 100,
+              message: "视频渲染完成",
+              remotionJobId: jobId,
+              remotionVideoUrl: uploadedVideo.url,
+              resultUrl: uploadedVideo.url,
+              url: uploadedVideo.url,
+              ...completedQueuePayload,
+              responseData: {
+                ...payload,
+                ...completedQueuePayload,
+                cosUrl: uploadedVideo.url,
+                cosKey: uploadedVideo.key,
+                localPath: uploadedVideo.localPath,
+                serviceUrl: uploadedVideo.serviceUrl,
+              },
+            },
+            { persist: "always" },
+          );
+          void syncServiceRuntime("video-template");
+          return {
+            success: true,
+            message: "Video Template 视频渲染完成",
+            data: {
+              recordId,
+              jobId,
+              videoUrl: uploadedVideo.url,
+              localPath: uploadedVideo.localPath,
+              cosKey: uploadedVideo.key,
+            },
+          };
+        } catch (error) {
+          const errorMessage = `视频渲染完成，但上传 COS 失败: ${serializeError(error)}`;
+          await syncRemotionRecordStatus(
+            recordId,
+            {
+              status: "failed",
+              progress: 100,
+              message: errorMessage,
+              errorMessage,
+              remotionJobId: jobId,
+              ...completedQueuePayload,
+              responseData: {
+                ...payload,
+                ...completedQueuePayload,
+                localPath: payload?.localPath || null,
+                serviceUrl: payload?.videoUrl || null,
+                uploadError: serializeError(error),
+              },
+            },
+            { persist: "always" },
+          );
+          void syncServiceRuntime("video-template");
+          throw new Error(errorMessage);
+        }
+      }
+
+      if (status === "failed") {
+        const errorMessage = String(
+          payload?.error?.message || payload?.message || "本地视频渲染失败",
+        );
+        const failedQueuePayload = buildRemotionQueuePayload(null, payload);
         await syncRemotionRecordStatus(
           recordId,
           {
             status: "failed",
-            progress: 100,
+            progress,
             message: errorMessage,
             errorMessage,
             remotionJobId: jobId,
-            ...completedQueuePayload,
+            ...failedQueuePayload,
             responseData: {
               ...payload,
-              ...completedQueuePayload,
-              localPath: payload?.localPath || null,
-              serviceUrl: payload?.videoUrl || null,
-              uploadError: serializeError(error),
+              ...failedQueuePayload,
             },
           },
           { persist: "always" },
@@ -3602,72 +3629,73 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
         void syncServiceRuntime("video-template");
         throw new Error(errorMessage);
       }
-    }
 
-    if (status === "failed") {
-      const errorMessage = String(
-        payload?.error?.message || payload?.message || "本地视频渲染失败",
-      );
-      const failedQueuePayload = buildRemotionQueuePayload(null, payload);
-      await syncRemotionRecordStatus(
-        recordId,
-        {
-          status: "failed",
-          progress,
-          message: errorMessage,
-          errorMessage,
-          remotionJobId: jobId,
-          ...failedQueuePayload,
-          responseData: {
-            ...payload,
-            ...failedQueuePayload,
-          },
-        },
-        { persist: "always" },
-      );
-      void syncServiceRuntime("video-template");
-      throw new Error(errorMessage);
-    }
-
-    if (status === "queued") {
-      const queueSnapshot = await getRemotionQueueSnapshot(jobId).catch(
-        () => null,
-      );
-      const queuedPayload = buildRemotionQueuePayload(queueSnapshot, payload);
-      await syncRemotionRecordStatus(
-        recordId,
-        {
-          status: "queued",
-          progress: null,
-          message: buildRemotionQueuedMessage(queueSnapshot),
-          remotionJobId: jobId,
-          ...queuedPayload,
-          responseData: {
-            ...payload,
+      if (status === "queued") {
+        const queueSnapshot = await getRemotionQueueSnapshot(jobId).catch(
+          () => null,
+        );
+        const queuedPayload = buildRemotionQueuePayload(queueSnapshot, payload);
+        await syncRemotionRecordStatus(
+          recordId,
+          {
+            status: "queued",
+            progress: null,
+            message: buildRemotionQueuedMessage(queueSnapshot),
+            remotionJobId: jobId,
             ...queuedPayload,
+            responseData: {
+              ...payload,
+              ...queuedPayload,
+            },
+          },
+          { persist: "auto" },
+        );
+        continue;
+      }
+
+      const processingQueuePayload = buildRemotionQueuePayload(null, payload);
+      await syncRemotionRecordStatus(
+        recordId,
+        {
+          status: "processing",
+          progress,
+          message: payload?.message || "本地渲染中",
+          remotionJobId: jobId,
+          ...processingQueuePayload,
+          responseData: {
+            ...payload,
+            ...processingQueuePayload,
           },
         },
         { persist: "auto" },
       );
-      continue;
     }
+  } catch (error) {
+    // 捕获所有未处理的异常（如 template not found、网络错误等）
+    // 确保错误状态能上报到服务端，防止前端一直卡在 0 进度
+    const errorMessage = String(
+      error instanceof Error ? error.message : JSON.stringify(error) || "视频渲染异常",
+    );
+    console.error(`[video-template:executeRemotionRender] 渲染失败: ${errorMessage}`, error);
 
-    const processingQueuePayload = buildRemotionQueuePayload(null, payload);
     await syncRemotionRecordStatus(
       recordId,
       {
-        status: "processing",
-        progress,
-        message: payload?.message || "本地渲染中",
-        remotionJobId: jobId,
-        ...processingQueuePayload,
+        status: "failed",
+        progress: 0,
+        message: errorMessage,
+        errorMessage,
         responseData: {
-          ...payload,
-          ...processingQueuePayload,
+          commandId: command.commandId,
+          error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+          failedAt: new Date().toISOString(),
         },
       },
-      { persist: "auto" },
+      { persist: "always" },
     );
+    void syncServiceRuntime("video-template");
+
+    throw new Error(errorMessage);
   }
 }
 

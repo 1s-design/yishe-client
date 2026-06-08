@@ -6381,3 +6381,778 @@ export const SocialProofWallTemplate: React.FC<
     </GradientStage>
   );
 };
+
+// ============================================================
+//  Simple Gradient Templates — 基础渐变模板集合
+//  用基础元素（文字、简单图形、渐变背景）+ 基础动画效果
+// ============================================================
+
+// ---------- 1. Simple Fade Text: 纯文字淡入淡出 ----------
+export const simpleFadeTextSchema = z.object({
+  palette: paletteSchema,
+  title: z.string(),
+  subtitle: z.string(),
+  lines: z.array(z.string()).min(1).max(10),
+  width: z.number(),
+  height: z.number(),
+  fps: z.number(),
+  durationInFrames: z.number(),
+});
+
+export const SimpleFadeTextTemplate: React.FC<
+  z.infer<typeof simpleFadeTextSchema>
+> = ({ palette, title, subtitle, lines, width, height, fps }) => {
+  const frame = useCurrentFrame();
+  const totalLines = lines.length || 1;
+  const framesPerLine = Math.max(30, Math.floor(450 / totalLines));
+  const activeIndex = Math.min(totalLines - 1, Math.floor(frame / framesPerLine));
+  const localProgress = (frame % framesPerLine) / framesPerLine;
+  const textOpacity = localProgress < 0.15
+    ? localProgress / 0.15
+    : localProgress > 0.8
+      ? (1 - localProgress) / 0.2
+      : 1;
+
+  return (
+    <AbsoluteFill
+      style={{
+        width,
+        height,
+        background: `linear-gradient(135deg, ${palette.background} 0%, ${palette.backgroundAlt} 50%, ${palette.surface} 100%)`,
+        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {/* 背景发光 */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `radial-gradient(circle at 30% 20%, ${alpha(palette.glow, 0.22)} 0%, transparent 40%), radial-gradient(circle at 70% 80%, ${alpha(palette.accent, 0.18)} 0%, transparent 35%)`,
+        }}
+      />
+
+      <div style={{ position: "relative", zIndex: 1, textAlign: "center", padding: "60px 48px" }}>
+        {/* 标题 */}
+        <div
+          style={{
+            fontSize: Math.min(72, width * 0.066),
+            fontWeight: 800,
+            color: palette.text,
+            marginBottom: 16,
+            lineHeight: 1.15,
+          }}
+        >
+          {title}
+        </div>
+
+        {/* 副标题 */}
+        <div
+          style={{
+            fontSize: Math.min(28, width * 0.026),
+            color: alpha(palette.text, 0.6),
+            marginBottom: 64,
+            lineHeight: 1.5,
+          }}
+        >
+          {subtitle}
+        </div>
+
+        {/* 当前行文字 */}
+        <div
+          style={{
+            fontSize: Math.min(42, width * 0.039),
+            color: palette.accentAlt,
+            fontWeight: 700,
+            lineHeight: 1.5,
+            opacity: clamp01(textOpacity),
+            transform: `translateY(${mix(20, 0, clamp01(textOpacity))}px)`,
+            transition: "opacity 0.3s, transform 0.3s",
+          }}
+        >
+          {lines[activeIndex]}
+        </div>
+
+        {/* 进度指示 */}
+        <div
+          style={{
+            marginTop: 48,
+            display: "flex",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
+          {Array.from({ length: totalLines }).map((_, i) => (
+            <div
+              key={i}
+              style={{
+                width: i === activeIndex ? 28 : 8,
+                height: 8,
+                borderRadius: 999,
+                background: i === activeIndex
+                  ? `linear-gradient(90deg, ${palette.accent} 0%, ${palette.accentAlt} 100%)`
+                  : alpha("#ffffff", 0.15),
+                transition: "width 0.3s, background 0.3s",
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ---------- 2. Slide Up Cards: 简单上滑卡片 ----------
+export const slideUpCardsSchema = z.object({
+  palette: paletteSchema,
+  title: z.string(),
+  cards: z.array(z.object({
+    label: z.string(),
+    text: z.string(),
+  })).min(1).max(8),
+  width: z.number(),
+  height: z.number(),
+  fps: z.number(),
+  durationInFrames: z.number(),
+});
+
+export const SlideUpCardsTemplate: React.FC<
+  z.infer<typeof slideUpCardsSchema>
+> = ({ palette, title, cards, width, height, fps }) => {
+  const frame = useCurrentFrame();
+  const normalizedCards = Array.isArray(cards) ? cards : [];
+  const cardCount = normalizedCards.length || 1;
+  const framesPerCard = Math.max(24, Math.floor(360 / cardCount));
+
+  return (
+    <AbsoluteFill
+      style={{
+        width,
+        height,
+        background: `linear-gradient(160deg, ${palette.background} 0%, ${palette.backgroundAlt} 55%, ${palette.surface} 100%)`,
+        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+        overflow: "hidden",
+      }}
+    >
+      {/* 背景装饰 */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `radial-gradient(circle at 50% 10%, ${alpha(palette.glow, 0.18)} 0%, transparent 45%)`,
+        }}
+      />
+
+      {/* 标题 */}
+      <div
+        style={{
+          position: "absolute",
+          top: 80,
+          left: 0,
+          right: 0,
+          textAlign: "center",
+          fontSize: Math.min(56, width * 0.052),
+          fontWeight: 800,
+          color: palette.text,
+          padding: "0 40px",
+        }}
+      >
+        {title}
+      </div>
+
+      {/* 卡片列表 */}
+      <div
+        style={{
+          position: "absolute",
+          top: 160,
+          bottom: 80,
+          left: 40,
+          right: 40,
+          display: "flex",
+          flexDirection: "column",
+          gap: 20,
+          overflow: "hidden",
+        }}
+      >
+        {normalizedCards.map((card, index) => {
+          const cardStart = index * framesPerCard;
+          const cardEnd = cardStart + framesPerCard;
+          const opacity = sceneWindow({
+            frame,
+            start: cardStart,
+            end: cardEnd,
+            fadeIn: 12,
+            fadeOut: 8,
+          });
+
+          return (
+            <div
+              key={`${card.label}-${index}`}
+              style={{
+                padding: "28px 32px",
+                borderRadius: 24,
+                background: `linear-gradient(135deg, ${alpha("#ffffff", 0.1)} 0%, ${alpha(palette.surface, 0.5)} 100%)`,
+                border: `1px solid ${alpha("#ffffff", 0.12)}`,
+                backdropFilter: "blur(12px)",
+                opacity,
+                transform: `translateY(${mix(60, 0, opacity)}px)`,
+                boxShadow: `0 16px 48px ${alpha("#000000", 0.2)}`,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: Math.min(20, width * 0.018),
+                  color: alpha(palette.accentAlt, 0.9),
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.12em",
+                  marginBottom: 8,
+                }}
+              >
+                {card.label}
+              </div>
+              <div
+                style={{
+                  fontSize: Math.min(30, width * 0.028),
+                  color: palette.text,
+                  lineHeight: 1.5,
+                  fontWeight: 600,
+                }}
+              >
+                {card.text}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ---------- 3. Progress Steps: 进度步骤式 ----------
+export const progressStepsSchema = z.object({
+  palette: paletteSchema,
+  title: z.string(),
+  steps: z.array(z.object({
+    label: z.string(),
+    description: z.string(),
+  })).min(1).max(8),
+  width: z.number(),
+  height: z.number(),
+  fps: z.number(),
+  durationInFrames: z.number(),
+});
+
+export const ProgressStepsTemplate: React.FC<
+  z.infer<typeof progressStepsSchema>
+> = ({ palette, title, steps, width, height, fps }) => {
+  const frame = useCurrentFrame();
+  const normalizedSteps = Array.isArray(steps) ? steps : [];
+  const stepCount = normalizedSteps.length || 1;
+  const framesPerStep = Math.max(30, Math.floor(420 / stepCount));
+  const activeStep = Math.min(stepCount - 1, Math.floor(frame / framesPerStep));
+  const overallProgress = clamp01(frame / Math.max(1, stepCount * framesPerStep - 1));
+
+  return (
+    <AbsoluteFill
+      style={{
+        width,
+        height,
+        background: `linear-gradient(135deg, ${palette.background} 0%, ${palette.backgroundAlt} 50%, ${palette.surface} 100%)`,
+        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+        overflow: "hidden",
+      }}
+    >
+      {/* 背景光 */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `radial-gradient(circle at 20% 80%, ${alpha(palette.accent, 0.16)} 0%, transparent 40%)`,
+        }}
+      />
+
+      {/* 标题 */}
+      <div
+        style={{
+          position: "absolute",
+          top: 80,
+          left: 0,
+          right: 0,
+          textAlign: "center",
+          fontSize: Math.min(56, width * 0.052),
+          fontWeight: 800,
+          color: palette.text,
+          padding: "0 40px",
+        }}
+      >
+        {title}
+      </div>
+
+      {/* 进度条 */}
+      <div
+        style={{
+          position: "absolute",
+          top: 160,
+          left: 60,
+          right: 60,
+          height: 4,
+          borderRadius: 999,
+          background: alpha("#ffffff", 0.08),
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${overallProgress * 100}%`,
+            height: "100%",
+            background: `linear-gradient(90deg, ${palette.accent} 0%, ${palette.accentAlt} 100%)`,
+            borderRadius: 999,
+          }}
+        />
+      </div>
+
+      {/* 步骤列表 */}
+      <div
+        style={{
+          position: "absolute",
+          top: 200,
+          bottom: 80,
+          left: 60,
+          right: 60,
+          display: "grid",
+          gap: 24,
+          alignContent: "start",
+        }}
+      >
+        {normalizedSteps.map((step, index) => {
+          const isActive = index <= activeStep;
+          const isCurrent = index === activeStep;
+          const reveal = spring({
+            frame: Math.max(0, frame - index * framesPerStep),
+            fps,
+            config: { damping: 16, stiffness: 120, mass: 0.8 },
+          });
+
+          return (
+            <div
+              key={`${step.label}-${index}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "48px minmax(0, 1fr)",
+                gap: 20,
+                alignItems: "start",
+                opacity: mix(0.3, 1, reveal),
+                transform: `translateY(${mix(30, 0, reveal)}px)`,
+              }}
+            >
+              {/* 序号圆 */}
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 999,
+                  display: "grid",
+                  placeItems: "center",
+                  background: isCurrent
+                    ? `linear-gradient(135deg, ${palette.accent} 0%, ${palette.accentAlt} 100%)`
+                    : isActive
+                      ? alpha(palette.accent, 0.3)
+                      : alpha("#ffffff", 0.06),
+                  color: isCurrent ? "#000" : palette.text,
+                  fontSize: 22,
+                  fontWeight: 800,
+                  boxShadow: isCurrent
+                    ? `0 0 24px ${alpha(palette.accent, 0.3)}`
+                    : "none",
+                }}
+              >
+                {String(index + 1).padStart(2, "0")}
+              </div>
+
+              {/* 文字 */}
+              <div>
+                <div
+                  style={{
+                    fontSize: Math.min(30, width * 0.028),
+                    fontWeight: 700,
+                    color: isActive ? palette.text : alpha(palette.text, 0.35),
+                    marginBottom: 6,
+                  }}
+                >
+                  {step.label}
+                </div>
+                <div
+                  style={{
+                    fontSize: Math.min(22, width * 0.02),
+                    color: isActive ? alpha(palette.text, 0.7) : alpha(palette.text, 0.2),
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {step.description}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ---------- 4. Image Showcase: 图片轮播展示 ----------
+export const imageShowcaseSchema = z.object({
+  palette: paletteSchema,
+  title: z.string(),
+  subtitle: z.string(),
+  images: z.array(z.object({
+    image: mediaSchema,
+    caption: z.string().optional(),
+  })).min(1).max(10),
+  width: z.number(),
+  height: z.number(),
+  fps: z.number(),
+  durationInFrames: z.number(),
+});
+
+export const ImageShowcaseTemplate: React.FC<
+  z.infer<typeof imageShowcaseSchema>
+> = ({ palette, title, subtitle, images, width, height, fps }) => {
+  const frame = useCurrentFrame();
+  const normalizedImages = Array.isArray(images)
+    ? images
+    : typeof images === "string"
+      ? (() => {
+          try {
+            const parsed = JSON.parse(images);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+  const slides = normalizedImages.length
+    ? normalizedImages.map((item, index) => ({
+        image: {
+          type: (item as any).image?.type || "image",
+          src: (item as any).image?.src || "",
+          alt: (item as any).image?.alt,
+        },
+        caption: (item as any).caption || `Image ${String(index + 1).padStart(2, "0")}`,
+      }))
+    : [{
+        image: { type: "image" as const, src: "https://picsum.photos/seed/showcase-default/1200/1600" },
+        caption: "Default Image",
+      }];
+  const framesPerSlide = Math.max(30, Math.floor(360 / slides.length));
+  const activeIndex = Math.min(slides.length - 1, Math.floor(frame / framesPerSlide));
+  const localProgress = (frame % framesPerSlide) / framesPerSlide;
+  const slideOpacity = localProgress < 0.1
+    ? localProgress / 0.1
+    : localProgress > 0.85
+      ? (1 - localProgress) / 0.15
+      : 1;
+
+  return (
+    <AbsoluteFill
+      style={{
+        width,
+        height,
+        overflow: "hidden",
+        background: `linear-gradient(135deg, ${palette.background} 0%, ${palette.backgroundAlt} 50%, ${palette.surface} 100%)`,
+        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+      }}
+    >
+      {/* 当前图片 */}
+      <AbsoluteFill style={{ opacity: slideOpacity }}>
+        <img
+          src={slides[activeIndex]?.image.src}
+          alt={slides[activeIndex]?.image.alt || ""}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            transform: `scale(${mix(0.96, 1.02, localProgress)})`,
+          }}
+        />
+      </AbsoluteFill>
+
+      {/* 渐变覆盖 */}
+      <AbsoluteFill
+        style={{
+          background: `linear-gradient(180deg, ${alpha(palette.background, 0.7)} 0%, transparent 30%, transparent 60%, ${alpha(palette.background, 0.85)} 100%)`,
+        }}
+      />
+
+      {/* 标题 */}
+      <div
+        style={{
+          position: "absolute",
+          top: 60,
+          left: 40,
+          right: 40,
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize: Math.min(56, width * 0.052),
+            fontWeight: 800,
+            color: palette.text,
+            marginBottom: 12,
+          }}
+        >
+          {title}
+        </div>
+        <div
+          style={{
+            fontSize: Math.min(24, width * 0.022),
+            color: alpha(palette.text, 0.65),
+            lineHeight: 1.5,
+          }}
+        >
+          {subtitle}
+        </div>
+      </div>
+
+      {/* 底部文案 */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 80,
+          left: 40,
+          right: 40,
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize: Math.min(28, width * 0.026),
+            color: palette.accentAlt,
+            fontWeight: 700,
+            marginBottom: 20,
+          }}
+        >
+          {slides[activeIndex]?.caption}
+        </div>
+
+        {/* 图片指示点 */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
+          {slides.map((_, i) => (
+            <div
+              key={i}
+              style={{
+                width: i === activeIndex ? 32 : 8,
+                height: 8,
+                borderRadius: 999,
+                background: i === activeIndex
+                  ? `linear-gradient(90deg, ${palette.accent} 0%, ${palette.accentAlt} 100%)`
+                  : alpha("#ffffff", 0.18),
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ---------- 5. Quote Reveal: 金句揭示 ----------
+export const quoteRevealSchema = z.object({
+  palette: paletteSchema,
+  quote: z.string(),
+  author: z.string(),
+  role: z.string().optional(),
+  highlightWords: z.array(z.string()).min(0).max(5),
+  width: z.number(),
+  height: z.number(),
+  fps: z.number(),
+  durationInFrames: z.number(),
+});
+
+export const QuoteRevealTemplate: React.FC<
+  z.infer<typeof quoteRevealSchema>
+> = ({ palette, quote, author, role, highlightWords, width, height, fps }) => {
+  const frame = useCurrentFrame();
+  const reveal = spring({
+    frame,
+    fps,
+    config: { damping: 14, stiffness: 90, mass: 1.2 },
+  });
+  const authorReveal = spring({
+    frame: Math.max(0, frame - 15),
+    fps,
+    config: { damping: 16, stiffness: 110, mass: 0.9 },
+  });
+
+  // 将 quote 按 highlightWords 拆分
+  const renderQuote = () => {
+    if (!highlightWords || highlightWords.length === 0) {
+      return <span>{quote}</span>;
+    }
+    const parts: Array<{ text: string; highlight: boolean }> = [];
+    let remaining = quote;
+    for (const word of highlightWords) {
+      const idx = remaining.indexOf(word);
+      if (idx >= 0) {
+        if (idx > 0) {
+          parts.push({ text: remaining.slice(0, idx), highlight: false });
+        }
+        parts.push({ text: word, highlight: true });
+        remaining = remaining.slice(idx + word.length);
+      }
+    }
+    if (remaining) {
+      parts.push({ text: remaining, highlight: false });
+    }
+
+    return (
+      <>
+        {parts.map((part, i) =>
+          part.highlight ? (
+            <span
+              key={i}
+              style={{
+                color: palette.accentAlt,
+                fontWeight: 800,
+                textShadow: `0 0 24px ${alpha(palette.accent, 0.3)}`,
+              }}
+            >
+              {part.text}
+            </span>
+          ) : (
+            <span key={i}>{part.text}</span>
+          ),
+        )}
+      </>
+    );
+  };
+
+  return (
+    <AbsoluteFill
+      style={{
+        width,
+        height,
+        background: `linear-gradient(135deg, ${palette.background} 0%, ${palette.backgroundAlt} 50%, ${palette.surface} 100%)`,
+        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+      }}
+    >
+      {/* 背景光 */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `radial-gradient(circle at 50% 50%, ${alpha(palette.glow, 0.2)} 0%, transparent 50%)`,
+        }}
+      />
+
+      {/* 装饰线 */}
+      <div
+        style={{
+          position: "absolute",
+          top: "20%",
+          left: "15%",
+          right: "15%",
+          height: 1,
+          background: `linear-gradient(90deg, transparent 0%, ${alpha(palette.accent, 0.3)} 50%, transparent 100%)`,
+          opacity: reveal,
+          transform: `scaleX(${mix(0, 1, reveal)})`,
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          bottom: "20%",
+          left: "15%",
+          right: "15%",
+          height: 1,
+          background: `linear-gradient(90deg, transparent 0%, ${alpha(palette.accentAlt, 0.3)} 50%, transparent 100%)`,
+          opacity: reveal,
+          transform: `scaleX(${mix(0, 1, reveal)})`,
+        }}
+      />
+
+      {/* 引号图标 */}
+      <div
+        style={{
+          position: "absolute",
+          top: "12%",
+          fontSize: Math.min(120, width * 0.11),
+          color: alpha(palette.accent, 0.15),
+          fontWeight: 900,
+          fontFamily: "Georgia, serif",
+          opacity: reveal,
+        }}
+      >
+        "
+      </div>
+
+      {/* 金句 */}
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          textAlign: "center",
+          padding: "0 60px",
+          opacity: reveal,
+          transform: `translateY(${mix(40, 0, reveal)}px)`,
+        }}
+      >
+        <div
+          style={{
+            fontSize: Math.min(48, width * 0.044),
+            color: palette.text,
+            lineHeight: 1.55,
+            fontWeight: 600,
+          }}
+        >
+          {renderQuote()}
+        </div>
+      </div>
+
+      {/* 作者 */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: height * 0.22,
+          left: 0,
+          right: 0,
+          textAlign: "center",
+          opacity: authorReveal,
+          transform: `translateY(${mix(20, 0, authorReveal)}px)`,
+        }}
+      >
+        <div
+          style={{
+            fontSize: Math.min(28, width * 0.026),
+            color: palette.accentAlt,
+            fontWeight: 700,
+            marginBottom: 8,
+          }}
+        >
+          {author}
+        </div>
+        {role ? (
+          <div
+            style={{
+              fontSize: Math.min(20, width * 0.018),
+              color: alpha(palette.text, 0.5),
+            }}
+          >
+            {role}
+          </div>
+        ) : null}
+      </div>
+    </AbsoluteFill>
+  );
+};
