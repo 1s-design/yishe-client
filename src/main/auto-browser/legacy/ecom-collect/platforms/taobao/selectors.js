@@ -1,7 +1,8 @@
 import { SHARED_LIST_ITEM_ANCESTORS } from '../shared.js';
 
 export const taobaoSearchScene = {
-    buildUrl: ({ keyword, page = 1 }) => `https://s.taobao.com/search?q=${encodeURIComponent(keyword)}&s=${Math.max(0, (page - 1) * 44)}`,
+    buildUrl: ({ keyword }) => `https://s.taobao.com/search?q=${encodeURIComponent(keyword)}&tab=all`,
+    singlePage: true,
     itemSelectors: ['a[href*="item.taobao.com/item.htm"]', '[data-index]'],
     titleSelectors: ['[class*="Title--title"]', '[class*="title"]'],
     linkSelectors: ['a[href*="item.taobao.com/item.htm"]'],

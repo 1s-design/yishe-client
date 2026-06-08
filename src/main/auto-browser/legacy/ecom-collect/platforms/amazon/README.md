@@ -13,7 +13,7 @@
 
 ## 目标页面
 
-- 搜索页：`https://www.amazon.com/s?k={keyword}&page={page}`
+- 搜索页：`https://www.amazon.com/s?k={keyword}`（当前只采集第一页）
 - 商品详情页：`/dp/` 详情链接
 - 热门商品页：Best Sellers、类目榜单、热门商品列表
 

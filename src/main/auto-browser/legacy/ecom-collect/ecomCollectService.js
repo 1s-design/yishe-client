@@ -288,7 +288,10 @@ async function collectSearchScene(page, platformConfig, taskConfig, runtime) {
         throw new Error('search 场景缺少 keyword/keywords');
     }
 
-    const maxPages = Math.max(1, Math.min(10, Number(taskConfig.configData?.maxPages) || DEFAULT_MAX_PAGES));
+    const maxPages =
+        sceneConfig.singlePage === true
+            ? 1
+            : Math.max(1, Math.min(10, Number(taskConfig.configData?.maxPages) || DEFAULT_MAX_PAGES));
     const maxItems = Math.max(1, Math.min(500, Number(taskConfig.configData?.maxItems) || DEFAULT_MAX_ITEMS));
     const allRecords = [];
     const pageSummaries = [];

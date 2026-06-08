@@ -1032,6 +1032,20 @@ async function enrichAmazonSearchRecord(record, context) {
     );
     const listingSnapshots = listingSnapshot ? [listingSnapshot] : [];
 
+    // 临时关闭搜索结果逐个进入 Amazon 详情页补抓，先只保留列表页采集数据。
+    return {
+        ...record,
+        listingData: {
+            ...listingData,
+            snapshots: listingSnapshots,
+        },
+        detailData: null,
+        detailFetchStatus: 'skipped',
+        detailFetchError: '已临时跳过详情页补抓',
+        detailRisk: null,
+        snapshots: listingSnapshots,
+    };
+
     if (!detailUrl) {
         return {
             ...record,
@@ -1242,7 +1256,7 @@ const amazonPlatform = {
                 },
                 keywordPlaceholder: '例如：wireless earbuds',
                 keywordsPlaceholder: '一行一个关键词，可按细分类目拆分',
-                overview: '进入 Amazon 搜索页后先抓取商品卡片，再按商品链接逐个进入详情页补抓详情信息。',
+                overview: '进入 Amazon 搜索第一页后先抓取商品卡片，再按商品链接逐个进入详情页补抓详情信息。',
                 notes: [
                     '推荐先从搜索场景验证平台是否可用。',
                     '支持 keyword 与 keywords 两种入参，keywords 适合批量跑词。',
@@ -1257,9 +1271,6 @@ const amazonPlatform = {
                             collectScene: 'search',
                             configData: {
                                 keyword: 'wireless earbuds',
-                                keywords: ['wireless earbuds', 'bluetooth headphones'],
-                                maxPages: 2,
-                                maxItems: 60,
                             },
                         },
                     },

@@ -41,7 +41,7 @@ const taobaoPlatform = {
                 availability: 'heuristic',
                 keywordPlaceholder: '例如：耳机',
                 keywordsPlaceholder: '建议按类目词拆分，避免单次任务过大',
-                overview: '淘宝搜索页当前采用多候选选择器策略。',
+                overview: '淘宝搜索页当前采集关键词搜索第一页，采用多候选选择器策略。',
                 examples: [
                     {
                         title: '淘宝搜索采集',
@@ -49,9 +49,7 @@ const taobaoPlatform = {
                             platform: 'taobao',
                             collectScene: 'search',
                             configData: {
-                                keyword: '耳机',
-                                maxPages: 2,
-                                maxItems: 60,
+                                keyword: '鼠标垫',
                             },
                         },
                     },

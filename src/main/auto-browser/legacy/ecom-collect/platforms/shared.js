@@ -689,18 +689,6 @@ export function buildSearchSceneCapability(overrides = {}) {
             buildKeywordsField({
                 placeholder: overrides.keywordsPlaceholder || '一行一个关键词，也支持逗号分隔',
             }),
-            buildMaxPagesField({
-                defaultValue:
-                    overrides.defaultMaxPages !== undefined
-                        ? overrides.defaultMaxPages
-                        : 2,
-            }),
-            buildMaxItemsField({
-                defaultValue:
-                    overrides.defaultMaxItems !== undefined
-                        ? overrides.defaultMaxItems
-                        : 60,
-            }),
             buildCaptureSnapshotsField(),
             ...(Array.isArray(overrides.extraFields) ? overrides.extraFields : []),
         ],

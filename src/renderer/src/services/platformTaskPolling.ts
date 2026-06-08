@@ -26,6 +26,7 @@ type PlatformAutoDispatchConfig = {
   autoSchedulingEnabled: boolean;
   targetClientId: string;
   targetMachineCode: string;
+  targetProfileId: string;
   currentProfileId: string;
   currentClientId: string;
   currentMachineCode: string;
@@ -46,6 +47,7 @@ export const platformTaskAutoState = reactive({
   progress: null as number | null,
   targetClientId: null as string | null,
   targetMachineCode: null as string | null,
+  targetProfileId: null as string | null,
   currentProfileId: null as string | null,
   lastReason: null as string | null,
   lastError: null as string | null,
@@ -118,6 +120,7 @@ function normalizePlatformAutoDispatchConfig(
   const targetMachineCode = pickFirstNonEmptyString(
     source.autoDispatchMachineCode,
   );
+  const targetProfileId = pickFirstNonEmptyString(source.autoDispatchProfileId);
   const currentProfileId = pickFirstNonEmptyString(runtime.profileId);
   const currentClientId = pickFirstNonEmptyString(runtime.clientId);
   const currentMachineCode = pickFirstNonEmptyString(runtime.machineCode);
@@ -143,6 +146,8 @@ function normalizePlatformAutoDispatchConfig(
     ? "auto-scheduling-disabled"
     : !targetValue
       ? "target-missing"
+      : !targetProfileId
+        ? "target-profile-missing"
       : !isMatch
         ? "target-mismatch"
         : null;
@@ -151,6 +156,7 @@ function normalizePlatformAutoDispatchConfig(
     autoSchedulingEnabled,
     targetClientId,
     targetMachineCode,
+    targetProfileId,
     currentProfileId,
     currentClientId,
     currentMachineCode,
@@ -166,6 +172,7 @@ function applyPlatformAutoDispatchConfig(config: PlatformAutoDispatchConfig) {
   platformTaskAutoState.enabled = config.enabled;
   platformTaskAutoState.targetClientId = config.targetClientId || null;
   platformTaskAutoState.targetMachineCode = config.targetMachineCode || null;
+  platformTaskAutoState.targetProfileId = config.targetProfileId || null;
   platformTaskAutoState.currentProfileId = config.currentProfileId || null;
   platformTaskAutoState.lastReason = config.reason;
   platformTaskAutoState.lastError = null;
@@ -190,6 +197,7 @@ export async function syncPlatformAutoDispatchConfig() {
         targetMode: config.targetMode,
         targetClientId: config.targetClientId,
         targetMachineCode: config.targetMachineCode,
+        targetProfileId: config.targetProfileId,
         currentProfileId: config.currentProfileId,
         currentClientId: config.currentClientId,
         currentMachineCode: config.currentMachineCode,
@@ -233,6 +241,7 @@ function stopTimer() {
 function resolvePollReadiness() {
   const runtime = getClientRuntime();
   const reasons: string[] = [];
+  const targetProfileId = String(platformTaskAutoState.targetProfileId || "").trim();
 
   if (!platformTaskAutoState.enabled) {
     reasons.push(platformTaskAutoState.lastReason || "auto-dispatch-disabled");
@@ -252,7 +261,10 @@ function resolvePollReadiness() {
   if (runtime.browserAutomationReady !== true) {
     reasons.push("browser-automation-not-ready");
   }
-  if (runtime.profileId && runtime.profileExists === false) {
+  if (!targetProfileId) {
+    reasons.push("target-profile-missing");
+  }
+  if (targetProfileId && runtime.profileId === targetProfileId && runtime.profileExists === false) {
     reasons.push("browser-profile-missing");
   }
   if (runtime.browserAutomationBusy === true) {
@@ -273,6 +285,7 @@ function logPollSkip(reason: string, runtime: PlatformTaskClientRuntime) {
     machineCode: runtime.machineCode || null,
     targetClientId: platformTaskAutoState.targetClientId || null,
     targetMachineCode: platformTaskAutoState.targetMachineCode || null,
+    targetProfileId: platformTaskAutoState.targetProfileId || null,
   });
   const now = Date.now();
   if (
@@ -290,6 +303,7 @@ function logPollSkip(reason: string, runtime: PlatformTaskClientRuntime) {
       clientId: runtime.clientId || null,
       machineCode: runtime.machineCode || null,
       profileId: runtime.profileId || null,
+      targetProfileId: platformTaskAutoState.targetProfileId || null,
       profileExists: runtime.profileExists ?? null,
       wsConnected: runtime.wsConnected === true,
       browserAutomationReady: runtime.browserAutomationReady === true,
@@ -340,10 +354,11 @@ async function pollPlatformTask() {
     ) {
       lastRecoveryAt = Date.now();
       try {
+        const targetProfileId = String(platformTaskAutoState.targetProfileId || "").trim();
         const recovery = await recoverClientPublishTaskOrphans({
           clientId: readiness.runtime.clientId || undefined,
           machineCode: readiness.runtime.machineCode || undefined,
-          profileId: readiness.runtime.profileId || undefined,
+          profileId: targetProfileId || undefined,
           reason: "客户端本地空闲，释放遗留发布任务",
         });
         const releasedCount = Number(
@@ -362,10 +377,11 @@ async function pollPlatformTask() {
       }
     }
 
+    const targetProfileId = String(platformTaskAutoState.targetProfileId || "").trim();
     const res = await claimNextPublishTask({
       clientId: readiness.runtime.clientId || undefined,
       machineCode: readiness.runtime.machineCode || undefined,
-      profileId: readiness.runtime.profileId || undefined,
+      profileId: targetProfileId || undefined,
     });
 
     console.log("[platform-task] claim response:", JSON.stringify(res));
@@ -422,7 +438,7 @@ async function pollPlatformTask() {
         {
           onRuntime: emitPlatformTaskRuntime,
           dispatchToken: task.dispatchToken || undefined,
-          profileId: task.profileId || readiness.runtime.profileId || undefined,
+          profileId: task.profileId || targetProfileId || undefined,
         },
       );
     } catch (execError) {

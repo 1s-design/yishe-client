@@ -7,7 +7,8 @@ export const AMAZON_BESTSELLER_ITEM_ANCESTORS = [
 ];
 
 export const amazonSearchScene = {
-    buildUrl: ({ keyword, page = 1 }) => `https://www.amazon.com/s?k=${encodeURIComponent(keyword)}&page=${page}`,
+    buildUrl: ({ keyword }) => `https://www.amazon.com/s?k=${encodeURIComponent(keyword)}`,
+    singlePage: true,
     itemSelectors: ['[data-component-type="s-search-result"][data-asin]'],
     itemIdAttrs: ['data-asin'],
     titleSelectors: ['h2 a span', 'h2 span'],
