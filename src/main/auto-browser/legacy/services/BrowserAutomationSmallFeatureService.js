@@ -16,6 +16,12 @@ import {
   runAlibaba1688CheckLoginSmallFeature,
   runAlibaba1688OpenWorkspaceSmallFeature,
 } from "../platforms/shopLoginFeatures.js";
+import { runDoudianSessionAcquireSmallFeature } from "../platforms/doudian/session.js";
+import {
+  runPddCheckLoginSmallFeature,
+  runPddOpenWorkspaceSmallFeature,
+  runPddSessionAcquireSmallFeature,
+} from "../platforms/pdd/session.js";
 import { logger } from "../utils/logger.js";
 
 const DEFAULT_SMALL_FEATURE_TIMEOUT_MS = 4 * 60 * 1000;
@@ -256,6 +262,45 @@ const SMALL_FEATURE_REGISTRY = {
     ],
     handler: runDoudianCheckLoginSmallFeature,
   },
+  "doudian-session-acquire": {
+    key: "doudian-session-acquire",
+    name: "抖店登录信息采集",
+    platform: "doudian",
+    category: "session",
+    visibility: "public",
+    description:
+      "打开当前环境的抖店工作台，确认登录态后采集 Cookie、账号与店铺信息，并返回可保存的会话快照。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先采集指定环境。",
+      "如果当前环境未登录，请先在打开的浏览器中完成登录后再执行采集。",
+      "采集完成后后台会保存到当前用户的平台会话中，后续可在会话中心查看和校验。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+      {
+        key: "keepPageOpen",
+        label: "保留页面",
+        type: "boolean",
+        required: false,
+        defaultValue: true,
+      },
+      {
+        key: "includeDebugInfo",
+        label: "返回调试快照",
+        type: "boolean",
+        required: false,
+        defaultValue: false,
+      },
+    ],
+    timeoutMs: DEFAULT_SMALL_FEATURE_TIMEOUT_MS,
+    handler: runDoudianSessionAcquireSmallFeature,
+  },
   "doudian-open-workspace": {
     key: "doudian-open-workspace",
     name: "进入工作台",
@@ -279,6 +324,99 @@ const SMALL_FEATURE_REGISTRY = {
       },
     ],
     handler: runDoudianOpenWorkspaceSmallFeature,
+  },
+  "pdd-check-login": {
+    key: "pdd-check-login",
+    name: "检测是否登录",
+    platform: "pdd",
+    category: "session",
+    visibility: "public",
+    description: "打开当前环境的拼多多商家后台，检测该环境是否处于已登录状态。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先检测指定环境。",
+      "该能力是原子化登录检测，后续页面、服务端转发和 AI 调用都可以复用同一个 featureKey。",
+      "默认检测完成后自动关闭临时页面。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+      {
+        key: "keepPageOpen",
+        label: "保留页面",
+        type: "boolean",
+        required: false,
+        defaultValue: false,
+      },
+    ],
+    handler: runPddCheckLoginSmallFeature,
+  },
+  "pdd-session-acquire": {
+    key: "pdd-session-acquire",
+    name: "拼多多登录信息采集",
+    platform: "pdd",
+    category: "session",
+    visibility: "public",
+    description:
+      "打开当前环境的拼多多商家后台，确认登录态后采集 Cookie 与账号信息，并返回可保存的会话快照。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先采集指定环境。",
+      "如果当前环境未登录，请先在打开的浏览器中完成登录后再执行采集。",
+      "采集完成后后台会保存到当前用户的平台会话中，后续可在会话中心查看和校验。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+      {
+        key: "keepPageOpen",
+        label: "保留页面",
+        type: "boolean",
+        required: false,
+        defaultValue: true,
+      },
+      {
+        key: "includeDebugInfo",
+        label: "返回调试快照",
+        type: "boolean",
+        required: false,
+        defaultValue: false,
+      },
+    ],
+    timeoutMs: DEFAULT_SMALL_FEATURE_TIMEOUT_MS,
+    handler: runPddSessionAcquireSmallFeature,
+  },
+  "pdd-open-workspace": {
+    key: "pdd-open-workspace",
+    name: "进入工作台",
+    platform: "pdd",
+    category: "navigation",
+    visibility: "public",
+    description:
+      "打开拼多多商家后台首页（mms.pinduoduo.com/home/），方便后续在工作台中进行操作。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先使用指定环境。",
+      "执行后会打开拼多多商家后台并保持页面不关闭。",
+      "如果当前环境未登录，打开后会跳转到登录页。",
+    ],
+    fields: [
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+    ],
+    handler: runPddOpenWorkspaceSmallFeature,
   },
   "kuaishou-shop-check-login": {
     key: "kuaishou-shop-check-login",

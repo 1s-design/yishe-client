@@ -480,7 +480,7 @@ export async function runQianniuOpenWorkspaceSmallFeature(
   return await runShopPlatformOpenWorkspaceSmallFeature("qianniu", input, runtimeOptions);
 }
 
-async function runShopPlatformOpenWorkspaceSmallFeature(platformKey, input = {}, runtimeOptions = {}) {
+export async function runShopPlatformOpenWorkspaceSmallFeature(platformKey, input = {}, runtimeOptions = {}) {
   const normalizedPlatformKey = String(platformKey || "").trim();
   const platformMeta = SHOP_PLATFORM_LOGIN_CONFIG[normalizedPlatformKey];
   const platformConfig = PLATFORM_CONFIGS?.[normalizedPlatformKey];
