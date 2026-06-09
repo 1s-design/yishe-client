@@ -148,9 +148,9 @@ function normalizePlatformAutoDispatchConfig(
       ? "target-missing"
       : !targetProfileId
         ? "target-profile-missing"
-      : !isMatch
-        ? "target-mismatch"
-        : null;
+        : !isMatch
+          ? "target-mismatch"
+          : null;
 
   return {
     autoSchedulingEnabled,
@@ -241,7 +241,9 @@ function stopTimer() {
 function resolvePollReadiness() {
   const runtime = getClientRuntime();
   const reasons: string[] = [];
-  const targetProfileId = String(platformTaskAutoState.targetProfileId || "").trim();
+  const targetProfileId = String(
+    platformTaskAutoState.targetProfileId || "",
+  ).trim();
 
   if (!platformTaskAutoState.enabled) {
     reasons.push(platformTaskAutoState.lastReason || "auto-dispatch-disabled");
@@ -264,7 +266,11 @@ function resolvePollReadiness() {
   if (!targetProfileId) {
     reasons.push("target-profile-missing");
   }
-  if (targetProfileId && runtime.profileId === targetProfileId && runtime.profileExists === false) {
+  if (
+    targetProfileId &&
+    runtime.profileId === targetProfileId &&
+    runtime.profileExists === false
+  ) {
     reasons.push("browser-profile-missing");
   }
   if (runtime.browserAutomationBusy === true) {
@@ -354,7 +360,9 @@ async function pollPlatformTask() {
     ) {
       lastRecoveryAt = Date.now();
       try {
-        const targetProfileId = String(platformTaskAutoState.targetProfileId || "").trim();
+        const targetProfileId = String(
+          platformTaskAutoState.targetProfileId || "",
+        ).trim();
         const recovery = await recoverClientPublishTaskOrphans({
           clientId: readiness.runtime.clientId || undefined,
           machineCode: readiness.runtime.machineCode || undefined,
@@ -377,7 +385,9 @@ async function pollPlatformTask() {
       }
     }
 
-    const targetProfileId = String(platformTaskAutoState.targetProfileId || "").trim();
+    const targetProfileId = String(
+      platformTaskAutoState.targetProfileId || "",
+    ).trim();
     const res = await claimNextPublishTask({
       clientId: readiness.runtime.clientId || undefined,
       machineCode: readiness.runtime.machineCode || undefined,
