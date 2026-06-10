@@ -3,6 +3,7 @@ PSD 文件分析服务
 专注于提取 PSD 文件的整体信息和智能对象详细信息
 """
 
+import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -14,6 +15,9 @@ except ImportError:
     PSDImage = None
     SmartObjectLayer = None
     Group = None
+
+
+PS_VERBOSE_LOG = os.environ.get("YISHE_PS_VERBOSE", "").strip().lower() in {"1", "true", "yes", "debug"}
 
 
 def _is_artboard_layer(layer: Layer) -> bool:
@@ -349,7 +353,18 @@ def analyze_psd(psd_path: str | Path) -> Dict[str, Any]:
         "timestamp": datetime.now().isoformat()
     }
     
-    # 在控制台打印结构信息
+    # 默认只输出一行摘要。完整画板、智能对象和图层树信息很大，
+    # 仅在 YISHE_PS_VERBOSE=1 时打印，避免套图制作日志刷屏。
+    print(
+        f"📄 PSD 分析: {file_info['file_name']} | "
+        f"{document_info['width']}x{document_info['height']} | "
+        f"图层 {statistics['total_layers']} | 智能对象 {statistics['total_smart_objects']} | "
+        f"画板 {statistics['artboard_count']}"
+    )
+
+    if not PS_VERBOSE_LOG:
+        return result
+
     print("\n" + "=" * 80)
     print(f"📄 PSD 文件分析结果: {file_info['file_name']}")
     print("=" * 80)

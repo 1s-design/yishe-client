@@ -3,6 +3,7 @@ PSD 导出模块
 包含多画板导出等复杂导出逻辑
 """
 import re
+import os
 import time
 from pathlib import Path
 from typing import Optional, List
@@ -32,6 +33,13 @@ except ImportError:
 
 # 颜色图层处理已临时停用。保留入参与日志，避免影响现有调用方。
 COLOR_LAYER_PROCESSING_ENABLED = False
+PS_VERBOSE_LOG = os.environ.get("YISHE_PS_VERBOSE", "").strip().lower() in {"1", "true", "yes", "debug"}
+
+
+def _log_detail(message: str) -> None:
+    """Verbose Photoshop automation diagnostics. Enable with YISHE_PS_VERBOSE=1."""
+    if PS_VERBOSE_LOG:
+        print(message)
 
 
 def _safe_filename_part(value: Optional[str], fallback: str = "item", max_length: int = 80) -> str:
@@ -76,6 +84,9 @@ def _smart_object_identity(smart_object: dict) -> tuple:
     layer = smart_object.get("layer")
     path = smart_object.get("path")
     name = smart_object.get("name")
+    bounds = smart_object.get("bounds")
+    width = smart_object.get("width")
+    height = smart_object.get("height")
     try:
         layer_id = getattr(layer, "id", None)
         if layer_id is not None:
@@ -84,7 +95,10 @@ def _smart_object_identity(smart_object: dict) -> tuple:
         pass
 
     # COM wrappers can be recreated while still pointing at the same PSD layer.
-    return ("path", str(path or ""), str(name or ""))
+    # Duplicate smart object names are valid in PSD templates, so name/path alone
+    # is not enough. Include geometry to avoid collapsing separate slots that
+    # share the same visible layer name.
+    return ("path", str(path or ""), str(name or ""), str(bounds or ""), str(width or ""), str(height or ""))
 
 
 def _dedupe_smart_objects(smart_objects: list[dict]) -> list[dict]:
@@ -166,29 +180,41 @@ def replace_and_export_psd_multi(
             all_smart_objects = filtered_smart_objects
 
             if len(smart_objects_config) > len(all_smart_objects):
-                doc.close()
-                raise ValueError(
-                    "传入的智能对象配置数量多于 PSD 中可处理的智能对象数量，"
-                    f"配置数={len(smart_objects_config)}，可处理智能对象数={len(all_smart_objects)}。"
-                    "为避免部分素材被静默忽略，已终止本次导出。"
-                )
+                unique_image_paths = {
+                    str(config.get("image_path") or "").strip()
+                    for config in smart_objects_config
+                    if str(config.get("image_path") or "").strip()
+                }
+                same_image_repeated = len(unique_image_paths) == 1
+                if same_image_repeated:
+                    original_config_count = len(smart_objects_config)
+                    smart_objects_config = smart_objects_config[:len(all_smart_objects)]
+                    print(
+                        "ℹ️ 智能对象配置数量多于可处理智能对象，但所有配置使用同一张素材图，"
+                        f"已从 {original_config_count} 条截断为 {len(smart_objects_config)} 条"
+                    )
+                else:
+                    doc.close()
+                    raise ValueError(
+                        "传入的智能对象配置数量多于 PSD 中可处理的智能对象数量，"
+                        f"配置数={len(smart_objects_config)}，可处理智能对象数={len(all_smart_objects)}。"
+                        "为避免部分素材被静默忽略，已终止本次导出。"
+                    )
 
         # ========== 打印 PSD 文件基本信息 ==========
-        print("\n" + "=" * 70)
-        print("📋 PSD 文件信息")
-        print("=" * 70)
-        print(f"文件路径: {psd_path}")
-        print(f"文件大小: {psd_path.stat().st_size / 1024 / 1024:.2f} MB")
-        print(f"文档名称: {doc.name}")
-        print(f"文档尺寸: {int(doc.width)} x {int(doc.height)} 像素")
-        print(f"分辨率: {int(doc.resolution)} DPI")
-        print(f"智能图层总数: {total_count}")
-        print(f"需要处理的智能对象: {len(all_smart_objects)}")
+        print(
+            f"\n📋 PSD: {doc.name} | {int(doc.width)}x{int(doc.height)} | "
+            f"智能对象 {len(all_smart_objects)}/{total_count}"
+        )
+        _log_detail("=" * 70)
+        _log_detail(f"文件路径: {psd_path}")
+        _log_detail(f"文件大小: {psd_path.stat().st_size / 1024 / 1024:.2f} MB")
+        _log_detail(f"分辨率: {int(doc.resolution)} DPI")
         if ignored_smart_objects:
             print(f"已忽略的智能对象: {len(ignored_smart_objects)} (包含标志 '{IGNORE_SMART_OBJECT_PREFIX}')")
-        print(f"智能对象配置数量: {len(smart_objects_config)}")
-        print(f"颜色图层配置数量: {len(color_layer_configs or [])}")
-        print("=" * 70)
+        _log_detail(f"智能对象配置数量: {len(smart_objects_config)}")
+        _log_detail(f"颜色图层配置数量: {len(color_layer_configs or [])}")
+        _log_detail("=" * 70)
         
         # 打印被忽略的智能对象信息
         if ignored_smart_objects:
@@ -267,7 +293,7 @@ def replace_and_export_psd_multi(
             doc.close()
             raise ValueError("未能匹配任何智能对象和配置")
         
-        print(f"\n📊 匹配结果: 共匹配 {len(matched_pairs)} 个智能对象")
+        print(f"🔗 智能对象匹配: {len(matched_pairs)} 个")
         
         # ========== 打印智能对象详细信息 ==========
         if matched_pairs:
@@ -275,13 +301,13 @@ def replace_and_export_psd_multi(
             print("🔗 智能对象处理计划")
             print("=" * 70)
             for i, (so, so_config) in enumerate(matched_pairs, 1):
-                print(f"\n  [{i}/{len(matched_pairs)}] {so['name']}")
-                print(f"      图层路径: {so['path']}")
-                print(f"      图片路径: {so_config['image_path']}")
-                print(f"      缩放模式: {so_config.get('resize_mode', 'contain')}")
+                _log_detail(f"\n  [{i}/{len(matched_pairs)}] {so['name']}")
+                _log_detail(f"      图层路径: {so['path']}")
+                _log_detail(f"      图片路径: {so_config['image_path']}")
+                _log_detail(f"      缩放模式: {so_config.get('resize_mode', 'contain')}")
                 if so_config.get('background_image_path'):
-                    print(f"      背景图: {so_config.get('background_image_path')}")
-                print(f"      分块尺寸: {so_config.get('tile_size', 512)}")
+                    _log_detail(f"      背景图: {so_config.get('background_image_path')}")
+                _log_detail(f"      分块尺寸: {so_config.get('tile_size', 512)}")
             print("=" * 70)
         
         # ========== 处理所有智能对象 ==========
@@ -420,9 +446,8 @@ def replace_and_export_psd_multi(
         
         # 如果有图层组（画板），逐个导出
         if layer_sets:
-            print(f"\n🔒 强制验证: 找到 {len(layer_sets)} 个图层组（画板），必须导出 {len(layer_sets)} 个文件")
-            print(f"   如果最终导出数量不匹配，将显示错误信息")
-            print("=" * 70)
+            print(f"\n🎨 找到 {len(layer_sets)} 个图层组（画板），开始导出")
+            _log_detail("=" * 70)
             
             # 保存所有图层组的可见性状态（用于后续恢复）
             original_visibility = {}
@@ -433,17 +458,17 @@ def replace_and_export_psd_multi(
                         original_visibility[ls_name] = ls.visible if hasattr(ls, 'visible') else True
                     except Exception:
                         continue
-                print(f"    ✅ 已保存 {len(original_visibility)} 个图层组的可见性状态")
+                _log_detail(f"    ✅ 已保存 {len(original_visibility)} 个图层组的可见性状态")
             except Exception as e:
                 print(f"    ⚠️ 警告: 保存图层可见性时出错: {e}")
             
             # 强制循环：确保每个图层组都被处理（参考 erpfile.py，但去掉 break）
-            print(f"\n🔄 开始循环处理 {len(layer_sets)} 个图层组（画板）...")
-            print(f"   图层组列表:")
+            _log_detail(f"\n🔄 开始循环处理 {len(layer_sets)} 个图层组（画板）...")
+            _log_detail(f"   图层组列表:")
             for idx, ls in enumerate(layer_sets, 1):
                 ls_name = ls.name if hasattr(ls, 'name') else "未知"
-                print(f"     [{idx}] {ls_name}")
-            print(f"   将逐个处理以上 {len(layer_sets)} 个图层组\n")
+                _log_detail(f"     [{idx}] {ls_name}")
+            _log_detail(f"   将逐个处理以上 {len(layer_sets)} 个图层组\n")
             
             for i, artboard_layer in enumerate(layer_sets, 1):
                 # 获取图层组名称
@@ -452,12 +477,11 @@ def replace_and_export_psd_multi(
                 except Exception:
                     artboard_name = f"图层组{i}"
                 
-                print(f"\n" + "=" * 70)
-                print(f"⏳ [{i}/{len(layer_sets)}] 正在导出图层组（画板）: {artboard_name}")
-                print("=" * 70)
-                print(f"🔍 循环验证: 这是第 {i} 个图层组，共 {len(layer_sets)} 个")
-                print(f"   图层组名称: '{artboard_name}'")
-                print(f"   图层对象: {type(artboard_layer).__name__}")
+                print(f"⏳ 导出画板 [{i}/{len(layer_sets)}]: {artboard_name}")
+                _log_detail("=" * 70)
+                _log_detail(f"🔍 循环验证: 这是第 {i} 个图层组，共 {len(layer_sets)} 个")
+                _log_detail(f"   图层组名称: '{artboard_name}'")
+                _log_detail(f"   图层对象: {type(artboard_layer).__name__}")
                 
                 # 强制确保每个图层组都有唯一的文件名（使用索引）
                 try:
@@ -475,9 +499,9 @@ def replace_and_export_psd_multi(
                         artboard_export_filename = f"{output_path.stem}_artboard{i}_{safe_artboard_name}{output_path.suffix}"
                     
                     artboard_export_path = export_dir / artboard_export_filename
-                    print(f"    📝 导出文件名: {artboard_export_filename}")
-                    print(f"    📁 完整路径: {artboard_export_path}")
-                    print(f"    🔢 画板索引: {i}/{len(layer_sets)}")
+                    _log_detail(f"    📝 导出文件名: {artboard_export_filename}")
+                    _log_detail(f"    📁 完整路径: {artboard_export_path}")
+                    _log_detail(f"    🔢 画板索引: {i}/{len(layer_sets)}")
                     
                     # 检查权限
                     has_permission, perm_error = check_write_permission(artboard_export_path)
@@ -486,35 +510,35 @@ def replace_and_export_psd_multi(
                         print(f"    ⚠️ 跳过图层组 [{i}/{len(layer_sets)}]: {artboard_name}")
                         export_paths.append(None)  # 占位，表示这个图层组导出失败
                         continue
-                    print(f"    ✅ 权限检查通过")
+                    _log_detail(f"    ✅ 权限检查通过")
                     
                     # 确保导出目录存在
                     artboard_export_path.parent.mkdir(parents=True, exist_ok=True)
-                    print(f"    ✅ 导出目录已准备")
+                    _log_detail(f"    ✅ 导出目录已准备")
                     
                     # 参考 erpfile.py 的原理：先隐藏所有图层组，然后只显示当前图层组
                     try:
-                        print(f"    🔄 正在设置图层可见性（参考 erpfile.py 原理）...")
-                        print(f"       目标图层组名称: '{artboard_name}'")
+                        _log_detail(f"    🔄 正在设置图层可见性")
+                        _log_detail(f"       目标图层组名称: '{artboard_name}'")
                         
                         # 先隐藏所有图层组
-                        print(f"       步骤1: 隐藏所有图层组...")
+                        _log_detail(f"       步骤1: 隐藏所有图层组...")
                         for ls in layer_sets:
                             try:
                                 ls_name = ls.name if hasattr(ls, 'name') else "未知"
                                 if hasattr(ls, 'visible'):
                                     ls.visible = False
-                                    print(f"           🔒 隐藏: '{ls_name}'")
+                                    _log_detail(f"           🔒 隐藏: '{ls_name}'")
                             except Exception as e:
                                 print(f"           ⚠️ 隐藏图层组时出错: {e}")
                         
                         # 只显示当前图层组
-                        print(f"       步骤2: 只显示当前图层组 '{artboard_name}'...")
+                        _log_detail(f"       步骤2: 只显示当前图层组 '{artboard_name}'...")
                         artboard_layer.visible = True
-                        print(f"           ✅ 显示: '{artboard_name}'")
+                        _log_detail(f"           ✅ 显示: '{artboard_name}'")
                         
                         # 验证可见性
-                        print(f"       步骤3: 验证可见性...")
+                        _log_detail(f"       步骤3: 验证可见性...")
                         visible_count = 0
                         visible_names = []
                         for ls in layer_sets:
@@ -526,11 +550,11 @@ def replace_and_export_psd_multi(
                             except Exception:
                                 pass
                         
-                        print(f"           可见图层组数量: {visible_count}")
-                        print(f"           可见图层组: {visible_names}")
+                        _log_detail(f"           可见图层组数量: {visible_count}")
+                        _log_detail(f"           可见图层组: {visible_names}")
                         
                         if visible_count == 1 and visible_names[0] == artboard_name:
-                            print(f"           ✅ 验证通过: 只有目标图层组 '{artboard_name}' 可见")
+                            _log_detail(f"           ✅ 验证通过: 只有目标图层组 '{artboard_name}' 可见")
                         else:
                             print(f"           ⚠️ 警告: 可见性设置可能不正确")
                             print(f"              预期: 只有 '{artboard_name}' 可见")
@@ -538,7 +562,7 @@ def replace_and_export_psd_multi(
                         
                         # 选中当前图层组
                         doc.activeLayer = artboard_layer
-                        print(f"    ✅ 已选中图层组: {artboard_name}")
+                        _log_detail(f"    ✅ 已选中图层组: {artboard_name}")
                         
                         # 等待一下，让 PS 完成可见性设置
                         time.sleep(1.5)  # 增加等待时间，确保可见性设置生效
@@ -550,18 +574,18 @@ def replace_and_export_psd_multi(
                         # 继续尝试导出
                     
                     # 导出画板
-                    print(f"    📤 正在导出到: {artboard_export_path}")
+                    _log_detail(f"    📤 正在导出到: {artboard_export_path}")
                     try:
                         png_options = session.PNGSaveOptions()
                         png_options.compression = 6  # PNG 压缩级别 0-9
                         png_options.interlaced = False
                         
                         # 记录导出前的状态
-                        print(f"       当前活动图层: {_safe_get_active_layer_name(doc)}")
+                        _log_detail(f"       当前活动图层: {_safe_get_active_layer_name(doc)}")
                         # 记录导出前的状态（新版API不再访问activeLayer，避免异常）
-                        print(f"       导出区域: 整个文档（已隐藏其他图层组，只显示当前图层组）")
-                        print(f"       导出文件: {artboard_export_filename}")
-                        print(f"       导出目录: {export_dir}")
+                        _log_detail(f"       导出区域: 整个文档（已隐藏其他图层组，只显示当前图层组）")
+                        _log_detail(f"       导出文件: {artboard_export_filename}")
+                        _log_detail(f"       导出目录: {export_dir}")
                         
                         # 重要：exportDocument 使用 SaveForWeb 时，需要传递目录路径，而不是完整文件路径
                         # 但我们需要指定文件名，所以先导出到临时文件，然后重命名
@@ -569,13 +593,13 @@ def replace_and_export_psd_multi(
                         # 参考 erpfile.py：传递目录路径，但文件名可能由 PS 自动生成
                         # 为了确保文件名正确，我们使用完整路径
                         export_file_path_str = str(artboard_export_path)
-                        print(f"       导出路径（字符串）: {export_file_path_str}")
+                        _log_detail(f"       导出路径（字符串）: {export_file_path_str}")
                         
                         # 导出文档（只包含当前可见的图层组）
                         # 注意：SaveForWeb 可能会自动添加扩展名，所以我们需要确保路径正确
                         # PS 2025 兼容性修复：使用 saveAs 代替 exportDocument
                         doc.saveAs(export_file_path_str, png_options, True, session.ExtensionType.Lowercase)
-                        print(f"    ✅ saveAs 调用成功 (PS 2025 兼容)")
+                        _log_detail(f"    ✅ saveAs 调用成功 (PS 2025 兼容)")
                         
                         # 等待文件写入完成
                         time.sleep(2.0)  # 增加等待时间，确保文件写入完成
@@ -606,26 +630,26 @@ def replace_and_export_psd_multi(
                         if not artboard_export_path.suffix.lower() == '.png':
                             possible_paths.append(export_dir / f"{artboard_export_path.stem}.png")
                         
-                        print(f"       检查可能的文件路径:")
+                        _log_detail(f"       检查可能的文件路径:")
                         for pp in possible_paths:
-                            print(f"          - {pp}")
+                            _log_detail(f"          - {pp}")
                         
                         while retry_count < max_retries and actual_export_path is None:
                             for pp in possible_paths:
                                 if pp.exists():
                                     actual_export_path = pp
-                                    print(f"       找到文件: {actual_export_path}")
+                                    _log_detail(f"       找到文件: {actual_export_path}")
                                     break
                             
                             if actual_export_path is None:
                                 retry_count += 1
                                 time.sleep(0.5)
                                 if retry_count < max_retries:
-                                    print(f"       等待文件生成... ({retry_count}/{max_retries})")
+                                    _log_detail(f"       等待文件生成... ({retry_count}/{max_retries})")
                         
                         # 如果还是找不到，尝试在目录中搜索匹配的文件（基于时间戳和基本名称）
                         if actual_export_path is None:
-                            print(f"       ⚠️ 未找到预期文件，尝试在目录中搜索匹配的文件...")
+                            _log_detail(f"       ⚠️ 未找到预期文件，尝试在目录中搜索匹配的文件...")
                             try:
                                 # 提取时间戳部分（格式：_20251229_130113_085）
                                 timestamp_match = re.search(r'_(\d{8}_\d{6}_\d{3})', artboard_export_filename)
@@ -638,41 +662,37 @@ def replace_and_export_psd_multi(
                                         # 按修改时间排序，取最新的
                                         matching_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
                                         actual_export_path = matching_files[0]
-                                        print(f"       找到匹配的文件: {actual_export_path}")
+                                        _log_detail(f"       找到匹配的文件: {actual_export_path}")
                             except Exception as search_error:
-                                print(f"       搜索文件时出错: {search_error}")
+                                _log_detail(f"       搜索文件时出错: {search_error}")
                         
                         # 如果还是找不到，列出导出目录中的所有文件，帮助调试
                         if actual_export_path is None:
-                            print(f"       ⚠️ 未找到预期文件，列出导出目录中的所有文件:")
+                            _log_detail(f"       ⚠️ 未找到预期文件，列出导出目录中的所有文件:")
                             try:
                                 dir_files = list(export_dir.glob("*"))
                                 if dir_files:
                                     # 只列出最近的文件（可能相关的）
                                     dir_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
                                     for df in dir_files[:20]:  # 只显示最近20个文件
-                                        print(f"          - {df.name} ({df.stat().st_size} 字节)")
+                                        _log_detail(f"          - {df.name} ({df.stat().st_size} 字节)")
                                 else:
-                                    print(f"          (目录为空)")
+                                    _log_detail(f"          (目录为空)")
                             except Exception as e:
-                                print(f"          (无法列出目录: {e})")
+                                _log_detail(f"          (无法列出目录: {e})")
                         
                         if actual_export_path and actual_export_path.exists():
                             # 如果实际文件路径与预期不同，更新它
                             if actual_export_path != artboard_export_path:
-                                print(f"       ⚠️ 注意: 实际文件路径与预期不同")
-                                print(f"          预期: {artboard_export_path}")
-                                print(f"          实际: {actual_export_path}")
+                                _log_detail(f"       ⚠️ 注意: 实际文件路径与预期不同")
+                                _log_detail(f"          预期: {artboard_export_path}")
+                                _log_detail(f"          实际: {actual_export_path}")
                                 artboard_export_path = actual_export_path
                             file_size = artboard_export_path.stat().st_size
                             file_size_mb = file_size / 1024 / 1024
-                            print(f"    ✅✅✅ 导出成功! ✅✅✅")
-                            print(f"       文件路径: {artboard_export_path}")
-                            print(f"       文件大小: {file_size} 字节 ({file_size_mb:.2f} MB)")
-                            print(f"       图层组 [{i}/{len(layer_sets)}]: {artboard_name}")
                             export_paths.append(artboard_export_path)
-                            print(f"    ✅ 已添加到导出列表")
-                            print(f"    📊 当前成功导出: {len([p for p in export_paths if p is not None])}/{len(layer_sets)} 个文件")
+                            print(f"✅ 画板 [{i}/{len(layer_sets)}] 导出成功: {artboard_export_path.name} ({file_size_mb:.2f} MB)")
+                            _log_detail(f"    📊 当前成功导出: {len([p for p in export_paths if p is not None])}/{len(layer_sets)} 个文件")
                         else:
                             print(f"    ❌❌❌ 错误: 导出文件不存在! ❌❌❌")
                             print(f"       预期路径: {artboard_export_path}")
@@ -701,27 +721,25 @@ def replace_and_export_psd_multi(
                     continue
                 
                 # 循环结束标记
-                print(f"\n    ✅ 图层组 [{i}/{len(layer_sets)}] 处理完成（无论成功或失败）")
-                print(f"    📊 当前进度: 已处理 {i}/{len(layer_sets)} 个图层组")
-                print(f"    📊 当前成功导出: {len([p for p in export_paths if p is not None])} 个文件")
+                _log_detail(f"\n    ✅ 图层组 [{i}/{len(layer_sets)}] 处理完成（无论成功或失败）")
+                _log_detail(f"    📊 当前进度: 已处理 {i}/{len(layer_sets)} 个图层组")
+                _log_detail(f"    📊 当前成功导出: {len([p for p in export_paths if p is not None])} 个文件")
             
             # 循环完成验证
-            print(f"\n" + "=" * 70)
-            print(f"🔄 循环处理完成验证")
-            print("=" * 70)
-            print(f"   预期处理图层组数: {len(layer_sets)}")
-            print(f"   实际循环次数: {i} (应该等于 {len(layer_sets)})")
-            print(f"   导出路径列表长度: {len(export_paths)} (应该等于 {len(layer_sets)})")
+            _log_detail(f"\n" + "=" * 70)
+            _log_detail(f"🔄 循环处理完成验证")
+            _log_detail("=" * 70)
+            _log_detail(f"   预期处理图层组数: {len(layer_sets)}")
+            _log_detail(f"   实际循环次数: {i} (应该等于 {len(layer_sets)})")
+            _log_detail(f"   导出路径列表长度: {len(export_paths)} (应该等于 {len(layer_sets)})")
             if len(export_paths) != len(layer_sets):
                 print(f"   ❌ 错误: 导出路径数量 ({len(export_paths)}) 不等于图层组数量 ({len(layer_sets)})")
             else:
-                print(f"   ✅ 验证通过: 所有图层组都已处理")
-            print("=" * 70)
+                _log_detail(f"   ✅ 验证通过: 所有图层组都已处理")
+            _log_detail("=" * 70)
             
             # 导出完成后，统计结果
-            print(f"\n" + "=" * 70)
-            print(f"📊 图层组导出统计")
-            print("=" * 70)
+            print(f"\n📊 图层组导出统计")
             successful_exports = [p for p in export_paths if p is not None]
             failed_exports = len(export_paths) - len(successful_exports)
             print(f"   总图层组数: {len(layer_sets)}")
@@ -744,11 +762,11 @@ def replace_and_export_psd_multi(
             
             # 重要：固定返回和分析出的画板一样数量的文件（包括失败的占位符）
             # 不筛选掉 None，保持所有路径（成功的是 Path 对象，失败的是 None）
-            print(f"   📋 最终返回: {len(export_paths)} 个路径（成功: {len(successful_exports)}, 失败: {failed_exports}）")
+            _log_detail(f"   📋 最终返回: {len(export_paths)} 个路径（成功: {len(successful_exports)}, 失败: {failed_exports}）")
             
             # 恢复所有图层组的可见性
             try:
-                print(f"\n    🔄 正在恢复图层组可见性...")
+                _log_detail(f"\n    🔄 正在恢复图层组可见性...")
                 restored_count = 0
                 for ls in layer_sets:
                     try:
@@ -759,7 +777,7 @@ def replace_and_export_psd_multi(
                     except Exception as e:
                         print(f"        ⚠️ 恢复图层组 '{ls_name}' 可见性时出错: {e}")
                         continue
-                print(f"    ✅ 已恢复 {restored_count}/{len(layer_sets)} 个图层组的可见性")
+                _log_detail(f"    ✅ 已恢复 {restored_count}/{len(layer_sets)} 个图层组的可见性")
             except Exception as e:
                 print(f"    ⚠️ 警告: 恢复图层组可见性时出错: {e}")
         else:

@@ -53,6 +53,7 @@ import {
 import { executeEcomSelectionSupplyMatchTask } from "./ecomSelectionSupplyMatch";
 import { getRemoteApiBase, getWsEndpoint, setServiceMode } from "../config/api";
 import { logger } from "./logger";
+import { buildPsdSmartObjectMappings } from "./psdSmartObjectMapping";
 
 type UploaderProfilesResponse = Awaited<ReturnType<typeof getUploaderProfiles>>;
 
@@ -6314,6 +6315,38 @@ async function handlePsdSetProduction(
     const config = stickerPsdSetConfig || psdTemplateConfig;
     const useConfig = config && typeof config === "object";
     let processPayload: any;
+    const resolveProcessImagePaths = async (paths: string[]) => {
+      const resolvedPaths: string[] = [];
+      for (const imagePath of paths) {
+        resolvedPaths.push(await processImageToPngIfNeeded(imagePath));
+      }
+      return resolvedPaths;
+    };
+    const analyzeProcessSmartObjects = async () => {
+      try {
+        const analysis = await photoshopApi.analyzePsdRuntime(psdLocalPath);
+        return Array.isArray(analysis?.smart_objects)
+          ? analysis.smart_objects
+          : [];
+      } catch (runtimeAnalysisError) {
+        emitter.emit("log", {
+          level: "warn",
+          message: `[psd-set] 运行时分析 PSD 智能对象失败，将尝试静态分析: ${serializeError(runtimeAnalysisError)}`,
+        });
+        try {
+          const analysis = await photoshopApi.analyzePsd(psdLocalPath);
+          return Array.isArray(analysis?.smart_objects)
+            ? analysis.smart_objects
+            : [];
+        } catch (analysisError) {
+          emitter.emit("log", {
+            level: "warn",
+            message: `[psd-set] 静态分析 PSD 智能对象失败，将按图片数量生成 smart_objects: ${serializeError(analysisError)}`,
+          });
+          return [];
+        }
+      }
+    };
 
     if (useConfig) {
       // 确定使用的配置来源
@@ -6328,7 +6361,6 @@ async function handlePsdSetProduction(
         message: `[psd-set] 检测到配置，使用${configSource}处理PSD`,
       });
 
-      // 检查 smart_objects 数量是否匹配
       const configSmartObjects = Array.isArray(config.smart_objects)
         ? config.smart_objects
         : [];
@@ -6339,43 +6371,15 @@ async function handlePsdSetProduction(
         });
       }
 
-      // 替换 smart_objects 中的 image_path 为实际下载的贴纸路径
-      const smartObjects: any[] = [];
-      for (let index = 0; index < configSmartObjects.length; index++) {
-        const so = configSmartObjects[index];
-        // 如果贴纸数量不足，使用最后一个贴纸路径
-        const actualIndex = Math.min(index, stickerLocalPaths.length - 1);
-        let imagePath = stickerLocalPaths[actualIndex];
-
-        // 处理SVG转PNG转换
-        if (actualIndex < stickers.length) {
-          imagePath = await processImageToPngIfNeeded(imagePath);
-        }
-
-        // 保留 config 中的其他配置，只替换 image_path
-        smartObjects.push({
-          ...so,
-          image_path: imagePath,
-        });
-      }
-
-      // 如果 config 中的 smart_objects 数量少于贴纸数量，补充剩余的贴纸
-      if (configSmartObjects.length < stickerLocalPaths.length) {
-        for (
-          let i = configSmartObjects.length;
-          i < stickerLocalPaths.length;
-          i++
-        ) {
-          let imagePath = stickerLocalPaths[i];
-
-          // 处理SVG转PNG转换
-          imagePath = await processImageToPngIfNeeded(imagePath);
-          smartObjects.push({
-            image_path: imagePath,
-            resize_mode: "contain" as const,
-          });
-        }
-      }
+      const resolvedStickerPaths = await resolveProcessImagePaths(stickerLocalPaths);
+      const analyzedSmartObjects = await analyzeProcessSmartObjects();
+      const mappingResult = buildPsdSmartObjectMappings({
+        imagePaths: resolvedStickerPaths,
+        configuredSmartObjects: configSmartObjects,
+        analyzedSmartObjects,
+        defaultResizeMode: config.defaults?.resize_mode || "contain",
+      });
+      const smartObjects = mappingResult.smartObjects;
 
       // 构建 processPayload，使用 config 的配置
       processPayload = {
@@ -6391,7 +6395,7 @@ async function handlePsdSetProduction(
 
       emitter.emit("log", {
         level: "info",
-        message: `[psd-set] 使用套图 config 配置: psd_path=${processPayload.psd_path}, export_dir=${processPayload.export_dir}, smart_objects数量=${smartObjects.length}`,
+        message: `[psd-set] 使用套图 config 配置: psd_path=${processPayload.psd_path}, export_dir=${processPayload.export_dir}, smart_objects数量=${smartObjects.length}, 映射策略=${mappingResult.strategy}, 场景=${mappingResult.caseKey}, ${mappingResult.caseDescription}, 复用最后图片=${mappingResult.reusedLastImage ? "是" : "否"}, 追加图片槽位=${mappingResult.appendedImageSlots}`,
       });
     } else {
       // 使用默认逻辑（套图没有 config 时）
@@ -6400,20 +6404,14 @@ async function handlePsdSetProduction(
         message: `[psd-set] 套图无 config 配置，使用默认方式处理PSD`,
       });
 
-      // 使用新格式：smart_objects 数组
-      // 使用 cover 模式：保持宽高比，填充目标区域（可能裁剪）
-      // 构建 smart_objects 时，确保每个 image_path 都有正确的后缀名（双重保险）
-      const smartObjects: any[] = [];
-      for (let index = 0; index < stickers.length; index++) {
-        let imagePath = stickerLocalPaths[index];
-
-        // 处理SVG转PNG转换
-        imagePath = await processImageToPngIfNeeded(imagePath);
-        smartObjects.push({
-          image_path: imagePath,
-          resize_mode: "contain" as const,
-        });
-      }
+      const analyzedSmartObjects = await analyzeProcessSmartObjects();
+      const resolvedStickerPaths = await resolveProcessImagePaths(stickerLocalPaths);
+      const mappingResult = buildPsdSmartObjectMappings({
+        imagePaths: resolvedStickerPaths,
+        analyzedSmartObjects,
+        defaultResizeMode: "contain",
+      });
+      const smartObjects = mappingResult.smartObjects;
 
       processPayload = {
         defaults: {
@@ -6424,6 +6422,10 @@ async function handlePsdSetProduction(
         smart_objects: smartObjects,
         export_dir: psdTestExportDir,
       };
+      emitter.emit("log", {
+        level: "info",
+        message: `[psd-set] 默认映射完成: smart_objects数量=${smartObjects.length}, 映射策略=${mappingResult.strategy}, 场景=${mappingResult.caseKey}, ${mappingResult.caseDescription}, PSD槽位=${mappingResult.slotCount}, 图片数=${mappingResult.imageCount}, 复用最后图片=${mappingResult.reusedLastImage ? "是" : "否"}, 追加图片槽位=${mappingResult.appendedImageSlots}`,
+      });
     }
 
     const assertProcessFileReady = async (label: string, filePath: string) => {
