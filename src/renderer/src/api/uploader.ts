@@ -1376,7 +1376,7 @@ export async function openPlatform(
 export async function openLink(
   url: string,
   profileId?: string,
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{ success: boolean; message?: string; data?: any }> {
   try {
     const res = await fetch(`${UPLOADER_API_BASE}/api/browser/open-link`, {
       method: "POST",
@@ -1394,9 +1394,10 @@ export async function openLink(
       return {
         success: false,
         message: json?.message ?? `打开失败: ${res.status}`,
+        data: json?.data,
       };
     }
-    return { success: true };
+    return { success: true, data: json?.data };
   } catch (e: any) {
     return { success: false, message: e?.message || "请求失败" };
   }
@@ -1574,7 +1575,7 @@ export async function openUploaderPlatform(
 export async function openUploaderLink(
   url: string,
   profileId?: string,
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{ success: boolean; message?: string; data?: any }> {
   return openLink(url, profileId);
 }
 

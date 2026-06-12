@@ -1271,8 +1271,22 @@ class AutoBrowserService {
     return this.ok({ success: true, data: response });
   }
 
-  private async ensureBrowserReady(profileId?: string) {
-    const browserStatus = await getBrowserStatus({ profileId });
+  private async ensureBrowserReady(
+    profileId?: string,
+    options: { autoConnect?: boolean } = {},
+  ) {
+    let browserStatus = await getBrowserStatus({ profileId });
+    if (
+      options.autoConnect === true &&
+      (!browserStatus?.hasInstance || !browserStatus?.isConnected)
+    ) {
+      await getOrCreateBrowser({
+        mode: "cdp",
+        profileId,
+      });
+      browserStatus = await getBrowserStatus({ profileId });
+    }
+
     if (!browserStatus?.hasInstance || !browserStatus?.isConnected) {
       return {
         ok: false,
@@ -1298,12 +1312,10 @@ class AutoBrowserService {
       return this.fail(400, `不支持的平台: ${platform}`);
     }
 
-    const ready = await this.ensureBrowserReady(profileId);
-    if (!ready.ok) {
-      return ready.response;
-    }
-
-    const browser = await getOrCreateBrowser({ profileId });
+    const browser = await getOrCreateBrowser({
+      mode: "cdp",
+      profileId,
+    });
     const page = await browser.newPage({ foreground: true });
     await page.goto(config.uploadUrl, {
       waitUntil: "domcontentloaded",
@@ -1339,12 +1351,10 @@ class AutoBrowserService {
       return this.fail(400, "仅支持 http/https 链接");
     }
 
-    const ready = await this.ensureBrowserReady(profileId);
-    if (!ready.ok) {
-      return ready.response;
-    }
-
-    const browser = await getOrCreateBrowser({ profileId });
+    const browser = await getOrCreateBrowser({
+      mode: "cdp",
+      profileId,
+    });
     const page = await browser.newPage({ foreground: true });
     await page.goto(targetUrl, {
       waitUntil: "domcontentloaded",
@@ -1355,6 +1365,7 @@ class AutoBrowserService {
       success: true,
       data: {
         url: targetUrl,
+        profileId: profileId || null,
         title: await page.title().catch(() => ""),
       },
     });

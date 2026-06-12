@@ -2116,16 +2116,10 @@ class ApiServer {
                 return;
             }
 
-            const browserStatus = await getBrowserStatus({ profileId });
-            if (!browserStatus?.hasInstance || !browserStatus?.isConnected) {
-                this.sendResponse(res, 400, {
-                    success: false,
-                    message: '浏览器实例未启动或未连接，请先连接浏览器'
-                });
-                return;
-            }
-
-            const browser = await getOrCreateBrowser({ profileId });
+            const browser = await getOrCreateBrowser({
+                mode: 'cdp',
+                profileId,
+            });
             const page = await browser.newPage({ foreground: true });
             await page.goto(config.uploadUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
             this.sendResponse(res, 200, { success: true, data: { platform, name: config.name, url: config.uploadUrl } });
@@ -2162,16 +2156,10 @@ class ApiServer {
                 return;
             }
 
-            const browserStatus = await getBrowserStatus({ profileId });
-            if (!browserStatus?.hasInstance || !browserStatus?.isConnected) {
-                this.sendResponse(res, 400, {
-                    success: false,
-                    message: '浏览器实例未启动或未连接，请先连接浏览器'
-                });
-                return;
-            }
-
-            const browser = await getOrCreateBrowser({ profileId });
+            const browser = await getOrCreateBrowser({
+                mode: 'cdp',
+                profileId,
+            });
             const page = await browser.newPage({ foreground: true });
             await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
@@ -2179,6 +2167,7 @@ class ApiServer {
                 success: true,
                 data: {
                     url: targetUrl,
+                    profileId: profileId || null,
                     title: await page.title().catch(() => '')
                 }
             });

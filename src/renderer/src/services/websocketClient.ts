@@ -8063,6 +8063,7 @@ function registerBuiltInLocalServices() {
           data: {
             url,
             profileId: profileId || null,
+            result: response.data ?? null,
           },
         };
       }
