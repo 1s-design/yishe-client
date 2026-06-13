@@ -275,6 +275,14 @@ function slimConfirmationSkc(value) {
     "applyJitStatus",
     "secondarySelectStatus",
     "supplierTodoStatus",
+    "supplierId",
+    "supplier_id",
+    "commitId",
+    "commit_id",
+    "goodsCommitId",
+    "goods_commit_id",
+    "commitVersion",
+    "commit_version",
   ]);
   const skuIdList = Array.isArray(source.productSkuIdList)
     ? source.productSkuIdList.map(Number).filter(Boolean)
@@ -299,11 +307,122 @@ function slimConfirmationItem(value) {
     "createTime",
     "updateTime",
     "siteVersion",
+    "siteVerison",
+    "supplierId",
+    "supplier_id",
+    "commitId",
+    "commit_id",
+    "goodsCommitId",
+    "goods_commit_id",
+    "commitVersion",
+    "commit_version",
   ]);
   result.skcList = Array.isArray(source.skcList)
     ? source.skcList.map(slimConfirmationSkc)
     : [];
   return result;
+}
+
+function extractConfirmationCommitResult(response) {
+  const payload = asPlainObject(response?.payload || response);
+  const result = asPlainObject(payload.result || payload.data?.result);
+  return Object.keys(result).length ? result : null;
+}
+
+async function resolveConfirmationCommitInfo({
+  region,
+  profileId,
+  traceId,
+  actionKey,
+  goodsId,
+  supplierId,
+}) {
+  let resolvedSupplierId = Number(supplierId || 0);
+  if (!resolvedSupplierId) {
+    const { sessionContext } = await getCachedTemuSessionContext(profileId);
+    resolvedSupplierId = Number(sessionContext?.mallId || 0);
+  }
+
+  if (!goodsId || !resolvedSupplierId) {
+    const reason = !resolvedSupplierId
+      ? "missing-supplier-id"
+      : "missing-goods-id";
+    logger.info("[temu-api-action] 商品确认 commit 预查询跳过", {
+      traceId,
+      profileId,
+      region,
+      goodsId: goodsId || null,
+      supplierId: resolvedSupplierId || null,
+      source: "skipped",
+      reason,
+      confirmMode: "site",
+    });
+    return {
+      source: "skipped",
+      reason,
+      supplierId: resolvedSupplierId || null,
+      commitId: null,
+      commitVersion: null,
+      siteVersion: null,
+      raw: null,
+    };
+  }
+
+  const response = await requestTemuJson(
+    region,
+    "/bg-brando-mms/goods/queryOnlineGoodsForGoodsCommitConfirm",
+    {
+      goodsId,
+      supplierId: resolvedSupplierId,
+    },
+    {
+      profileId,
+      traceId,
+      actionKey,
+      step: "confirmation-commit-query",
+    },
+  );
+  const result = extractConfirmationCommitResult(response);
+  const commitId = Number(result?.goodsCommitId || result?.commitId || 0);
+  const commitVersion =
+    Number(result?.goodsCommitVersion || result?.commitVersion || 0) || null;
+  const rawSiteVersion =
+    result?.siteVersion !== undefined ? result.siteVersion : result?.siteVerison;
+  const siteVersion =
+    rawSiteVersion === undefined ||
+    rawSiteVersion === null ||
+    String(rawSiteVersion).trim() === ""
+      ? null
+      : Number(rawSiteVersion);
+  const resolved = {
+    source: response?.success === false ? "failed" : "queried",
+    responseSuccess: response?.success !== false,
+    supplierId: resolvedSupplierId || null,
+    commitId: Number.isFinite(commitId) && commitId > 0 ? commitId : null,
+    commitVersion:
+      Number.isFinite(commitVersion) && commitVersion > 0
+        ? commitVersion
+        : null,
+    siteVersion: Number.isFinite(siteVersion) ? siteVersion : null,
+    raw: result,
+    message: response?.message || normalizeTemuApiMessage(response?.payload, ""),
+  };
+  logger.info("[temu-api-action] 商品确认 commit 预查询结果", {
+    traceId,
+    profileId,
+    region,
+    goodsId,
+    supplierId: resolvedSupplierId,
+    source: resolved.source,
+    responseSuccess: resolved.responseSuccess,
+    commitId: resolved.commitId,
+    commitVersion: resolved.commitVersion,
+    siteVersion: resolved.siteVersion,
+    confirmMode: resolved.commitId ? "modify" : "site",
+    message: resolved.message,
+  });
+
+  return resolved;
 }
 
 function filterConfirmationListResponse(response) {
@@ -1410,30 +1529,88 @@ async function executeAction(actionKey, profileId, region, payload) {
 
   if (actionKey === "goods.confirmation.confirm") {
     const goodsId = Number(payload.goodsId || 0);
-    const siteVersion = Number(payload.siteVersion || 10003);
+    const supplierId = Number(payload.supplierId || payload.supplier_id || 0);
+    const rawSiteVersion = payload.siteVersion;
+    const siteVersion =
+      rawSiteVersion === undefined ||
+      rawSiteVersion === null ||
+      String(rawSiteVersion).trim() === ""
+        ? null
+        : Number(rawSiteVersion);
+    const normalizedSiteVersion = Number.isFinite(siteVersion)
+      ? siteVersion
+      : null;
+    const payloadCommitId = Number(payload.commitId || payload.commit_id || 0);
+    const payloadCommitVersion =
+      Number(payload.commitVersion || payload.commit_version || 0) || 1;
+    const commitQuery = await resolveConfirmationCommitInfo({
+      region,
+      profileId,
+      traceId,
+      actionKey,
+      goodsId,
+      supplierId,
+    });
+    const resolvedSupplierId = commitQuery.supplierId || supplierId || null;
+    const commitId =
+      commitQuery.commitId ||
+      (Number.isFinite(payloadCommitId) && payloadCommitId > 0
+        ? payloadCommitId
+        : null);
+    const commitVersion =
+      commitQuery.commitVersion ||
+      (Number.isFinite(payloadCommitVersion) && payloadCommitVersion > 0
+        ? payloadCommitVersion
+        : 1);
+    const isModifyConfirm = Number.isFinite(commitId) && commitId > 0;
     const priceConfirmKeyStr = String(payload.priceConfirmKeyStr || "1");
     const goodsSkuIdList = Array.isArray(payload.goodsSkuIdList)
       ? payload.goodsSkuIdList.map((id) => Number(id)).filter((id) => id > 0)
       : [];
+    const requestPath = isModifyConfirm
+      ? "/bg-brando-mms/goods/goodsModifyConfirm"
+      : "/bg-brando-mms/goods/bindSiteConfirmForPrice";
+    const requestPayload = isModifyConfirm
+      ? {
+          goodsId,
+          commitId,
+          priceConfirmKeyStr,
+          commitVersion,
+          goodsSkuIdList,
+        }
+      : {
+          goodsId,
+          siteVersion:
+            commitQuery.siteVersion !== null
+              ? commitQuery.siteVersion
+              : normalizedSiteVersion,
+          priceConfirmKeyStr,
+          goodsSkuIdList,
+        };
     logger.info("[temu-api-action] 商品确认动作开始", {
       traceId,
       profileId,
       region,
       goodsId,
-      siteVersion,
+      supplierId: resolvedSupplierId,
+      siteVersion:
+        commitQuery.siteVersion !== null
+          ? commitQuery.siteVersion
+          : normalizedSiteVersion,
+      commitId: isModifyConfirm ? commitId : null,
+      commitVersion: isModifyConfirm ? commitVersion : null,
+      confirmMode: isModifyConfirm ? "modify" : "site",
+      commitQuerySource: commitQuery.source,
+      commitQueryMessage: commitQuery.message || commitQuery.reason || "",
+      requestPath,
       skuCount: goodsSkuIdList.length,
       rowTrace,
     });
     const startedAt = Date.now();
     const response = await requestTemuJson(
       region,
-      "/bg-brando-mms/goods/bindSiteConfirmForPrice",
-      {
-        goodsId,
-        siteVersion,
-        priceConfirmKeyStr,
-        goodsSkuIdList,
-      },
+      requestPath,
+      requestPayload,
       { profileId, traceId, actionKey, step: "confirmation-confirm" },
     );
     logger.info("[temu-api-action] 商品确认动作结束", {
@@ -1441,9 +1618,19 @@ async function executeAction(actionKey, profileId, region, payload) {
       profileId,
       region,
       goodsId,
+      supplierId: resolvedSupplierId,
       rowTrace,
       success: !!response?.success,
       status: response?.status ?? null,
+      siteVersion:
+        commitQuery.siteVersion !== null
+          ? commitQuery.siteVersion
+          : normalizedSiteVersion,
+      commitId: isModifyConfirm ? commitId : null,
+      commitVersion: isModifyConfirm ? commitVersion : null,
+      confirmMode: isModifyConfirm ? "modify" : "site",
+      commitQuerySource: commitQuery.source,
+      requestPath,
       elapsedMs: Date.now() - startedAt,
       message:
         response?.message || normalizeTemuApiMessage(response?.payload, ""),
@@ -1457,7 +1644,17 @@ async function executeAction(actionKey, profileId, region, payload) {
       failureMessage: "商品确认失败",
       result: {
         goodsId,
-        siteVersion,
+        supplierId: resolvedSupplierId,
+        siteVersion:
+          commitQuery.siteVersion !== null
+            ? commitQuery.siteVersion
+            : normalizedSiteVersion,
+        commitId: isModifyConfirm ? commitId : null,
+        commitVersion: isModifyConfirm ? commitVersion : null,
+        confirmMode: isModifyConfirm ? "modify" : "site",
+        commitQuerySource: commitQuery.source,
+        commitQueryMessage: commitQuery.message || commitQuery.reason || "",
+        requestPath,
         priceConfirmKeyStr,
         goodsSkuIdList,
         traceId,
