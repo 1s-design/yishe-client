@@ -15,6 +15,10 @@ const COOKIE_DOMAIN_PATTERNS = [
   /yangkeduo\.com$/i,
   /pddugc\.com$/i,
 ];
+const PDD_LOGIN_URL = "https://mms.pinduoduo.com/login/";
+const PDD_ACCOUNT_LOGIN_TEXT = "账号登录";
+const PDD_ACCOUNT_INPUT_PLACEHOLDER = "请输入账号名/手机号";
+const PDD_PASSWORD_INPUT_PLACEHOLDER = "请输入密码";
 
 function normalizeBoolean(value, fallback = false) {
   if (typeof value === "boolean") {
@@ -289,6 +293,245 @@ export async function runPddOpenWorkspaceSmallFeature(
     input,
     runtimeOptions,
   );
+}
+
+async function clickPddText(page, text, label, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  const errors = [];
+  const selectors = [
+    `text="${text}"`,
+    `button:has-text("${text}")`,
+    `[role="button"]:has-text("${text}")`,
+    `a:has-text("${text}")`,
+    `[tabindex]:has-text("${text}")`,
+  ];
+
+  while (Date.now() < deadline) {
+    for (const selector of selectors) {
+      try {
+        const locator = page.locator(selector).first();
+        await locator.waitFor({ state: "visible", timeout: 800 });
+        const snapshot = await getPddElementSnapshot(locator);
+        await locator.click({ timeout: 3000 });
+        return {
+          clicked: true,
+          selector,
+          text,
+          element: snapshot,
+        };
+      } catch (error) {
+        errors.push(error?.message || String(error));
+      }
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  throw new Error(
+    `${PLATFORM_NAME}未找到或无法点击${label}：${text}（${errors.slice(-3).join(" | ")}）`,
+  );
+}
+
+async function getPddElementSnapshot(locator) {
+  return await locator
+    .evaluate((element) => ({
+      tagName: element.tagName,
+      className:
+        typeof element.className === "string"
+          ? element.className
+          : String(element.className || ""),
+      text: String(element.textContent || "").trim().slice(0, 80),
+      role: element.getAttribute("role") || "",
+      placeholder: element.getAttribute("placeholder") || "",
+    }))
+    .catch(() => null);
+}
+
+async function fillPddLoginInput(page, placeholder, value, label, timeoutMs = 15000) {
+  const normalizedValue = normalizeText(value);
+  if (!normalizedValue) {
+    throw new Error(`请先填写拼多多${label}`);
+  }
+
+  const locator = page.locator(`input[placeholder="${placeholder}"]`).first();
+  await locator.waitFor({ state: "visible", timeout: timeoutMs });
+  const snapshot = await getPddElementSnapshot(locator);
+  await locator.fill("");
+  await locator.fill(normalizedValue);
+  return {
+    filled: true,
+    placeholder,
+    element: snapshot,
+  };
+}
+
+async function clickPddSubmitLoginButton(page, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  const errors = [];
+
+  while (Date.now() < deadline) {
+    try {
+      const locator = page.locator("button").filter({ hasText: "登录" }).first();
+      await locator.waitFor({ state: "visible", timeout: 800 });
+      const snapshot = await getPddElementSnapshot(locator);
+      await locator.click({ timeout: 3000 });
+      return {
+        clicked: true,
+        selector: 'button:has-text("登录")',
+        element: snapshot,
+      };
+    } catch (error) {
+      errors.push(error?.message || String(error));
+    }
+    await page.waitForTimeout(500);
+  }
+
+  throw new Error(
+    `${PLATFORM_NAME}未找到或无法点击登录 button（${errors.slice(-3).join(" | ")}）`,
+  );
+}
+
+export async function runPddClickLoginSmallFeature(input = {}, runtimeOptions = {}) {
+  const platformConfig = PLATFORM_CONFIGS?.[PLATFORM_KEY];
+  if (!platformConfig) {
+    throw new Error("拼多多平台配置不存在");
+  }
+
+  const profileId = normalizeText(input?.profileId) || undefined;
+  const account = normalizeText(input?.account);
+  const password = normalizeText(input?.password);
+  const keepPageOpen = normalizeBoolean(input?.keepPageOpen, true);
+  const targetUrl = normalizeText(input?.loginUrl) || PDD_LOGIN_URL;
+  const pageOperator = runtimeOptions?.pageOperator || new PageOperator();
+  const executionTrace = [];
+  const clickedAt = new Date().toISOString();
+  const managePage = !runtimeOptions?.page;
+  let page = runtimeOptions?.page || null;
+
+  const pushTrace = (step, status, detail = {}) => {
+    executionTrace.push({
+      step,
+      status,
+      time: new Date().toISOString(),
+      detail,
+    });
+  };
+
+  try {
+    logger.info(`${PLATFORM_NAME}开始点击登录`, {
+      profileId: profileId || "default",
+      targetUrl,
+      keepPageOpen,
+    });
+    pushTrace("start", "success", {
+      profileId: profileId || null,
+      targetUrl,
+      keepPageOpen,
+    });
+
+    if (managePage) {
+      const browser = await getOrCreateBrowser({ profileId });
+      page = await browser.newPage({ foreground: true });
+      await pageOperator.setupAntiDetection(page);
+      pushTrace("open_page", "success", {
+        reusedCurrentPage: false,
+        currentUrl: page.url(),
+      });
+    } else {
+      pushTrace("open_page", "success", {
+        reusedCurrentPage: true,
+        currentUrl: page.url(),
+      });
+    }
+
+    await page.goto(targetUrl, {
+      waitUntil: platformConfig.waitUntil || "domcontentloaded",
+      timeout: platformConfig.timeout || 45000,
+    });
+    await page.waitForTimeout(2500);
+    pushTrace("open_login_page", "success", {
+      currentUrl: page.url(),
+      pageTitle: await page.title().catch(() => ""),
+    });
+
+    const modeClickResult = await clickPddText(
+      page,
+      PDD_ACCOUNT_LOGIN_TEXT,
+      "账号登录入口",
+    );
+    await page.waitForTimeout(800);
+    pushTrace("click_account_login", "success", modeClickResult);
+
+    const accountFillResult = await fillPddLoginInput(
+      page,
+      PDD_ACCOUNT_INPUT_PLACEHOLDER,
+      account,
+      "账号",
+    );
+    pushTrace("fill_account", "success", {
+      ...accountFillResult,
+      valueLength: account.length,
+    });
+
+    const passwordFillResult = await fillPddLoginInput(
+      page,
+      PDD_PASSWORD_INPUT_PLACEHOLDER,
+      password,
+      "密码",
+    );
+    pushTrace("fill_password", "success", {
+      ...passwordFillResult,
+      valueLength: password.length,
+    });
+
+    const clickResult = await clickPddSubmitLoginButton(page);
+    await page.waitForTimeout(1200);
+    pushTrace("click_login", "success", clickResult);
+
+    return {
+      success: true,
+      message: `${PLATFORM_NAME}已点击登录`,
+      data: {
+        featureKey: "pdd-click-login",
+        platform: PLATFORM_KEY,
+        platformName: PLATFORM_NAME,
+        profileId: profileId || null,
+        clickedAt,
+        accountProvided: !!account,
+        passwordProvided: !!password,
+        modeClickResult,
+        clickResult,
+        currentUrl: page.url(),
+        pageTitle: await page.title().catch(() => ""),
+        executionTrace,
+        pageKeptOpen: keepPageOpen,
+      },
+    };
+  } catch (error) {
+    logger.error(`${PLATFORM_NAME}点击登录失败:`, error);
+    pushTrace("click_login", "failed", {
+      error: error?.message || String(error || ""),
+    });
+    return {
+      success: false,
+      message: error?.message || `${PLATFORM_NAME}点击登录失败`,
+      data: {
+        featureKey: "pdd-click-login",
+        platform: PLATFORM_KEY,
+        platformName: PLATFORM_NAME,
+        profileId: profileId || null,
+        clickedAt,
+        currentUrl: page?.url?.() || "",
+        pageTitle: await page?.title?.().catch(() => ""),
+        executionTrace,
+        pageKeptOpen: keepPageOpen,
+      },
+    };
+  } finally {
+    if (managePage && page && !keepPageOpen) {
+      await page.close().catch(() => undefined);
+    }
+  }
 }
 
 export async function runPddSessionAcquireSmallFeature(input = {}, runtimeOptions = {}) {

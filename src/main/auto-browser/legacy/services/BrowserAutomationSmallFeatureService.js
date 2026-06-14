@@ -18,6 +18,7 @@ import {
 } from "../platforms/shopLoginFeatures.js";
 import { runDoudianSessionAcquireSmallFeature } from "../platforms/doudian/session.js";
 import {
+  runPddClickLoginSmallFeature,
   runPddCheckLoginSmallFeature,
   runPddOpenWorkspaceSmallFeature,
   runPddSessionAcquireSmallFeature,
@@ -354,6 +355,52 @@ const SMALL_FEATURE_REGISTRY = {
       },
     ],
     handler: runPddCheckLoginSmallFeature,
+  },
+  "pdd-click-login": {
+    key: "pdd-click-login",
+    name: "点击登录",
+    platform: "pdd",
+    category: "login",
+    visibility: "public",
+    description:
+      "打开拼多多商家登录页，切换账号登录，填写账号密码后点击登录按钮。",
+    tips: [
+      "默认使用当前活动环境；传 profileId 时优先使用指定环境。",
+      "账号密码来自拼多多工具页保存的凭据或当前输入框。",
+      "执行后会保留页面，方便继续处理验证码或风控。",
+      "只作用于拼多多工具集，不影响 Temu 登录流程。",
+    ],
+    fields: [
+      {
+        key: "account",
+        label: "账号",
+        type: "text",
+        required: true,
+        placeholder: "请输入拼多多账号名/手机号",
+      },
+      {
+        key: "password",
+        label: "密码",
+        type: "password",
+        required: true,
+        placeholder: "请输入拼多多密码",
+      },
+      {
+        key: "profileId",
+        label: "环境编号",
+        type: "text",
+        required: false,
+        placeholder: "可选，留空时使用当前活动环境",
+      },
+      {
+        key: "keepPageOpen",
+        label: "保留页面",
+        type: "boolean",
+        required: false,
+        defaultValue: true,
+      },
+    ],
+    handler: runPddClickLoginSmallFeature,
   },
   "pdd-session-acquire": {
     key: "pdd-session-acquire",
