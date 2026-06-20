@@ -2054,6 +2054,75 @@ async function executeAction(actionKey, profileId, region, payload) {
     });
   }
 
+  if (actionKey === "goods.published-site.list") {
+    const leafCatIdList = Array.isArray(payload.leafCatIdList)
+      ? payload.leafCatIdList.map(Number).filter((n) => n > 0)
+      : [];
+    return runPagedSearchForChainSupplier({
+      action: actionKey,
+      profileId,
+      region,
+      payload: {
+        pageNum: Number(payload.pageNum || 1),
+        leafCatIdList,
+        removeStatus: 0,
+        secondarySelectStatusList: [12],
+        supplierTodoTypeList: [],
+        ...payload,
+      },
+      pageSize: Math.min(
+        1000,
+        Math.max(1, Number(payload.pageSize || 10) || 10),
+      ),
+      successMessage: "获取已发布站点商品成功",
+      failureMessage: "获取已发布站点商品失败",
+    });
+  }
+
+  if (actionKey === "goods.published-site.off-sale") {
+    const reqList = Array.isArray(payload.mmsOffSaleProductReqList)
+      ? payload.mmsOffSaleProductReqList.map((item) => ({
+          productId: Number(item.productId),
+          productSkcId: Number(item.productSkcId),
+          saleStatus: item.saleStatus !== undefined ? Number(item.saleStatus) : 0,
+          offSaleType: item.offSaleType !== undefined ? Number(item.offSaleType) : 2001,
+          reason: String(item.reason || "无").trim(),
+        }))
+      : [];
+    const response = await requestTemuJson(
+      region,
+      "/visage-agent-seller/product/skc/batch/change/sale/status",
+      { mmsOffSaleProductReqList: reqList },
+      { profileId },
+    );
+    const respList = Array.isArray(
+      response.payload?.result?.mmsOffSaleProductSkcRespList,
+    )
+      ? response.payload.result.mmsOffSaleProductSkcRespList
+      : [];
+    const successCount = respList.filter((r) => r?.result === true).length;
+    const failCount = respList.filter((r) => r?.result !== true).length;
+    return buildFeatureResponse({
+      action: actionKey,
+      profileId,
+      region,
+      requestResult: response,
+      successMessage: `下架完成：成功 ${successCount}，失败 ${failCount}`,
+      failureMessage: "下架操作失败",
+      result: {
+        totalCount: reqList.length,
+        successCount,
+        failCount,
+        details: respList.map((r) => ({
+          productId: Number(r?.productId || 0) || null,
+          productSkcId: Number(r?.productSkcId || 0) || null,
+          success: r?.result === true,
+          message: String(r?.message || "").trim(),
+        })),
+      },
+    });
+  }
+
   const genericMap = {
     "compliance.page-query": [
       "/ms/bg-flux-ms/compliance_property/page_query",
