@@ -576,57 +576,24 @@ def replace_and_export_psd_multi(
                     # 导出画板
                     _log_detail(f"    📤 正在导出到: {artboard_export_path}")
                     try:
-                        png_options = session.PNGSaveOptions()
-                        png_options.compression = 6  # PNG 压缩级别 0-9
-                        png_options.interlaced = False
-
-                        # 记录导出前的状态
-                        _log_detail(f"       当前活动图层: {_safe_get_active_layer_name(doc)}")
-                        _log_detail(f"       导出文件: {artboard_export_filename}")
-                        _log_detail(f"       导出目录: {export_dir}")
-
-                        # 获取画板边界（用于导出后裁剪）
-                        ab_crop_box = None
-                        try:
-                            ab_bounds = artboard_layer.bounds  # [left, top, right, bottom]
-                            ab_left = int(ab_bounds[0])
-                            ab_top = int(ab_bounds[1])
-                            ab_right = int(ab_bounds[2])
-                            ab_bottom = int(ab_bounds[3])
-                            ab_width = ab_right - ab_left
-                            ab_height = ab_bottom - ab_top
-                            doc_width = int(doc.width)
-                            doc_height = int(doc.height)
-                            _log_detail(f"       画板边界: left={ab_left}, top={ab_top}, right={ab_right}, bottom={ab_bottom}")
-                            _log_detail(f"       画板尺寸: {ab_width}x{ab_height}, 文档尺寸: {doc_width}x{doc_height}")
-
-                            if ab_width > 0 and ab_height > 0 and (ab_width < doc_width or ab_height < doc_height or ab_left != 0 or ab_top != 0):
-                                ab_crop_box = (ab_left, ab_top, ab_right, ab_bottom)
-                                _log_detail(f"       ✅ 记录画板裁剪区域，将在导出后裁剪")
-                            else:
-                                _log_detail(f"       ℹ️ 画板与文档尺寸一致，无需裁剪")
-                        except Exception as bounds_err:
-                            _log_detail(f"       ⚠️ 获取画板边界失败: {bounds_err}")
+                        # 使用 ExportOptionsSaveForWeb 导出（只导出可见内容，按画板尺寸）
+                        options = session.ExportOptionsSaveForWeb()
+                        options.format = 13  # PNG
+                        options.PNG8 = False  # PNG-24
+                        options.transparency = True
+                        options.interlaced = False
+                        options.compression = 6
 
                         export_file_path_str = str(artboard_export_path)
-                        _log_detail(f"       导出路径（字符串）: {export_file_path_str}")
+                        _log_detail(f"       导出路径: {export_file_path_str}")
 
-                        # PS 2025 兼容性修复：使用 saveAs 代替 exportDocument
-                        doc.saveAs(export_file_path_str, png_options, True, session.ExtensionType.Lowercase)
-                        _log_detail(f"    ✅ saveAs 调用成功 (PS 2025 兼容)")
-                        time.sleep(1.0)  # 等待 PS 写入文件完成
+                        doc.exportDocument(
+                            export_file_path_str,
+                            exportAs=session.ExportType.SaveForWeb,
+                            options=options,
+                        )
+                        _log_detail(f"    ✅ exportDocument 调用成功 (SaveForWeb)")
 
-                        # 导出后用 PIL 裁剪到画板区域
-                        if ab_crop_box is not None:
-                            try:
-                                from PIL import Image
-                                with Image.open(export_file_path_str) as img:
-                                    cropped_img = img.crop(ab_crop_box)
-                                    cropped_img.save(export_file_path_str)
-                                    _log_detail(f"       ✅ 已裁剪导出图片到画板区域: {cropped_img.size[0]}x{cropped_img.size[1]}")
-                            except Exception as crop_err:
-                                _log_detail(f"       ⚠️ PIL 裁剪失败（保留原始导出）: {crop_err}")
-                        
                         # 等待文件写入完成
                         time.sleep(2.0)  # 增加等待时间，确保文件写入完成
                         
@@ -832,12 +799,18 @@ def replace_and_export_psd_multi(
                 # 确保导出目录存在
                 export_path.parent.mkdir(parents=True, exist_ok=True)
                 
-                png_options = session.PNGSaveOptions()
-                png_options.compression = 6  # PNG 压缩级别 0-9
-                png_options.interlaced = False
+                options = session.ExportOptionsSaveForWeb()
+                options.format = 13  # PNG
+                options.PNG8 = False  # PNG-24
+                options.transparency = True
+                options.interlaced = False
+                options.compression = 6
                 print(f"    导出路径: {export_path}")
-                # PS 2025 兼容性修复：使用 saveAs 代替 exportDocument
-                doc.saveAs(str(export_path), png_options, True, session.ExtensionType.Lowercase)
+                doc.exportDocument(
+                    str(export_path),
+                    exportAs=session.ExportType.SaveForWeb,
+                    options=options,
+                )
                 print(f"    ✅ 导出成功")
                 export_paths.append(export_path)
             except Exception as e:
