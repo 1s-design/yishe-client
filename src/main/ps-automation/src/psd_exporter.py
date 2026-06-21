@@ -579,27 +579,52 @@ def replace_and_export_psd_multi(
                         png_options = session.PNGSaveOptions()
                         png_options.compression = 6  # PNG 压缩级别 0-9
                         png_options.interlaced = False
-                        
+
                         # 记录导出前的状态
                         _log_detail(f"       当前活动图层: {_safe_get_active_layer_name(doc)}")
-                        # 记录导出前的状态（新版API不再访问activeLayer，避免异常）
-                        _log_detail(f"       导出区域: 整个文档（已隐藏其他图层组，只显示当前图层组）")
                         _log_detail(f"       导出文件: {artboard_export_filename}")
                         _log_detail(f"       导出目录: {export_dir}")
-                        
-                        # 重要：exportDocument 使用 SaveForWeb 时，需要传递目录路径，而不是完整文件路径
-                        # 但我们需要指定文件名，所以先导出到临时文件，然后重命名
-                        # 或者直接使用完整路径（某些版本可能支持）
-                        # 参考 erpfile.py：传递目录路径，但文件名可能由 PS 自动生成
-                        # 为了确保文件名正确，我们使用完整路径
+
+                        # 裁剪画布到画板边界，避免导出多余空白
+                        cropped = False
+                        original_width = int(doc.width)
+                        original_height = int(doc.height)
+                        try:
+                            ab_bounds = artboard_layer.bounds  # [left, top, right, bottom]
+                            ab_left = int(ab_bounds[0])
+                            ab_top = int(ab_bounds[1])
+                            ab_right = int(ab_bounds[2])
+                            ab_bottom = int(ab_bounds[3])
+                            ab_width = ab_right - ab_left
+                            ab_height = ab_bottom - ab_top
+                            _log_detail(f"       画板边界: left={ab_left}, top={ab_top}, right={ab_right}, bottom={ab_bottom}")
+                            _log_detail(f"       画板尺寸: {ab_width}x{ab_height}, 文档尺寸: {original_width}x{original_height}")
+
+                            if ab_width > 0 and ab_height > 0 and (ab_width < original_width or ab_height < original_height or ab_left != 0 or ab_top != 0):
+                                # 使用 crop 裁剪到画板区域
+                                crop_bounds = [ab_left, ab_top, ab_right, ab_bottom]
+                                doc.crop(crop_bounds)
+                                cropped = True
+                                _log_detail(f"       ✅ 已裁剪画布到画板区域: {ab_width}x{ab_height}")
+                            else:
+                                _log_detail(f"       ℹ️ 画板与文档尺寸一致，无需裁剪")
+                        except Exception as crop_err:
+                            _log_detail(f"       ⚠️ 裁剪画布失败（将使用原始画布导出）: {crop_err}")
+
                         export_file_path_str = str(artboard_export_path)
                         _log_detail(f"       导出路径（字符串）: {export_file_path_str}")
-                        
-                        # 导出文档（只包含当前可见的图层组）
-                        # 注意：SaveForWeb 可能会自动添加扩展名，所以我们需要确保路径正确
+
                         # PS 2025 兼容性修复：使用 saveAs 代替 exportDocument
                         doc.saveAs(export_file_path_str, png_options, True, session.ExtensionType.Lowercase)
                         _log_detail(f"    ✅ saveAs 调用成功 (PS 2025 兼容)")
+
+                        # 恢复画布到原始尺寸（撤销裁剪）
+                        if cropped:
+                            try:
+                                doc.resizeCanvas(original_width, original_height)
+                                _log_detail(f"       ✅ 已恢复画布到原始尺寸: {original_width}x{original_height}")
+                            except Exception as undo_err:
+                                _log_detail(f"       ⚠️ 恢复画布失败: {undo_err}")
                         
                         # 等待文件写入完成
                         time.sleep(2.0)  # 增加等待时间，确保文件写入完成
