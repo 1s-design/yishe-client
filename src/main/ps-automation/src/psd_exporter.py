@@ -576,30 +576,6 @@ def replace_and_export_psd_multi(
                     # 导出画板
                     _log_detail(f"    📤 正在导出到: {artboard_export_path}")
                     try:
-                        # 获取画板边界（用于导出后裁剪）
-                        ab_crop_box = None
-                        try:
-                            ab_bounds = artboard_layer.bounds  # [left, top, right, bottom]
-                            ab_left = int(ab_bounds[0])
-                            ab_top = int(ab_bounds[1])
-                            ab_right = int(ab_bounds[2])
-                            ab_bottom = int(ab_bounds[3])
-                            ab_width = ab_right - ab_left
-                            ab_height = ab_bottom - ab_top
-                            doc_width = int(doc.width)
-                            doc_height = int(doc.height)
-                            _log_detail(f"       画板边界: left={ab_left}, top={ab_top}, right={ab_right}, bottom={ab_bottom}")
-                            _log_detail(f"       画板尺寸: {ab_width}x{ab_height}, 文档尺寸: {doc_width}x{doc_height}")
-
-                            if ab_width > 0 and ab_height > 0 and (ab_width < doc_width or ab_height < doc_height or ab_left != 0 or ab_top != 0):
-                                ab_crop_box = (ab_left, ab_top, ab_right, ab_bottom)
-                                _log_detail(f"       ✅ 记录画板裁剪区域: {ab_crop_box}")
-                            else:
-                                _log_detail(f"       ℹ️ 画板与文档尺寸一致，无需裁剪")
-                        except Exception as bounds_err:
-                            _log_detail(f"       ⚠️ 获取画板边界失败: {bounds_err}")
-
-                        # 使用 ExportOptionsSaveForWeb 导出
                         options = session.ExportOptionsSaveForWeb()
                         options.format = 13  # PNG
                         options.PNG8 = False  # PNG-24
@@ -608,30 +584,15 @@ def replace_and_export_psd_multi(
                         options.compression = 6
 
                         export_file_path_str = str(artboard_export_path)
-                        _log_detail(f"       导出路径: {export_file_path_str}")
-
                         doc.exportDocument(
                             export_file_path_str,
                             exportAs=session.ExportType.SaveForWeb,
                             options=options,
                         )
-                        _log_detail(f"    ✅ exportDocument 调用成功 (SaveForWeb)")
-
-                        time.sleep(1.0)  # 等待 PS 写入文件完成
-
-                        # 导出后用 PIL 裁剪到画板区域
-                        if ab_crop_box is not None:
-                            try:
-                                from PIL import Image
-                                with Image.open(export_file_path_str) as img:
-                                    cropped_img = img.crop(ab_crop_box)
-                                    cropped_img.save(export_file_path_str)
-                                    _log_detail(f"       ✅ 已裁剪到画板区域: {cropped_img.size[0]}x{cropped_img.size[1]}")
-                            except Exception as crop_err:
-                                _log_detail(f"       ⚠️ PIL 裁剪失败（保留原始导出）: {crop_err}")
+                        _log_detail(f"    ✅ exportDocument 调用成功")
 
                         # 等待文件写入完成
-                        time.sleep(2.0)  # 增加等待时间，确保文件写入完成
+                        time.sleep(2.0)
                         
                         # 检查文件是否存在
                         # 注意：SaveForWeb 可能会修改文件名（添加扩展名或修改名称）
