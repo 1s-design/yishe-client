@@ -12,17 +12,22 @@ a = Analysis(
         # src 模块
         'src',
         'src.api_server',
-        'src.psd-img-replace-smartobject',  # 注意：文件名包含连字符
+        'src.psd_exporter',
+        'src.smart_object_replacer',
+        'src.layer_finder',
+        'src.color_layer_service',
         'src.photoshop_service',
         'src.psd_parser',
         # src.services 模块
         'src.services',
         'src.services.photoshop_status_service',
         'src.services.psd_analysis_service',
+        'src.services.runtime_psd_analysis_service',
         # src.utils 模块
         'src.utils',
         'src.utils.file_utils',
         'src.utils.image_utils',
+        'src.utils.permission_utils',
         'src.utils.photoshop_diagnostics',
         'src.utils.photoshop_process',
         # FastAPI 相关

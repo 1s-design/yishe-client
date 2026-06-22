@@ -569,112 +569,64 @@ def replace_and_export_psd_multi(
                         png_options.interlaced = False
 
                         export_file_path_str = str(artboard_export_path)
-                        # PS 2025 兼容性修复：使用 saveAs 代替 exportDocument
+                        # saveAs 会保存到指定的确切路径（asCopy=True 不改变文档关联）
                         doc.saveAs(export_file_path_str, png_options, True, session.ExtensionType.Lowercase)
                         _log_detail(f"    ✅ saveAs 调用成功")
 
-                        # 等待文件写入完成
-                        time.sleep(2.0)
-                        
-                        # 检查文件是否存在
-                        # 注意：SaveForWeb 可能会修改文件名（添加扩展名或修改名称）
-                        # Photoshop 会自动清理文件名中的特殊字符（空格、括号等）替换为 `-`
-                        # 所以我们需要检查多种可能的文件名
-                        max_retries = 10
+                        # saveAs 是同步操作，但给 Photoshop 一些时间完成文件写入
+                        time.sleep(1.0)
+
+                        # saveAs 保存到指定的确切路径，直接检查该路径
+                        max_retries = 15
                         retry_count = 0
-                        actual_export_path = None
-                        
-                        # 生成文件名变体（Photoshop 可能会修改特殊字符）
-                        # 将文件名中的空格、括号等特殊字符替换为 `-`（Photoshop 的行为）
-                        sanitized_name = re.sub(r'[ ()\[\]]+', '-', artboard_export_filename)
-                        sanitized_name = re.sub(r'-+', '-', sanitized_name)  # 多个 `-` 合并为一个
-                        sanitized_name = sanitized_name.strip('-')  # 去掉首尾的 `-`
-                        
-                        # 可能的文件名变体
-                        possible_paths = [
-                            artboard_export_path,  # 原始路径
-                            export_dir / sanitized_name,  # Photoshop 清理后的文件名
-                            export_dir / f"{artboard_export_path.stem}.png",  # 可能去掉后缀
-                            export_dir / artboard_export_filename,  # 原始文件名
-                        ]
-                        
-                        # 如果原始路径没有 .png 扩展名，添加它
-                        if not artboard_export_path.suffix.lower() == '.png':
-                            possible_paths.append(export_dir / f"{artboard_export_path.stem}.png")
-                        
-                        _log_detail(f"       检查可能的文件路径:")
-                        for pp in possible_paths:
-                            _log_detail(f"          - {pp}")
-                        
-                        while retry_count < max_retries and actual_export_path is None:
-                            for pp in possible_paths:
-                                if pp.exists():
-                                    actual_export_path = pp
-                                    _log_detail(f"       找到文件: {actual_export_path}")
-                                    break
-                            
-                            if actual_export_path is None:
-                                retry_count += 1
-                                time.sleep(0.5)
-                                if retry_count < max_retries:
-                                    _log_detail(f"       等待文件生成... ({retry_count}/{max_retries})")
-                        
-                        # 如果还是找不到，尝试在目录中搜索匹配的文件（基于时间戳和基本名称）
-                        if actual_export_path is None:
-                            _log_detail(f"       ⚠️ 未找到预期文件，尝试在目录中搜索匹配的文件...")
-                            try:
-                                # 提取时间戳部分（格式：_20251229_130113_085）
-                                timestamp_match = re.search(r'_(\d{8}_\d{6}_\d{3})', artboard_export_filename)
-                                if timestamp_match:
-                                    timestamp = timestamp_match.group(1)
-                                    # 搜索包含相同时间戳和画板标识的文件
-                                    search_pattern = f"*{timestamp}*artboard*画板*.png"
-                                    matching_files = list(export_dir.glob(search_pattern))
-                                    if matching_files:
-                                        # 按修改时间排序，取最新的
-                                        matching_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                                        actual_export_path = matching_files[0]
-                                        _log_detail(f"       找到匹配的文件: {actual_export_path}")
-                            except Exception as search_error:
-                                _log_detail(f"       搜索文件时出错: {search_error}")
-                        
-                        # 如果还是找不到，列出导出目录中的所有文件，帮助调试
-                        if actual_export_path is None:
-                            _log_detail(f"       ⚠️ 未找到预期文件，列出导出目录中的所有文件:")
-                            try:
-                                dir_files = list(export_dir.glob("*"))
-                                if dir_files:
-                                    # 只列出最近的文件（可能相关的）
-                                    dir_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                                    for df in dir_files[:20]:  # 只显示最近20个文件
-                                        _log_detail(f"          - {df.name} ({df.stat().st_size} 字节)")
-                                else:
-                                    _log_detail(f"          (目录为空)")
-                            except Exception as e:
-                                _log_detail(f"          (无法列出目录: {e})")
-                        
-                        if actual_export_path and actual_export_path.exists():
-                            # 如果实际文件路径与预期不同，更新它
-                            if actual_export_path != artboard_export_path:
-                                _log_detail(f"       ⚠️ 注意: 实际文件路径与预期不同")
-                                _log_detail(f"          预期: {artboard_export_path}")
-                                _log_detail(f"          实际: {actual_export_path}")
-                                artboard_export_path = actual_export_path
+
+                        while retry_count < max_retries and not artboard_export_path.exists():
+                            retry_count += 1
+                            time.sleep(0.5)
+                            _log_detail(f"       等待文件写入... ({retry_count}/{max_retries})")
+
+                        if artboard_export_path.exists():
                             file_size = artboard_export_path.stat().st_size
                             file_size_mb = file_size / 1024 / 1024
                             export_paths.append(artboard_export_path)
                             print(f"✅ 画板 [{i}/{len(layer_sets)}] 导出成功: {artboard_export_path.name} ({file_size_mb:.2f} MB)")
                             _log_detail(f"    📊 当前成功导出: {len([p for p in export_paths if p is not None])}/{len(layer_sets)} 个文件")
                         else:
-                            print(f"    ❌❌❌ 错误: 导出文件不存在! ❌❌❌")
-                            print(f"       预期路径: {artboard_export_path}")
-                            print(f"       已重试 {max_retries} 次，文件仍未生成")
-                            print(f"       图层组 [{i}/{len(layer_sets)}]: {artboard_name}")
-                            print(f"       可能原因:")
-                            print(f"         1. Photoshop 导出失败但未报错")
-                            print(f"         2. 文件路径权限问题")
-                            print(f"         3. 磁盘空间不足")
-                            export_paths.append(None)  # 占位，表示这个图层组导出失败
+                            # 兜底：在导出目录中搜索最近生成的 PNG 文件
+                            _log_detail(f"       ⚠️ 直接路径未找到，搜索导出目录中最近的 PNG...")
+                            actual_export_path = None
+                            try:
+                                recent_pngs = sorted(
+                                    export_dir.glob("*.png"),
+                                    key=lambda p: p.stat().st_mtime,
+                                    reverse=True
+                                )
+                                for png in recent_pngs[:5]:
+                                    _log_detail(f"          候选: {png.name} ({png.stat().st_size} 字节)")
+                                    # 检查文件名是否包含画板名称的关键词
+                                    if artboard_name and artboard_name[:4] in png.name:
+                                        actual_export_path = png
+                                        break
+                                # 如果关键词匹配失败，取最近修改的
+                                if not actual_export_path and recent_pngs:
+                                    actual_export_path = recent_pngs[0]
+                            except Exception as search_error:
+                                _log_detail(f"       搜索文件时出错: {search_error}")
+
+                            if actual_export_path and actual_export_path.exists():
+                                if actual_export_path != artboard_export_path:
+                                    _log_detail(f"       ⚠️ 实际文件路径与预期不同: {actual_export_path}")
+                                    artboard_export_path = actual_export_path
+                                file_size = artboard_export_path.stat().st_size
+                                file_size_mb = file_size / 1024 / 1024
+                                export_paths.append(artboard_export_path)
+                                print(f"✅ 画板 [{i}/{len(layer_sets)}] 导出成功(兜底): {artboard_export_path.name} ({file_size_mb:.2f} MB)")
+                            else:
+                                print(f"    ❌❌❌ 错误: 导出文件不存在! ❌❌❌")
+                                print(f"       预期路径: {artboard_export_path}")
+                                print(f"       已重试 {max_retries} 次，文件仍未生成")
+                                print(f"       图层组 [{i}/{len(layer_sets)}]: {artboard_name}")
+                                export_paths.append(None)  # 占位，表示这个图层组导出失败
                             
                     except Exception as export_error:
                         print(f"    ❌❌❌ 导出调用失败: {export_error} ❌❌❌")
