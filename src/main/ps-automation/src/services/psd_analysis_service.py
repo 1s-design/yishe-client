@@ -20,28 +20,27 @@ except ImportError:
 PS_VERBOSE_LOG = os.environ.get("YISHE_PS_VERBOSE", "").strip().lower() in {"1", "true", "yes", "debug"}
 
 
-def _is_artboard_layer(layer: Layer) -> bool:
+def _is_artboard_layer(layer: Layer, depth: Optional[int] = None) -> bool:
     """
     判断图层是否是画板
-    
+
     Args:
         layer: 图层对象
-    
+        depth: 图层在层级树中的深度（0=顶层）。为 0 时，顶层 Group 也被视为画板。
+
     Returns:
         是否是画板
     """
     try:
-        # 检查是否有 artboard 属性
+        # 检查是否有 artboard 属性（PS 原生画板）
         if hasattr(layer, "artboard") and layer.artboard:
             return True
         # 检查是否有 is_artboard 属性
         if hasattr(layer, "is_artboard") and getattr(layer, "is_artboard"):
             return True
-        # 检查是否是顶层组（作为逻辑画板）
-        if isinstance(layer, Group) or (hasattr(layer, "is_group") and layer.is_group()):
-            # 这里不直接返回 True，因为需要结合 depth 判断
-            # 在调用处会结合 depth 来判断
-            pass
+        # 顶层图层组视为画板（与 _extract_artboards_with_smart_objects 保持一致）
+        if depth == 0 and (isinstance(layer, Group) or (hasattr(layer, "is_group") and layer.is_group())):
+            return True
     except Exception:
         pass
     return False
@@ -630,8 +629,8 @@ def _extract_layer_structure(psd: PSDImage, parent_path: str = "", depth: int = 
             else "layer"
         )
 
-        # 仅根据 psd-tools 的真实画板标记判断（不再把顶层 group 视为画板）
-        is_artboard = _is_artboard_layer(layer)
+        # 画板判断：PS 原生画板 + 顶层图层组
+        is_artboard = _is_artboard_layer(layer, depth=current_depth)
 
         info: Dict[str, Any] = {
             "name": name,

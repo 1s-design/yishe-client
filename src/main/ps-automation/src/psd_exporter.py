@@ -16,14 +16,12 @@ IGNORE_SMART_OBJECT_PREFIX = "ignore"
 # 支持相对导入和绝对导入
 try:
     from .utils.permission_utils import check_write_permission
-    from .layer_finder import find_artboard_layers
     from .smart_object_replacer import replace_smart_object_content
     from .utils import create_photoshop_session
     from .layer_finder import find_smart_object_layers
 except ImportError:
     try:
         from src.utils.permission_utils import check_write_permission
-        from src.layer_finder import find_artboard_layers
         from src.smart_object_replacer import replace_smart_object_content
         from src.utils import create_photoshop_session
         from src.layer_finder import find_smart_object_layers
@@ -412,41 +410,31 @@ def replace_and_export_psd_multi(
                 )
             print("=" * 70)
 
-        # ========== 查找画板并导出 ==========
-        # 参考 erpfile.py 的原理：直接使用 doc.layerSets 获取所有图层组（画板）
+        # ========== 查找顶层元素并导出 ==========
+        # 规则：doc.layers 中每个顶层元素（图层组、单个图层、原生画板）都作为一张导出图
         print(f"\n" + "=" * 70)
-        print("🎨 检查画板（使用 doc.layerSets 方法）")
+        print("🎨 查找顶层元素（导出单元）")
         print("=" * 70)
         print(f"PSD 文件路径: {psd_path}")
         print(f"文档名称: {doc.name if hasattr(doc, 'name') else '未知'}")
-        
+
         export_paths = []  # 存储所有导出路径
-        
-        # 方法1: 直接使用 doc.layerSets（参考 erpfile.py）
+
         layer_sets = []
         try:
-            if hasattr(doc, 'layerSets'):
-                layer_sets = list(doc.layerSets) if hasattr(doc.layerSets, '__iter__') else [doc.layerSets]
-                print(f"✅ 使用 doc.layerSets 找到 {len(layer_sets)} 个图层组（画板）")
+            if hasattr(doc, 'layers'):
+                layer_sets = list(doc.layers) if hasattr(doc.layers, '__iter__') else [doc.layers]
+                print(f"✅ 找到 {len(layer_sets)} 个顶层元素")
                 for i, ls in enumerate(layer_sets, 1):
                     ls_name = ls.name if hasattr(ls, 'name') else "未知"
-                    print(f"   图层组[{i}]: {ls_name}")
+                    ls_type = type(ls).__name__
+                    print(f"   [{i}] {ls_name} ({ls_type})")
         except Exception as e:
-            print(f"⚠️ 使用 doc.layerSets 失败: {e}")
-            layer_sets = []
-        
-        # 方法2: 如果 layerSets 为空，尝试使用分析服务查找
-        if not layer_sets:
-            print(f"\n尝试使用分析服务查找画板...")
-            artboards = find_artboard_layers(doc, psd_path=psd_path, debug=True)
-            if artboards:
-                # 将分析服务找到的画板转换为图层组列表
-                layer_sets = [ab['layer'] for ab in artboards]
-                print(f"✅ 通过分析服务找到 {len(layer_sets)} 个画板")
-        
-        # 如果有图层组（画板），逐个导出
+            print(f"⚠️ 获取顶层元素失败: {e}")
+
+        # 逐个导出
         if layer_sets:
-            print(f"\n🎨 找到 {len(layer_sets)} 个图层组（画板），开始导出")
+            print(f"\n🎨 找到 {len(layer_sets)} 个顶层元素，开始逐个导出")
             _log_detail("=" * 70)
             
             # 保存所有图层组的可见性状态（用于后续恢复）
@@ -576,20 +564,14 @@ def replace_and_export_psd_multi(
                     # 导出画板
                     _log_detail(f"    📤 正在导出到: {artboard_export_path}")
                     try:
-                        options = session.ExportOptionsSaveForWeb()
-                        options.format = 13  # PNG
-                        options.PNG8 = False  # PNG-24
-                        options.transparency = True
-                        options.interlaced = False
-                        options.compression = 6
+                        png_options = session.PNGSaveOptions()
+                        png_options.compression = 6  # PNG 压缩级别 0-9
+                        png_options.interlaced = False
 
                         export_file_path_str = str(artboard_export_path)
-                        doc.exportDocument(
-                            export_file_path_str,
-                            exportAs=session.ExportType.SaveForWeb,
-                            options=options,
-                        )
-                        _log_detail(f"    ✅ exportDocument 调用成功")
+                        # PS 2025 兼容性修复：使用 saveAs 代替 exportDocument
+                        doc.saveAs(export_file_path_str, png_options, True, session.ExtensionType.Lowercase)
+                        _log_detail(f"    ✅ saveAs 调用成功")
 
                         # 等待文件写入完成
                         time.sleep(2.0)
@@ -796,18 +778,12 @@ def replace_and_export_psd_multi(
                 # 确保导出目录存在
                 export_path.parent.mkdir(parents=True, exist_ok=True)
                 
-                options = session.ExportOptionsSaveForWeb()
-                options.format = 13  # PNG
-                options.PNG8 = False  # PNG-24
-                options.transparency = True
-                options.interlaced = False
-                options.compression = 6
+                png_options = session.PNGSaveOptions()
+                png_options.compression = 6  # PNG 压缩级别 0-9
+                png_options.interlaced = False
                 print(f"    导出路径: {export_path}")
-                doc.exportDocument(
-                    str(export_path),
-                    exportAs=session.ExportType.SaveForWeb,
-                    options=options,
-                )
+                # PS 2025 兼容性修复：使用 saveAs 代替 exportDocument
+                doc.saveAs(str(export_path), png_options, True, session.ExtensionType.Lowercase)
                 print(f"    ✅ 导出成功")
                 export_paths.append(export_path)
             except Exception as e:
