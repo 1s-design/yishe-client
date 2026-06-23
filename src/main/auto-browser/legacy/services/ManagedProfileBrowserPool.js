@@ -646,6 +646,18 @@ function launchChromeWithDebugPort({
   );
   child.unref();
 
+  // 监听 Chrome 进程异常退出和启动错误，便于排查闪退问题
+  child.on("error", (err) => {
+    logger.error(`Chrome 进程启动失败 (port=${safePort}): ${err.message}`);
+  });
+  child.on("exit", (code, signal) => {
+    if (code !== 0 && code !== null) {
+      logger.warn(
+        `Chrome 进程异常退出 (port=${safePort}, pid=${child.pid || "unknown"}): code=${code}, signal=${signal}`,
+      );
+    }
+  });
+
   logger.info(
     `已为环境启动 Chrome: port=${safePort}, pid=${child.pid || "unknown"}, userDataDir=${safeUserDataDir}`,
   );
@@ -685,7 +697,7 @@ async function getSessionPages(session) {
     return [];
   }
 
-  const probeTimeoutMs = 1500;
+  const probeTimeoutMs = 3000;
   const runtimePayload = buildProfileRuntimePayload({
     id: session.profileId,
     name: session.profileName,
@@ -790,7 +802,7 @@ async function probeSessionConnectedLightweight(session) {
     for (const page of pages.slice(0, 3)) {
       const runtimeInfo = await withTimeout(
         probeBrowserPageRuntime(page, runtimePayload),
-        900,
+        2000,
         "page.runtimeLightweight",
       ).catch(() => null);
 
@@ -832,9 +844,30 @@ async function isSessionAvailable(session) {
       throw new Error("浏览器连接已断开");
     }
 
-    const pages = await getSessionPages(session);
-    const hasReachableRuntime = pages.some((page) => page.runtimeReachable);
-    const hasOnlyOptionalPages = pages.length > 0 && pages.every((page) => page.isPlaceholderPage);
+    // 页面探活失败时增加重试，避免 Chrome 启动中或临时抖动导致误判
+    const MAX_PROBE_RETRIES = 2;
+    const PROBE_RETRY_DELAY_MS = 2000;
+    let pages = [];
+    let hasReachableRuntime = false;
+    let hasOnlyOptionalPages = false;
+
+    for (let attempt = 0; attempt < MAX_PROBE_RETRIES; attempt += 1) {
+      pages = await getSessionPages(session);
+      hasReachableRuntime = pages.some((page) => page.runtimeReachable);
+      hasOnlyOptionalPages = pages.length > 0 && pages.every((page) => page.isPlaceholderPage);
+
+      // 探活成功或无页面（用户关闭了所有标签页），无需重试
+      if (hasReachableRuntime || hasOnlyOptionalPages || pages.length === 0) {
+        break;
+      }
+
+      // 最后一次重试前等待
+      if (attempt < MAX_PROBE_RETRIES - 1) {
+        logger.info(`环境 ${session.profileId || "default"} 页面探活未就绪，${PROBE_RETRY_DELAY_MS / 1000} 秒后重试 (${attempt + 1}/${MAX_PROBE_RETRIES})`);
+        await sleep(PROBE_RETRY_DELAY_MS);
+      }
+    }
+
     if (pages.length > 0 && !hasReachableRuntime && !hasOnlyOptionalPages) {
       throw new Error("页面运行时探活失败");
     }
@@ -846,23 +879,23 @@ async function isSessionAvailable(session) {
     session.updatedAt = new Date().toISOString();
     return true;
   } catch (error) {
-    const staleBrowser = session.browserInstance;
-    const stalePid = session.chromePid;
+    // 仅标记为不可用，不杀死 Chrome 进程。
+    // 进程清理统一由 closeSession 处理，避免健康检查/探活抖动误杀正常运行的浏览器。
     session.browserStatus.isConnected = false;
     session.browserStatus.pageCount = 0;
-    session.browserInstance = null;
-    session.contextInstance = null;
-    session.chromePid = null;
     session.lastConnectError = error?.message || String(error);
     session.updatedAt = new Date().toISOString();
+
+    // 尝试断开无效的 Playwright 连接引用（不杀进程）
+    const staleBrowser = session.browserInstance;
     try {
       await staleBrowser?.close?.();
     } catch {
       try { staleBrowser?.disconnect?.(); } catch {}
     }
-    if (stalePid) {
-      await killPids([stalePid]).catch(() => {});
-    }
+    session.browserInstance = null;
+    session.contextInstance = null;
+
     return false;
   }
 }
@@ -987,6 +1020,7 @@ async function closeSession(session, { preserveError = false, killProcess = true
   if (!session) return;
 
   const browserInstance = session.browserInstance;
+  const contextInstance = session.contextInstance;
   const chromePid = session.chromePid;
   const debugPort = session.debugPort;
 
@@ -1006,9 +1040,17 @@ async function closeSession(session, { preserveError = false, killProcess = true
   } finally {
     if (killProcess) {
       if (chromePid) {
+        // 有明确 PID 时直接杀
         await killPids([chromePid]).catch(() => {});
-      } else if (debugPort && (browserInstance || session.contextInstance)) {
-        await killPortProcesses(debugPort).catch(() => {});
+      } else if (debugPort && (browserInstance || contextInstance)) {
+        // 仅当会话仍持有浏览器/上下文引用时才通过端口杀进程。
+        // 如果引用已被 isSessionAvailable 等清理掉，说明浏览器可能已被清理或已自然退出，
+        // 此时不应通过端口杀进程，避免误杀新启动的 Chrome 实例。
+        const pids = await getListeningPids(debugPort).catch(() => []);
+        if (pids.length > 0) {
+          logger.info(`环境 ${session.profileId || "default"} 通过端口 ${debugPort} 清理残留进程: pids=${pids.join(",")}`);
+          await killPids(pids).catch(() => {});
+        }
       }
     }
     session.isClosing = false;

@@ -771,6 +771,17 @@ export function launchWithDebugPort({
     const child = spawn(exe, args, { stdio: 'ignore', detached: true });
     child.unref();
     const pid = child.pid;
+
+    // 监听 Chrome 进程异常退出和启动错误，便于排查闪退问题
+    child.on('error', (err) => {
+        logger.error(`Chrome 进程启动失败 (port=${finalPort}): ${err.message}`);
+    });
+    child.on('exit', (code, signal) => {
+        if (code !== 0 && code !== null) {
+            logger.warn(`Chrome 进程异常退出 (port=${finalPort}, pid=${pid}): code=${code}, signal=${signal}`);
+        }
+    });
+
     const modeStr = useHeadless ? '无头' : '有界面';
     logger.info(`已启动 Chrome pid=${pid} port=${finalPort}，模式: ${modeStr}，user-data-dir: ${finalUserDataDir}`);
     return {
@@ -799,11 +810,31 @@ export async function isBrowserAvailable(options = {}) {
         if (browserInstance && !browserInstance.isConnected()) {
             return false;
         }
-        const pages = await getVisiblePagesDetailed();
-        const hasReachableRuntime = pages.some((page) => page.runtimeReachable);
-        const hasOnlyOptionalPages = pages.length > 0 && pages.every((page) => page.isPlaceholderPage);
+
+        // 页面探活失败时增加重试，避免 Chrome 启动中或临时抖动导致误判
+        let pages = [];
+        let hasReachableRuntime = false;
+        let hasOnlyOptionalPages = false;
+        const maxProbeRetries = 2;
+        const probeRetryDelayMs = 2000;
+
+        for (let attempt = 0; attempt < maxProbeRetries; attempt++) {
+            pages = await getVisiblePagesDetailed();
+            hasReachableRuntime = pages.some((page) => page.runtimeReachable);
+            hasOnlyOptionalPages = pages.length > 0 && pages.every((page) => page.isPlaceholderPage);
+
+            if (hasReachableRuntime || hasOnlyOptionalPages || pages.length === 0) {
+                break;
+            }
+
+            if (attempt < maxProbeRetries - 1) {
+                logger.info(`浏览器页面探活未就绪，${probeRetryDelayMs / 1000} 秒后重试 (${attempt + 1}/${maxProbeRetries})`);
+                await new Promise((resolve) => setTimeout(resolve, probeRetryDelayMs));
+            }
+        }
+
         // 在有界面模式下，若已经没有任何可见页，通常意味着用户已手动关闭最后一个浏览器窗口。
-        // 这种情况下按“未连接”处理，避免控制端继续误判为可用。
+        // 这种情况下按”未连接”处理，避免控制端继续误判为可用。
         if (!isHeadlessConnection() && currentMode !== 'cdp' && pages.length === 0) {
             logger.info('浏览器可见页面为 0，按浏览器/上下文已关闭处理');
             browserStatus.isConnected = false;
@@ -1354,7 +1385,7 @@ async function getVisiblePagesDetailed() {
     const pages = getPagesInternal();
     const visiblePages = [];
     const seenPlaceholderKeys = new Set();
-    const probeTimeoutMs = 1500;
+    const probeTimeoutMs = 3000;
     const runtimePayload = buildBrowserRuntimePayload();
 
     for (const page of pages) {
