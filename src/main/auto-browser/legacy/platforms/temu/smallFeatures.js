@@ -242,7 +242,7 @@ function normalizeTemuPublishDetailTriggerMode(value) {
 }
 
 function buildTemuPublishDetailRequestCaptureSettings(input = {}) {
-    const spuId = String(input?.spuId || input?.supId || input?.productId || '').trim();
+    const spuId = String(input?.spuId || input?.productId || '').trim();
 
     return {
         spuId,
