@@ -1193,11 +1193,17 @@ export async function publishToPdd(publishInfo = {}) {
     let stickerCode = String(
       settings.stickerCode ?? publishInfo.stickerCode ?? "",
     ).trim();
-    // 兜底：如果 stickerCode 为空但 productCode 有值，用 productCode 作为 stickerCode
-    // （productCode 可能是 stickerCode 或 stickerCode-vendorProductCode）
+    // 兜底：如果 stickerCode 为空但 productCode 有值，取第一个 "-" 前的部分作为 stickerCode
+    // （productCode 格式为 stickerCode-vendorProductCode 或仅 stickerCode）
     if (!stickerCode && productCode) {
-      stickerCode = productCode;
+      stickerCode = productCode.split('-')[0];
     }
+    logger.info(`${PLATFORM_NAME}编码参数`, {
+      stickerCode,
+      productCode,
+      vendorProductMappingCount: vendorProductMappings.length,
+      vendorProductCodes: vendorProductMappings.map((m) => m?.code),
+    });
     const vendorProductMappings = Array.isArray(settings.vendorProductMappings)
       ? settings.vendorProductMappings
       : [];
