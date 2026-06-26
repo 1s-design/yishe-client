@@ -449,70 +449,50 @@ async function fillPddSkuCodes(page, skuCodes) {
     return { filled: 0, total: 0 };
   }
 
-  logger.info(`${PLATFORM_NAME}开始查找 SKU-PLACEHOLDER 输入框`, {
+  logger.info(`${PLATFORM_NAME}开始通过 JS 填写 SKU 编码`, {
     skuCodeCount: skuCodes.length,
+    skuCodes,
   });
 
-  const scopes = getPddSearchScopes(page);
-  const placeholderInputs = [];
-
-  for (const scope of scopes) {
-    const inputs = scope.locator('input');
-    const count = await inputs.count().catch(() => 0);
-    logger.info(`${PLATFORM_NAME}扫描 input 元素`, { count });
-
-    for (let i = 0; i < count; i += 1) {
-      const input = inputs.nth(i);
-      try {
-        const value = await input.inputValue({ timeout: 500 });
-        if (value === 'SKU-PLACEHOLDER') {
-          placeholderInputs.push(input);
-        }
-      } catch {}
+  const result = await page.evaluate((codes) => {
+    const allInputs = document.querySelectorAll('input');
+    const matchedInputs = [];
+    for (const input of allInputs) {
+      if (input.value === 'SKU-PLACEHOLDER') {
+        matchedInputs.push(input);
+      }
     }
-  }
 
-  logger.info(`${PLATFORM_NAME}查找结果`, {
-    found: placeholderInputs.length,
-    needed: skuCodes.length,
-  });
+    if (!matchedInputs.length) {
+      return { found: 0, filled: 0, total: codes.length, error: '未找到 SKU-PLACEHOLDER 输入框' };
+    }
 
-  if (!placeholderInputs.length) {
-    logger.warn(`${PLATFORM_NAME}未找到 SKU-PLACEHOLDER 输入框，跳过 SKU 编码填写`);
-    return { filled: 0, total: skuCodes.length };
-  }
+    const fillCount = Math.min(matchedInputs.length, codes.length);
+    let filled = 0;
 
-  const fillCount = Math.min(placeholderInputs.length, skuCodes.length);
-  let filled = 0;
+    for (let i = 0; i < fillCount; i += 1) {
+      const code = String(codes[i] || '').trim();
+      if (!code) continue;
 
-  logger.info(`${PLATFORM_NAME}SKU 编码列表`, { skuCodes });
+      const input = matchedInputs[i];
+      // 清空并填入新值
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
 
-  for (let i = 0; i < fillCount; i += 1) {
-    const code = String(skuCodes[i] || '').trim();
-    logger.info(`${PLATFORM_NAME}SKU 编码处理`, { index: i + 1, code, empty: !code });
+      input.value = code;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
 
-    if (!code) continue;
-
-    try {
-      await placeholderInputs[i].click({ timeout: 3000 });
-      await page.keyboard.down('Control');
-      await page.keyboard.press('a');
-      await page.keyboard.up('Control');
-      await page.keyboard.press('Backspace');
-      await page.keyboard.type(code, { delay: 30 });
       filled += 1;
-      logger.info(`${PLATFORM_NAME}SKU 编码已填写`, {
-        index: i + 1,
-        code,
-      });
-    } catch (error) {
-      logger.warn(`${PLATFORM_NAME}SKU 编码填写失败`, {
-        index: i + 1,
-        code,
-        error: error?.message || String(error),
-      });
     }
-  }
+
+    return { found: matchedInputs.length, filled, total: codes.length };
+  }, skuCodes);
+
+  logger.info(`${PLATFORM_NAME}SKU 编码填写结果`, result);
+  return { filled: result.filled, total: skuCodes.length };
+}
 
   logger.info(`${PLATFORM_NAME}SKU 编码填写完成`, {
     filled,
