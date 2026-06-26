@@ -779,7 +779,7 @@ async function clickSubmitAudit(page) {
 
 async function fillTableColumnInputs(
   page,
-  { containerSelector, columnKeyword, value, logPrefix },
+  { containerSelector, columnKeyword, value, values, logPrefix },
 ) {
   const startedAt = Date.now();
   try {
@@ -1080,8 +1080,11 @@ async function fillTableColumnInputs(
 
     const fillDebug = [];
     let filledCount = 0;
-    const targetValue = String(value);
+    const valueArray = Array.isArray(values) ? values : [];
+    let inputIndex = 0;
     for (const inputId of result.taggedInputIds || []) {
+      const targetValue = String(valueArray[inputIndex] ?? value ?? '');
+      inputIndex += 1;
       const elapsedMs = Date.now() - startedAt;
       if (elapsedMs > TABLE_FILL_TOTAL_TIMEOUT_MS) {
         logger.warn(
@@ -1223,6 +1226,22 @@ export async function publishToKuaishouShop(publishInfo = {}) {
         publishInfo.data?.productCode ??
         "",
     ).trim();
+    let stickerCode = String(
+      settings.stickerCode ?? publishInfo.stickerCode ?? "",
+    ).trim();
+    if (!stickerCode && productCode) {
+      stickerCode = productCode.split('-')[0];
+    }
+    const vendorProductMappings = Array.isArray(settings.vendorProductMappings)
+      ? settings.vendorProductMappings
+      : [];
+    const skuCodes = vendorProductMappings.map((mapping) => {
+      const vendorProductCode = String(mapping?.code || '').trim();
+      if (vendorProductCode && stickerCode) {
+        return `${stickerCode}-${vendorProductCode}`;
+      }
+      return stickerCode || productCode || '';
+    });
     const inventoryValue = "999";
 
     logger.info(`开始执行${PLATFORM_NAME}发布流程`);
@@ -1313,8 +1332,17 @@ export async function publishToKuaishouShop(publishInfo = {}) {
       }
     }
 
-    if (!productCode) {
-      logger.info(`${PLATFORM_NAME}SKU编码逻辑：productCode 为空，跳过填写`);
+    if (!productCode && !skuCodes.length) {
+      logger.info(`${PLATFORM_NAME}SKU编码逻辑：productCode 为空且无 skuCodes，跳过填写`);
+    } else if (skuCodes.length > 0) {
+      // per-SKU 编码：逐行填不同编码
+      productCodeFilledCount = await fillTableColumnInputs(page, {
+        containerSelector: SKU_AND_PRICE_CONTAINER_SELECTOR,
+        columnKeyword: "sku",
+        values: skuCodes,
+        value: productCode,
+        logPrefix: "SKU编码逻辑",
+      });
     } else {
       productCodeFilledCount = await fillTableColumnInputs(page, {
         containerSelector: SKU_AND_PRICE_CONTAINER_SELECTOR,

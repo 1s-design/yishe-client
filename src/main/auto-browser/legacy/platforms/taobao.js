@@ -423,15 +423,15 @@ async function fillTaobaoTitle(page, title) {
   return false;
 }
 
-async function fillTaobaoSkuOuterIds(page, productCode) {
+async function fillTaobaoSkuOuterIds(page, productCode, skuCodes = []) {
   const normalizedProductCode = normalizeProductCode(productCode);
   const result = {
     fieldCount: 0,
     filledCount: 0,
   };
 
-  if (!normalizedProductCode) {
-    logger.info("淘宝 productCode 为空，跳过 skuOuterId 填写");
+  if (!normalizedProductCode && !skuCodes.length) {
+    logger.info("淘宝 productCode 为空且无 skuCodes，跳过 skuOuterId 填写");
     return result;
   }
 
@@ -445,6 +445,8 @@ async function fillTaobaoSkuOuterIds(page, productCode) {
   }
 
   for (let index = 0; index < fieldCount; index += 1) {
+    const code = skuCodes[index] || normalizedProductCode;
+    if (!code) continue;
     const field = fieldLocator.nth(index);
     const fieldId = await field.getAttribute("id").catch(() => "");
     const inputCandidates = [
@@ -457,13 +459,13 @@ async function fillTaobaoSkuOuterIds(page, productCode) {
     let filled = false;
     for (const input of inputCandidates) {
       try {
-        if (await fillTextLocator(input, normalizedProductCode)) {
+        if (await fillTextLocator(input, code)) {
           filled = true;
           result.filledCount += 1;
           logger.info("淘宝 skuOuterId 已填写", {
             index,
             fieldId,
-            productCode: normalizedProductCode,
+            code,
           });
           break;
         }
@@ -1468,6 +1470,22 @@ export async function publishToTaobao(publishInfo = {}) {
     const productCode = normalizeProductCode(
       settings.productCode ?? publishInfo.productCode ?? publishInfo.data?.productCode,
     );
+    let stickerCode = String(
+      settings.stickerCode ?? publishInfo.stickerCode ?? "",
+    ).trim();
+    if (!stickerCode && productCode) {
+      stickerCode = productCode.split('-')[0];
+    }
+    const vendorProductMappings = Array.isArray(settings.vendorProductMappings)
+      ? settings.vendorProductMappings
+      : [];
+    const skuCodes = vendorProductMappings.map((mapping) => {
+      const vendorProductCode = String(mapping?.code || '').trim();
+      if (vendorProductCode && stickerCode) {
+        return `${stickerCode}-${vendorProductCode}`;
+      }
+      return stickerCode || productCode || '';
+    });
     const sourceImages =
       Array.isArray(publishInfo.images) && publishInfo.images.length
         ? publishInfo.images
@@ -1566,7 +1584,7 @@ export async function publishToTaobao(publishInfo = {}) {
     }
 
     const titleFilled = await fillTaobaoTitle(page, title);
-    const skuOuterIdFillResult = await fillTaobaoSkuOuterIds(page, productCode);
+    const skuOuterIdFillResult = await fillTaobaoSkuOuterIds(page, productCode, skuCodes);
     const detailImagesClearResult = await clearTaobaoDetailImages(page);
     const detailImagePanelResult = await openTaobaoDetailImagePanel(page);
     const detailImagesSelectResult = detailImagePanelResult.imageButtonClicked

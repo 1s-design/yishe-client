@@ -2096,6 +2096,22 @@ export async function publishToDoudian(publishInfo = {}) {
         publishInfo.data?.productCode ??
         "",
     ).trim();
+    let stickerCode = String(
+      settings.stickerCode ?? publishInfo.stickerCode ?? "",
+    ).trim();
+    if (!stickerCode && productCode) {
+      stickerCode = productCode.split('-')[0];
+    }
+    const vendorProductMappings = Array.isArray(settings.vendorProductMappings)
+      ? settings.vendorProductMappings
+      : [];
+    const skuCodes = vendorProductMappings.map((mapping) => {
+      const vendorProductCode = String(mapping?.code || '').trim();
+      if (vendorProductCode && stickerCode) {
+        return `${stickerCode}-${vendorProductCode}`;
+      }
+      return stickerCode || productCode || '';
+    });
     const stockValue = String(
       settings.stock ?? publishInfo.stock ?? publishInfo.data?.stock ?? "",
     ).trim();
@@ -2528,8 +2544,8 @@ export async function publishToDoudian(publishInfo = {}) {
     }
 
     let productCodeFilledCount = 0;
-    if (!productCode) {
-      logger.info("抖店商家编码逻辑：productCode 为空，跳过填写");
+    if (!productCode && !skuCodes.length) {
+      logger.info("抖店商家编码逻辑：productCode 为空且无 skuCodes，跳过填写");
     } else {
       try {
         const productCodeSelector =
@@ -2537,18 +2553,20 @@ export async function publishToDoudian(publishInfo = {}) {
         const productCodeInputs = page.locator(productCodeSelector);
         const inputCount = await productCodeInputs.count();
         logger.info(
-          `抖店商家编码逻辑：准备填写商家编码，inputCount=${inputCount}, value=${productCode}`,
+          `抖店商家编码逻辑：准备填写商家编码，inputCount=${inputCount}, productCode=${productCode}, skuCodes=${JSON.stringify(skuCodes)}`,
         );
 
         for (let index = 0; index < inputCount; index += 1) {
+          const code = skuCodes[index] || productCode;
+          if (!code) continue;
           const input = productCodeInputs.nth(index);
           await input.waitFor({ timeout: 5000, state: "visible" });
           await input.scrollIntoViewIfNeeded().catch(() => undefined);
           await input.click({ clickCount: 3 }).catch(() => undefined);
           await input.fill("").catch(() => undefined);
-          await input.fill(productCode);
+          await input.fill(code);
           productCodeFilledCount += 1;
-          logger.info(`抖店商家编码逻辑：已填写 input[${index}]`);
+          logger.info(`抖店商家编码逻辑：已填写 input[${index}] = ${code}`);
         }
       } catch (error) {
         logger.warn(`抖店商家编码逻辑执行失败: ${error?.message || error}`);
