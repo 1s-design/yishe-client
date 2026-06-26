@@ -454,44 +454,55 @@ async function fillPddSkuCodes(page, skuCodes) {
     skuCodes,
   });
 
-  const result = await page.evaluate((codes) => {
-    const allInputs = document.querySelectorAll('input');
-    const matchedInputs = [];
-    for (const input of allInputs) {
-      if (input.value === 'SKU-PLACEHOLDER') {
-        matchedInputs.push(input);
+  // 遍历所有 frame（包括 iframe）
+  const frames = [page, ...page.frames()];
+  let totalResult = { found: 0, filled: 0, total: skuCodes.length };
+
+  for (const frame of frames) {
+    const result = await frame.evaluate((codes) => {
+      const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      const allInputs = document.querySelectorAll('input');
+      const matchedInputs = [];
+      for (const input of allInputs) {
+        if (input.value === 'SKU-PLACEHOLDER') {
+          matchedInputs.push(input);
+        }
       }
+
+      if (!matchedInputs.length) {
+        return { found: 0, filled: 0 };
+      }
+
+      const fillCount = Math.min(matchedInputs.length, codes.length);
+      let filled = 0;
+
+      for (let i = 0; i < fillCount; i += 1) {
+        const code = String(codes[i] || '').trim();
+        if (!code) continue;
+
+        const input = matchedInputs[i];
+        input.focus();
+        nativeSet.call(input, code);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.dispatchEvent(new Event('blur', { bubbles: true }));
+        filled += 1;
+      }
+
+      return { found: matchedInputs.length, filled };
+    }, skuCodes);
+
+    totalResult.found += result.found;
+    totalResult.filled += result.filled;
+
+    if (result.found > 0) {
+      logger.info(`${PLATFORM_NAME}frame 中找到 SKU-PLACEHOLDER`, result);
+      break;
     }
+  }
 
-    if (!matchedInputs.length) {
-      return { found: 0, filled: 0, total: codes.length, error: '未找到 SKU-PLACEHOLDER 输入框' };
-    }
-
-    const fillCount = Math.min(matchedInputs.length, codes.length);
-    let filled = 0;
-
-    for (let i = 0; i < fillCount; i += 1) {
-      const code = String(codes[i] || '').trim();
-      if (!code) continue;
-
-      const input = matchedInputs[i];
-      // 清空并填入新值
-      input.value = '';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-
-      input.value = code;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-
-      filled += 1;
-    }
-
-    return { found: matchedInputs.length, filled, total: codes.length };
-  }, skuCodes);
-
-  logger.info(`${PLATFORM_NAME}SKU 编码填写结果`, result);
-  return { filled: result.filled, total: skuCodes.length };
+  logger.info(`${PLATFORM_NAME}SKU 编码填写结果`, totalResult);
+  return { filled: totalResult.filled, total: skuCodes.length };
 }
 
 async function submitPddProduct(page) {
