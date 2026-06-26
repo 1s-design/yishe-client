@@ -443,6 +443,86 @@ async function fillPddProductTitle(page, title) {
   );
 }
 
+async function fillPddSkuCodes(page, skuCodes) {
+  if (!Array.isArray(skuCodes) || !skuCodes.length) {
+    logger.info(`${PLATFORM_NAME}未提供 SKU 编码，跳过填写`);
+    return { filled: 0, total: 0 };
+  }
+
+  logger.info(`${PLATFORM_NAME}开始查找 SKU-PLACEHOLDER 输入框`, {
+    skuCodeCount: skuCodes.length,
+  });
+
+  const scopes = getPddSearchScopes(page);
+  const placeholderInputs = [];
+
+  for (const scope of scopes) {
+    const inputs = scope.locator('input');
+    const count = await inputs.count().catch(() => 0);
+    logger.info(`${PLATFORM_NAME}扫描 input 元素`, { count });
+
+    for (let i = 0; i < count; i += 1) {
+      const input = inputs.nth(i);
+      try {
+        const value = await input.inputValue({ timeout: 500 });
+        if (value === 'SKU-PLACEHOLDER') {
+          placeholderInputs.push(input);
+        }
+      } catch {}
+    }
+  }
+
+  logger.info(`${PLATFORM_NAME}查找结果`, {
+    found: placeholderInputs.length,
+    needed: skuCodes.length,
+  });
+
+  if (!placeholderInputs.length) {
+    logger.warn(`${PLATFORM_NAME}未找到 SKU-PLACEHOLDER 输入框，跳过 SKU 编码填写`);
+    return { filled: 0, total: skuCodes.length };
+  }
+
+  const fillCount = Math.min(placeholderInputs.length, skuCodes.length);
+  let filled = 0;
+
+  logger.info(`${PLATFORM_NAME}SKU 编码列表`, { skuCodes });
+
+  for (let i = 0; i < fillCount; i += 1) {
+    const code = String(skuCodes[i] || '').trim();
+    logger.info(`${PLATFORM_NAME}SKU 编码处理`, { index: i + 1, code, empty: !code });
+
+    if (!code) continue;
+
+    try {
+      await placeholderInputs[i].click({ timeout: 3000 });
+      await page.keyboard.down('Control');
+      await page.keyboard.press('a');
+      await page.keyboard.up('Control');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type(code, { delay: 30 });
+      filled += 1;
+      logger.info(`${PLATFORM_NAME}SKU 编码已填写`, {
+        index: i + 1,
+        code,
+      });
+    } catch (error) {
+      logger.warn(`${PLATFORM_NAME}SKU 编码填写失败`, {
+        index: i + 1,
+        code,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  logger.info(`${PLATFORM_NAME}SKU 编码填写完成`, {
+    filled,
+    total: skuCodes.length,
+    placeholderCount: placeholderInputs.length,
+  });
+
+  return { filled, total: skuCodes.length };
+}
+
 async function submitPddProduct(page) {
   await clickPddButtonByExactText(page, "提交并上架", "提交并上架按钮", {
     timeout: 30000,
@@ -1110,6 +1190,17 @@ export async function publishToPdd(publishInfo = {}) {
     const productCode = String(
       settings.productCode ?? publishInfo.productCode ?? "",
     ).trim();
+    let stickerCode = String(
+      settings.stickerCode ?? publishInfo.stickerCode ?? "",
+    ).trim();
+    // 兜底：如果 stickerCode 为空但 productCode 有值，用 productCode 作为 stickerCode
+    // （productCode 可能是 stickerCode 或 stickerCode-vendorProductCode）
+    if (!stickerCode && productCode) {
+      stickerCode = productCode;
+    }
+    const vendorProductMappings = Array.isArray(settings.vendorProductMappings)
+      ? settings.vendorProductMappings
+      : [];
     const sourceImages =
       Array.isArray(publishInfo.images) && publishInfo.images.length
         ? publishInfo.images
@@ -1122,6 +1213,8 @@ export async function publishToPdd(publishInfo = {}) {
       goodsListUrl: PDD_GOODS_LIST_URL,
       title,
       productCode,
+      stickerCode,
+      vendorProductMappingCount: vendorProductMappings.length,
       imageCount: sourceImages.length,
       profileId: publishInfo?.profileId || "default",
     });
@@ -1172,6 +1265,17 @@ export async function publishToPdd(publishInfo = {}) {
       settings,
     );
     tempFiles.push(...(mainImageUploadResult.tempFiles || []));
+
+    // 构建 SKU 编码列表：有供应商商品码时拼接 stickerCode-vendorProductCode，否则用 stickerCode
+    const skuCodes = vendorProductMappings.map((mapping) => {
+      const vendorProductCode = String(mapping?.code || '').trim();
+      if (vendorProductCode && stickerCode) {
+        return `${stickerCode}-${vendorProductCode}`;
+      }
+      return stickerCode || '';
+    });
+    const skuCodeResult = await fillPddSkuCodes(page, skuCodes);
+
     const filledTitle = await fillPddProductTitle(page, title);
     const submitted = await submitPddProduct(page);
     shouldClosePage = true;
@@ -1213,6 +1317,10 @@ export async function publishToPdd(publishInfo = {}) {
         mainImageDetailConfirmClicked:
           mainImageUploadResult.detailConfirmClicked,
         mainImageSkuSelected: mainImageUploadResult.skuSelected,
+        stickerCode,
+        skuCodes,
+        skuCodeFilled: skuCodeResult.filled,
+        skuCodeTotal: skuCodeResult.total,
         submitted,
         pageKeptOpen: false,
         automationStage: "submitted",
