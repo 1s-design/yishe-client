@@ -1198,15 +1198,15 @@ export async function publishToPdd(publishInfo = {}) {
     if (!stickerCode && productCode) {
       stickerCode = productCode.split('-')[0];
     }
+    const vendorProductMappings = Array.isArray(settings.vendorProductMappings)
+      ? settings.vendorProductMappings
+      : [];
     logger.info(`${PLATFORM_NAME}编码参数`, {
       stickerCode,
       productCode,
       vendorProductMappingCount: vendorProductMappings.length,
       vendorProductCodes: vendorProductMappings.map((m) => m?.code),
     });
-    const vendorProductMappings = Array.isArray(settings.vendorProductMappings)
-      ? settings.vendorProductMappings
-      : [];
     const sourceImages =
       Array.isArray(publishInfo.images) && publishInfo.images.length
         ? publishInfo.images
