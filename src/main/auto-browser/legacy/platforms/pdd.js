@@ -494,15 +494,6 @@ async function fillPddSkuCodes(page, skuCodes) {
   return { filled: result.filled, total: skuCodes.length };
 }
 
-  logger.info(`${PLATFORM_NAME}SKU 编码填写完成`, {
-    filled,
-    total: skuCodes.length,
-    placeholderCount: placeholderInputs.length,
-  });
-
-  return { filled, total: skuCodes.length };
-}
-
 async function submitPddProduct(page) {
   await clickPddButtonByExactText(page, "提交并上架", "提交并上架按钮", {
     timeout: 30000,
