@@ -435,11 +435,19 @@ function clearCachedTemuStoredSession(profileId?: string | null) {
 }
 
 async function acquireAndSyncTemuStoredSession(profileId: string) {
+  // 从已存储的会话中提取账号密码，传给 session acquire 用于自动登录
+  const existingSession = getCachedTemuStoredSession(profileId) || null;
+  const storedAccount = String(existingSession?.account || existingSession?.session?.account || '').trim();
+  const storedPassword = String(existingSession?.password || existingSession?.session?.password || '').trim();
+
   const response = await runUploaderBrowserSmallFeature("temu-session-acquire", {
     profileId,
     keepPageOpen: true,
     collectRegionCookies: true,
     timeoutMs: 4 * 60 * 1000,
+    ...(storedAccount ? { account: storedAccount } : {}),
+    ...(storedPassword ? { password: storedPassword } : {}),
+    ...(existingSession ? { temuStoredSession: existingSession } : {}),
   });
   const sessionBundle = response?.data?.sessionBundle;
   if (!response.success || !hasUsableTemuStoredSession(sessionBundle)) {
