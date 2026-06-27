@@ -988,42 +988,31 @@ export async function collectTemuSessionBundle(page, options = {}) {
             targetUrl: TEMU_SELLER_HOME_URL,
             previousUrlWasTemu: isTemuSessionProbePage(page.url())
         });
-        // 如果当前已在认证页上，等待自动跳转完成而不是跳到 settle 页面
-        let currentUrlForAuth = String(page.url() || '');
-        if (/\/auth\/authentication/i.test(currentUrlForAuth)) {
-            logger.info(`${PLATFORM_NAME}会话采集：已在认证页，等待自动跳转`, { currentUrl: currentUrlForAuth });
-            // 认证页通常会自动跳转，等待 URL 变化
-            for (let wait = 0; wait < 15; wait++) {
-                await page.waitForTimeout(2000);
-                const urlNow = String(page.url() || '');
-                if (!/\/auth\/authentication/i.test(urlNow)) {
-                    logger.info(`${PLATFORM_NAME}认证页已跳转`, { newUrl: urlNow });
-                    break;
-                }
-                // 尝试点击可能的确认按钮
-                await clickClickableByText(page, TEMU_AUTHENTICATION_CONTINUE_LABELS, {
-                    selector: 'button,[role="button"],a',
-                    exact: false
-                }).catch(() => {});
-            }
-        } else {
+        // 检查当前是否已在 seller 域名上（已登录）
+        let currentUrl = String(page.url() || '');
+        const isOnSellerDomain = TEMU_SELLER_HOST_KEYWORDS.some((keyword) => currentUrl.includes(keyword));
+
+        if (!isOnSellerDomain) {
+            // 不在 seller 域名，导航到首页
             await page.goto(TEMU_SELLER_HOME_URL, {
                 waitUntil: 'domcontentloaded',
                 timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
             });
             await page.waitForTimeout(TEMU_SESSION_HOME_SETTLE_MS);
-
-            const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
-            if (!authorizationResult.success) {
-                return {
-                    success: false,
-                    reason: authorizationResult.reason === 'not_logged_in'
-                        ? 'login_required'
-                        : (authorizationResult.reason || 'global_region_authorization_failed'),
-                    message: authorizationResult.message || 'Temu 全球区授权确认失败，无法继续采集会话'
-                };
-            }
+            currentUrl = String(page.url() || '');
         }
+
+        // 判断是否已登录：在 seller 域名上且不在登录页
+        const isOnLoginPage = /login|passport/i.test(currentUrl) && !/auth\/authentication/i.test(currentUrl);
+        if (isOnLoginPage) {
+            return {
+                success: false,
+                reason: 'login_required',
+                message: '当前环境未登录 Temu，需要先登录'
+            };
+        }
+
+        logger.info(`${PLATFORM_NAME}会话采集：已在 seller 域名，直接采集`, { currentUrl });
 
         await page.goto(TEMU_SELLER_HOME_URL, {
             waitUntil: 'domcontentloaded',
