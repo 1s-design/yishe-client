@@ -1,7 +1,7 @@
 import { getOrCreateBrowser } from '../../services/BrowserService.js';
 import { PageOperator } from '../../services/PageOperator.js';
 import { logger } from '../../utils/logger.js';
-import { PLATFORM_NAME } from './constants.js';
+import { PLATFORM_NAME, TEMU_SELLER_HOME_URL } from './constants.js';
 import {
     normalizeTemuSettings,
     pushTrace,
@@ -162,19 +162,30 @@ export async function publishToTemu(publishInfo = {}) {
 
         requestCapture = createTemuLiveRequestCapture(page.context());
 
-        logger.info(`${PLATFORM_NAME}准备打开商品创建页: ${settings.createUrl}`);
-        await page.goto(settings.createUrl, {
+        // 先访问 seller 首页检测登录状态
+        logger.info(`${PLATFORM_NAME}先访问 seller 首页检测登录状态`);
+        await page.goto(TEMU_SELLER_HOME_URL, {
             waitUntil: 'domcontentloaded',
             timeout: 60000
         });
-        await page.waitForTimeout(4000);
-        pushTrace(executionTrace, 'open_create_page', 'success', {
-            currentUrl: page.url()
-        });
+        await page.waitForTimeout(3000);
 
         let loginState = await resolveTemuLoginState(page);
-        logger.info(`${PLATFORM_NAME}登录检测结果: ${loginState.loggedIn ? '已登录' : '未登录'}`, loginState);
+        logger.info(`${PLATFORM_NAME}登录检测结果: ${loginState.loggedIn ? '已登录' : '未登录'}`, {
+            currentUrl: page.url(),
+            reason: loginState.reason
+        });
         pushTrace(executionTrace, 'check_login_state', loginState.loggedIn ? 'success' : 'pending', loginState);
+
+        if (loginState.loggedIn) {
+            // 已登录，跳转到商品创建页
+            logger.info(`${PLATFORM_NAME}已登录，准备打开商品创建页: ${settings.createUrl}`);
+            await page.goto(settings.createUrl, {
+                waitUntil: 'domcontentloaded',
+                timeout: 60000
+            });
+            await page.waitForTimeout(3000);
+        }
 
         if (!loginState.loggedIn) {
             const loginCredentials = await resolveTemuLoginCredentials(publishInfo);
