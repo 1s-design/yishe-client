@@ -1059,7 +1059,7 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
             });
         }
 
-        // 先访问 seller 首页检测登录状态
+        // 先访问 seller 首页检测登录状态（带重试）
         if (managePage || page.url() === 'about:blank') {
             logger.info(`${PLATFORM_NAME}会话获取步骤：先访问 seller 首页检测登录状态`);
             await page.goto(TEMU_SELLER_HOME_URL, {
@@ -1069,7 +1069,14 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
             await page.waitForTimeout(3000);
         }
 
-        const loginStateBefore = await resolveTemuLoginState(page);
+        let loginStateBefore = await resolveTemuLoginState(page);
+        // 如果检测为未登录，等待更久再试一次（页面可能还在跳转）
+        if (!loginStateBefore.loggedIn) {
+            logger.info(`${PLATFORM_NAME}首次检测未登录，等待后重试`, { currentUrl: page.url(), reason: loginStateBefore.reason });
+            await page.waitForTimeout(5000);
+            loginStateBefore = await resolveTemuLoginState(page);
+            logger.info(`${PLATFORM_NAME}重试检测结果`, { loggedIn: loginStateBefore.loggedIn, currentUrl: page.url(), reason: loginStateBefore.reason });
+        }
         pushTrace(executionTrace, 'check_login_state_before', loginStateBefore.loggedIn ? 'success' : 'pending', loginStateBefore);
 
         let acquireMessage = `${PLATFORM_NAME}会话获取完成`;
