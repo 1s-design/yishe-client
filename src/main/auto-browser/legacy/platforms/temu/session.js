@@ -1,16 +1,8 @@
 import {
     PLATFORM_NAME,
     TEMU_SELLER_HOME_URL,
-    TEMU_USERINFO_API_URL,
-    TEMU_AUTHENTICATION_CONTINUE_LABELS
+    TEMU_USERINFO_API_URL
 } from './constants.js';
-import {
-    ensureTemuGlobalRegionAuthorization,
-    handleTemuAuthenticationPage
-} from './login.js';
-import {
-    clickClickableByText
-} from './page.js';
 import {
     logger
 } from '../../utils/logger.js';
@@ -1020,32 +1012,9 @@ export async function collectTemuSessionBundle(page, options = {}) {
         });
         await page.waitForTimeout(TEMU_SESSION_AUTH_SETTLE_MS);
 
-        let currentUrl = String(page.url() || '');
-        if (/\/auth\/authentication/i.test(currentUrl)) {
-            const authenticationResult = await handleTemuAuthenticationPage(page, 25_000);
-            if (!authenticationResult.success) {
-                const sessionProbe = await probeTemuAuthenticatedSessionFromContext(page, trafficCapture.state);
-                if (sessionProbe.success) {
-                    warnings.push(`认证页未跳转，但 userInfo 已确认当前会话有效，继续采集；${authenticationResult.reason || 'authentication_page_pending'}`);
-                    logger.warn(`${PLATFORM_NAME}认证页未完成但会话已有效，继续采集`, {
-                        currentUrl: authenticationResult.currentUrl || currentUrl,
-                        authReason: authenticationResult.reason || '',
-                        cookieCount: sessionProbe.cookieCount || 0,
-                        userInfoMessage: sessionProbe.message || ''
-                    });
-                } else {
-                    return {
-                        success: false,
-                        reason: authenticationResult.reason || 'authentication_required',
-                        message: authenticationResult.message || '当前环境停留在 Temu 认证页，请完成认证后重新采集会话',
-                        currentUrl: authenticationResult.currentUrl || currentUrl,
-                        sessionProbe
-                    };
-                }
-            }
-            currentUrl = String(page.url() || '');
-        }
-        if (/login|passport/i.test(currentUrl)) {
+        // 重新检查 URL，如果跳到了登录页则返回未登录
+        currentUrl = String(page.url() || '');
+        if (/login|passport/i.test(currentUrl) && !/auth\/authentication/i.test(currentUrl)) {
             return {
                 success: false,
                 reason: 'login_required',
