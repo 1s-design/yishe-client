@@ -1,12 +1,16 @@
 import {
     PLATFORM_NAME,
     TEMU_SELLER_HOME_URL,
-    TEMU_USERINFO_API_URL
+    TEMU_USERINFO_API_URL,
+    TEMU_AUTHENTICATION_CONTINUE_LABELS
 } from './constants.js';
 import {
     ensureTemuGlobalRegionAuthorization,
     handleTemuAuthenticationPage
 } from './login.js';
+import {
+    clickClickableByText
+} from './page.js';
 import {
     logger
 } from '../../utils/logger.js';
@@ -984,13 +988,23 @@ export async function collectTemuSessionBundle(page, options = {}) {
             targetUrl: TEMU_SELLER_HOME_URL,
             previousUrlWasTemu: isTemuSessionProbePage(page.url())
         });
-        // 如果当前已在认证页上，等待认证完成而不是跳到 settle 页面
+        // 如果当前已在认证页上，等待自动跳转完成而不是跳到 settle 页面
         let currentUrlForAuth = String(page.url() || '');
         if (/\/auth\/authentication/i.test(currentUrlForAuth)) {
-            logger.info(`${PLATFORM_NAME}会话采集：已在认证页，等待认证完成`, { currentUrl: currentUrlForAuth });
-            const authResult = await handleTemuAuthenticationPage(page, 30_000);
-            if (!authResult.success) {
-                logger.warn(`${PLATFORM_NAME}认证页处理失败，尝试继续采集`, { reason: authResult.reason });
+            logger.info(`${PLATFORM_NAME}会话采集：已在认证页，等待自动跳转`, { currentUrl: currentUrlForAuth });
+            // 认证页通常会自动跳转，等待 URL 变化
+            for (let wait = 0; wait < 15; wait++) {
+                await page.waitForTimeout(2000);
+                const urlNow = String(page.url() || '');
+                if (!/\/auth\/authentication/i.test(urlNow)) {
+                    logger.info(`${PLATFORM_NAME}认证页已跳转`, { newUrl: urlNow });
+                    break;
+                }
+                // 尝试点击可能的确认按钮
+                await clickClickableByText(page, TEMU_AUTHENTICATION_CONTINUE_LABELS, {
+                    selector: 'button,[role="button"],a',
+                    exact: false
+                }).catch(() => {});
             }
         } else {
             await page.goto(TEMU_SELLER_HOME_URL, {
