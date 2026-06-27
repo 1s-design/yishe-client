@@ -161,11 +161,15 @@ const UPLOADER_POLL_INTERVAL_MS = 2000;
 const UPLOADER_POLL_TIMEOUT_MS = 30 * 60 * 1000;
 const UPLOADER_RUNTIME_SYNC_MIN_INTERVAL_MS = 8000;
 
-export function getPlatformCapability(platform: string): PlatformCapability | null {
+export function getPlatformCapability(
+  platform: string,
+): PlatformCapability | null {
   return PLATFORM_CAPABILITIES[platform] || null;
 }
 
-export function getPlatformCapabilityByTaskType(taskType: string): PlatformCapability | null {
+export function getPlatformCapabilityByTaskType(
+  taskType: string,
+): PlatformCapability | null {
   const normalizedTaskType = String(taskType || "").trim();
   if (!normalizedTaskType) return null;
   return (
@@ -436,19 +440,72 @@ function clearCachedTemuStoredSession(profileId?: string | null) {
 
 async function acquireAndSyncTemuStoredSession(profileId: string) {
   // 从已存储的会话中提取账号密码，传给 session acquire 用于自动登录
-  const existingSession = getCachedTemuStoredSession(profileId) || null;
-  const storedAccount = String(existingSession?.account || existingSession?.session?.account || '').trim();
-  const storedPassword = String(existingSession?.password || existingSession?.session?.password || '').trim();
+  let existingSession = getCachedTemuStoredSession(profileId);
+  let rawDbSession: Record<string, any> | null = null;
+  if (!existingSession) {
+    // 缓存为空，从数据库加载
+    try {
+      const dbSession = await getPlatformSessions({
+        platform: "temu",
+        profileId,
+      });
+      if (dbSession) {
+        rawDbSession = dbSession;
+        existingSession = buildTemuStoredSessionBundle(dbSession);
+        if (existingSession) {
+          setCachedTemuStoredSession(profileId, existingSession);
+        }
+      }
+    } catch (e) {
+      console.warn("acquireAndSyncTemuStoredSession: 加载已存储会话失败", e);
+    }
+  }
+  // 优先从 session bundle 提取，若 cookies 已过期导致 bundle 为 undefined，则直接从原始 DB 数据中提取账号密码
+  // NestJS TransformInterceptor 会将响应包裹在 { data: {...}, code: 0 } 中，需要逐层解包
+  const rawData = isPlainObject(rawDbSession?.data) ? rawDbSession.data : null;
+  const storedAccount = String(
+    existingSession?.account ||
+      existingSession?.session?.account ||
+      rawDbSession?.account ||
+      rawDbSession?.session?.account ||
+      rawData?.account ||
+      rawData?.session?.account ||
+      "",
+  ).trim();
+  const storedPassword = String(
+    existingSession?.password ||
+      existingSession?.session?.password ||
+      rawDbSession?.password ||
+      rawDbSession?.session?.password ||
+      rawData?.password ||
+      rawData?.session?.password ||
+      "",
+  ).trim();
 
-  const response = await runUploaderBrowserSmallFeature("temu-session-acquire", {
-    profileId,
-    keepPageOpen: true,
-    collectRegionCookies: true,
-    timeoutMs: 4 * 60 * 1000,
-    ...(storedAccount ? { account: storedAccount } : {}),
-    ...(storedPassword ? { password: storedPassword } : {}),
-    ...(existingSession ? { temuStoredSession: existingSession } : {}),
+  console.log("[acquireAndSyncTemuStoredSession] 凭证检查", {
+    hasCachedSession: !!getCachedTemuStoredSession(profileId),
+    hasExistingSession: !!existingSession,
+    hasAccount: !!storedAccount,
+    hasPassword: !!storedPassword,
+    hasRawDbSession: !!rawDbSession,
+    hasRawData: !!rawData,
+    rawDbTopKeys: rawDbSession ? Object.keys(rawDbSession).slice(0, 10) : [],
+    rawDataTopKeys: rawData ? Object.keys(rawData).slice(0, 10) : [],
+    sessionKeys: existingSession ? Object.keys(existingSession) : [],
   });
+
+  const response = await runUploaderBrowserSmallFeature(
+    "temu-session-acquire",
+    {
+      profileId,
+      keepPageOpen: true,
+      collectRegionCookies: true,
+      timeoutMs: 4 * 60 * 1000,
+      ...(storedAccount ? { account: storedAccount } : {}),
+      ...(storedPassword ? { password: storedPassword } : {}),
+      ...(existingSession ? { temuStoredSession: existingSession } : {}),
+    },
+  );
   const sessionBundle = response?.data?.sessionBundle;
   if (!response.success || !hasUsableTemuStoredSession(sessionBundle)) {
     throw new Error(response.message || "Temu 会话采集失败");
@@ -480,8 +537,7 @@ function isTemuStoredSessionInvalidError(error: any) {
   return (
     /cookie|cookies|session|auth|authorization|unauthorized|login|logged|401|403/i.test(
       message,
-    ) ||
-    /未登录|登录|会话|授权|鉴权|认证|过期|失效/.test(message)
+    ) || /未登录|登录|会话|授权|鉴权|认证|过期|失效/.test(message)
   );
 }
 
@@ -653,9 +709,7 @@ async function enrichTemuStoredSession(
     return publishData;
   }
 
-  if (
-    hasUsableTemuStoredSession(publishData?.temuStoredSession)
-  ) {
+  if (hasUsableTemuStoredSession(publishData?.temuStoredSession)) {
     setCachedTemuStoredSession(profileId, publishData.temuStoredSession);
     return compactObject({
       ...publishData,
@@ -687,10 +741,13 @@ async function enrichTemuStoredSession(
       ...(temuStoredSession ? { temuStoredSession } : {}),
     });
   } catch (error) {
-    console.warn("preparePublishTask: 加载 Temu 已存储会话失败，本次不主动采集", {
-      profileId,
-      error,
-    });
+    console.warn(
+      "preparePublishTask: 加载 Temu 已存储会话失败，本次不主动采集",
+      {
+        profileId,
+        error,
+      },
+    );
     return compactObject({ ...publishData, profileId });
   }
 }
@@ -804,18 +861,18 @@ function normalizeFromFlatPublishData(
       platform === "temu"
         ? undefined
         : typeof publishData?.productCode === "string" &&
-      publishData.productCode.trim()
-        ? publishData.productCode.trim()
-        : typeof nestedPlatformOptions?.productCode === "string" &&
-            nestedPlatformOptions.productCode.trim()
-          ? nestedPlatformOptions.productCode.trim()
-          : typeof nestedPublishOptions?.productCode === "string" &&
-              nestedPublishOptions.productCode.trim()
-            ? nestedPublishOptions.productCode.trim()
-            : typeof nestedPlatformSettings?.productCode === "string" &&
-                nestedPlatformSettings.productCode.trim()
-              ? nestedPlatformSettings.productCode.trim()
-              : undefined,
+            publishData.productCode.trim()
+          ? publishData.productCode.trim()
+          : typeof nestedPlatformOptions?.productCode === "string" &&
+              nestedPlatformOptions.productCode.trim()
+            ? nestedPlatformOptions.productCode.trim()
+            : typeof nestedPublishOptions?.productCode === "string" &&
+                nestedPublishOptions.productCode.trim()
+              ? nestedPublishOptions.productCode.trim()
+              : typeof nestedPlatformSettings?.productCode === "string" &&
+                  nestedPlatformSettings.productCode.trim()
+                ? nestedPlatformSettings.productCode.trim()
+                : undefined,
   });
   const explicitFields = buildExplicitPublishFields(
     platform,
@@ -1231,18 +1288,18 @@ function buildPublishRequestBody(
       platform === "temu"
         ? undefined
         : typeof task.publishData?.productCode === "string" &&
-      task.publishData.productCode.trim()
-        ? task.publishData.productCode.trim()
-        : typeof platformOptions?.productCode === "string" &&
-            platformOptions.productCode.trim()
-          ? platformOptions.productCode.trim()
-          : typeof publishOptions?.productCode === "string" &&
-              publishOptions.productCode.trim()
-            ? publishOptions.productCode.trim()
-            : typeof platformSettings?.productCode === "string" &&
-                platformSettings.productCode.trim()
-              ? platformSettings.productCode.trim()
-              : undefined,
+            task.publishData.productCode.trim()
+          ? task.publishData.productCode.trim()
+          : typeof platformOptions?.productCode === "string" &&
+              platformOptions.productCode.trim()
+            ? platformOptions.productCode.trim()
+            : typeof publishOptions?.productCode === "string" &&
+                publishOptions.productCode.trim()
+              ? publishOptions.productCode.trim()
+              : typeof platformSettings?.productCode === "string" &&
+                  platformSettings.productCode.trim()
+                ? platformSettings.productCode.trim()
+                : undefined,
     platform: task.platform,
     platforms: [task.platform],
   });
@@ -1557,7 +1614,11 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
       sourceId: initialSourceId,
       profileId: profileId || null,
     });
-    await this.updateTaskRuntime(row, buildRuntimeSnapshot(initialSourceId), context);
+    await this.updateTaskRuntime(
+      row,
+      buildRuntimeSnapshot(initialSourceId),
+      context,
+    );
     await this.appendTaskRuntimeLogs(
       row,
       {
@@ -1601,7 +1662,8 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
           logs: [
             normalizeRuntimeLogItem({
               level: "warn",
-              message: "Temu 会话不可用，正在重新采集 cookie 并同步服务端后重试",
+              message:
+                "Temu 会话不可用，正在重新采集 cookie 并同步服务端后重试",
               timestamp: new Date().toISOString(),
             }),
           ],
@@ -1713,7 +1775,8 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
       });
 
       const mappedStatus = mapUploaderTaskStatus(runtimeTask.status);
-      const runtimeFingerprint = buildRuntimeSnapshotFingerprint(runtimeSnapshot);
+      const runtimeFingerprint =
+        buildRuntimeSnapshotFingerprint(runtimeSnapshot);
       const shouldSyncRuntime =
         mappedStatus !== "processing" ||
         runtimeLogs.length > 0 ||

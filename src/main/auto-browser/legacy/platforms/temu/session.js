@@ -1,55 +1,56 @@
 import {
-    PLATFORM_NAME,
-    TEMU_SELLER_HOME_URL,
-    TEMU_USERINFO_API_URL,
-    TEMU_SELLER_HOST_KEYWORDS
-} from './constants.js';
+  PLATFORM_NAME,
+  TEMU_SELLER_HOME_URL,
+  TEMU_USERINFO_API_URL,
+} from "./constants.js";
 import {
-    logger
-} from '../../utils/logger.js';
+  ensureTemuGlobalRegionAuthorization,
+  resolveTemuLoginState,
+} from "./login.js";
+import { logger } from "../../utils/logger.js";
 
-const TEMU_DEFAULT_ACCEPT = 'application/json, text/plain, */*';
+const TEMU_DEFAULT_ACCEPT = "application/json, text/plain, */*";
 const TEMU_REGION_URLS = {
-    global: TEMU_SELLER_HOME_URL,
-    us: 'https://agentseller-us.temu.com/',
-    eu: 'https://agentseller-eu.temu.com/'
+  global: TEMU_SELLER_HOME_URL,
+  us: "https://agentseller-us.temu.com/",
+  eu: "https://agentseller-eu.temu.com/",
 };
 const TEMU_REGION_HOSTS = {
-    global: 'agentseller.temu.com',
-    us: 'agentseller-us.temu.com',
-    eu: 'agentseller-eu.temu.com'
+  global: "agentseller.temu.com",
+  us: "agentseller-us.temu.com",
+  eu: "agentseller-eu.temu.com",
 };
 const TEMU_REGION_COOKIE_DOMAINS = {
-    global: ['temu.com', 'agentseller.temu.com'],
-    us: ['temu.com', 'agentseller-us.temu.com'],
-    eu: ['temu.com', 'agentseller-eu.temu.com']
+  global: ["temu.com", "agentseller.temu.com"],
+  us: ["temu.com", "agentseller-us.temu.com"],
+  eu: ["temu.com", "agentseller-eu.temu.com"],
 };
-const TEMU_REGION_SWITCHER_TEXT_MARKERS = ['全球', '美国', '欧区', '商家中心'];
+const TEMU_REGION_SWITCHER_TEXT_MARKERS = ["全球", "美国", "欧区", "商家中心"];
 const TEMU_REGION_CLICK_INDEX = {
-    us: 1,
-    eu: 2
+  us: 1,
+  eu: 2,
 };
-const TEMU_REGION_CARD_SELECTOR = 'a.index-module__drItem___kEdZY';
+const TEMU_REGION_CARD_SELECTOR = "a.index-module__drItem___kEdZY";
 const TEMU_CAPTURE_HEADER_KEYS = [
-    'accept',
-    'accept-language',
-    'anti-content',
-    'cache-control',
-    'content-type',
-    'mallid',
-    'origin',
-    'priority',
-    'referer',
-    'sec-ch-ua',
-    'sec-ch-ua-mobile',
-    'sec-ch-ua-platform',
-    'sec-fetch-dest',
-    'sec-fetch-mode',
-    'sec-fetch-site',
-    'user-agent'
+  "accept",
+  "accept-language",
+  "anti-content",
+  "cache-control",
+  "content-type",
+  "mallid",
+  "origin",
+  "priority",
+  "referer",
+  "sec-ch-ua",
+  "sec-ch-ua-mobile",
+  "sec-ch-ua-platform",
+  "sec-fetch-dest",
+  "sec-fetch-mode",
+  "sec-fetch-site",
+  "user-agent",
 ];
 const TEMU_CAPTURE_WARMUP_URLS = [
-    'https://agentseller.temu.com/newon/product-select'
+  "https://agentseller.temu.com/newon/product-select",
 ];
 const TEMU_SESSION_HOME_GOTO_TIMEOUT_MS = 35_000;
 const TEMU_SESSION_HOME_SETTLE_MS = 1_500;
@@ -59,1200 +60,1347 @@ const TEMU_SESSION_CAPTURE_WARMUP_SETTLE_MS = 1_500;
 const TEMU_REGION_COOKIE_GOTO_TIMEOUT_MS = 25_000;
 const TEMU_REGION_COOKIE_SETTLE_MS = 1_500;
 
-function isTemuSessionProbePage(pageUrl = '') {
-    const currentUrl = String(pageUrl || '').trim();
-    if (!currentUrl || currentUrl === 'about:blank') {
-        return false;
-    }
-    return /(^https?:\/\/)?([^/]+\.)?(temu\.com|kuajingmaihuo\.com)\b/i.test(currentUrl);
+function isTemuSessionProbePage(pageUrl = "") {
+  const currentUrl = String(pageUrl || "").trim();
+  if (!currentUrl || currentUrl === "about:blank") {
+    return false;
+  }
+  return /(^https?:\/\/)?([^/]+\.)?(temu\.com|kuajingmaihuo\.com)\b/i.test(
+    currentUrl,
+  );
 }
 
 function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function normalizeMatcherText(value = '') {
-    return String(value || '').replace(/\s+/g, '');
+function normalizeMatcherText(value = "") {
+  return String(value || "").replace(/\s+/g, "");
 }
 
-function normalizeCookieDomain(value = '') {
-    const normalized = String(value || '').trim().toLowerCase();
-    return normalized.startsWith('.') ? normalized.slice(1) : normalized;
+function normalizeCookieDomain(value = "") {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized.startsWith(".") ? normalized.slice(1) : normalized;
 }
 
-function filterCookieEntries(cookieEntries = [], domainKeyword = '') {
-    const safeDomainKeywords = Array.isArray(domainKeyword)
-        ? domainKeyword.map((item) => normalizeCookieDomain(item)).filter(Boolean)
-        : [normalizeCookieDomain(domainKeyword)].filter(Boolean);
+function filterCookieEntries(cookieEntries = [], domainKeyword = "") {
+  const safeDomainKeywords = Array.isArray(domainKeyword)
+    ? domainKeyword.map((item) => normalizeCookieDomain(item)).filter(Boolean)
+    : [normalizeCookieDomain(domainKeyword)].filter(Boolean);
 
-    return cookieEntries.filter((cookie) => {
-        if (!cookie?.name) {
-            return false;
-        }
-
-        if (!safeDomainKeywords.length) {
-            return true;
-        }
-
-        const cookieDomain = normalizeCookieDomain(cookie.domain);
-        return !!cookieDomain && safeDomainKeywords.includes(cookieDomain);
-    });
-}
-
-function normalizeCookieEntries(cookieEntries = [], domainKeyword = '') {
-    const result = {};
-
-    for (const cookie of filterCookieEntries(cookieEntries, domainKeyword)) {
-        result[cookie.name] = cookie.value;
+  return cookieEntries.filter((cookie) => {
+    if (!cookie?.name) {
+      return false;
     }
 
-    return result;
+    if (!safeDomainKeywords.length) {
+      return true;
+    }
+
+    const cookieDomain = normalizeCookieDomain(cookie.domain);
+    return !!cookieDomain && safeDomainKeywords.includes(cookieDomain);
+  });
+}
+
+function normalizeCookieEntries(cookieEntries = [], domainKeyword = "") {
+  const result = {};
+
+  for (const cookie of filterCookieEntries(cookieEntries, domainKeyword)) {
+    result[cookie.name] = cookie.value;
+  }
+
+  return result;
 }
 
 function buildCookieHeader(cookies = {}) {
-    return Object.entries(cookies)
-        .filter(([name, value]) => String(name || '').trim() && value !== undefined && value !== null)
-        .map(([name, value]) => `${name}=${value}`)
-        .join('; ');
+  return Object.entries(cookies)
+    .filter(
+      ([name, value]) =>
+        String(name || "").trim() && value !== undefined && value !== null,
+    )
+    .map(([name, value]) => `${name}=${value}`)
+    .join("; ");
 }
 
 function extractTemuCaptureHeaders(headers = {}) {
-    return TEMU_CAPTURE_HEADER_KEYS.reduce((result, key) => {
-        const value = String(headers?.[key] || '').trim();
-        if (!value || value === 'undefined') {
-            return result;
-        }
+  return TEMU_CAPTURE_HEADER_KEYS.reduce((result, key) => {
+    const value = String(headers?.[key] || "").trim();
+    if (!value || value === "undefined") {
+      return result;
+    }
 
-        result[key] = value;
-        return result;
-    }, {});
+    result[key] = value;
+    return result;
+  }, {});
 }
 
-function normalizeTemuRegionKey(value = '') {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized === 'us' || normalized === 'eu') {
-        return normalized;
-    }
-    return 'global';
+function normalizeTemuRegionKey(value = "") {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "us" || normalized === "eu") {
+    return normalized;
+  }
+  return "global";
 }
 
 function getFallbackOriginFromUrl(pageUrl) {
-    try {
-        const url = new URL(String(pageUrl || '').trim() || TEMU_SELLER_HOME_URL);
-        return url.origin;
-    } catch {
-        return new URL(TEMU_SELLER_HOME_URL).origin;
-    }
+  try {
+    const url = new URL(String(pageUrl || "").trim() || TEMU_SELLER_HOME_URL);
+    return url.origin;
+  } catch {
+    return new URL(TEMU_SELLER_HOME_URL).origin;
+  }
 }
 
 function buildRegionHeaders(regionKey, sessionInfo = {}) {
-    const regionUrl = TEMU_REGION_URLS[regionKey] || TEMU_REGION_URLS.global;
-    const origin = new URL(regionUrl).origin;
-    const headers = {
-        accept: TEMU_DEFAULT_ACCEPT,
-        'content-type': 'application/json',
-        origin,
-        referer: regionUrl,
-        'user-agent': String(sessionInfo.userAgent || '').trim()
-    };
+  const regionUrl = TEMU_REGION_URLS[regionKey] || TEMU_REGION_URLS.global;
+  const origin = new URL(regionUrl).origin;
+  const headers = {
+    accept: TEMU_DEFAULT_ACCEPT,
+    "content-type": "application/json",
+    origin,
+    referer: regionUrl,
+    "user-agent": String(sessionInfo.userAgent || "").trim(),
+  };
 
-    if (sessionInfo.antiContent) {
-        headers['anti-content'] = sessionInfo.antiContent;
-    }
-    if (sessionInfo.mallId) {
-        headers.mallid = String(sessionInfo.mallId);
-    }
+  if (sessionInfo.antiContent) {
+    headers["anti-content"] = sessionInfo.antiContent;
+  }
+  if (sessionInfo.mallId) {
+    headers.mallid = String(sessionInfo.mallId);
+  }
 
-    return headers;
+  return headers;
 }
 
-function pickSelectedMall(mallList = [], preferredMallId = '') {
-    const safeMallId = String(preferredMallId || '').trim();
-    if (!Array.isArray(mallList) || !mallList.length) {
-        return null;
-    }
+function pickSelectedMall(mallList = [], preferredMallId = "") {
+  const safeMallId = String(preferredMallId || "").trim();
+  if (!Array.isArray(mallList) || !mallList.length) {
+    return null;
+  }
 
-    if (safeMallId) {
-        const matchedMall = mallList.find((item) => String(item?.mallId || '') === safeMallId);
-        if (matchedMall) {
-            return matchedMall;
-        }
+  if (safeMallId) {
+    const matchedMall = mallList.find(
+      (item) => String(item?.mallId || "") === safeMallId,
+    );
+    if (matchedMall) {
+      return matchedMall;
     }
+  }
 
-    return mallList[0] || null;
+  return mallList[0] || null;
 }
 
 function summarizeCookieDomains(cookieEntries = []) {
-    const domains = Array.from(new Set(
-        cookieEntries
-            .map((item) => String(item?.domain || '').trim())
-            .filter(Boolean)
-    ));
+  const domains = Array.from(
+    new Set(
+      cookieEntries
+        .map((item) => String(item?.domain || "").trim())
+        .filter(Boolean),
+    ),
+  );
 
-    return domains.sort();
+  return domains.sort();
 }
 
 function collectTemuCookieMaps(cookieEntries = [], options = {}) {
-    const includeRegionalCookies = options.includeRegionalCookies !== false;
-    const cookiesGlobal = normalizeCookieEntries(
-        cookieEntries,
-        TEMU_REGION_COOKIE_DOMAINS.global
-    );
-    const cookiesUs = includeRegionalCookies
-        ? normalizeCookieEntries(cookieEntries, TEMU_REGION_COOKIE_DOMAINS.us)
-        : {};
-    const cookiesEu = includeRegionalCookies
-        ? normalizeCookieEntries(cookieEntries, TEMU_REGION_COOKIE_DOMAINS.eu)
-        : {};
+  const includeRegionalCookies = options.includeRegionalCookies !== false;
+  const cookiesGlobal = normalizeCookieEntries(
+    cookieEntries,
+    TEMU_REGION_COOKIE_DOMAINS.global,
+  );
+  const cookiesUs = includeRegionalCookies
+    ? normalizeCookieEntries(cookieEntries, TEMU_REGION_COOKIE_DOMAINS.us)
+    : {};
+  const cookiesEu = includeRegionalCookies
+    ? normalizeCookieEntries(cookieEntries, TEMU_REGION_COOKIE_DOMAINS.eu)
+    : {};
 
-    return {
-        cookies: cookiesGlobal,
-        cookies_global: cookiesGlobal,
-        cookies_us: cookiesUs,
-        cookies_eu: cookiesEu
-    };
+  return {
+    cookies: cookiesGlobal,
+    cookies_global: cookiesGlobal,
+    cookies_us: cookiesUs,
+    cookies_eu: cookiesEu,
+  };
 }
 
-export function inspectTemuSessionBundleCompleteness(sessionBundle = {}, options = {}) {
-    const requireRegionalCookies = options.requireRegionalCookies !== false;
-    const requireAntiContent = options.requireAntiContent !== false;
-    const requireIdentity = options.requireIdentity !== false;
-    const globalCookies = sessionBundle?.cookies_global && typeof sessionBundle.cookies_global === 'object'
-        ? sessionBundle.cookies_global
-        : (sessionBundle?.cookies && typeof sessionBundle.cookies === 'object'
-            ? sessionBundle.cookies
-            : {});
-    const usCookies = sessionBundle?.cookies_us && typeof sessionBundle.cookies_us === 'object'
-        ? sessionBundle.cookies_us
+export function inspectTemuSessionBundleCompleteness(
+  sessionBundle = {},
+  options = {},
+) {
+  const requireRegionalCookies = options.requireRegionalCookies !== false;
+  const requireAntiContent = options.requireAntiContent !== false;
+  const requireIdentity = options.requireIdentity !== false;
+  const globalCookies =
+    sessionBundle?.cookies_global &&
+    typeof sessionBundle.cookies_global === "object"
+      ? sessionBundle.cookies_global
+      : sessionBundle?.cookies && typeof sessionBundle.cookies === "object"
+        ? sessionBundle.cookies
         : {};
-    const euCookies = sessionBundle?.cookies_eu && typeof sessionBundle.cookies_eu === 'object'
-        ? sessionBundle.cookies_eu
+  const usCookies =
+    sessionBundle?.cookies_us && typeof sessionBundle.cookies_us === "object"
+      ? sessionBundle.cookies_us
+      : {};
+  const euCookies =
+    sessionBundle?.cookies_eu && typeof sessionBundle.cookies_eu === "object"
+      ? sessionBundle.cookies_eu
+      : {};
+  const headersTemplate =
+    sessionBundle?.headersTemplate &&
+    typeof sessionBundle.headersTemplate === "object"
+      ? sessionBundle.headersTemplate
+      : sessionBundle?.headers && typeof sessionBundle.headers === "object"
+        ? sessionBundle.headers
         : {};
-    const headersTemplate = sessionBundle?.headersTemplate && typeof sessionBundle.headersTemplate === 'object'
-        ? sessionBundle.headersTemplate
-        : (sessionBundle?.headers && typeof sessionBundle.headers === 'object'
-            ? sessionBundle.headers
-            : {});
-    const antiContent = String(
-        sessionBundle?.antiContent || headersTemplate['anti-content'] || ''
-    ).trim();
-    const mallList = Array.isArray(sessionBundle?.mallList) ? sessionBundle.mallList : [];
-    const accountId = String(sessionBundle?.accountId || '').trim();
-    const mallId = String(sessionBundle?.mallId || headersTemplate.mallid || '').trim();
-    const missing = [];
+  const antiContent = String(
+    sessionBundle?.antiContent || headersTemplate["anti-content"] || "",
+  ).trim();
+  const mallList = Array.isArray(sessionBundle?.mallList)
+    ? sessionBundle.mallList
+    : [];
+  const accountId = String(sessionBundle?.accountId || "").trim();
+  const mallId = String(
+    sessionBundle?.mallId || headersTemplate.mallid || "",
+  ).trim();
+  const missing = [];
 
-    if (!Object.keys(globalCookies).length) {
-        missing.push('全球 Cookie');
-    }
-    if (requireRegionalCookies && !Object.keys(usCookies).length) {
-        missing.push('美区 Cookie');
-    }
-    if (requireRegionalCookies && !Object.keys(euCookies).length) {
-        missing.push('欧区 Cookie');
-    }
-    if (requireAntiContent && !antiContent) {
-        missing.push('anti-content');
-    }
-    if (requireIdentity && !accountId) {
-        missing.push('账号身份');
-    }
-    if (requireIdentity && !mallId) {
-        missing.push('店铺 ID');
-    }
-    if (requireIdentity && !mallList.length) {
-        missing.push('店铺列表');
-    }
+  if (!Object.keys(globalCookies).length) {
+    missing.push("全球 Cookie");
+  }
+  if (requireRegionalCookies && !Object.keys(usCookies).length) {
+    missing.push("美区 Cookie");
+  }
+  if (requireRegionalCookies && !Object.keys(euCookies).length) {
+    missing.push("欧区 Cookie");
+  }
+  if (requireAntiContent && !antiContent) {
+    missing.push("anti-content");
+  }
+  if (requireIdentity && !accountId) {
+    missing.push("账号身份");
+  }
+  if (requireIdentity && !mallId) {
+    missing.push("店铺 ID");
+  }
+  if (requireIdentity && !mallList.length) {
+    missing.push("店铺列表");
+  }
 
-    return {
-        success: missing.length === 0,
-        missing,
-        cookieCounts: {
-            global: Object.keys(globalCookies).length,
-            us: Object.keys(usCookies).length,
-            eu: Object.keys(euCookies).length
-        },
-        accountId,
-        mallId,
-        mallCount: mallList.length,
-        antiContentReady: !!antiContent
-    };
+  return {
+    success: missing.length === 0,
+    missing,
+    cookieCounts: {
+      global: Object.keys(globalCookies).length,
+      us: Object.keys(usCookies).length,
+      eu: Object.keys(euCookies).length,
+    },
+    accountId,
+    mallId,
+    mallCount: mallList.length,
+    antiContentReady: !!antiContent,
+  };
 }
 
 function buildTemuSessionIncompleteMessage(completeness, extraReasons = []) {
-    const missingText = Array.isArray(completeness?.missing) && completeness.missing.length
-        ? `缺少 ${completeness.missing.join(' / ')}`
-        : '关键信息不完整';
-    const normalizedReasons = Array.from(new Set(
-        (Array.isArray(extraReasons) ? extraReasons : [])
-            .map((item) => String(item || '').trim())
-            .filter(Boolean)
-    ));
+  const missingText =
+    Array.isArray(completeness?.missing) && completeness.missing.length
+      ? `缺少 ${completeness.missing.join(" / ")}`
+      : "关键信息不完整";
+  const normalizedReasons = Array.from(
+    new Set(
+      (Array.isArray(extraReasons) ? extraReasons : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    ),
+  );
 
-    return normalizedReasons.length
-        ? `Temu 会话采集不完整，${missingText}；${normalizedReasons.join('；')}`
-        : `Temu 会话采集不完整，${missingText}`;
+  return normalizedReasons.length
+    ? `Temu 会话采集不完整，${missingText}；${normalizedReasons.join("；")}`
+    : `Temu 会话采集不完整，${missingText}`;
 }
 
-function isTemuInvalidLoginStateMessage(value = '') {
-    const message = String(value || '').trim();
-    if (!message) {
-        return false;
-    }
-    return (
-        /Invalid Login State/i.test(message) ||
-        /invalid_login_state/i.test(message) ||
-        /登录态.*失效|登录.*失效|请.*登录|未登录/.test(message)
-    );
+function isTemuInvalidLoginStateMessage(value = "") {
+  const message = String(value || "").trim();
+  if (!message) {
+    return false;
+  }
+  return (
+    /Invalid Login State/i.test(message) ||
+    /invalid_login_state/i.test(message) ||
+    /登录态.*失效|登录.*失效|请.*登录|未登录/.test(message)
+  );
 }
 
-async function resolveTemuCurrentUserAgent(page, fallbackValue = '') {
-    const fallback = String(fallbackValue || '').trim();
-    if (!page) {
-        return fallback;
-    }
+async function resolveTemuCurrentUserAgent(page, fallbackValue = "") {
+  const fallback = String(fallbackValue || "").trim();
+  if (!page) {
+    return fallback;
+  }
 
-    try {
-        const userAgent = await page.evaluate(() => navigator.userAgent || '');
-        return String(userAgent || '').trim() || fallback;
-    } catch {
-        return fallback;
-    }
+  try {
+    const userAgent = await page.evaluate(() => navigator.userAgent || "");
+    return String(userAgent || "").trim() || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export async function getTemuCurrentSessionContext(page, options = {}) {
-    if (!page || typeof page.context !== 'function') {
-        return {
-            success: false,
-            requestedRegion: normalizeTemuRegionKey(options?.region),
-            effectiveRegion: 'global',
-            message: '缺少可用页面，无法获取当前 Temu 会话'
-        };
+  if (!page || typeof page.context !== "function") {
+    return {
+      success: false,
+      requestedRegion: normalizeTemuRegionKey(options?.region),
+      effectiveRegion: "global",
+      message: "缺少可用页面，无法获取当前 Temu 会话",
+    };
+  }
+
+  try {
+    const context = page.context();
+    const currentUrl = String(page.url() || "").trim();
+    const allCookies = await context.cookies();
+    const cookieMaps = collectTemuCookieMaps(allCookies, options);
+    const requestedRegion = normalizeTemuRegionKey(options?.region);
+    const preferredCookies =
+      requestedRegion === "us"
+        ? cookieMaps.cookies_us
+        : requestedRegion === "eu"
+          ? cookieMaps.cookies_eu
+          : cookieMaps.cookies_global;
+    const preferredCookieCount = Object.keys(preferredCookies).length;
+    const effectiveRegion =
+      preferredCookieCount > 0 || requestedRegion === "global"
+        ? requestedRegion
+        : "global";
+    const activeCookies =
+      effectiveRegion === "us"
+        ? cookieMaps.cookies_us
+        : effectiveRegion === "eu"
+          ? cookieMaps.cookies_eu
+          : cookieMaps.cookies_global;
+    const userAgent = await resolveTemuCurrentUserAgent(
+      page,
+      options?.headersTemplate?.["user-agent"],
+    );
+    const origin = String(
+      options?.headersTemplate?.origin ||
+        options?.origin ||
+        getFallbackOriginFromUrl(currentUrl),
+    ).trim();
+    const referer = String(
+      options?.headersTemplate?.referer ||
+        options?.referer ||
+        currentUrl ||
+        `${origin}/`,
+    ).trim();
+    const mallId = String(
+      options?.mallId ||
+        cookieMaps.cookies_global.mallid ||
+        cookieMaps.cookies_us.mallid ||
+        cookieMaps.cookies_eu.mallid ||
+        options?.headersTemplate?.mallid ||
+        "",
+    ).trim();
+    const antiContent = String(
+      options?.antiContent || options?.headersTemplate?.["anti-content"] || "",
+    ).trim();
+    const sessionInfo = {
+      userAgent,
+      antiContent,
+      mallId,
+    };
+    const headersTemplate = {
+      ...buildRegionHeaders("global", sessionInfo),
+      ...(options?.headersTemplate &&
+      typeof options.headersTemplate === "object"
+        ? options.headersTemplate
+        : {}),
+    };
+    if (mallId) {
+      headersTemplate.mallid = mallId;
     }
 
-    try {
-        const context = page.context();
-        const currentUrl = String(page.url() || '').trim();
-        const allCookies = await context.cookies();
-        const cookieMaps = collectTemuCookieMaps(allCookies, options);
-        const requestedRegion = normalizeTemuRegionKey(options?.region);
-        const preferredCookies =
-            requestedRegion === 'us'
-                ? cookieMaps.cookies_us
-                : requestedRegion === 'eu'
-                    ? cookieMaps.cookies_eu
-                    : cookieMaps.cookies_global;
-        const preferredCookieCount = Object.keys(preferredCookies).length;
-        const effectiveRegion =
-            preferredCookieCount > 0 || requestedRegion === 'global'
-                ? requestedRegion
-                : 'global';
-        const activeCookies =
-            effectiveRegion === 'us'
-                ? cookieMaps.cookies_us
-                : effectiveRegion === 'eu'
-                    ? cookieMaps.cookies_eu
-                    : cookieMaps.cookies_global;
-        const userAgent = await resolveTemuCurrentUserAgent(
-            page,
-            options?.headersTemplate?.['user-agent']
-        );
-        const origin = String(
-            options?.headersTemplate?.origin || options?.origin || getFallbackOriginFromUrl(currentUrl)
-        ).trim();
-        const referer = String(
-            options?.headersTemplate?.referer || options?.referer || currentUrl || `${origin}/`
-        ).trim();
-        const mallId = String(
-            options?.mallId
-            || cookieMaps.cookies_global.mallid
-            || cookieMaps.cookies_us.mallid
-            || cookieMaps.cookies_eu.mallid
-            || options?.headersTemplate?.mallid
-            || ''
-        ).trim();
-        const antiContent = String(
-            options?.antiContent || options?.headersTemplate?.['anti-content'] || ''
-        ).trim();
-        const sessionInfo = {
-            userAgent,
-            antiContent,
-            mallId
-        };
-        const headersTemplate = {
-            ...buildRegionHeaders('global', sessionInfo),
-            ...(options?.headersTemplate && typeof options.headersTemplate === 'object'
-                ? options.headersTemplate
-                : {})
-        };
-        if (mallId) {
-            headersTemplate.mallid = mallId;
-        }
-
-        const regionHeaders = {
-            global: {
-                ...buildRegionHeaders('global', sessionInfo),
-                ...(effectiveRegion === 'global' ? headersTemplate : {})
-            },
-            us: buildRegionHeaders('us', sessionInfo),
-            eu: buildRegionHeaders('eu', sessionInfo)
-        };
-        const activeHeaders =
-            effectiveRegion === 'us'
-                ? regionHeaders.us
-                : effectiveRegion === 'eu'
-                    ? regionHeaders.eu
-                    : regionHeaders.global;
-        const temuCookieEntries = filterCookieEntries(
-            allCookies,
-            Array.from(new Set([
-                ...TEMU_REGION_COOKIE_DOMAINS.global,
-                ...TEMU_REGION_COOKIE_DOMAINS.us,
-                ...TEMU_REGION_COOKIE_DOMAINS.eu
-            ]))
-        );
-        const warnings = [];
-        if (requestedRegion !== effectiveRegion) {
-            warnings.push(`${requestedRegion.toUpperCase()} 区域当前未拿到独立 cookies，已回退使用 GLOBAL`);
-        }
-
-        return {
-            success: true,
-            requestedRegion,
-            effectiveRegion,
-            currentUrl,
-            userAgent,
-            mallId,
-            antiContent,
-            headers: activeHeaders,
-            headersTemplate,
-            regionHeaders,
-            cookies: activeCookies,
-            cookies_global: cookieMaps.cookies_global,
-            cookies_us: cookieMaps.cookies_us,
-            cookies_eu: cookieMaps.cookies_eu,
-            cookieHeader: buildCookieHeader(activeCookies),
-            cookieHeaders: {
-                global: buildCookieHeader(cookieMaps.cookies_global),
-                us: buildCookieHeader(cookieMaps.cookies_us),
-                eu: buildCookieHeader(cookieMaps.cookies_eu)
-            },
-            cookieCount: Object.keys(activeCookies).length,
-            cookieCounts: {
-                global: Object.keys(cookieMaps.cookies_global).length,
-                us: Object.keys(cookieMaps.cookies_us).length,
-                eu: Object.keys(cookieMaps.cookies_eu).length
-            },
-            cookieDomains: summarizeCookieDomains(temuCookieEntries),
-            warnings
-        };
-    } catch (error) {
-        return {
-            success: false,
-            requestedRegion: normalizeTemuRegionKey(options?.region),
-            effectiveRegion: 'global',
-            message: error?.message || String(error)
-        };
+    const regionHeaders = {
+      global: {
+        ...buildRegionHeaders("global", sessionInfo),
+        ...(effectiveRegion === "global" ? headersTemplate : {}),
+      },
+      us: buildRegionHeaders("us", sessionInfo),
+      eu: buildRegionHeaders("eu", sessionInfo),
+    };
+    const activeHeaders =
+      effectiveRegion === "us"
+        ? regionHeaders.us
+        : effectiveRegion === "eu"
+          ? regionHeaders.eu
+          : regionHeaders.global;
+    const temuCookieEntries = filterCookieEntries(
+      allCookies,
+      Array.from(
+        new Set([
+          ...TEMU_REGION_COOKIE_DOMAINS.global,
+          ...TEMU_REGION_COOKIE_DOMAINS.us,
+          ...TEMU_REGION_COOKIE_DOMAINS.eu,
+        ]),
+      ),
+    );
+    const warnings = [];
+    if (requestedRegion !== effectiveRegion) {
+      warnings.push(
+        `${requestedRegion.toUpperCase()} 区域当前未拿到独立 cookies，已回退使用 GLOBAL`,
+      );
     }
+
+    return {
+      success: true,
+      requestedRegion,
+      effectiveRegion,
+      currentUrl,
+      userAgent,
+      mallId,
+      antiContent,
+      headers: activeHeaders,
+      headersTemplate,
+      regionHeaders,
+      cookies: activeCookies,
+      cookies_global: cookieMaps.cookies_global,
+      cookies_us: cookieMaps.cookies_us,
+      cookies_eu: cookieMaps.cookies_eu,
+      cookieHeader: buildCookieHeader(activeCookies),
+      cookieHeaders: {
+        global: buildCookieHeader(cookieMaps.cookies_global),
+        us: buildCookieHeader(cookieMaps.cookies_us),
+        eu: buildCookieHeader(cookieMaps.cookies_eu),
+      },
+      cookieCount: Object.keys(activeCookies).length,
+      cookieCounts: {
+        global: Object.keys(cookieMaps.cookies_global).length,
+        us: Object.keys(cookieMaps.cookies_us).length,
+        eu: Object.keys(cookieMaps.cookies_eu).length,
+      },
+      cookieDomains: summarizeCookieDomains(temuCookieEntries),
+      warnings,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      requestedRegion: normalizeTemuRegionKey(options?.region),
+      effectiveRegion: "global",
+      message: error?.message || String(error),
+    };
+  }
 }
 
 function createTemuRequestCapture(context) {
-    const state = {
-        requestCount: 0,
-        antiContent: '',
-        mallId: '',
-        origin: '',
-        referer: '',
-        userAgent: '',
-        capturedHeaders: {},
-        lastRequestUrl: '',
-        requestSamples: []
-    };
+  const state = {
+    requestCount: 0,
+    antiContent: "",
+    mallId: "",
+    origin: "",
+    referer: "",
+    userAgent: "",
+    capturedHeaders: {},
+    lastRequestUrl: "",
+    requestSamples: [],
+  };
 
-    const onRequest = (request) => {
-        try {
-            const url = String(request.url() || '');
-            const resourceType = String(request.resourceType() || '');
-            if (!/temu\.com|kuajingmaihuo\.com/i.test(url)) {
-                return;
-            }
-            if (!['xhr', 'fetch', 'document'].includes(resourceType)) {
-                return;
-            }
+  const onRequest = (request) => {
+    try {
+      const url = String(request.url() || "");
+      const resourceType = String(request.resourceType() || "");
+      if (!/temu\.com|kuajingmaihuo\.com/i.test(url)) {
+        return;
+      }
+      if (!["xhr", "fetch", "document"].includes(resourceType)) {
+        return;
+      }
 
-            const headers = request.headers();
-            const normalizedHeaders = Object.fromEntries(
-                Object.entries(headers || {}).map(([key, value]) => [String(key || '').toLowerCase(), String(value || '').trim()])
-            );
-            const capturedHeaders = extractTemuCaptureHeaders(normalizedHeaders);
+      const headers = request.headers();
+      const normalizedHeaders = Object.fromEntries(
+        Object.entries(headers || {}).map(([key, value]) => [
+          String(key || "").toLowerCase(),
+          String(value || "").trim(),
+        ]),
+      );
+      const capturedHeaders = extractTemuCaptureHeaders(normalizedHeaders);
 
-            state.requestCount += 1;
-            state.lastRequestUrl = url;
-            if (Object.keys(capturedHeaders).length) {
-                state.capturedHeaders = {
-                    ...state.capturedHeaders,
-                    ...capturedHeaders
-                };
-            }
+      state.requestCount += 1;
+      state.lastRequestUrl = url;
+      if (Object.keys(capturedHeaders).length) {
+        state.capturedHeaders = {
+          ...state.capturedHeaders,
+          ...capturedHeaders,
+        };
+      }
 
-            if (state.capturedHeaders['anti-content']) {
-                state.antiContent = state.capturedHeaders['anti-content'];
-            }
-            if (state.capturedHeaders.mallid) {
-                state.mallId = state.capturedHeaders.mallid;
-            }
-            if (state.capturedHeaders.origin) {
-                state.origin = state.capturedHeaders.origin;
-            }
-            if (state.capturedHeaders.referer) {
-                state.referer = state.capturedHeaders.referer;
-            }
-            if (state.capturedHeaders['user-agent']) {
-                state.userAgent = state.capturedHeaders['user-agent'];
-            }
+      if (state.capturedHeaders["anti-content"]) {
+        state.antiContent = state.capturedHeaders["anti-content"];
+      }
+      if (state.capturedHeaders.mallid) {
+        state.mallId = state.capturedHeaders.mallid;
+      }
+      if (state.capturedHeaders.origin) {
+        state.origin = state.capturedHeaders.origin;
+      }
+      if (state.capturedHeaders.referer) {
+        state.referer = state.capturedHeaders.referer;
+      }
+      if (state.capturedHeaders["user-agent"]) {
+        state.userAgent = state.capturedHeaders["user-agent"];
+      }
 
-            if (state.requestSamples.length < 8) {
-                state.requestSamples.push({
-                    url,
-                    resourceType,
-                    hasAntiContent: !!normalizedHeaders['anti-content'],
-                    mallId: normalizedHeaders.mallid || '',
-                    origin: normalizedHeaders.origin || '',
-                    referer: normalizedHeaders.referer || ''
-                });
-            }
-        } catch {
-            // ignore request capture failures
-        }
-    };
+      if (state.requestSamples.length < 8) {
+        state.requestSamples.push({
+          url,
+          resourceType,
+          hasAntiContent: !!normalizedHeaders["anti-content"],
+          mallId: normalizedHeaders.mallid || "",
+          origin: normalizedHeaders.origin || "",
+          referer: normalizedHeaders.referer || "",
+        });
+      }
+    } catch {
+      // ignore request capture failures
+    }
+  };
 
-    context.on('request', onRequest);
+  context.on("request", onRequest);
 
-    return {
-        state,
-        dispose() {
-            context.off('request', onRequest);
-        }
-    };
+  return {
+    state,
+    dispose() {
+      context.off("request", onRequest);
+    },
+  };
 }
 
-async function waitForCaptureWarmup(captureState, timeoutMs = TEMU_SESSION_CAPTURE_WARMUP_TIMEOUT_MS) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        if (captureState.requestCount > 0 && (captureState.antiContent || captureState.origin || captureState.referer)) {
-            return true;
-        }
-        await sleep(400);
+async function waitForCaptureWarmup(
+  captureState,
+  timeoutMs = TEMU_SESSION_CAPTURE_WARMUP_TIMEOUT_MS,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (
+      captureState.requestCount > 0 &&
+      (captureState.antiContent || captureState.origin || captureState.referer)
+    ) {
+      return true;
     }
-    return captureState.requestCount > 0;
+    await sleep(400);
+  }
+  return captureState.requestCount > 0;
 }
 
 async function warmupTemuTrafficCapture(page, captureState) {
-    for (const warmupUrl of TEMU_CAPTURE_WARMUP_URLS) {
-        try {
-            await page.goto(warmupUrl, {
-                waitUntil: 'domcontentloaded',
-                timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
-            });
-            await page.waitForTimeout(TEMU_SESSION_CAPTURE_WARMUP_SETTLE_MS);
-            await waitForCaptureWarmup(captureState, TEMU_SESSION_CAPTURE_WARMUP_SETTLE_MS);
+  for (const warmupUrl of TEMU_CAPTURE_WARMUP_URLS) {
+    try {
+      await page.goto(warmupUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS,
+      });
+      await page.waitForTimeout(TEMU_SESSION_CAPTURE_WARMUP_SETTLE_MS);
+      await waitForCaptureWarmup(
+        captureState,
+        TEMU_SESSION_CAPTURE_WARMUP_SETTLE_MS,
+      );
 
-            if (captureState.antiContent || captureState.mallId) {
-                return {
-                    success: true,
-                    url: warmupUrl
-                };
-            }
-        } catch (error) {
-            return {
-                success: false,
-                url: warmupUrl,
-                message: error?.message || String(error)
-            };
-        }
-    }
-
-    return {
+      if (captureState.antiContent || captureState.mallId) {
+        return {
+          success: true,
+          url: warmupUrl,
+        };
+      }
+    } catch (error) {
+      return {
         success: false,
-        url: ''
-    };
+        url: warmupUrl,
+        message: error?.message || String(error),
+      };
+    }
+  }
+
+  return {
+    success: false,
+    url: "",
+  };
 }
 
 async function postJsonWithTimeout(url, options = {}, timeoutMs = 15_000) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error(`request timeout after ${timeoutMs}ms`)), timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`request timeout after ${timeoutMs}ms`)),
+    timeoutMs,
+  );
 
-    try {
-        return await fetch(url, {
-            ...options,
-            signal: controller.signal
-        });
-    } finally {
-        clearTimeout(timer);
-    }
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchTemuUserInfo(headersTemplate = {}, cookies = {}) {
-    const cookieHeader = buildCookieHeader(cookies);
-    if (!cookieHeader) {
-        return {
-            success: false,
-            message: 'cookies 为空，无法请求 userInfo'
+  const cookieHeader = buildCookieHeader(cookies);
+  if (!cookieHeader) {
+    return {
+      success: false,
+      message: "cookies 为空，无法请求 userInfo",
+    };
+  }
+
+  const baseHeaders = {
+    accept: headersTemplate.accept || TEMU_DEFAULT_ACCEPT,
+    "content-type": headersTemplate["content-type"] || "application/json",
+    origin: headersTemplate.origin || new URL(TEMU_SELLER_HOME_URL).origin,
+    referer: headersTemplate.referer || TEMU_SELLER_HOME_URL,
+    cookie: cookieHeader,
+  };
+
+  if (headersTemplate["user-agent"]) {
+    baseHeaders["user-agent"] = headersTemplate["user-agent"];
+  }
+
+  const attemptHeadersList = [];
+  if (headersTemplate["anti-content"]) {
+    attemptHeadersList.push({
+      ...baseHeaders,
+      "anti-content": headersTemplate["anti-content"],
+    });
+  }
+  attemptHeadersList.push(baseHeaders);
+
+  let lastFailure = null;
+
+  for (const requestHeaders of attemptHeadersList) {
+    try {
+      const response = await postJsonWithTimeout(TEMU_USERINFO_API_URL, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify({}),
+      });
+      const rawText = await response.text();
+      let payload = null;
+
+      try {
+        payload = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        lastFailure = {
+          success: false,
+          status: response.status,
+          message:
+            payload?.errorMsg ||
+            rawText ||
+            `userInfo 请求失败，状态码 ${response.status}`,
         };
-    }
+        continue;
+      }
 
-    const baseHeaders = {
-        accept: headersTemplate.accept || TEMU_DEFAULT_ACCEPT,
-        'content-type': headersTemplate['content-type'] || 'application/json',
-        origin: headersTemplate.origin || new URL(TEMU_SELLER_HOME_URL).origin,
-        referer: headersTemplate.referer || TEMU_SELLER_HOME_URL,
-        cookie: cookieHeader
-    };
-
-    if (headersTemplate['user-agent']) {
-        baseHeaders['user-agent'] = headersTemplate['user-agent'];
-    }
-
-    const attemptHeadersList = [];
-    if (headersTemplate['anti-content']) {
-        attemptHeadersList.push({
-            ...baseHeaders,
-            'anti-content': headersTemplate['anti-content']
-        });
-    }
-    attemptHeadersList.push(baseHeaders);
-
-    let lastFailure = null;
-
-    for (const requestHeaders of attemptHeadersList) {
-        try {
-            const response = await postJsonWithTimeout(TEMU_USERINFO_API_URL, {
-                method: 'POST',
-                headers: requestHeaders,
-                body: JSON.stringify({})
-            });
-            const rawText = await response.text();
-            let payload = null;
-
-            try {
-                payload = rawText ? JSON.parse(rawText) : null;
-            } catch {
-                payload = null;
-            }
-
-            if (!response.ok) {
-                lastFailure = {
-                    success: false,
-                    status: response.status,
-                    message: payload?.errorMsg || rawText || `userInfo 请求失败，状态码 ${response.status}`
-                };
-                continue;
-            }
-
-            const result = payload?.result || {};
-            return {
-                success: payload?.success === true,
-                status: response.status,
-                payload,
-                accountId: result.accountId || '',
-                accountType: result.accountType || '',
-                mallList: Array.isArray(result.mallList) ? result.mallList : [],
-                message: payload?.success === true ? 'userInfo 获取成功' : payload?.errorMsg || 'userInfo 返回失败'
-            };
-        } catch (error) {
-            lastFailure = {
-                success: false,
-                message: error?.message || String(error)
-            };
-        }
-    }
-
-    return lastFailure || {
+      const result = payload?.result || {};
+      return {
+        success: payload?.success === true,
+        status: response.status,
+        payload,
+        accountId: result.accountId || "",
+        accountType: result.accountType || "",
+        mallList: Array.isArray(result.mallList) ? result.mallList : [],
+        message:
+          payload?.success === true
+            ? "userInfo 获取成功"
+            : payload?.errorMsg || "userInfo 返回失败",
+      };
+    } catch (error) {
+      lastFailure = {
         success: false,
-        message: 'userInfo 请求失败'
-    };
+        message: error?.message || String(error),
+      };
+    }
+  }
+
+  return (
+    lastFailure || {
+      success: false,
+      message: "userInfo 请求失败",
+    }
+  );
 }
 
 export async function validateTemuSessionBundle(sessionBundle = {}) {
-    const headersTemplate = sessionBundle?.headersTemplate && typeof sessionBundle.headersTemplate === 'object'
-        ? sessionBundle.headersTemplate
-        : (sessionBundle?.headers && typeof sessionBundle.headers === 'object'
-            ? sessionBundle.headers
-            : {});
-    const cookies = sessionBundle?.cookies && typeof sessionBundle.cookies === 'object'
-        ? sessionBundle.cookies
-        : (sessionBundle?.cookies_global && typeof sessionBundle.cookies_global === 'object'
-            ? sessionBundle.cookies_global
-            : {});
+  const headersTemplate =
+    sessionBundle?.headersTemplate &&
+    typeof sessionBundle.headersTemplate === "object"
+      ? sessionBundle.headersTemplate
+      : sessionBundle?.headers && typeof sessionBundle.headers === "object"
+        ? sessionBundle.headers
+        : {};
+  const cookies =
+    sessionBundle?.cookies && typeof sessionBundle.cookies === "object"
+      ? sessionBundle.cookies
+      : sessionBundle?.cookies_global &&
+          typeof sessionBundle.cookies_global === "object"
+        ? sessionBundle.cookies_global
+        : {};
 
-    const userInfoResult = await fetchTemuUserInfo(headersTemplate, cookies);
-    if (!userInfoResult?.success) {
-        return {
-            success: false,
-            message: userInfoResult?.message || 'Temu session 校验失败',
-            status: userInfoResult?.status || 0,
-            accountId: '',
-            accountType: '',
-            mallList: []
-        };
-    }
-
+  const userInfoResult = await fetchTemuUserInfo(headersTemplate, cookies);
+  if (!userInfoResult?.success) {
     return {
-        success: true,
-        message: userInfoResult.message || 'Temu session 校验成功',
-        status: userInfoResult.status || 200,
-        accountId: userInfoResult.accountId || '',
-        accountType: userInfoResult.accountType || '',
-        mallList: Array.isArray(userInfoResult.mallList) ? userInfoResult.mallList : [],
-        payload: userInfoResult.payload || null
+      success: false,
+      message: userInfoResult?.message || "Temu session 校验失败",
+      status: userInfoResult?.status || 0,
+      accountId: "",
+      accountType: "",
+      mallList: [],
     };
+  }
+
+  return {
+    success: true,
+    message: userInfoResult.message || "Temu session 校验成功",
+    status: userInfoResult.status || 200,
+    accountId: userInfoResult.accountId || "",
+    accountType: userInfoResult.accountType || "",
+    mallList: Array.isArray(userInfoResult.mallList)
+      ? userInfoResult.mallList
+      : [],
+    payload: userInfoResult.payload || null,
+  };
 }
 
 async function findRegionSwitcherContainer(page) {
-    const locator = page.locator('div');
-    const containerIndex = await locator.evaluateAll((nodes, markers) => {
-        const normalizeText = (value = '') => String(value || '').replace(/\s+/g, '');
-        const candidates = [];
+  const locator = page.locator("div");
+  const containerIndex = await locator.evaluateAll((nodes, markers) => {
+    const normalizeText = (value = "") =>
+      String(value || "").replace(/\s+/g, "");
+    const candidates = [];
 
-        for (const [index, node] of nodes.entries()) {
-            const text = normalizeText(node.textContent || '');
-            if (!markers.every((marker) => text.includes(marker))) {
-                continue;
-            }
+    for (const [index, node] of nodes.entries()) {
+      const text = normalizeText(node.textContent || "");
+      if (!markers.every((marker) => text.includes(marker))) {
+        continue;
+      }
 
-            const style = window.getComputedStyle(node);
-            const isVisible = node.getClientRects().length > 0
-                && style.display !== 'none'
-                && style.visibility !== 'hidden';
+      const style = window.getComputedStyle(node);
+      const isVisible =
+        node.getClientRects().length > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden";
 
-            candidates.push({
-                index,
-                isVisible,
-                textLength: text.length,
-                childCount: node.children.length,
-                descendantCount: node.querySelectorAll('*').length
-            });
-        }
-
-        if (!candidates.length) {
-            return -1;
-        }
-
-        candidates.sort((left, right) => {
-            const leftVisibilityPenalty = left.isVisible ? 0 : 1;
-            const rightVisibilityPenalty = right.isVisible ? 0 : 1;
-            const leftPenalty = left.childCount >= 3 ? 0 : 1;
-            const rightPenalty = right.childCount >= 3 ? 0 : 1;
-            return leftVisibilityPenalty - rightVisibilityPenalty
-                || leftPenalty - rightPenalty
-                || left.textLength - right.textLength
-                || left.descendantCount - right.descendantCount
-                || left.index - right.index;
-        });
-
-        return candidates[0].index;
-    }, TEMU_REGION_SWITCHER_TEXT_MARKERS);
-
-    if (containerIndex < 0) {
-        return null;
+      candidates.push({
+        index,
+        isVisible,
+        textLength: text.length,
+        childCount: node.children.length,
+        descendantCount: node.querySelectorAll("*").length,
+      });
     }
 
-    return {
-        index: containerIndex,
-        locator: locator.nth(containerIndex)
-    };
+    if (!candidates.length) {
+      return -1;
+    }
+
+    candidates.sort((left, right) => {
+      const leftVisibilityPenalty = left.isVisible ? 0 : 1;
+      const rightVisibilityPenalty = right.isVisible ? 0 : 1;
+      const leftPenalty = left.childCount >= 3 ? 0 : 1;
+      const rightPenalty = right.childCount >= 3 ? 0 : 1;
+      return (
+        leftVisibilityPenalty - rightVisibilityPenalty ||
+        leftPenalty - rightPenalty ||
+        left.textLength - right.textLength ||
+        left.descendantCount - right.descendantCount ||
+        left.index - right.index
+      );
+    });
+
+    return candidates[0].index;
+  }, TEMU_REGION_SWITCHER_TEXT_MARKERS);
+
+  if (containerIndex < 0) {
+    return null;
+  }
+
+  return {
+    index: containerIndex,
+    locator: locator.nth(containerIndex),
+  };
 }
 
 async function attemptRegionSelectionClick(page, regionKey) {
-    const fallbackIndex = TEMU_REGION_CLICK_INDEX[regionKey];
-    if (fallbackIndex === undefined) {
-        return {
-            clicked: false,
-            strategy: 'not_configured'
-        };
-    }
-
-    try {
-        const container = await findRegionSwitcherContainer(page);
-        if (container?.locator) {
-            const childLocator = container.locator.locator(':scope > *');
-            const childCount = await childLocator.count();
-            if (childCount > fallbackIndex) {
-                const target = childLocator.nth(fallbackIndex);
-                const childText = normalizeMatcherText(await target.innerText().catch(() => ''));
-
-                await target.scrollIntoViewIfNeeded().catch(() => { });
-
-                try {
-                    await target.click({
-                        timeout: 5_000
-                    });
-                } catch {
-                    await target.click({
-                        timeout: 5_000,
-                        force: true
-                    });
-                }
-
-                return {
-                    clicked: true,
-                    strategy: 'text_container_child',
-                    detail: `div[${container.index}] child[${fallbackIndex}] ${childText}`.trim()
-                };
-            }
-
-            return {
-                clicked: false,
-                strategy: 'text_container_child_missing',
-                detail: `div[${container.index}] childCount=${childCount}`
-            };
-        }
-    } catch {
-        // ignore container-based click errors and continue to fallback
-    }
-
-    try {
-        const locator = page.locator(TEMU_REGION_CARD_SELECTOR);
-        const count = await locator.count();
-        if (count > fallbackIndex) {
-            await locator.nth(fallbackIndex).click();
-            return {
-                clicked: true,
-                strategy: 'selector_index',
-                detail: `${TEMU_REGION_CARD_SELECTOR}[${fallbackIndex}]`
-            };
-        }
-    } catch {
-        // ignore selector fallback errors
-    }
-
+  const fallbackIndex = TEMU_REGION_CLICK_INDEX[regionKey];
+  if (fallbackIndex === undefined) {
     return {
-        clicked: false,
-        strategy: 'not_found'
+      clicked: false,
+      strategy: "not_configured",
     };
+  }
+
+  try {
+    const container = await findRegionSwitcherContainer(page);
+    if (container?.locator) {
+      const childLocator = container.locator.locator(":scope > *");
+      const childCount = await childLocator.count();
+      if (childCount > fallbackIndex) {
+        const target = childLocator.nth(fallbackIndex);
+        const childText = normalizeMatcherText(
+          await target.innerText().catch(() => ""),
+        );
+
+        await target.scrollIntoViewIfNeeded().catch(() => {});
+
+        try {
+          await target.click({
+            timeout: 5_000,
+          });
+        } catch {
+          await target.click({
+            timeout: 5_000,
+            force: true,
+          });
+        }
+
+        return {
+          clicked: true,
+          strategy: "text_container_child",
+          detail:
+            `div[${container.index}] child[${fallbackIndex}] ${childText}`.trim(),
+        };
+      }
+
+      return {
+        clicked: false,
+        strategy: "text_container_child_missing",
+        detail: `div[${container.index}] childCount=${childCount}`,
+      };
+    }
+  } catch {
+    // ignore container-based click errors and continue to fallback
+  }
+
+  try {
+    const locator = page.locator(TEMU_REGION_CARD_SELECTOR);
+    const count = await locator.count();
+    if (count > fallbackIndex) {
+      await locator.nth(fallbackIndex).click();
+      return {
+        clicked: true,
+        strategy: "selector_index",
+        detail: `${TEMU_REGION_CARD_SELECTOR}[${fallbackIndex}]`,
+      };
+    }
+  } catch {
+    // ignore selector fallback errors
+  }
+
+  return {
+    clicked: false,
+    strategy: "not_found",
+  };
 }
 
 async function collectRegionCookies(context, regionKey, options = {}) {
-    const regionHost = TEMU_REGION_HOSTS[regionKey];
-    const regionUrl = TEMU_REGION_URLS[regionKey];
-    const regionCookieDomains = TEMU_REGION_COOKIE_DOMAINS[regionKey] || [regionHost];
-    const gotoTimeoutMs = Number(options.gotoTimeoutMs) || TEMU_REGION_COOKIE_GOTO_TIMEOUT_MS;
-    const settleMs = Number(options.settleMs) || TEMU_REGION_COOKIE_SETTLE_MS;
-    let page = null;
+  const regionHost = TEMU_REGION_HOSTS[regionKey];
+  const regionUrl = TEMU_REGION_URLS[regionKey];
+  const regionCookieDomains = TEMU_REGION_COOKIE_DOMAINS[regionKey] || [
+    regionHost,
+  ];
+  const gotoTimeoutMs =
+    Number(options.gotoTimeoutMs) || TEMU_REGION_COOKIE_GOTO_TIMEOUT_MS;
+  const settleMs = Number(options.settleMs) || TEMU_REGION_COOKIE_SETTLE_MS;
+  let page = null;
 
-    try {
-        const existingCookies = normalizeCookieEntries(await context.cookies(), regionCookieDomains);
-        if (Object.keys(existingCookies).length) {
-            return {
-                success: true,
-                region: regionKey,
-                currentUrl: '',
-                strategy: 'existing_context_cookies',
-                cookieCount: Object.keys(existingCookies).length,
-                cookies: existingCookies,
-                warning: ''
-            };
-        }
-
-        page = await context.newPage();
-        await page.goto(regionUrl, {
-            waitUntil: 'domcontentloaded',
-            timeout: gotoTimeoutMs
-        });
-        await page.waitForTimeout(settleMs);
-
-        let strategy = 'direct_url';
-        let regionCookies = normalizeCookieEntries(await context.cookies(), regionCookieDomains);
-
-        if (!Object.keys(regionCookies).length) {
-            const clickResult = await attemptRegionSelectionClick(page, regionKey);
-            if (clickResult.clicked) {
-                strategy = clickResult.strategy;
-                await page.waitForTimeout(settleMs);
-                regionCookies = normalizeCookieEntries(await context.cookies(), regionCookieDomains);
-            }
-        }
-
-        if (!Object.keys(regionCookies).length) {
-            const currentUrl = String(page.url() || '');
-            if (currentUrl.includes(regionHost)) {
-                strategy = `${strategy}+cookie_domain_retry`;
-                regionCookies = normalizeCookieEntries(await context.cookies(), regionCookieDomains);
-            }
-        }
-
-        return {
-            success: Object.keys(regionCookies).length > 0,
-            region: regionKey,
-            currentUrl: page.url(),
-            strategy,
-            cookieCount: Object.keys(regionCookies).length,
-            cookies: regionCookies,
-            warning: Object.keys(regionCookies).length > 0 ? '' : `${regionKey} 区域未采集到独立 cookies`
-        };
-    } catch (error) {
-        return {
-            success: false,
-            region: regionKey,
-            currentUrl: page?.url?.() || '',
-            strategy: 'error',
-            cookieCount: 0,
-            cookies: {},
-            warning: error?.message || String(error)
-        };
-    } finally {
-        if (page) {
-            await page.close().catch(() => { });
-        }
+  try {
+    const existingCookies = normalizeCookieEntries(
+      await context.cookies(),
+      regionCookieDomains,
+    );
+    if (Object.keys(existingCookies).length) {
+      return {
+        success: true,
+        region: regionKey,
+        currentUrl: "",
+        strategy: "existing_context_cookies",
+        cookieCount: Object.keys(existingCookies).length,
+        cookies: existingCookies,
+        warning: "",
+      };
     }
+
+    page = await context.newPage();
+    await page.goto(regionUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: gotoTimeoutMs,
+    });
+    await page.waitForTimeout(settleMs);
+
+    let strategy = "direct_url";
+    let regionCookies = normalizeCookieEntries(
+      await context.cookies(),
+      regionCookieDomains,
+    );
+
+    if (!Object.keys(regionCookies).length) {
+      const clickResult = await attemptRegionSelectionClick(page, regionKey);
+      if (clickResult.clicked) {
+        strategy = clickResult.strategy;
+        await page.waitForTimeout(settleMs);
+        regionCookies = normalizeCookieEntries(
+          await context.cookies(),
+          regionCookieDomains,
+        );
+      }
+    }
+
+    if (!Object.keys(regionCookies).length) {
+      const currentUrl = String(page.url() || "");
+      if (currentUrl.includes(regionHost)) {
+        strategy = `${strategy}+cookie_domain_retry`;
+        regionCookies = normalizeCookieEntries(
+          await context.cookies(),
+          regionCookieDomains,
+        );
+      }
+    }
+
+    return {
+      success: Object.keys(regionCookies).length > 0,
+      region: regionKey,
+      currentUrl: page.url(),
+      strategy,
+      cookieCount: Object.keys(regionCookies).length,
+      cookies: regionCookies,
+      warning:
+        Object.keys(regionCookies).length > 0
+          ? ""
+          : `${regionKey} 区域未采集到独立 cookies`,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      region: regionKey,
+      currentUrl: page?.url?.() || "",
+      strategy: "error",
+      cookieCount: 0,
+      cookies: {},
+      warning: error?.message || String(error),
+    };
+  } finally {
+    if (page) {
+      await page.close().catch(() => {});
+    }
+  }
 }
 
-async function probeTemuAuthenticatedSessionFromContext(page, captureState = {}) {
-    try {
-        const context = page?.context?.();
-        if (!context) {
-            return {
-                success: false,
-                message: '缺少浏览器上下文，无法探测 Temu 会话'
-            };
-        }
-
-        const allCookies = await context.cookies();
-        const cookiesGlobal = normalizeCookieEntries(
-            allCookies,
-            TEMU_REGION_COOKIE_DOMAINS.global
-        );
-        if (!Object.keys(cookiesGlobal).length) {
-            return {
-                success: false,
-                message: '未发现 Temu global cookies'
-            };
-        }
-
-        const capturedHeaders = extractTemuCaptureHeaders(captureState.capturedHeaders || {});
-        const currentUrl = String(page?.url?.() || '');
-        const origin = captureState.origin || capturedHeaders.origin || getFallbackOriginFromUrl(currentUrl);
-        const referer = captureState.referer || capturedHeaders.referer || currentUrl || `${origin}/`;
-        const userAgent = captureState.userAgent
-            || capturedHeaders['user-agent']
-            || await page.evaluate(() => navigator.userAgent).catch(() => '');
-        const headersTemplate = {
-            ...capturedHeaders,
-            accept: capturedHeaders.accept || TEMU_DEFAULT_ACCEPT,
-            'content-type': capturedHeaders['content-type'] || 'application/json',
-            origin,
-            referer,
-            'user-agent': userAgent
-        };
-        if (captureState.antiContent) {
-            headersTemplate['anti-content'] = captureState.antiContent;
-        }
-        if (captureState.mallId) {
-            headersTemplate.mallid = captureState.mallId;
-        }
-
-        const userInfoResult = await fetchTemuUserInfo(headersTemplate, cookiesGlobal);
-        return {
-            success: !!userInfoResult?.success,
-            message: userInfoResult?.message || '',
-            userInfoResult,
-            cookieCount: Object.keys(cookiesGlobal).length
-        };
-    } catch (error) {
-        return {
-            success: false,
-            message: error?.message || String(error)
-        };
+async function probeTemuAuthenticatedSessionFromContext(
+  page,
+  captureState = {},
+) {
+  try {
+    const context = page?.context?.();
+    if (!context) {
+      return {
+        success: false,
+        message: "缺少浏览器上下文，无法探测 Temu 会话",
+      };
     }
+
+    const allCookies = await context.cookies();
+    const cookiesGlobal = normalizeCookieEntries(
+      allCookies,
+      TEMU_REGION_COOKIE_DOMAINS.global,
+    );
+    if (!Object.keys(cookiesGlobal).length) {
+      return {
+        success: false,
+        message: "未发现 Temu global cookies",
+      };
+    }
+
+    const capturedHeaders = extractTemuCaptureHeaders(
+      captureState.capturedHeaders || {},
+    );
+    const currentUrl = String(page?.url?.() || "");
+    const origin =
+      captureState.origin ||
+      capturedHeaders.origin ||
+      getFallbackOriginFromUrl(currentUrl);
+    const referer =
+      captureState.referer ||
+      capturedHeaders.referer ||
+      currentUrl ||
+      `${origin}/`;
+    const userAgent =
+      captureState.userAgent ||
+      capturedHeaders["user-agent"] ||
+      (await page.evaluate(() => navigator.userAgent).catch(() => ""));
+    const headersTemplate = {
+      ...capturedHeaders,
+      accept: capturedHeaders.accept || TEMU_DEFAULT_ACCEPT,
+      "content-type": capturedHeaders["content-type"] || "application/json",
+      origin,
+      referer,
+      "user-agent": userAgent,
+    };
+    if (captureState.antiContent) {
+      headersTemplate["anti-content"] = captureState.antiContent;
+    }
+    if (captureState.mallId) {
+      headersTemplate.mallid = captureState.mallId;
+    }
+
+    const userInfoResult = await fetchTemuUserInfo(
+      headersTemplate,
+      cookiesGlobal,
+    );
+    return {
+      success: !!userInfoResult?.success,
+      message: userInfoResult?.message || "",
+      userInfoResult,
+      cookieCount: Object.keys(cookiesGlobal).length,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error?.message || String(error),
+    };
+  }
 }
 
 export async function collectTemuSessionBundle(page, options = {}) {
-    const context = page.context();
-    const warnings = [];
-    const trafficCapture = createTemuRequestCapture(context);
+  const context = page.context();
+  const warnings = [];
+  const trafficCapture = createTemuRequestCapture(context);
 
-    try {
-        logger.info(`${PLATFORM_NAME}准备采集会话信息`, {
-            collectRegionCookies: options.collectRegionCookies !== false,
-            currentUrl: page.url()
-        });
+  try {
+    logger.info(`${PLATFORM_NAME}准备采集会话信息`, {
+      collectRegionCookies: options.collectRegionCookies !== false,
+      currentUrl: page.url(),
+    });
 
-        logger.info(`${PLATFORM_NAME}会话采集步骤：采集页打开商家后台`, {
-            currentUrl: page.url(),
-            targetUrl: TEMU_SELLER_HOME_URL,
-            previousUrlWasTemu: isTemuSessionProbePage(page.url())
-        });
-        // 检查当前是否已在 seller 域名上（已登录）
-        let currentUrl = String(page.url() || '');
-        const isOnSellerDomain = TEMU_SELLER_HOST_KEYWORDS.some((keyword) => currentUrl.includes(keyword));
+    logger.info(`${PLATFORM_NAME}会话采集步骤：采集页打开商家后台`, {
+      currentUrl: page.url(),
+      targetUrl: TEMU_SELLER_HOME_URL,
+      previousUrlWasTemu: isTemuSessionProbePage(page.url()),
+    });
+    await page.goto(TEMU_SELLER_HOME_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS,
+    });
+    await page.waitForTimeout(TEMU_SESSION_HOME_SETTLE_MS);
 
-        if (!isOnSellerDomain) {
-            // 不在 seller 域名，导航到首页
-            await page.goto(TEMU_SELLER_HOME_URL, {
-                waitUntil: 'domcontentloaded',
-                timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
-            });
-            await page.waitForTimeout(TEMU_SESSION_HOME_SETTLE_MS);
-            currentUrl = String(page.url() || '');
-        }
+    // 使用 resolveTemuLoginState 检查登录状态，覆盖所有已登录场景
+    // （Dashboard、/auth/authentication 认证页等），而非仅靠 URL 正则匹配
+    // settle 页面在 kuajingmaihuo.com 域名上，用户可能没有该域名的 session
+    const loginStateAfterHome = await resolveTemuLoginState(page);
+    logger.info(`${PLATFORM_NAME}导航后登录状态检查`, {
+      currentUrl: page.url(),
+      loginState: loginStateAfterHome,
+    });
 
-        // 判断是否已登录：在 seller 域名上且不在登录页
-        const isOnLoginPage = /login|passport/i.test(currentUrl) && !/auth\/authentication/i.test(currentUrl);
-        if (isOnLoginPage) {
-            return {
-                success: false,
-                reason: 'login_required',
-                message: '当前环境未登录 Temu，需要先登录'
-            };
-        }
-
-        logger.info(`${PLATFORM_NAME}会话采集：已在 seller 域名，直接采集`, { currentUrl });
-
-        await page.goto(TEMU_SELLER_HOME_URL, {
-            waitUntil: 'domcontentloaded',
-            timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
-        });
-        await page.waitForTimeout(TEMU_SESSION_AUTH_SETTLE_MS);
-
-        // 重新检查 URL，如果跳到了登录页则返回未登录
-        currentUrl = String(page.url() || '');
-        if (/login|passport/i.test(currentUrl) && !/auth\/authentication/i.test(currentUrl)) {
-            return {
-                success: false,
-                reason: 'login_required',
-                message: '当前环境未登录 Temu，无法采集会话'
-            };
-        }
-
-        let captureReady = await waitForCaptureWarmup(
-            trafficCapture.state,
-            TEMU_SESSION_CAPTURE_WARMUP_TIMEOUT_MS
-        );
-        if (!captureReady || !trafficCapture.state.antiContent) {
-            const warmupResult = await warmupTemuTrafficCapture(page, trafficCapture.state);
-            if (warmupResult.success) {
-                captureReady = true;
-            } else if (warmupResult.message) {
-                warnings.push(`预热 Temu 请求失败: ${warmupResult.message}`);
-            }
-        }
-        if (!captureReady) {
-            warnings.push('未捕获到明显的 Temu XHR/fetch 请求，anti-content 可能为空');
-        }
-        if (!trafficCapture.state.antiContent) {
-            warnings.push('未捕获到 anti-content，请在后续接入时允许重新刷新页面补抓');
-        }
-
-        const allCookies = await context.cookies();
-        const cookiesGlobal = normalizeCookieEntries(
-            allCookies,
-            TEMU_REGION_COOKIE_DOMAINS.global
-        );
-        if (!Object.keys(cookiesGlobal).length) {
-            return {
-                success: false,
-                reason: 'cookies_not_found',
-                message: '未采集到 Temu 会话 cookies'
-            };
-        }
-
-        const capturedHeaders = extractTemuCaptureHeaders(trafficCapture.state.capturedHeaders);
-        const userAgent = trafficCapture.state.userAgent
-            || capturedHeaders['user-agent']
-            || await page.evaluate(() => navigator.userAgent).catch(() => '');
-        const origin = trafficCapture.state.origin || capturedHeaders.origin || getFallbackOriginFromUrl(page.url());
-        const referer = trafficCapture.state.referer || capturedHeaders.referer || `${origin}/`;
-        const initialMallId = String(trafficCapture.state.mallId || '').trim();
-
-        const headersTemplate = {
-            ...capturedHeaders,
-            accept: capturedHeaders.accept || TEMU_DEFAULT_ACCEPT,
-            'content-type': capturedHeaders['content-type'] || 'application/json',
-            origin,
-            referer,
-            'user-agent': userAgent
-        };
-        if (trafficCapture.state.antiContent) {
-            headersTemplate['anti-content'] = trafficCapture.state.antiContent;
-        }
-        if (initialMallId) {
-            headersTemplate.mallid = initialMallId;
-        }
-
-        const userInfoResult = await fetchTemuUserInfo(headersTemplate, cookiesGlobal);
-
-        const mallList = Array.isArray(userInfoResult.mallList) ? userInfoResult.mallList : [];
-        const selectedMall = pickSelectedMall(mallList, initialMallId);
-        const mallId = String(selectedMall?.mallId || initialMallId || '').trim();
-        const mallName = String(selectedMall?.mallName || '').trim();
-
-        if (mallId) {
-            headersTemplate.mallid = mallId;
-        }
-
-        const regionCollection = {
-            enabled: options.collectRegionCookies !== false,
-            us: {
-                success: false,
-                cookieCount: 0,
-                cookies: {}
-            },
-            eu: {
-                success: false,
-                cookieCount: 0,
-                cookies: {}
-            }
-        };
-
-        if (options.collectRegionCookies !== false) {
-            logger.info(`${PLATFORM_NAME}会话采集步骤：并行采集美区/欧区 Cookie`);
-            const [usRegion, euRegion] = await Promise.all([
-                collectRegionCookies(context, 'us'),
-                collectRegionCookies(context, 'eu')
-            ]);
-            logger.info(`${PLATFORM_NAME}会话采集步骤：区域 Cookie 采集完成`, {
-                usSuccess: !!usRegion.success,
-                usCookieCount: usRegion.cookieCount || 0,
-                usWarning: usRegion.warning || '',
-                euSuccess: !!euRegion.success,
-                euCookieCount: euRegion.cookieCount || 0,
-                euWarning: euRegion.warning || ''
-            });
-            regionCollection.us = usRegion;
-            regionCollection.eu = euRegion;
-
-            if (usRegion.warning) {
-                warnings.push(`US 区域: ${usRegion.warning}`);
-            }
-            if (euRegion.warning) {
-                warnings.push(`EU 区域: ${euRegion.warning}`);
-            }
-        }
-
-        const temuCookieEntries = filterCookieEntries(
-            allCookies,
-            Array.from(new Set([
-                ...TEMU_REGION_COOKIE_DOMAINS.global,
-                ...TEMU_REGION_COOKIE_DOMAINS.us,
-                ...TEMU_REGION_COOKIE_DOMAINS.eu
-            ]))
-        );
-
-        const sessionBundle = {
-            collectedAt: new Date().toISOString(),
-            currentUrl: page.url(),
-            mallId,
-            mallName,
-            mallList,
-            accountId: userInfoResult.accountId || '',
-            accountType: userInfoResult.accountType || '',
-            antiContent: trafficCapture.state.antiContent || '',
-            userAgent,
-            headersTemplate,
-            regionHeaders: {
-                global: {
-                    ...headersTemplate
-                },
-                us: buildRegionHeaders('us', {
-                    userAgent,
-                    antiContent: trafficCapture.state.antiContent,
-                    mallId
-                }),
-                eu: buildRegionHeaders('eu', {
-                    userAgent,
-                    antiContent: trafficCapture.state.antiContent,
-                    mallId
-                })
-            },
-            cookies: cookiesGlobal,
-            cookies_global: cookiesGlobal,
-            cookies_us: regionCollection.us.cookies || {},
-            cookies_eu: regionCollection.eu.cookies || {},
-            cookieDomains: summarizeCookieDomains(temuCookieEntries),
-            requestCapture: {
-                requestCount: trafficCapture.state.requestCount,
-                lastRequestUrl: trafficCapture.state.lastRequestUrl,
-                mallIdFromTraffic: initialMallId,
-                capturedHeaders,
-                requestSamples: trafficCapture.state.requestSamples
-            },
-            regionCollection: {
-                enabled: regionCollection.enabled,
-                us: {
-                    success: !!regionCollection.us.success,
-                    currentUrl: regionCollection.us.currentUrl || '',
-                    strategy: regionCollection.us.strategy || '',
-                    cookieCount: regionCollection.us.cookieCount || 0
-                },
-                eu: {
-                    success: !!regionCollection.eu.success,
-                    currentUrl: regionCollection.eu.currentUrl || '',
-                    strategy: regionCollection.eu.strategy || '',
-                    cookieCount: regionCollection.eu.cookieCount || 0
-                }
-            },
-            warnings
-        };
-        const completeness = inspectTemuSessionBundleCompleteness(sessionBundle, {
-            requireRegionalCookies: false,
-            requireAntiContent: true,
-            requireIdentity: true
-        });
-        const failureReasons = [];
-        const regionalFailureReasons = [];
-
-        if (!userInfoResult.success) {
-            failureReasons.push(`身份信息拉取失败: ${userInfoResult.message || 'unknown error'}`);
-        }
-        if (!trafficCapture.state.antiContent) {
-            failureReasons.push('未捕获到 anti-content');
-        }
-        if (options.collectRegionCookies !== false && !regionCollection.us.success) {
-            regionalFailureReasons.push(`美区 Cookie 采集失败: ${regionCollection.us.warning || '未采集到独立 cookies'}`);
-        }
-        if (options.collectRegionCookies !== false && !regionCollection.eu.success) {
-            regionalFailureReasons.push(`欧区 Cookie 采集失败: ${regionCollection.eu.warning || '未采集到独立 cookies'}`);
-        }
-        if (regionalFailureReasons.length) {
-            warnings.push(...regionalFailureReasons);
-            logger.warn(`${PLATFORM_NAME}区域 Cookie 采集不完整，但 global 会话有效，继续返回成功`, {
-                regionalFailureReasons,
-                globalCookieCount: Object.keys(cookiesGlobal).length,
-                mallId,
-                accountId: userInfoResult.accountId || ''
-            });
-        }
-
-        if (!completeness.success) {
-            const userInfoMessage = userInfoResult?.message || '';
-            return {
-                success: false,
-                reason: isTemuInvalidLoginStateMessage(userInfoMessage)
-                    ? 'login_required'
-                    : 'session_incomplete',
-                message: buildTemuSessionIncompleteMessage(completeness, failureReasons),
-                sessionBundle
-            };
-        }
-
+    if (!loginStateAfterHome.loggedIn) {
+      const authorizationResult =
+        await ensureTemuGlobalRegionAuthorization(page);
+      if (!authorizationResult.success) {
         return {
-            success: true,
-            sessionBundle
+          success: false,
+          reason:
+            authorizationResult.reason === "not_logged_in"
+              ? "login_required"
+              : authorizationResult.reason ||
+                "global_region_authorization_failed",
+          message:
+            authorizationResult.message ||
+            "Temu 全球区授权确认失败，无法继续采集会话",
         };
-    } catch (error) {
-        logger.error(`${PLATFORM_NAME}采集会话信息失败:`, error);
-        return {
-            success: false,
-            reason: 'session_collect_failed',
-            message: error?.message || String(error)
-        };
-    } finally {
-        trafficCapture.dispose();
+      }
+
+      await page.goto(TEMU_SELLER_HOME_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS,
+      });
+      await page.waitForTimeout(TEMU_SESSION_AUTH_SETTLE_MS);
+    } else {
+      logger.info(`${PLATFORM_NAME}已登录，跳过 settle 授权，直接采集`);
     }
+
+    let captureReady = await waitForCaptureWarmup(
+      trafficCapture.state,
+      TEMU_SESSION_CAPTURE_WARMUP_TIMEOUT_MS,
+    );
+    if (!captureReady || !trafficCapture.state.antiContent) {
+      const warmupResult = await warmupTemuTrafficCapture(
+        page,
+        trafficCapture.state,
+      );
+      if (warmupResult.success) {
+        captureReady = true;
+      } else if (warmupResult.message) {
+        warnings.push(`预热 Temu 请求失败: ${warmupResult.message}`);
+      }
+    }
+    if (!captureReady) {
+      warnings.push(
+        "未捕获到明显的 Temu XHR/fetch 请求，anti-content 可能为空",
+      );
+    }
+    if (!trafficCapture.state.antiContent) {
+      warnings.push(
+        "未捕获到 anti-content，请在后续接入时允许重新刷新页面补抓",
+      );
+    }
+
+    const allCookies = await context.cookies();
+    const cookiesGlobal = normalizeCookieEntries(
+      allCookies,
+      TEMU_REGION_COOKIE_DOMAINS.global,
+    );
+    if (!Object.keys(cookiesGlobal).length) {
+      return {
+        success: false,
+        reason: "cookies_not_found",
+        message: "未采集到 Temu 会话 cookies",
+      };
+    }
+
+    const capturedHeaders = extractTemuCaptureHeaders(
+      trafficCapture.state.capturedHeaders,
+    );
+    const userAgent =
+      trafficCapture.state.userAgent ||
+      capturedHeaders["user-agent"] ||
+      (await page.evaluate(() => navigator.userAgent).catch(() => ""));
+    const origin =
+      trafficCapture.state.origin ||
+      capturedHeaders.origin ||
+      getFallbackOriginFromUrl(page.url());
+    const referer =
+      trafficCapture.state.referer || capturedHeaders.referer || `${origin}/`;
+    const initialMallId = String(trafficCapture.state.mallId || "").trim();
+
+    const headersTemplate = {
+      ...capturedHeaders,
+      accept: capturedHeaders.accept || TEMU_DEFAULT_ACCEPT,
+      "content-type": capturedHeaders["content-type"] || "application/json",
+      origin,
+      referer,
+      "user-agent": userAgent,
+    };
+    if (trafficCapture.state.antiContent) {
+      headersTemplate["anti-content"] = trafficCapture.state.antiContent;
+    }
+    if (initialMallId) {
+      headersTemplate.mallid = initialMallId;
+    }
+
+    const userInfoResult = await fetchTemuUserInfo(
+      headersTemplate,
+      cookiesGlobal,
+    );
+
+    const mallList = Array.isArray(userInfoResult.mallList)
+      ? userInfoResult.mallList
+      : [];
+    const selectedMall = pickSelectedMall(mallList, initialMallId);
+    const mallId = String(selectedMall?.mallId || initialMallId || "").trim();
+    const mallName = String(selectedMall?.mallName || "").trim();
+
+    if (mallId) {
+      headersTemplate.mallid = mallId;
+    }
+
+    const regionCollection = {
+      enabled: options.collectRegionCookies !== false,
+      us: {
+        success: false,
+        cookieCount: 0,
+        cookies: {},
+      },
+      eu: {
+        success: false,
+        cookieCount: 0,
+        cookies: {},
+      },
+    };
+
+    if (options.collectRegionCookies !== false) {
+      logger.info(`${PLATFORM_NAME}会话采集步骤：并行采集美区/欧区 Cookie`);
+      const [usRegion, euRegion] = await Promise.all([
+        collectRegionCookies(context, "us"),
+        collectRegionCookies(context, "eu"),
+      ]);
+      logger.info(`${PLATFORM_NAME}会话采集步骤：区域 Cookie 采集完成`, {
+        usSuccess: !!usRegion.success,
+        usCookieCount: usRegion.cookieCount || 0,
+        usWarning: usRegion.warning || "",
+        euSuccess: !!euRegion.success,
+        euCookieCount: euRegion.cookieCount || 0,
+        euWarning: euRegion.warning || "",
+      });
+      regionCollection.us = usRegion;
+      regionCollection.eu = euRegion;
+
+      if (usRegion.warning) {
+        warnings.push(`US 区域: ${usRegion.warning}`);
+      }
+      if (euRegion.warning) {
+        warnings.push(`EU 区域: ${euRegion.warning}`);
+      }
+    }
+
+    const temuCookieEntries = filterCookieEntries(
+      allCookies,
+      Array.from(
+        new Set([
+          ...TEMU_REGION_COOKIE_DOMAINS.global,
+          ...TEMU_REGION_COOKIE_DOMAINS.us,
+          ...TEMU_REGION_COOKIE_DOMAINS.eu,
+        ]),
+      ),
+    );
+
+    const sessionBundle = {
+      collectedAt: new Date().toISOString(),
+      currentUrl: page.url(),
+      mallId,
+      mallName,
+      mallList,
+      accountId: userInfoResult.accountId || "",
+      accountType: userInfoResult.accountType || "",
+      antiContent: trafficCapture.state.antiContent || "",
+      userAgent,
+      headersTemplate,
+      regionHeaders: {
+        global: {
+          ...headersTemplate,
+        },
+        us: buildRegionHeaders("us", {
+          userAgent,
+          antiContent: trafficCapture.state.antiContent,
+          mallId,
+        }),
+        eu: buildRegionHeaders("eu", {
+          userAgent,
+          antiContent: trafficCapture.state.antiContent,
+          mallId,
+        }),
+      },
+      cookies: cookiesGlobal,
+      cookies_global: cookiesGlobal,
+      cookies_us: regionCollection.us.cookies || {},
+      cookies_eu: regionCollection.eu.cookies || {},
+      cookieDomains: summarizeCookieDomains(temuCookieEntries),
+      requestCapture: {
+        requestCount: trafficCapture.state.requestCount,
+        lastRequestUrl: trafficCapture.state.lastRequestUrl,
+        mallIdFromTraffic: initialMallId,
+        capturedHeaders,
+        requestSamples: trafficCapture.state.requestSamples,
+      },
+      regionCollection: {
+        enabled: regionCollection.enabled,
+        us: {
+          success: !!regionCollection.us.success,
+          currentUrl: regionCollection.us.currentUrl || "",
+          strategy: regionCollection.us.strategy || "",
+          cookieCount: regionCollection.us.cookieCount || 0,
+        },
+        eu: {
+          success: !!regionCollection.eu.success,
+          currentUrl: regionCollection.eu.currentUrl || "",
+          strategy: regionCollection.eu.strategy || "",
+          cookieCount: regionCollection.eu.cookieCount || 0,
+        },
+      },
+      warnings,
+    };
+    const completeness = inspectTemuSessionBundleCompleteness(sessionBundle, {
+      requireRegionalCookies: false,
+      requireAntiContent: true,
+      requireIdentity: true,
+    });
+    const failureReasons = [];
+    const regionalFailureReasons = [];
+
+    if (!userInfoResult.success) {
+      failureReasons.push(
+        `身份信息拉取失败: ${userInfoResult.message || "unknown error"}`,
+      );
+    }
+    if (!trafficCapture.state.antiContent) {
+      failureReasons.push("未捕获到 anti-content");
+    }
+    if (
+      options.collectRegionCookies !== false &&
+      !regionCollection.us.success
+    ) {
+      regionalFailureReasons.push(
+        `美区 Cookie 采集失败: ${regionCollection.us.warning || "未采集到独立 cookies"}`,
+      );
+    }
+    if (
+      options.collectRegionCookies !== false &&
+      !regionCollection.eu.success
+    ) {
+      regionalFailureReasons.push(
+        `欧区 Cookie 采集失败: ${regionCollection.eu.warning || "未采集到独立 cookies"}`,
+      );
+    }
+    if (regionalFailureReasons.length) {
+      warnings.push(...regionalFailureReasons);
+      logger.warn(
+        `${PLATFORM_NAME}区域 Cookie 采集不完整，但 global 会话有效，继续返回成功`,
+        {
+          regionalFailureReasons,
+          globalCookieCount: Object.keys(cookiesGlobal).length,
+          mallId,
+          accountId: userInfoResult.accountId || "",
+        },
+      );
+    }
+
+    if (!completeness.success) {
+      const userInfoMessage = userInfoResult?.message || "";
+      return {
+        success: false,
+        reason: isTemuInvalidLoginStateMessage(userInfoMessage)
+          ? "login_required"
+          : "session_incomplete",
+        message: buildTemuSessionIncompleteMessage(
+          completeness,
+          failureReasons,
+        ),
+        sessionBundle,
+      };
+    }
+
+    return {
+      success: true,
+      sessionBundle,
+    };
+  } catch (error) {
+    logger.error(`${PLATFORM_NAME}采集会话信息失败:`, error);
+    return {
+      success: false,
+      reason: "session_collect_failed",
+      message: error?.message || String(error),
+    };
+  } finally {
+    trafficCapture.dispose();
+  }
 }
 
 export default {
-    collectTemuSessionBundle,
-    getTemuCurrentSessionContext,
-    inspectTemuSessionBundleCompleteness,
-    validateTemuSessionBundle
+  collectTemuSessionBundle,
+  getTemuCurrentSessionContext,
+  inspectTemuSessionBundleCompleteness,
+  validateTemuSessionBundle,
 };
