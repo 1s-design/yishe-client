@@ -984,21 +984,31 @@ export async function collectTemuSessionBundle(page, options = {}) {
             targetUrl: TEMU_SELLER_HOME_URL,
             previousUrlWasTemu: isTemuSessionProbePage(page.url())
         });
-        await page.goto(TEMU_SELLER_HOME_URL, {
-            waitUntil: 'domcontentloaded',
-            timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
-        });
-        await page.waitForTimeout(TEMU_SESSION_HOME_SETTLE_MS);
+        // 如果当前已在认证页上，等待认证完成而不是跳到 settle 页面
+        let currentUrlForAuth = String(page.url() || '');
+        if (/\/auth\/authentication/i.test(currentUrlForAuth)) {
+            logger.info(`${PLATFORM_NAME}会话采集：已在认证页，等待认证完成`, { currentUrl: currentUrlForAuth });
+            const authResult = await handleTemuAuthenticationPage(page, 30_000);
+            if (!authResult.success) {
+                logger.warn(`${PLATFORM_NAME}认证页处理失败，尝试继续采集`, { reason: authResult.reason });
+            }
+        } else {
+            await page.goto(TEMU_SELLER_HOME_URL, {
+                waitUntil: 'domcontentloaded',
+                timeout: TEMU_SESSION_HOME_GOTO_TIMEOUT_MS
+            });
+            await page.waitForTimeout(TEMU_SESSION_HOME_SETTLE_MS);
 
-        const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
-        if (!authorizationResult.success) {
-            return {
-                success: false,
-                reason: authorizationResult.reason === 'not_logged_in'
-                    ? 'login_required'
-                    : (authorizationResult.reason || 'global_region_authorization_failed'),
-                message: authorizationResult.message || 'Temu 全球区授权确认失败，无法继续采集会话'
-            };
+            const authorizationResult = await ensureTemuGlobalRegionAuthorization(page);
+            if (!authorizationResult.success) {
+                return {
+                    success: false,
+                    reason: authorizationResult.reason === 'not_logged_in'
+                        ? 'login_required'
+                        : (authorizationResult.reason || 'global_region_authorization_failed'),
+                    message: authorizationResult.message || 'Temu 全球区授权确认失败，无法继续采集会话'
+                };
+            }
         }
 
         await page.goto(TEMU_SELLER_HOME_URL, {
