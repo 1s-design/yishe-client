@@ -1,7 +1,8 @@
 import {
     PLATFORM_NAME,
     TEMU_SELLER_HOME_URL,
-    TEMU_USERINFO_API_URL
+    TEMU_USERINFO_API_URL,
+    TEMU_SELLER_HOST_KEYWORDS
 } from './constants.js';
 import {
     logger
