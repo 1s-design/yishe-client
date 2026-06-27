@@ -1059,6 +1059,16 @@ export async function runTemuSessionAcquireSmallFeature(input = {}, runtimeOptio
             });
         }
 
+        // 先访问 seller 首页检测登录状态
+        if (managePage || page.url() === 'about:blank') {
+            logger.info(`${PLATFORM_NAME}会话获取步骤：先访问 seller 首页检测登录状态`);
+            await page.goto(TEMU_SELLER_HOME_URL, {
+                waitUntil: 'domcontentloaded',
+                timeout: 60000
+            });
+            await page.waitForTimeout(3000);
+        }
+
         const loginStateBefore = await resolveTemuLoginState(page);
         pushTrace(executionTrace, 'check_login_state_before', loginStateBefore.loggedIn ? 'success' : 'pending', loginStateBefore);
 
