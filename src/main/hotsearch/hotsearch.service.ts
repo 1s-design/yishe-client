@@ -22,6 +22,28 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * 读取系统代理配置
+ * 优先级: ALL_PROXY > HTTPS_PROXY > HTTP_PROXY
+ */
+function getSystemProxy(): { host: string; port: number; protocol?: string } | null {
+  const proxyUrl = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || "";
+  if (!proxyUrl) return null;
+  try {
+    const url = new URL(proxyUrl);
+    return {
+      host: url.hostname,
+      port: parseInt(url.port, 10) || (url.protocol === "https:" ? 443 : 80),
+      protocol: url.protocol.replace(":", ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+const SYSTEM_PROXY = getSystemProxy();
+console.log(`[HotSearch] 系统代理: ${SYSTEM_PROXY ? `${SYSTEM_PROXY.host}:${SYSTEM_PROXY.port}` : "无"}`);
+
 // 与服务端通信的基础地址（main 进程直接 HTTP 调用，无需关注 CORS）
 const REMOTE_API_BASE =
   process.env.NODE_ENV === "development"
@@ -95,7 +117,11 @@ class HotSearchService {
     const startTime = Date.now();
     this.progress[key] = { status: "fetching" };
 
-    const ctx: FetchContext = { userAgent: randomUA(), timeout };
+    const ctx: FetchContext = {
+      userAgent: randomUA(),
+      timeout,
+      proxy: platformModule.config.environment === "proxy" ? SYSTEM_PROXY : null,
+    };
     let lastError: string = "未知错误";
 
     for (let attempt = 0; attempt <= retryCount; attempt++) {

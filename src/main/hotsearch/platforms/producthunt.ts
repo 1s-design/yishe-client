@@ -5,7 +5,7 @@
  */
 
 import type { PlatformModule } from '../types'
-import axios from 'axios'
+import { createHttpClient } from '../http'
 
 const producthunt: PlatformModule = {
   config: {
@@ -19,8 +19,9 @@ const producthunt: PlatformModule = {
   },
 
   async fetch(ctx) {
+    const http = createHttpClient(ctx);
     // 使用 Product Hunt 的公开 GraphQL API
-    const { data } = await axios.post(
+    const { data } = await http.post(
       'https://www.producthunt.com/frontend/graphql',
       {
         operationName: 'HomePage',

@@ -4,7 +4,7 @@
  */
 
 import type { PlatformModule } from '../types'
-import axios from 'axios'
+import { createHttpClient } from '../http'
 
 const API_BASE = 'https://hacker-news.firebaseio.com/v0'
 
@@ -20,10 +20,9 @@ const hackernews: PlatformModule = {
   },
 
   async fetch(ctx) {
+    const http = createHttpClient(ctx);
     // 获取 top story IDs
-    const { data: ids } = await axios.get<number[]>(`${API_BASE}/topstories.json`, {
-      timeout: ctx.timeout,
-    })
+    const { data: ids } = await http.get<number[]>(`${API_BASE}/topstories.json`)
 
     const topIds = (ids || []).slice(0, this.config.maxItems)
 
@@ -31,7 +30,7 @@ const hackernews: PlatformModule = {
     const items = await Promise.all(
       topIds.map(async (id, index) => {
         try {
-          const { data } = await axios.get(`${API_BASE}/item/${id}.json`, {
+          const { data } = await http.get(`${API_BASE}/item/${id}.json`, {
             timeout: 5000,
           })
           return {

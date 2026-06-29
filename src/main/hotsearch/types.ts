@@ -50,4 +50,5 @@ export interface PlatformModule {
 export interface FetchContext {
   userAgent: string
   timeout: number
+  proxy?: { host: string; port: number; protocol?: string } | null
 }

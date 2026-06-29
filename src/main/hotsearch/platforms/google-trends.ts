@@ -4,7 +4,7 @@
  */
 
 import type { PlatformModule } from '../types'
-import axios from 'axios'
+import { createHttpClient } from '../http'
 
 const FEED_URL = 'https://trends.google.com/trending/rss'
 const DEFAULT_GEO = 'US'
@@ -36,8 +36,8 @@ const googleTrends: PlatformModule = {
   },
 
   async fetch(ctx) {
-    const { data: xml } = await axios.get(`${FEED_URL}?geo=${DEFAULT_GEO}`, {
-      timeout: ctx.timeout,
+    const http = createHttpClient(ctx);
+    const { data: xml } = await http.get(`${FEED_URL}?geo=${DEFAULT_GEO}`, {
       responseType: 'text',
       headers: {
         'User-Agent': ctx.userAgent,

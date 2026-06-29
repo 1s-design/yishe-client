@@ -4,7 +4,7 @@
  */
 
 import type { PlatformModule } from '../types'
-import axios from 'axios'
+import { createHttpClient } from '../http'
 
 const reddit: PlatformModule = {
   config: {
@@ -18,10 +18,10 @@ const reddit: PlatformModule = {
   },
 
   async fetch(ctx) {
+    const http = createHttpClient(ctx);
     // Reddit 要求 User-Agent 格式为: platform:app_id:version (by /u/username)
     // 使用 old.reddit.com 更稳定
-    const { data } = await axios.get('https://old.reddit.com/r/popular.json', {
-      timeout: ctx.timeout,
+    const { data } = await http.get('https://old.reddit.com/r/popular.json', {
       params: { limit: this.config.maxItems, raw_json: 1 },
       headers: {
         'User-Agent': 'YisheHotSearch:1.0 (by /u/yishe_bot)',
