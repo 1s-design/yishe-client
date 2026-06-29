@@ -535,6 +535,16 @@ export type WebsocketEvents = {
     autoDispatchEnabled?: boolean | null;
     operator?: { id?: string | number; account?: string };
   };
+  hotsearchScheduleChanged: {
+    id: number;
+    clientId: string;
+    enabled: boolean;
+    platforms: string[];
+    intervalMinutes: number;
+    lastRunAt: string | null;
+    runStatus: string;
+    environment: string;
+  };
 };
 
 const emitter = mitt<WebsocketEvents>();
@@ -3085,7 +3095,8 @@ async function getRemotionRuntime() {
           serviceHealthy: false,
           warmed: false,
           lastHeartbeatAt: checkedAt,
-          templateCount: templates.length || Number(healthPayload?.templateCount || 0),
+          templateCount:
+            templates.length || Number(healthPayload?.templateCount || 0),
           queueCount: 0,
           activeJobsCount: 0,
           queuedJobsCount: 0,
@@ -3130,9 +3141,9 @@ async function getRemotionRuntime() {
       (Number.isFinite(templateCount) &&
         templateCount >= 0 &&
         templateCount !== previousTemplates.length);
-    const catalogTemplates = await getCachedRemotionTemplates(shouldRefreshTemplates).catch(
-      () => [],
-    );
+    const catalogTemplates = await getCachedRemotionTemplates(
+      shouldRefreshTemplates,
+    ).catch(() => []);
     const templates = catalogTemplates.length
       ? catalogTemplates
       : healthTemplates.length
@@ -3182,7 +3193,9 @@ async function getRemotionRuntime() {
         serviceHealthy: true,
         heartbeatLatencyMs,
         lastHeartbeatAt: checkedAt,
-        templateCount: templates.length || (Number.isFinite(templateCount) ? templateCount : 0),
+        templateCount:
+          templates.length ||
+          (Number.isFinite(templateCount) ? templateCount : 0),
         queueCount: activeJobsCount,
         activeJobsCount,
         queuedJobsCount,
@@ -3495,7 +3508,9 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
       ensureRemotionResponseOk(result, "本地 Video Template 创建渲染任务失败"),
     );
 
-    const jobId = String(createRes?.data?.jobId || createRes?.jobId || "").trim();
+    const jobId = String(
+      createRes?.data?.jobId || createRes?.jobId || "",
+    ).trim();
     if (!jobId) {
       throw new Error("本地 Video Template 未返回 jobId");
     }
@@ -3675,9 +3690,14 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
     // 捕获所有未处理的异常（如 template not found、网络错误等）
     // 确保错误状态能上报到服务端，防止前端一直卡在 0 进度
     const errorMessage = String(
-      error instanceof Error ? error.message : JSON.stringify(error) || "视频渲染异常",
+      error instanceof Error
+        ? error.message
+        : JSON.stringify(error) || "视频渲染异常",
     );
-    console.error(`[video-template:executeRemotionRender] 渲染失败: ${errorMessage}`, error);
+    console.error(
+      `[video-template:executeRemotionRender] 渲染失败: ${errorMessage}`,
+      error,
+    );
 
     await syncRemotionRecordStatus(
       recordId,
@@ -3688,7 +3708,10 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
         errorMessage,
         responseData: {
           commandId: command.commandId,
-          error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+          error:
+            error instanceof Error
+              ? { message: error.message, stack: error.stack }
+              : String(error),
           failedAt: new Date().toISOString(),
         },
       },
@@ -5257,6 +5280,27 @@ function bindSocketEvents(currentSocket: Socket) {
     },
   );
 
+  // 热搜采集定时配置同步（WebSocket 实时推送）
+  currentSocket.on(
+    "hotsearch-schedule-changed",
+    (payload: {
+      id: number;
+      clientId: string;
+      enabled: boolean;
+      platforms: string[];
+      intervalMinutes: number;
+      lastRunAt: string | null;
+      runStatus: string;
+      environment: string;
+    }) => {
+      emitter.emit("log", {
+        level: "info",
+        message: `[ws] received hotsearch-schedule-changed: enabled=${payload.enabled} id=${payload.id}`,
+      });
+      emitter.emit("hotsearchScheduleChanged", payload);
+    },
+  );
+
   // 监听来自管理后台的消息
   currentSocket.on("admin-message", async (data: any) => {
     emitter.emit("log", {
@@ -6371,7 +6415,8 @@ async function handlePsdSetProduction(
         });
       }
 
-      const resolvedStickerPaths = await resolveProcessImagePaths(stickerLocalPaths);
+      const resolvedStickerPaths =
+        await resolveProcessImagePaths(stickerLocalPaths);
       const analyzedSmartObjects = await analyzeProcessSmartObjects();
       const mappingResult = buildPsdSmartObjectMappings({
         imagePaths: resolvedStickerPaths,
@@ -6405,7 +6450,8 @@ async function handlePsdSetProduction(
       });
 
       const analyzedSmartObjects = await analyzeProcessSmartObjects();
-      const resolvedStickerPaths = await resolveProcessImagePaths(stickerLocalPaths);
+      const resolvedStickerPaths =
+        await resolveProcessImagePaths(stickerLocalPaths);
       const mappingResult = buildPsdSmartObjectMappings({
         imagePaths: resolvedStickerPaths,
         analyzedSmartObjects,
