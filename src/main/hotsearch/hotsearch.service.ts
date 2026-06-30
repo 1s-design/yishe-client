@@ -292,12 +292,18 @@ class HotSearchService {
 
   // ==================== 定时任务轮询 ====================
 
+  /**
+   * 启动定时任务轮询（含自动注册）
+   */
   startSchedulePolling(intervalMs: number = 30000) {
     if (this.schedulePolling) return;
     this.schedulePolling = true;
     console.log(
       `⏰ [HotSearch] 定时任务轮询已启动, 间隔 ${intervalMs / 1000}s`,
     );
+
+    // 启动时先自动注册，确保服务端有对应的定时任务
+    this.autoRegisterSchedule();
 
     const poll = async () => {
       if (!this.schedulePolling) return;
@@ -309,6 +315,32 @@ class HotSearchService {
     };
 
     this.schedulePollTimer = setTimeout(poll, 3000);
+  }
+
+  /**
+   * 自动注册：确保服务端有当前 clientId 的定时任务
+   * 如果不存在则自动创建（默认未启用，由 admin 切换启用状态）
+   */
+  private async autoRegisterSchedule() {
+    const token = this.getToken?.();
+    const deviceId = clientDeviceId;
+    if (!token || !deviceId) return;
+
+    try {
+      const res = await this.apiFetch(
+        `/hotsearch-data/schedule/by-client?clientId=${encodeURIComponent(deviceId)}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const raw = await res.json();
+      const result = raw?.data && typeof raw.data === "object" && "success" in raw.data ? raw.data : raw;
+      if (result?.data) {
+        console.log(
+          `[HotSearch] 自动注册成功: scheduleId=${result.data.id}, enabled=${result.data.enabled}, clientId=${deviceId}`,
+        );
+      }
+    } catch (err: any) {
+      console.warn(`[HotSearch] 自动注册失败: ${err?.message}`);
+    }
   }
 
   stopSchedulePolling() {

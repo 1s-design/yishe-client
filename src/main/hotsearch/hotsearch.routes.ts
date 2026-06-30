@@ -170,5 +170,42 @@ export function registerHotSearchRoutes(
     },
   );
 
+  // 代理：按 clientId 获取/创建定时任务
+  app.get(
+    "/api/hotsearch-data/schedule/by-client",
+    async (req: Request, res: Response) => {
+      try {
+        const clientId = (req.query.clientId as string) || "";
+        if (!clientId) {
+          res.status(400).json({ success: false, message: "clientId required" });
+          return;
+        }
+        const response = await fetchWithFallback(
+          `/hotsearch-data/schedule/by-client?clientId=${encodeURIComponent(clientId)}`,
+          {
+            headers: {
+              Authorization: (req.headers.authorization || "").replace(/^Bearer /i, "")
+                ? req.headers.authorization!
+                : getToken?.()
+                  ? `Bearer ${getToken()}`
+                  : "",
+              "Content-Type": "application/json",
+            },
+          },
+        );
+        if (!response.ok) {
+          res.status(response.status).json({ success: false, message: `Remote returned ${response.status}` });
+          return;
+        }
+        const raw = await response.json();
+        const data = raw?.data && typeof raw.data === "object" && "success" in raw.data ? raw.data : raw;
+        res.json(data);
+      } catch (error: any) {
+        console.error("[HotSearch Proxy] by-client 失败:", error?.message);
+        res.status(500).json({ success: false, message: error?.message });
+      }
+    },
+  );
+
   console.log("✅ [HotSearch] 路由已注册: /api/hotsearch/*");
 }
