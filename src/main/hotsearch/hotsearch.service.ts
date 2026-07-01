@@ -216,9 +216,9 @@ class HotSearchService {
   /**
    * 采集并上报到服务端
    */
-  async fetchAndReport(platformKeys?: string[]) {
+  async fetchAndReport(platformKeys?: string[], scheduleId?: number) {
     const fetchResult = await this.fetchAll(platformKeys);
-    const reportResult = await this.reportToServer(fetchResult);
+    const reportResult = await this.reportToServer(fetchResult, scheduleId);
     return { ...fetchResult, reportResult };
   }
 
@@ -230,7 +230,7 @@ class HotSearchService {
     fetchedAt: string;
     platforms: PlatformResult[];
     summary: { duration: number };
-  }) {
+  }, scheduleId?: number) {
     const token = this.getToken?.();
     if (!token) {
       console.warn("⚠️ [HotSearch] 未登录，跳过上报");
@@ -253,6 +253,7 @@ class HotSearchService {
           triggeredBy: "client",
           fetchedAt: data.fetchedAt,
           duration: data.summary.duration,
+          scheduleId: scheduleId || undefined,
         }),
       });
 
@@ -394,7 +395,7 @@ class HotSearchService {
 
     try {
       console.log(`🚀 [HotSearch] 开始采集 ${task.platforms.length} 个平台...`);
-      const fetchResult = await this.fetchAndReport(task.platforms);
+      const fetchResult = await this.fetchAndReport(task.platforms, task.scheduleId);
       console.log(`📊 [HotSearch] 采集完成: success=${fetchResult.summary?.success}, failed=${fetchResult.summary?.failed}, reportId=${fetchResult.reportResult?.id}`);
 
       const reportRes = await this.apiFetch("/hotsearch-data/schedule/report", {
