@@ -75,13 +75,19 @@ export async function resolveTemuLoginState(page) {
     }
 
     if (isTemuSellerPage(currentUrl)) {
+        // 认证页面 = 未登录，需要走登录流程
+        if (isTemuAuthenticationPage(currentUrl)) {
+            return {
+                loggedIn: false,
+                currentUrl,
+                reason: 'seller_authentication_page_detected',
+                requiresAuthentication: true
+            };
+        }
         return {
             loggedIn: true,
             currentUrl,
-            reason: isTemuAuthenticationPage(currentUrl)
-                ? 'seller_authentication_page_detected'
-                : 'seller_page_detected',
-            requiresAuthentication: isTemuAuthenticationPage(currentUrl)
+            reason: 'seller_page_detected'
         };
     }
 
