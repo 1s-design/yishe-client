@@ -263,6 +263,7 @@ class HotSearchService {
       }
 
       const raw = await response.json();
+      console.log(`[HotSearch] 上报原始响应:`, JSON.stringify(raw).slice(0, 300));
       const result = raw?.data && typeof raw.data === "object" && "success" in raw.data ? raw.data : raw;
       console.log(`✅ [HotSearch] 已上报, 采集记录ID=${result.id}`);
       return result;
