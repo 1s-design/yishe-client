@@ -3,6 +3,7 @@
  */
 
 import { type Express, type Request, type Response } from "express";
+import { randomUUID } from "crypto";
 import { hotSearchService } from "./hotsearch.service";
 
 export function registerHotSearchRoutes(
@@ -41,16 +42,23 @@ export function registerHotSearchRoutes(
     }
   });
 
-  app.post("/api/hotsearch/fetch", async (req: Request, res: Response) => {
-    try {
-      const { platforms, reportToServer = true } = req.body || {};
-      const result = reportToServer
-        ? await hotSearchService.fetchAndReport(platforms)
-        : await hotSearchService.fetchAll(platforms);
-      res.json({ success: true, ...result });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: error?.message });
-    }
+  app.post("/api/hotsearch/fetch", (req: Request, res: Response) => {
+    const { platforms, reportToServer = true } = req.body || {};
+    const jobId = randomUUID();
+    console.log(`[HotSearch] 异步采集启动 jobId=${jobId}, platforms=${platforms?.length}`);
+    res.json({ success: true, jobId, message: "采集已启动" });
+
+    // 后台执行，不阻塞响应
+    setImmediate(async () => {
+      try {
+        const result = reportToServer !== false
+          ? await hotSearchService.fetchAndReport(platforms)
+          : await hotSearchService.fetchAll(platforms);
+        console.log(`[HotSearch] 异步采集完成 jobId=${jobId}, success=${result.summary?.success}, failed=${result.summary?.failed}`);
+      } catch (error: any) {
+        console.error(`[HotSearch] 异步采集失败 jobId=${jobId}: ${error?.message}`);
+      }
+    });
   });
 
   app.get("/api/hotsearch/platform/:key", (req: Request, res: Response) => {
