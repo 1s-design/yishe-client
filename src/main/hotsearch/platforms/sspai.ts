@@ -10,7 +10,7 @@ const sspai: PlatformModule = {
   config: {
     key: 'sspai',
     name: '少数派',
-    enabled: true,
+    enabled: false,
     environment: 'direct',
     maxItems: 20,
     timeout: 15000,

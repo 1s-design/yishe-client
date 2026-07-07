@@ -12,7 +12,7 @@ const npmTrending: PlatformModule = {
   config: {
     key: 'npm_trending',
     name: 'npm Trending',
-    enabled: true,
+    enabled: false,
     environment: 'direct',
     maxItems: 20,
     timeout: 15000,

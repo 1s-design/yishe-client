@@ -11,7 +11,7 @@ const producthunt: PlatformModule = {
   config: {
     key: 'producthunt',
     name: 'Product Hunt',
-    enabled: true,
+    enabled: false,
     environment: 'proxy',
     maxItems: 20,
     timeout: 15000,

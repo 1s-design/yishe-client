@@ -10,7 +10,7 @@ const reddit: PlatformModule = {
   config: {
     key: 'reddit',
     name: 'Reddit',
-    enabled: true,
+    enabled: false,
     environment: 'proxy',
     maxItems: 20,
     timeout: 15000,

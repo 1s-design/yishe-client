@@ -10,7 +10,7 @@ const etsyTrending: PlatformModule = {
   config: {
     key: 'etsy_trending',
     name: 'Etsy Trending',
-    enabled: true,
+    enabled: false,
     environment: 'proxy',
     maxItems: 20,
     timeout: 20000,
