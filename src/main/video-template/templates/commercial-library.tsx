@@ -221,7 +221,7 @@ export const GradientImageTransitionTemplate: React.FC<
   const slideDurations = slides.map((slide) =>
     Math.max(1, Math.round(Number(slide.durationSeconds || 3) * fps)),
   );
-  const slideStarts = slideDurations.reduce<number[]>((starts, duration, index) => {
+  const slideStarts = slideDurations.reduce<number[]>((starts, _duration, index) => {
     starts[index] = index === 0 ? 0 : starts[index - 1] + slideDurations[index - 1];
     return starts;
   }, []);
@@ -263,7 +263,6 @@ export const GradientImageTransitionTemplate: React.FC<
           fadeOut: transitionFrames,
         });
         const localProgress = clamp01((frame - start) / slideDuration);
-        const scale = mix(1.04, 1.12, localProgress);
         const shift = mix(-18, 18, localProgress) * (index % 2 === 0 ? 1 : -1);
 
         return (
@@ -6401,7 +6400,7 @@ export const simpleFadeTextSchema = z.object({
 
 export const SimpleFadeTextTemplate: React.FC<
   z.infer<typeof simpleFadeTextSchema>
-> = ({ palette, title, subtitle, lines, width, height, fps }) => {
+> = ({ palette, title, subtitle, lines, width, height }) => {
   const frame = useCurrentFrame();
   const totalLines = lines.length || 1;
   const framesPerLine = Math.max(30, Math.floor(450 / totalLines));
@@ -6519,7 +6518,7 @@ export const slideUpCardsSchema = z.object({
 
 export const SlideUpCardsTemplate: React.FC<
   z.infer<typeof slideUpCardsSchema>
-> = ({ palette, title, cards, width, height, fps }) => {
+> = ({ palette, title, cards, width, height }) => {
   const frame = useCurrentFrame();
   const normalizedCards = Array.isArray(cards) ? cards : [];
   const cardCount = normalizedCards.length || 1;
@@ -6818,7 +6817,7 @@ export const imageShowcaseSchema = z.object({
 
 export const ImageShowcaseTemplate: React.FC<
   z.infer<typeof imageShowcaseSchema>
-> = ({ palette, title, subtitle, images, width, height, fps }) => {
+> = ({ palette, title, subtitle, images, width, height }) => {
   const frame = useCurrentFrame();
   const normalizedImages = Array.isArray(images)
     ? images
@@ -6842,7 +6841,7 @@ export const ImageShowcaseTemplate: React.FC<
         caption: (item as any).caption || `Image ${String(index + 1).padStart(2, "0")}`,
       }))
     : [{
-        image: { type: "image" as const, src: "https://picsum.photos/seed/showcase-default/1200/1600" },
+        image: { type: "image" as const, src: "https://picsum.photos/seed/showcase-default/1200/1600", alt: "Default Image" },
         caption: "Default Image",
       }];
   const framesPerSlide = Math.max(30, Math.floor(360 / slides.length));

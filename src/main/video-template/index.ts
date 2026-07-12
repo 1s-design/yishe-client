@@ -5,15 +5,25 @@ import fs from "fs";
 import path from "path";
 import { makeRenderQueue, type VideoTemplateJobState } from "./render-queue";
 import { resolveRemotionBrowser } from "./remotion-browser";
+import {
+  aiUniversalTemplateMetadata,
+  publicAiTemplateCatalog,
+} from "./templates/ai-metadata";
 import { publicTemplateCatalog, templateCatalog } from "./templates/registry";
 
 type WorkspaceResolver = () => string;
 type VideoTemplateQueue = ReturnType<typeof makeRenderQueue>;
 
 let resolveWorkspaceDirectory: WorkspaceResolver = () => "";
-let bundlePromise: Promise<string> | null = null;
+let standardBundlePromise: Promise<string> | null = null;
+let aiBundlePromise: Promise<string> | null = null;
 let queueWarmupPromise: Promise<VideoTemplateQueue> | null = null;
 let queueInstance: VideoTemplateQueue | null = null;
+
+const allPublicTemplateCatalog = [
+  ...publicTemplateCatalog,
+  ...publicAiTemplateCatalog,
+];
 
 function configureVideoTemplate(options: { getWorkspaceDirectory?: WorkspaceResolver }) {
   if (typeof options?.getWorkspaceDirectory === "function") {
@@ -133,70 +143,96 @@ function resolveRemotionBinariesDirectory() {
   return null;
 }
 
-function getVideoTemplateEntryPointCandidates() {
+type VideoTemplateBundleKind = "standard" | "ai";
+
+function getVideoTemplateBundleDirectoryNames(kind: VideoTemplateBundleKind) {
+  return kind === "ai"
+    ? ["video-template-ai-bundle-v3", "video-template-ai-bundle-v2", "video-template-ai-bundle"]
+    : [
+        "video-template-standard-bundle-v3",
+        "video-template-standard-bundle-v2",
+        "video-template-standard-bundle",
+        "video-template-bundle",
+      ];
+}
+
+function getVideoTemplateEntryPointFileName(kind: VideoTemplateBundleKind) {
+  return kind === "ai" ? "ai-index.ts" : "index.ts";
+}
+
+function getVideoTemplateEntryPointCandidates(kind: VideoTemplateBundleKind) {
+  const entryFileName = getVideoTemplateEntryPointFileName(kind);
+  const sourceDirectoryNames = [
+    "video-template-runtime-source-v3",
+    "video-template-runtime-source-v2",
+    "video-template-runtime-source",
+    "video-template-source",
+  ];
   const packagedCandidates = [
-    path.join(
-      process.resourcesPath,
-      "app.asar.unpacked",
-      "generated",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-    path.join(
-      process.resourcesPath,
-      "generated",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-    path.join(
-      app.getAppPath(),
-      "generated",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-    path.join(
-      path.dirname(app.getAppPath()),
-      "app.asar.unpacked",
-      "generated",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-    path.join(
-      process.resourcesPath,
-      "app.asar.unpacked",
-      "out",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-    path.join(
-      process.resourcesPath,
-      "out",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-    path.join(
-      app.getAppPath(),
-      "out",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-    path.join(
-      path.dirname(app.getAppPath()),
-      "app.asar.unpacked",
-      "out",
-      "video-template-source",
-      "remotion",
-      "index.ts",
-    ),
-    path.join(__dirname, "../../video-template-source/remotion/index.ts"),
-    path.join(__dirname, "../video-template-source/remotion/index.ts"),
+    ...sourceDirectoryNames.flatMap((sourceDirectoryName) => [
+      path.join(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "generated",
+        sourceDirectoryName,
+        "remotion",
+        entryFileName,
+      ),
+      path.join(
+        process.resourcesPath,
+        "generated",
+        sourceDirectoryName,
+        "remotion",
+        entryFileName,
+      ),
+      path.join(
+        app.getAppPath(),
+        "generated",
+        sourceDirectoryName,
+        "remotion",
+        entryFileName,
+      ),
+      path.join(
+        path.dirname(app.getAppPath()),
+        "app.asar.unpacked",
+        "generated",
+        sourceDirectoryName,
+        "remotion",
+        entryFileName,
+      ),
+      path.join(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "out",
+        sourceDirectoryName,
+        "remotion",
+        entryFileName,
+      ),
+      path.join(
+        process.resourcesPath,
+        "out",
+        sourceDirectoryName,
+        "remotion",
+        entryFileName,
+      ),
+      path.join(
+        app.getAppPath(),
+        "out",
+        sourceDirectoryName,
+        "remotion",
+        entryFileName,
+      ),
+      path.join(
+        path.dirname(app.getAppPath()),
+        "app.asar.unpacked",
+        "out",
+        sourceDirectoryName,
+        "remotion",
+        entryFileName,
+      ),
+      path.join(__dirname, "../../", sourceDirectoryName, "remotion", entryFileName),
+      path.join(__dirname, "../", sourceDirectoryName, "remotion", entryFileName),
+    ]),
   ].filter((candidate, index, list) => list.indexOf(candidate) === index);
 
   const existingPackagedCandidates = app.isPackaged
@@ -212,7 +248,7 @@ function getVideoTemplateEntryPointCandidates() {
     "main",
     "video-template",
     "remotion",
-    "index.ts",
+    entryFileName,
   );
   if (fs.existsSync(devEntry)) {
     return [devEntry];
@@ -227,87 +263,172 @@ function getVideoTemplateEntryPointCandidates() {
   );
 }
 
-function getVideoTemplateBundleCandidates() {
-  return [
-    path.join(
-      process.resourcesPath,
-      "app.asar.unpacked",
-      "generated",
-      "video-template-bundle",
-    ),
-    path.join(
-      process.resourcesPath,
-      "generated",
-      "video-template-bundle",
-    ),
-    path.join(
-      app.getAppPath(),
-      "generated",
-      "video-template-bundle",
-    ),
-    path.join(
-      path.dirname(app.getAppPath()),
-      "app.asar.unpacked",
-      "generated",
-      "video-template-bundle",
-    ),
-    path.join(
-      process.resourcesPath,
-      "app.asar.unpacked",
-      "out",
-      "video-template-bundle",
-    ),
-    path.join(
-      process.resourcesPath,
-      "out",
-      "video-template-bundle",
-    ),
-    path.join(
-      app.getAppPath(),
-      "out",
-      "video-template-bundle",
-    ),
-    path.join(
-      path.dirname(app.getAppPath()),
-      "app.asar.unpacked",
-      "out",
-      "video-template-bundle",
-    ),
-    path.join(__dirname, "../../video-template-bundle"),
-    path.join(__dirname, "../video-template-bundle"),
-  ].filter((candidate, index, list) => list.indexOf(candidate) === index);
+function getVideoTemplateBundleCandidates(kind: VideoTemplateBundleKind) {
+  return getVideoTemplateBundleDirectoryNames(kind)
+    .flatMap((bundleDirectoryName) => [
+      path.join(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "generated",
+        bundleDirectoryName,
+      ),
+      path.join(
+        process.resourcesPath,
+        "generated",
+        bundleDirectoryName,
+      ),
+      path.join(
+        app.getAppPath(),
+        "generated",
+        bundleDirectoryName,
+      ),
+      path.join(
+        path.dirname(app.getAppPath()),
+        "app.asar.unpacked",
+        "generated",
+        bundleDirectoryName,
+      ),
+      path.join(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "out",
+        bundleDirectoryName,
+      ),
+      path.join(
+        process.resourcesPath,
+        "out",
+        bundleDirectoryName,
+      ),
+      path.join(
+        app.getAppPath(),
+        "out",
+        bundleDirectoryName,
+      ),
+      path.join(
+        path.dirname(app.getAppPath()),
+        "app.asar.unpacked",
+        "out",
+        bundleDirectoryName,
+      ),
+      path.resolve(process.cwd(), "generated", bundleDirectoryName),
+      path.join(__dirname, "../../", bundleDirectoryName),
+      path.join(__dirname, "../", bundleDirectoryName),
+    ])
+    .filter((candidate, index, list) => list.indexOf(candidate) === index);
 }
 
-function resolvePrebuiltVideoTemplateBundle() {
-  if (!app.isPackaged) {
-    return null;
-  }
+function collectVideoTemplateSourceFiles(kind: VideoTemplateBundleKind) {
+  const sourceRoot = path.join(app.getAppPath(), "src", "main", "video-template");
+  const sourceFiles = kind === "ai"
+    ? [
+        path.join(sourceRoot, "remotion", "AiRoot.tsx"),
+        path.join(sourceRoot, "remotion", "ai-index.ts"),
+        path.join(sourceRoot, "templates", "ai-registry.ts"),
+        path.join(sourceRoot, "templates", "ai-metadata.ts"),
+        path.join(sourceRoot, "templates", "ai-types.ts"),
+        path.join(sourceRoot, "templates", "ai-universal-composition.tsx"),
+        path.join(sourceRoot, "templates", "shared.tsx"),
+      ]
+    : [
+        path.join(sourceRoot, "remotion", "Root.tsx"),
+        path.join(sourceRoot, "remotion", "index.ts"),
+        path.join(sourceRoot, "templates", "registry.ts"),
+        path.join(sourceRoot, "templates", "commercial-library.tsx"),
+        path.join(sourceRoot, "templates", "shared.tsx"),
+      ];
 
-  for (const candidate of getVideoTemplateBundleCandidates()) {
-    if (fs.existsSync(path.join(candidate, "index.html"))) {
-      return candidate;
+  return sourceFiles.filter((sourceFile) => fs.existsSync(sourceFile));
+}
+
+function resolvePrebuiltVideoTemplateBundle(kind: VideoTemplateBundleKind) {
+  for (const candidate of getVideoTemplateBundleCandidates(kind)) {
+    const indexPath = path.join(candidate, "index.html");
+    if (!fs.existsSync(indexPath)) {
+      continue;
     }
+
+    // In development mode, check if the bundle is stale (source files newer than bundle)
+    if (!app.isPackaged) {
+      try {
+        const bundleTime = fs.statSync(indexPath).mtimeMs;
+        const sourceFiles = collectVideoTemplateSourceFiles(kind);
+        for (const src of sourceFiles) {
+          if (fs.existsSync(src) && fs.statSync(src).mtimeMs > bundleTime) {
+            console.info(
+              `[video-template] ${kind} prebuilt bundle is stale (source ${path.basename(src)} is newer), will rebuild`,
+            );
+            return null;
+          }
+        }
+      } catch {
+        // If we can't check timestamps, use the bundle as-is
+      }
+    }
+
+    return candidate;
   }
 
   return null;
 }
 
+function inspectVideoTemplateBundle(kind: VideoTemplateBundleKind) {
+  const sourceFiles = !app.isPackaged ? collectVideoTemplateSourceFiles(kind) : [];
+  const candidates = getVideoTemplateBundleCandidates(kind).map((candidate) => {
+    const indexPath = path.join(candidate, "index.html");
+    const exists = fs.existsSync(indexPath);
+    let indexMtimeMs: number | null = null;
+    let staleSource: string | null = null;
+
+    try {
+      indexMtimeMs = exists ? fs.statSync(indexPath).mtimeMs : null;
+      staleSource = !app.isPackaged && exists && indexMtimeMs
+        ? sourceFiles.find((sourceFile) => {
+            try {
+              return fs.statSync(sourceFile).mtimeMs > indexMtimeMs!;
+            } catch {
+              return false;
+            }
+          }) || null
+        : null;
+    } catch {
+      indexMtimeMs = null;
+      staleSource = null;
+    }
+
+    return {
+      path: candidate,
+      exists,
+      indexMtimeMs,
+      stale: !!staleSource,
+      staleSource,
+    };
+  });
+
+  const selected = candidates.find((candidate) => candidate.exists && !candidate.stale);
+  return {
+    selected: selected?.path || null,
+    building: kind === "ai" ? !!aiBundlePromise : !!standardBundlePromise,
+    candidates,
+  };
+}
+
 async function bundleVideoTemplateFromEntry(entryPoint: string, outputDirectory: string) {
-  // 打包版运行在只读应用目录附近时，Remotion 的 webpack 缓存和工作根目录
-  // 不能再落到安装目录，否则容易因为权限导致预热失败。
-  const bundlerRoot = app.isPackaged
-    ? ensureVideoTemplateDirectories().bundlerRoot
-    : undefined;
+  const directories = ensureVideoTemplateDirectories();
+  // Keep Remotion's webpack filesystem cache in the user workspace. This avoids
+  // root-owned node_modules/.cache directories slowing down or breaking runtime bundling.
+  const bundlerRoot = directories.bundlerRoot;
+  const devPublicDir = path.resolve(process.cwd(), "public");
+  const publicDir = fs.existsSync(devPublicDir) ? devPublicDir : null;
+
+  fs.rmSync(outputDirectory, { recursive: true, force: true });
+  fs.mkdirSync(outputDirectory, { recursive: true });
 
   return bundle({
     entryPoint,
+    outDir: outputDirectory,
     rootDir: bundlerRoot,
+    publicDir,
     enableCaching: !app.isPackaged,
-    webpackOverride: (config) => {
-      config.output = config.output || {};
-      config.output.path = outputDirectory;
-      return config;
-    },
   });
 }
 
@@ -429,25 +550,28 @@ function formatJob(jobId: string, job: VideoTemplateJobState | undefined | null)
   };
 }
 
-async function ensureVideoTemplateServeUrl() {
-  const prebuiltBundle = resolvePrebuiltVideoTemplateBundle();
+async function ensureVideoTemplateServeUrl(kind: VideoTemplateBundleKind) {
+  const prebuiltBundle = resolvePrebuiltVideoTemplateBundle(kind);
   if (prebuiltBundle) {
     return prebuiltBundle;
   }
 
-  if (!bundlePromise) {
-    bundlePromise = (async () => {
+  const existingPromise =
+    kind === "ai" ? aiBundlePromise : standardBundlePromise;
+  if (!existingPromise) {
+    const nextPromise = (async () => {
       const directories = ensureVideoTemplateDirectories();
-      const entryCandidates = getVideoTemplateEntryPointCandidates();
+      const outputDirectory = path.join(directories.bundles, kind);
+      const entryCandidates = getVideoTemplateEntryPointCandidates(kind);
       let lastError: unknown = null;
 
       for (const entryPoint of entryCandidates) {
         try {
-          return await bundleVideoTemplateFromEntry(entryPoint, directories.bundles);
+          return await bundleVideoTemplateFromEntry(entryPoint, outputDirectory);
         } catch (error) {
           lastError = error;
           console.error(
-            `[video-template] Failed to bundle entry ${entryPoint}:`,
+            `[video-template] Failed to bundle ${kind} entry ${entryPoint}:`,
             error,
           );
         }
@@ -455,14 +579,37 @@ async function ensureVideoTemplateServeUrl() {
 
       throw lastError instanceof Error
         ? lastError
-        : new Error("[video-template] Failed to bundle any entry candidate");
+        : new Error(`[video-template] Failed to bundle ${kind} entry candidate`);
     })().catch((error) => {
-      bundlePromise = null;
+      if (kind === "ai") {
+        aiBundlePromise = null;
+      } else {
+        standardBundlePromise = null;
+      }
       throw error;
     });
+
+    if (kind === "ai") {
+      aiBundlePromise = nextPromise;
+    } else {
+      standardBundlePromise = nextPromise;
+    }
   }
 
-  return bundlePromise;
+  return kind === "ai" ? aiBundlePromise! : standardBundlePromise!;
+}
+
+function getVideoTemplateBundleKind(data: {
+  templateId?: string;
+  compositionId?: string;
+}): VideoTemplateBundleKind {
+  const templateId = String(data.templateId || "").trim();
+  const compositionId = String(data.compositionId || "").trim();
+
+  return templateId === aiUniversalTemplateMetadata.id ||
+    compositionId === aiUniversalTemplateMetadata.compositionId
+    ? "ai"
+    : "standard";
 }
 
 async function warmVideoTemplateService() {
@@ -473,7 +620,6 @@ async function warmVideoTemplateService() {
   if (!queueWarmupPromise) {
     queueWarmupPromise = (async () => {
       const directories = ensureVideoTemplateDirectories();
-      const serveUrl = await ensureVideoTemplateServeUrl();
       const binariesDirectory = resolveRemotionBinariesDirectory();
       const browser = resolveRemotionBrowser();
 
@@ -490,7 +636,8 @@ async function warmVideoTemplateService() {
       }
 
       const queue = makeRenderQueue({
-        serveUrl,
+        resolveServeUrl: (jobData) =>
+          ensureVideoTemplateServeUrl(getVideoTemplateBundleKind(jobData)),
         rendersDir: directories.renders,
         browserExecutable: browser.executablePath,
         binariesDirectory,
@@ -498,6 +645,9 @@ async function warmVideoTemplateService() {
       });
 
       queueInstance = queue;
+      void ensureVideoTemplateServeUrl("standard").catch((error) => {
+        console.warn("[video-template] standard bundle background warmup failed:", error);
+      });
       console.info("[服务] Video Template 已就绪");
       return queue;
     })().catch((error) => {
@@ -525,7 +675,8 @@ async function shutdownVideoTemplateService() {
 
   queueInstance = null;
   queueWarmupPromise = null;
-  bundlePromise = null;
+  standardBundlePromise = null;
+  aiBundlePromise = null;
 
   return {
     success: true,
@@ -547,7 +698,11 @@ function sanitizeInputProps(
   templateId: string,
   inputProps: Record<string, unknown> = {},
 ) {
-  const template = templateCatalog.find((item) => item.id === templateId);
+  const template =
+    templateCatalog.find((item) => item.id === templateId) ||
+    (templateId === aiUniversalTemplateMetadata.id
+      ? aiUniversalTemplateMetadata
+      : null);
   if (!template) {
     throw new Error(`Template ${templateId} not found`);
   }
@@ -584,9 +739,13 @@ async function getVideoTemplateStatus() {
     service: "video-template",
     status: queueInstance ? "ok" : "idle",
     warmed: !!queueInstance,
-    templateCount: publicTemplateCatalog.length,
-    templates: publicTemplateCatalog,
+    templateCount: allPublicTemplateCatalog.length,
+    templates: allPublicTemplateCatalog,
     directories,
+    bundles: {
+      standard: inspectVideoTemplateBundle("standard"),
+      ai: inspectVideoTemplateBundle("ai"),
+    },
     queue: {
       total: jobs.length,
       activeCount: activeJobs.length,
@@ -605,8 +764,8 @@ async function getVideoTemplateStatus() {
 async function getVideoTemplateCatalog() {
   return {
     success: true,
-    templates: publicTemplateCatalog,
-    total: publicTemplateCatalog.length,
+    templates: allPublicTemplateCatalog,
+    total: allPublicTemplateCatalog.length,
   };
 }
 

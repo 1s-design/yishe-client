@@ -1,4 +1,9 @@
-import { makeCancelSignal, renderMedia, selectComposition } from "@remotion/renderer";
+import {
+  makeCancelSignal,
+  renderMedia,
+  selectComposition,
+  type BrowserLog,
+} from "@remotion/renderer";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { RemotionChromeMode } from "./remotion-browser";
@@ -8,6 +13,10 @@ export interface VideoTemplateJobData {
   compositionId: string;
   inputProps: Record<string, unknown>;
 }
+
+export type VideoTemplateServeUrlResolver = (
+  jobData: VideoTemplateJobData,
+) => string | Promise<string>;
 
 export interface VideoTemplateJobLogEntry {
   timestamp: number;
@@ -75,7 +84,7 @@ export type VideoTemplateJobState =
     } & VideoTemplateJobShared;
 
 function resolveRenderTimeout(inputProps: Record<string, unknown>) {
-  const defaultTimeoutMs = Number(process.env.RENDER_TIMEOUT_MS) || 120_000;
+  const defaultTimeoutMs = Number(process.env.REMOTION_TIMEOUT_MS || process.env.RENDER_TIMEOUT_MS) || 300_000;
   const audioDuration = Number(inputProps.audioDuration ?? 0);
   const timeoutFromAudio =
     audioDuration > 0 ? Math.round(audioDuration * 1000 + 30_000) : 0;
@@ -93,6 +102,15 @@ function resolveProgressLogStep() {
   }
 
   return Math.max(1, Math.round(configuredStep));
+}
+
+function resolveRenderConcurrency() {
+  const configuredConcurrency = Number(process.env.REMOTION_RENDER_CONCURRENCY);
+  if (!Number.isFinite(configuredConcurrency) || configuredConcurrency <= 0) {
+    return 1;
+  }
+
+  return Math.max(1, Math.round(configuredConcurrency));
 }
 
 function clampProgress(progress: number) {
@@ -135,6 +153,22 @@ function appendJobLog(
 
   logs.push(entry);
   return logs.slice(-50);
+}
+
+function formatBrowserLog(log: BrowserLog) {
+  const type = String(log.type || "log").trim() || "log";
+  const text = String(log.text || "").trim();
+  const location = Array.isArray(log.stackTrace) && log.stackTrace[0]
+    ? [
+        log.stackTrace[0].url,
+        log.stackTrace[0].lineNumber,
+        log.stackTrace[0].columnNumber,
+      ]
+        .filter((item) => item !== undefined && item !== null && item !== "")
+        .join(":")
+    : "";
+
+  return `[browser:${type}] ${text}${location ? ` (${location})` : ""}`;
 }
 
 function withDiagnostics<T extends VideoTemplateJobState>(
@@ -226,13 +260,13 @@ function renderProgressMessage(
 }
 
 export function makeRenderQueue({
-  serveUrl,
+  resolveServeUrl,
   rendersDir,
   browserExecutable,
   binariesDirectory,
   chromeMode,
 }: {
-  serveUrl: string;
+  resolveServeUrl: VideoTemplateServeUrlResolver;
   rendersDir: string;
   browserExecutable: string | null;
   binariesDirectory: string | null;
@@ -252,6 +286,7 @@ export function makeRenderQueue({
     const timeoutMs = resolveRenderTimeout(job.data.inputProps);
     const progressLogIntervalMs = resolveProgressLogIntervalMs();
     const progressLogStep = resolveProgressLogStep();
+    const renderConcurrency = resolveRenderConcurrency();
     let lastLoggedProgressBucket = -1;
     let lastLoggedStage: string | null = null;
     let lastLoggedAt = 0;
@@ -279,6 +314,40 @@ export function makeRenderQueue({
         }
       }
     };
+    const appendRuntimeLog = (
+      level: "info" | "warn" | "error",
+      stage: string,
+      message: string,
+    ) => {
+      const currentJob = jobs.get(jobId);
+      if (!currentJob) {
+        return;
+      }
+
+      jobs.set(jobId, {
+        ...currentJob,
+        updatedAt: Date.now(),
+        logs: appendJobLog(
+          currentJob.logs,
+          createLogEntry(level, stage, message),
+        ),
+        lastHeartbeatAt: Date.now(),
+      } as VideoTemplateJobState);
+
+      const logMessage = `[video-template:${jobId}] [${stage}] ${message}`;
+      if (level === "error") {
+        console.error(logMessage);
+      } else if (level === "warn") {
+        console.warn(logMessage);
+      } else {
+        console.info(logMessage);
+      }
+    };
+    const onBrowserLog = (log: BrowserLog) => {
+      const message = formatBrowserLog(log);
+      const level = log.type === "error" ? "error" : log.type === "warning" ? "warn" : "info";
+      appendRuntimeLog(level, "browser", message);
+    };
 
     setJob(
       {
@@ -291,16 +360,35 @@ export function makeRenderQueue({
         updatedAt: startedAt,
       },
       {
-        stage: "select-composition",
-        message: "正在准备渲染环境",
+        stage: "prepare-bundle",
+        message: "正在准备 Remotion bundle",
         timeoutMs,
         logLevel: "info",
-        logMessage: `任务进入渲染队列，准备解析合成配置，超时阈值 ${timeoutMs}ms`,
+        logMessage: `任务进入渲染队列，准备 Remotion bundle，超时阈值 ${timeoutMs}ms`,
       },
     );
 
     try {
       const inputProps = job.data.inputProps;
+      const serveUrl = await resolveServeUrl(job.data);
+      setJob(
+        {
+          progress: 0,
+          status: "in-progress",
+          cancel,
+          data: job.data,
+          createdAt: job.createdAt,
+          startedAt,
+          updatedAt: Date.now(),
+        },
+        {
+          stage: "select-composition",
+          message: "正在解析合成配置",
+          timeoutMs,
+          logLevel: "info",
+          logMessage: `Remotion bundle 已就绪：${serveUrl}`,
+        },
+      );
       const composition = await selectComposition({
         serveUrl,
         id: job.data.compositionId,
@@ -308,6 +396,13 @@ export function makeRenderQueue({
         browserExecutable,
         binariesDirectory,
         chromeMode,
+        chromiumOptions: {
+          disableWebSecurity: true,
+          ignoreCertificateErrors: true,
+          gl: "swiftshader",
+        },
+        onBrowserLog,
+        logLevel: "verbose",
         timeoutInMilliseconds: timeoutMs,
       });
       const totalFrames = Math.max(0, Number(composition.durationInFrames) || 0);
@@ -339,9 +434,19 @@ export function makeRenderQueue({
         composition,
         inputProps,
         codec: "h264",
+        outputLocation,
         browserExecutable,
         binariesDirectory,
         chromeMode,
+        concurrency: renderConcurrency,
+        chromiumOptions: {
+          disableWebSecurity: true,
+          ignoreCertificateErrors: true,
+          gl: "swiftshader",
+        },
+        hardwareAcceleration: "disable",
+        onBrowserLog,
+        logLevel: "verbose",
         timeoutInMilliseconds: resolveRenderTimeout(inputProps),
         onStart: () => {
           setJob(
@@ -364,8 +469,8 @@ export function makeRenderQueue({
               logLevel: "info",
               logMessage:
                 totalFrames > 0
-                  ? `开始调用 Remotion 渲染，共 ${totalFrames} 帧`
-                  : "开始调用 Remotion 渲染",
+                  ? `开始调用 Remotion 渲染，共 ${totalFrames} 帧，并发 ${renderConcurrency}`
+                  : `开始调用 Remotion 渲染，并发 ${renderConcurrency}`,
             },
           );
         },
@@ -430,7 +535,6 @@ export function makeRenderQueue({
             },
           );
         },
-        outputLocation,
       });
 
       const completedAt = Date.now();

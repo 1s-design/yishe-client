@@ -84,6 +84,8 @@ const IMAGE_PROCESSING_LOCAL_BASE = "electron://image-tool";
 const REMOTION_REQUEST_TIMEOUT_MS = 30_000;
 const REMOTION_HEALTH_TIMEOUT_MS = 15_000;
 const REMOTION_TEMPLATE_REQUEST_TIMEOUT_MS = 15_000;
+const REMOTION_RENDER_CREATE_TIMEOUT_MS = 5 * 60_000;
+const REMOTION_RENDER_QUERY_TIMEOUT_MS = 60_000;
 const REMOTION_TEMPLATE_CACHE_TTL_MS = 60_000;
 const REMOTION_RECORD_PROGRESS_PERSIST_STEP = 10;
 const REMOTION_RECORD_PROGRESS_PERSIST_INTERVAL_MS = 15_000;
@@ -3497,6 +3499,7 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
   try {
     const createRes = await fetchRemotionJson("/api/renders", {
       method: "POST",
+      timeoutMs: REMOTION_RENDER_CREATE_TIMEOUT_MS,
       headers: {
         "Content-Type": "application/json",
       },
@@ -3543,7 +3546,9 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
     while (true) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
       const jobRes = ensureRemotionResponseOk(
-        await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`),
+        await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`, {
+          timeoutMs: REMOTION_RENDER_QUERY_TIMEOUT_MS,
+        }),
         "查询本地视频渲染任务失败",
       );
       const payload = jobRes?.data || jobRes || {};

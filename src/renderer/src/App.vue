@@ -54,6 +54,9 @@ const hotsearchScheduleInfo = ref({
   lastRunAt: "",
 });
 
+// 本地实际支持的平台数量（从本地 API 获取，用于替代服务端的平台数）
+const localPlatformCount = ref(0);
+
 let hotsearchSyncErrorCount = 0;
 
 async function pollHotsearchStatus() {
@@ -67,8 +70,12 @@ async function pollHotsearchStatus() {
       if (localRes.ok) {
         const localData = await localRes.json();
         deviceKey = localData.deviceId || "";
+        // 获取本地实际平台数量（与 allPlatforms 一致）
+        if (localData.platformCount) {
+          localPlatformCount.value = localData.platformCount;
+        }
         if (deviceKey) {
-          console.log("[HotSearch] deviceKey (from local API) =", deviceKey);
+          console.log("[HotSearch] deviceKey (from local API) =", deviceKey, "platformCount =", localData.platformCount);
         }
       } else {
         console.warn("[HotSearch] 本地热搜服务不可用, HTTP", localRes.status);
@@ -1421,7 +1428,7 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     description: hotsearchScheduleEnabled.value
       ? hotsearchFetching.value
         ? "正在采集热搜数据"
-        : `每 ${hotsearchScheduleInfo.value.intervalMinutes} 分钟 · ${hotsearchScheduleInfo.value.platformCount} 个平台`
+        : `每 ${hotsearchScheduleInfo.value.intervalMinutes} 分钟 · ${localPlatformCount.value || hotsearchScheduleInfo.value.platformCount} 个平台`
       : "未配置定时采集",
     icon: "mdi-fire",
     tone: hotsearchScheduleEnabled.value

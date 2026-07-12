@@ -12,16 +12,34 @@ files:
   - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
   - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
   - "!out/**/*"
+  - "!out/video-template-runtime-source-v3/**/*"
+  - "!out/video-template-runtime-source-v2/**/*"
+  - "!out/video-template-runtime-source/**/*"
   - "!out/video-template-source/**/*"
+  - "!out/video-template-standard-bundle-v3/**/*"
+  - "!out/video-template-standard-bundle-v2/**/*"
+  - "!out/video-template-standard-bundle/**/*"
   - "!out/video-template-bundle/**/*"
+  - "!out/video-template-ai-bundle-v3/**/*"
+  - "!out/video-template-ai-bundle-v2/**/*"
+  - "!out/video-template-ai-bundle/**/*"
   - "!resources/remotion-browser/**/*"
   - "!resources/google-art/**/*"
   - "!resources/plugin/**/*"
 asarUnpack:
   - resources/**
   - node_modules/@remotion/**
+  - generated/video-template-runtime-source-v3/**
+  - generated/video-template-runtime-source-v2/**
+  - generated/video-template-runtime-source/**
   - generated/video-template-source/**
+  - generated/video-template-standard-bundle-v3/**
+  - generated/video-template-standard-bundle-v2/**
+  - generated/video-template-standard-bundle/**
   - generated/video-template-bundle/**
+  - generated/video-template-ai-bundle-v3/**
+  - generated/video-template-ai-bundle-v2/**
+  - generated/video-template-ai-bundle/**
 extraResources:
   - from: resources/remotion
     to: resources/remotion
