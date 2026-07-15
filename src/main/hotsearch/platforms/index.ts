@@ -10,11 +10,7 @@ import douban from './douban'
 import kuaishou from './kuaishou'
 import v2ex from './v2ex'
 import kr36 from './36kr'
-import huxiu from './huxiu'
 import ithome from './ithome'
-import taobaoHot from './taobao-hot'
-import jdHot from './jd-hot'
-import pddHot from './pdd-hot'
 
 // 国际新闻/趋势 (proxy)
 import googleTrends from './google-trends'
@@ -24,15 +20,10 @@ import wikipedia from './wikipedia'
 import bbcNews from './bbc-news'
 import cnn from './cnn'
 import nytimes from './nytimes'
-import guardian from './guardian'
 import aljazeera from './aljazeera'
-import yahooNews from './yahoo-news'
-import medium from './medium'
 import devto from './devto'
 
 // 电商平台 (proxy)
-import amazonBestSellers from './amazon-best-sellers'
-import aliexpressPopular from './aliexpress-popular'
 import ebayTrending from './ebay-trending'
 import shopifyTrending from './shopify-trending'
 
@@ -47,11 +38,7 @@ export const allPlatforms: PlatformModule[] = [
   kuaishou,
   v2ex,
   kr36,
-  huxiu,
   ithome,
-  taobaoHot,
-  jdHot,
-  pddHot,
   // 国际新闻/趋势 (proxy)
   googleTrends,
   hackernews,
@@ -60,14 +47,9 @@ export const allPlatforms: PlatformModule[] = [
   bbcNews,
   cnn,
   nytimes,
-  guardian,
   aljazeera,
-  yahooNews,
-  medium,
   devto,
   // 电商平台 (proxy)
-  amazonBestSellers,
-  aliexpressPopular,
   ebayTrending,
   shopifyTrending,
 ]
