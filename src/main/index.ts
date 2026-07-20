@@ -49,13 +49,30 @@ type ImageToolModule = typeof import("./image-tool");
 type VideoTemplateModule = typeof import("./video-template");
 type AutoBrowserModule = typeof import("./auto-browser");
 type ServerModule = typeof import("./server");
+type LocalDatabaseModule = typeof import("./localDatabase");
 type SharpFactory = typeof import("sharp");
 
 let imageToolModulePromise: Promise<ImageToolModule> | null = null;
 let videoTemplateModulePromise: Promise<VideoTemplateModule> | null = null;
 let autoBrowserModulePromise: Promise<AutoBrowserModule> | null = null;
 let serverModulePromise: Promise<ServerModule> | null = null;
+let localDatabaseModulePromise: Promise<LocalDatabaseModule> | null = null;
 let sharpModulePromise: Promise<any> | null = null;
+
+function getLocalDatabaseModule(): Promise<LocalDatabaseModule> {
+  if (!localDatabaseModulePromise) {
+    localDatabaseModulePromise = import("./localDatabase");
+  }
+  return localDatabaseModulePromise;
+}
+
+async function getCurrentLocalDatabaseInfo() {
+  const { getLocalDatabaseInfo } = await getLocalDatabaseModule();
+  const workspaceDirectory = String(
+    store.get("workspaceDirectory", "") || "",
+  ).trim();
+  return getLocalDatabaseInfo(workspaceDirectory);
+}
 
 function isImageToolModuleLoaded() {
   return !!imageToolModulePromise;
@@ -932,6 +949,29 @@ if (!gotTheLock) {
 app.whenReady().then(() => {
   // 初始化默认工作目录（在创建窗口之前）
   initializeDefaultWorkspaceDirectory();
+  void getCurrentLocalDatabaseInfo()
+    .then((localDatabaseInfo) => {
+      writeMainLog(
+        localDatabaseInfo.connected ? "INFO" : "ERROR",
+        localDatabaseInfo.connected
+          ? "本地 SQLite 数据库初始化完成"
+          : "本地 SQLite 数据库初始化失败",
+        {
+          databasePath: localDatabaseInfo.databasePath,
+          sqliteVersion: localDatabaseInfo.sqliteVersion,
+          schemaVersion: localDatabaseInfo.schemaVersion,
+          error: localDatabaseInfo.error,
+        },
+      );
+    })
+    .catch((error) => {
+      writeMainLog("ERROR", "本地 SQLite 数据库模块加载失败", {
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+    });
   void ensureLocalServiceStartedForCachedToken("app-ready").catch((error) => {
     writeMainLog("ERROR", "缓存 token 自动启动 1519 服务失败", {
       scene: "app-ready",
@@ -1016,6 +1056,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle("get-device-key", async () => {
     return getOrCreateDeviceKey();
+  });
+
+  ipcMain.handle("local-database:get-info", async () => {
+    return getCurrentLocalDatabaseInfo();
   });
 
   // 插件/外部进程管理 IPC

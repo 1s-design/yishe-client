@@ -38,6 +38,8 @@ const logDirectory = ref("");
 const logFileCount = ref(0);
 const logTotalSize = ref(0);
 const logLoading = ref(false);
+const localDatabaseInfo = ref<Awaited<ReturnType<typeof window.api.getLocalDatabaseInfo>> | null>(null);
+const localDatabaseLoading = ref(false);
 const supportsNativeApi = computed(() => !!getNativeApi());
 
 const currentApiBase = computed(() => getApiBaseByMode(serviceMode.value));
@@ -54,6 +56,16 @@ const themeOptions: Array<{ label: string; value: ThemePreference }> = [
 ];
 const logSizeText = computed(() => {
   const size = logTotalSize.value;
+  if (size >= 1024 * 1024) {
+    return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (size >= 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${size} B`;
+});
+const localDatabaseSizeText = computed(() => {
+  const size = localDatabaseInfo.value?.sizeBytes || 0;
   if (size >= 1024 * 1024) {
     return `${(size / 1024 / 1024).toFixed(1)} MB`;
   }
@@ -194,6 +206,7 @@ const selectWorkspaceDirectory = async () => {
     websocketClient.updateClientInfo({
       workspaceDirectory: String(selectedPath || "").trim(),
     });
+    await loadLocalDatabaseInfo();
     showToast({ color: "success", icon: "mdi-folder-check-outline", message: "工作目录已更新" });
   } catch (error) {
     console.error("选择工作目录失败:", error);
@@ -266,6 +279,49 @@ const openLogDirectory = async () => {
   }
 };
 
+const loadLocalDatabaseInfo = async () => {
+  try {
+    localDatabaseLoading.value = true;
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.getLocalDatabaseInfo) {
+      localDatabaseInfo.value = null;
+      return;
+    }
+    localDatabaseInfo.value = await nativeApi.getLocalDatabaseInfo();
+  } catch (error) {
+    console.error("加载本地数据库信息失败:", error);
+    localDatabaseInfo.value = null;
+  } finally {
+    localDatabaseLoading.value = false;
+  }
+};
+
+const copyLocalDatabasePath = async () => {
+  const databasePath = localDatabaseInfo.value?.databasePath;
+  if (!databasePath) return;
+
+  try {
+    await navigator.clipboard.writeText(databasePath);
+    showToast({ color: "success", icon: "mdi-content-copy", message: "数据库路径已复制" });
+  } catch (error) {
+    console.error("复制数据库路径失败:", error);
+    showToast({ color: "error", icon: "mdi-alert-circle-outline", message: "复制数据库路径失败" });
+  }
+};
+
+const openLocalDatabaseDirectory = async () => {
+  const directory = localDatabaseInfo.value?.directory;
+  if (!directory) return;
+
+  try {
+    const nativeApi = getNativeApi();
+    if (!nativeApi?.openPath) return;
+    await nativeApi.openPath(directory);
+  } catch (error) {
+    console.error("打开数据库目录失败:", error);
+  }
+};
+
 const handleServiceModeChanged = ((event: CustomEvent<{ mode: ServiceMode }>) => {
   serviceMode.value = event.detail.mode;
 }) as EventListener;
@@ -275,6 +331,7 @@ onMounted(() => {
   void loadDeviceKey();
   void loadWorkspaceDirectory();
   void loadLogInfo();
+  void loadLocalDatabaseInfo();
 });
 
 onBeforeUnmount(() => {
@@ -405,6 +462,36 @@ onBeforeUnmount(() => {
         <div class="settings-row__btns">
           <el-button size="small" type="primary" :disabled="!supportsNativeApi" @click="openLogDirectory">打开日志</el-button>
           <el-button size="small" text :disabled="!supportsNativeApi" :loading="logLoading" @click="loadLogInfo">刷新</el-button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-row__label">本地数据库</div>
+      <div class="settings-row__content">
+        <div class="settings-addr-row">
+          <span
+            class="settings-addr-row__dot"
+            :class="localDatabaseInfo?.connected ? 'is-success' : 'is-error'"
+          ></span>
+          <span class="settings-addr-row__label">DB</span>
+          <span class="settings-addr-row__value">{{ localDatabaseInfo?.databasePath || "未加载" }}</span>
+          <span
+            class="settings-addr-row__tag"
+            :class="localDatabaseInfo?.connected ? 'is-success' : 'is-error'"
+          >{{ localDatabaseInfo?.connected ? "已连接" : "不可用" }}</span>
+        </div>
+        <div class="settings-row__meta">
+          <span>SQLite {{ localDatabaseInfo?.sqliteVersion || "-" }}</span>
+          <span>Schema {{ localDatabaseInfo?.schemaVersion || 0 }}</span>
+          <span>{{ localDatabaseSizeText }}</span>
+          <span v-if="localDatabaseInfo?.journalMode">{{ localDatabaseInfo.journalMode.toUpperCase() }}</span>
+        </div>
+        <div v-if="localDatabaseInfo?.error" class="settings-row__error">{{ localDatabaseInfo.error }}</div>
+        <div class="settings-row__btns">
+          <el-button size="small" type="primary" :disabled="!localDatabaseInfo?.databasePath" @click="copyLocalDatabasePath">复制路径</el-button>
+          <el-button size="small" :disabled="!localDatabaseInfo?.directory || !supportsNativeApi" @click="openLocalDatabaseDirectory">打开目录</el-button>
+          <el-button size="small" text :disabled="!supportsNativeApi" :loading="localDatabaseLoading" @click="loadLocalDatabaseInfo">刷新</el-button>
         </div>
       </div>
     </div>
@@ -563,6 +650,15 @@ onBeforeUnmount(() => {
 
 .settings-addr-row__tag.is-success { color: var(--theme-success); }
 .settings-addr-row__tag.is-warning { color: var(--theme-warning); }
+.settings-addr-row__dot.is-error { background: var(--theme-danger); }
+.settings-addr-row__tag.is-error { color: var(--theme-danger); }
+
+.settings-row__error {
+  color: var(--theme-danger);
+  font-size: 10px;
+  line-height: 1.4;
+  word-break: break-word;
+}
 
 @media (max-width: 520px) {
   .settings-row {

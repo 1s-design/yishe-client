@@ -28,6 +28,7 @@ const api = {
   getToken: () => ipcRenderer.invoke('get-token'),
   isTokenExist: () => ipcRenderer.invoke('is-token-exist'),
   getDeviceKey: () => ipcRenderer.invoke('get-device-key'),
+  getLocalDatabaseInfo: () => ipcRenderer.invoke('local-database:get-info'),
   onAppRuntimeEvent: (callback: (event: any) => void) => {
     ipcRenderer.on('app-runtime-event', (_event, payload) => callback(payload));
   },

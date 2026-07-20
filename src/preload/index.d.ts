@@ -14,6 +14,18 @@ declare global {
       getToken(): Promise<string | undefined>
       isTokenExist(): Promise<boolean>
       getDeviceKey(): Promise<string>
+      getLocalDatabaseInfo(): Promise<{
+        connected: boolean
+        engine: 'SQLite'
+        databasePath: string
+        databaseUri: string
+        directory: string
+        sizeBytes: number
+        sqliteVersion: string
+        schemaVersion: number
+        journalMode: string
+        error?: string
+      }>
       onAppRuntimeEvent(callback: (event: any) => void): void
       onExtensionConnectionStatus(callback: (status: any) => void): void
       openExternal(url: string): Promise<void>
