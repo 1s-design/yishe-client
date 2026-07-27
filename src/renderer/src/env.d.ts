@@ -180,6 +180,15 @@ interface Window {
       port: number
       error?: string
     }>
+    // MCP Server 管理
+    startMcpServer(): Promise<{ success: boolean; message: string }>
+    stopMcpServer(): Promise<{ success: boolean; message: string }>
+    checkMcpServerStatus(): Promise<{
+      running: boolean
+      port: number
+      toolCount: number
+      error?: string
+    }>
     // Google Arts 高清图片
     getGoogleArtStatus(): Promise<{
       ok: boolean

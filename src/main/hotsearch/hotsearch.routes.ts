@@ -13,11 +13,8 @@ export function registerHotSearchRoutes(
   app.get("/api/hotsearch/info", (_req: Request, res: Response) => {
     try {
       const status = hotSearchService.getStatus();
-      const polling = hotSearchService.getSchedulePollingStatus();
       res.json({
         success: true,
-        deviceId: polling.clientDeviceId,
-        polling: polling.polling,
         lastFetchAt: status.lastFetchAt,
         platformCount: status.platforms.length,
       });
@@ -78,15 +75,6 @@ export function registerHotSearchRoutes(
     try {
       const result = await hotSearchService.fetchAndReport([req.params.key]);
       res.json({ success: true, ...result });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: error?.message });
-    }
-  });
-
-  app.get("/api/hotsearch/schedule/status", (_req: Request, res: Response) => {
-    try {
-      const status = hotSearchService.getSchedulePollingStatus();
-      res.json({ success: true, ...status });
     } catch (error: any) {
       res.status(500).json({ success: false, message: error?.message });
     }

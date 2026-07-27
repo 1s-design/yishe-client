@@ -44,198 +44,11 @@ const isLoggingOut = ref(false);
 const browserAutomationActionLoading = ref(false);
 const videoTemplateActionLoading = ref(false);
 const imageToolActionLoading = ref(false);
-
-// 热搜采集状态
-const hotsearchScheduleEnabled = ref(false);
-const hotsearchFetching = ref(false);
-const hotsearchScheduleInfo = ref({
-  intervalMinutes: 0,
-  platformCount: 0,
-  lastRunAt: "",
-});
-
-// 本地实际支持的平台数量（从本地 API 获取，用于替代服务端的平台数）
-const localPlatformCount = ref(0);
-
-let hotsearchSyncErrorCount = 0;
-
-async function pollHotsearchStatus() {
-  try {
-    // Step 1: 获取 deviceKey（多渠道 fallback）
-    let deviceKey = "";
-
-    // 优先从本地 Electron 服务获取（最准确）
-    try {
-      const localRes = await fetch("http://localhost:1519/api/hotsearch/info");
-      if (localRes.ok) {
-        const localData = await localRes.json();
-        deviceKey = localData.deviceId || "";
-        // 获取本地实际平台数量（与 allPlatforms 一致）
-        if (localData.platformCount) {
-          localPlatformCount.value = localData.platformCount;
-        }
-        if (deviceKey) {
-          console.log("[HotSearch] deviceKey (from local API) =", deviceKey, "platformCount =", localData.platformCount);
-        }
-      } else {
-        console.warn("[HotSearch] 本地热搜服务不可用, HTTP", localRes.status);
-      }
-    } catch (localErr: any) {
-      console.warn("[HotSearch] 本地热搜服务连接失败:", localErr?.message);
-    }
-
-    // Fallback 1: 从 WebSocket identity 获取（已与 main 进程同步）
-    if (!deviceKey) {
-      deviceKey =
-        (websocketClient.identity as any)?.deviceKey ||
-        (websocketClient.profile as any)?.deviceKey ||
-        "";
-      if (deviceKey) {
-        console.log("[HotSearch] deviceKey (from identity) =", deviceKey);
-      }
-    }
-
-    // Fallback 2: 从 localStorage 读取
-    if (!deviceKey) {
-      try {
-        const raw = localStorage.getItem("yishe-device-identity");
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          deviceKey = parsed?.deviceKey || "";
-          if (deviceKey) {
-            console.log(
-              "[HotSearch] deviceKey (from localStorage) =",
-              deviceKey,
-            );
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-
-    if (!deviceKey) {
-      console.warn("[HotSearch] 无法获取 deviceKey，跳过状态同步");
-      return;
-    }
-
-    // Step 2: 获取渲染进程 token（传给代理 fallback）
-    let rendererToken = "";
-    try {
-      rendererToken = (await getTokenFromClient()) || "";
-    } catch {
-      /* ignore */
-    }
-
-    // Step 3: 获取 schedules
-    let schedules: any[] | null = null;
-    try {
-      const rawRes = await request.get<any>({
-        url: "/hotsearch-data/schedules",
-      });
-      console.log("[HotSearch] rawRes 类型:", typeof rawRes, ", isArray:", Array.isArray(rawRes), ", keys:", rawRes ? Object.keys(rawRes).slice(0, 5) : "null");
-      // API 返回 { data: [...], code: 0, status: true }，需要提取 data
-      schedules = Array.isArray(rawRes)
-        ? rawRes
-        : Array.isArray(rawRes?.data)
-          ? rawRes.data
-          : null;
-      console.log(
-        "[HotSearch] 直连获取 schedules 成功, count =",
-        Array.isArray(schedules) ? schedules.length : "non-array",
-      );
-    } catch (directErr: any) {
-      console.warn(
-        "[HotSearch] 直连远程获取 schedules 失败，尝试代理:",
-        directErr?.message,
-      );
-      try {
-        const proxyUrl = `http://localhost:1519/api/hotsearch-data/schedules?clientId=${encodeURIComponent(deviceKey)}`;
-        const headers: Record<string, string> = {};
-        if (rendererToken) headers["Authorization"] = `Bearer ${rendererToken}`;
-        const proxyRes = await fetch(proxyUrl, { headers });
-        if (proxyRes.ok) {
-          const proxyData = await proxyRes.json();
-          schedules = proxyData?.success
-            ? proxyData.data
-            : Array.isArray(proxyData)
-              ? proxyData
-              : null;
-          console.log(
-            "[HotSearch] 代理获取 schedules 成功, count =",
-            Array.isArray(schedules) ? schedules.length : "non-array",
-          );
-        } else {
-          console.warn("[HotSearch] 代理返回非 200:", proxyRes.status);
-        }
-      } catch (proxyErr: any) {
-        console.warn("[HotSearch] 代理 fallback 也失败:", proxyErr?.message);
-      }
-    }
-
-    if (!schedules) {
-      hotsearchSyncErrorCount++;
-      console.warn(
-        `[HotSearch] 无法获取 schedules (连续 ${hotsearchSyncErrorCount} 次)`,
-      );
-      if (hotsearchSyncErrorCount >= 3) {
-        hotsearchScheduleEnabled.value = false;
-        console.warn("[HotSearch] 连续多次同步失败，已重置状态");
-      }
-      return;
-    }
-
-    hotsearchSyncErrorCount = 0;
-
-    const mySchedule = Array.isArray(schedules)
-      ? (() => {
-          console.log(
-            "[HotSearch] DB 返回",
-            schedules.length,
-            "条 schedules, clientId:",
-            schedules.map((s: any) => s.clientId),
-            "| 当前 deviceKey:",
-            deviceKey,
-          );
-          return schedules.find((s: any) => s.clientId === deviceKey) || null;
-        })()
-      : null;
-
-    console.log(
-      "[HotSearch] 匹配结果:",
-      mySchedule
-        ? `ID=${mySchedule.id} enabled=${mySchedule.enabled} platforms=${mySchedule.platforms?.length}`
-        : "未匹配 (deviceKey=" + deviceKey + ")",
-    );
-
-    if (mySchedule) {
-      hotsearchScheduleEnabled.value = mySchedule.enabled ?? false;
-      hotsearchScheduleInfo.value = {
-        intervalMinutes: mySchedule.intervalMinutes || 0,
-        platformCount: mySchedule.platforms?.length || 0,
-        lastRunAt: mySchedule.lastRunAt || "",
-      };
-    } else {
-      hotsearchScheduleEnabled.value = false;
-    }
-  } catch (e: any) {
-    console.warn("[HotSearch] 状态同步异常:", e?.message || e);
-  }
-}
-
-setInterval(pollHotsearchStatus, 15000);
-pollHotsearchStatus();
-
-// WebSocket 实时同步：管理后台修改配置后即时更新状态
-websocketClient.events.on("hotsearchScheduleChanged", (schedule: any) => {
-  console.log("[HotSearch] WS push received:", schedule);
-  hotsearchScheduleEnabled.value = schedule.enabled ?? false;
-  hotsearchScheduleInfo.value = {
-    intervalMinutes: schedule.intervalMinutes || 0,
-    platformCount: schedule.platforms?.length || 0,
-    lastRunAt: schedule.lastRunAt || "",
-  };
-  hotsearchSyncErrorCount = 0;
+const mcpServerActionLoading = ref(false);
+const mcpServerStatus = ref<{ running: boolean; port: number; toolCount: number }>({
+  running: false,
+  port: 3210,
+  toolCount: 0,
 });
 
 const extensionConnectionStatus = ref<ExtensionConnectionStatus | null>(null);
@@ -683,6 +496,7 @@ function handleWindowForegroundRecovery() {
   void checkPsServiceStatus();
   void checkUploaderServiceStatus();
   void checkLocalServiceStatus();
+  void checkMcpServerStatus();
   void websocketClient.syncServiceRuntime("video-template");
 }
 
@@ -807,6 +621,26 @@ async function checkLocalServiceStatus() {
       },
       { emitClientInfo: false },
     );
+  }
+}
+
+let mcpServerStatusInterval: NodeJS.Timeout | null = null;
+
+async function checkMcpServerStatus() {
+  const nativeApi = getNativeApi();
+  if (!nativeApi?.checkMcpServerStatus) {
+    mcpServerStatus.value = { running: false, port: 3210, toolCount: 0 };
+    return;
+  }
+  try {
+    const status = await nativeApi.checkMcpServerStatus();
+    mcpServerStatus.value = {
+      running: status.running ?? false,
+      port: status.port ?? 3210,
+      toolCount: status.toolCount ?? 0,
+    };
+  } catch {
+    mcpServerStatus.value = { running: false, port: 3210, toolCount: 0 };
   }
 }
 
@@ -1193,6 +1027,39 @@ async function refreshImageToolFromDashboard() {
   }
 }
 
+async function toggleMcpServer() {
+  const nativeApi = getNativeApi();
+  if (!nativeApi) return;
+
+  mcpServerActionLoading.value = true;
+  try {
+    if (mcpServerStatus.value.running) {
+      await nativeApi.stopMcpServer();
+      showToast({
+        color: "success",
+        icon: "mdi-stop-circle-outline",
+        message: "MCP Server 已停止",
+      });
+    } else {
+      await nativeApi.startMcpServer();
+      showToast({
+        color: "success",
+        icon: "mdi-play-circle-outline",
+        message: "MCP Server 已启动",
+      });
+    }
+    await checkMcpServerStatus();
+  } catch (error: any) {
+    showToast({
+      color: "error",
+      icon: "mdi-alert-circle-outline",
+      message: error?.message || "MCP Server 操作失败",
+    });
+  } finally {
+    mcpServerActionLoading.value = false;
+  }
+}
+
 function handleDashboardCardAction(key: string) {
   if (key === "video-template-toggle") {
     if (
@@ -1234,6 +1101,18 @@ function handleDashboardCardAction(key: string) {
   }
   if (key === "image-tool-refresh") {
     void refreshImageToolFromDashboard();
+  }
+  if (key === "mcp-server-toggle") {
+    void toggleMcpServer();
+    return;
+  }
+  if (key === "mcp-server-refresh") {
+    void checkMcpServerStatus();
+    return;
+  }
+  if (key === "mcp-server-help") {
+    window.open("http://localhost:1519/api-docs", "_blank");
+    return;
   }
 }
 
@@ -1418,26 +1297,36 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     ],
   },
   {
-    key: "hotsearch",
-    title: "热搜采集",
-    value: hotsearchScheduleEnabled.value
-      ? hotsearchFetching.value
-        ? "采集中..."
-        : "定时已开启"
-      : "未开启",
-    description: hotsearchScheduleEnabled.value
-      ? hotsearchFetching.value
-        ? "正在采集热搜数据"
-        : `每 ${hotsearchScheduleInfo.value.intervalMinutes} 分钟 · ${localPlatformCount.value || hotsearchScheduleInfo.value.platformCount} 个平台`
-      : "未配置定时采集",
-    icon: "mdi-fire",
-    tone: hotsearchScheduleEnabled.value
-      ? hotsearchFetching.value
-        ? "warning"
-        : "success"
-      : "muted",
-    busy: hotsearchFetching.value,
-    highlight: hotsearchScheduleEnabled.value && !hotsearchFetching.value,
+    key: "mcp-server",
+    title: "MCP Server",
+    value: mcpServerStatus.value.running ? "运行中" : "未启动",
+    description: mcpServerStatus.value.running
+      ? `端口 ${mcpServerStatus.value.port} · ${mcpServerStatus.value.toolCount} 个工具`
+      : "供 AI Agent 调用的 MCP 服务",
+    icon: "mdi-robot-outline",
+    tone: mcpServerStatus.value.running ? "success" : "muted",
+    actions: [
+      {
+        key: "mcp-server-toggle",
+        label: mcpServerStatus.value.running ? "关闭" : "启动",
+        icon: mcpServerStatus.value.running
+          ? "mdi-stop-circle-outline"
+          : "mdi-play-circle-outline",
+        loading: mcpServerActionLoading.value,
+      },
+      {
+        key: "mcp-server-refresh",
+        label: "刷新",
+        icon: "mdi-refresh",
+        loading: mcpServerActionLoading.value,
+      },
+      {
+        key: "mcp-server-help",
+        label: "配置教程",
+        icon: "mdi-help-circle-outline",
+        loading: false,
+      },
+    ],
   },
 ]);
 
@@ -1521,6 +1410,9 @@ onMounted(() => {
   void checkLocalServiceStatus();
   localServiceStatusInterval = setInterval(checkLocalServiceStatus, 8000);
 
+  void checkMcpServerStatus();
+  mcpServerStatusInterval = setInterval(checkMcpServerStatus, 10000);
+
   window.addEventListener("auth:logout", handleAuthLogout);
   window.addEventListener("service-mode-changed", handleServiceModeChanged);
   window.addEventListener("focus", handleWindowForegroundRecovery);
@@ -1576,6 +1468,11 @@ onBeforeUnmount(() => {
   if (localServiceStatusInterval) {
     clearInterval(localServiceStatusInterval);
     localServiceStatusInterval = null;
+  }
+
+  if (mcpServerStatusInterval) {
+    clearInterval(mcpServerStatusInterval);
+    mcpServerStatusInterval = null;
   }
 
   if (extensionStatusTimer) {

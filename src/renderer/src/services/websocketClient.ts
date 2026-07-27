@@ -537,16 +537,6 @@ export type WebsocketEvents = {
     autoDispatchEnabled?: boolean | null;
     operator?: { id?: string | number; account?: string };
   };
-  hotsearchScheduleChanged: {
-    id: number;
-    clientId: string;
-    enabled: boolean;
-    platforms: string[];
-    intervalMinutes: number;
-    lastRunAt: string | null;
-    runStatus: string;
-    environment: string;
-  };
 };
 
 const emitter = mitt<WebsocketEvents>();
@@ -5282,27 +5272,6 @@ function bindSocketEvents(currentSocket: Socket) {
       if (requestedAutoDispatchEnabled !== true) {
         emitPsAutomationStatus();
       }
-    },
-  );
-
-  // 热搜采集定时配置同步（WebSocket 实时推送）
-  currentSocket.on(
-    "hotsearch-schedule-changed",
-    (payload: {
-      id: number;
-      clientId: string;
-      enabled: boolean;
-      platforms: string[];
-      intervalMinutes: number;
-      lastRunAt: string | null;
-      runStatus: string;
-      environment: string;
-    }) => {
-      emitter.emit("log", {
-        level: "info",
-        message: `[ws] received hotsearch-schedule-changed: enabled=${payload.enabled} id=${payload.id}`,
-      });
-      emitter.emit("hotsearchScheduleChanged", payload);
     },
   );
 

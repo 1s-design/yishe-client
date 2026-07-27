@@ -160,7 +160,9 @@ function videoTemplateAssetsPlugin() {
 export default defineConfig({
   main: {
     plugins: [
-      externalizeDepsPlugin(),
+      externalizeDepsPlugin({
+        exclude: ['@modelcontextprotocol/sdk']
+      }),
       videoTemplateAssetsPlugin()
     ],
     build: {

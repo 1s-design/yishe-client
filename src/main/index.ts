@@ -50,6 +50,7 @@ type VideoTemplateModule = typeof import("./video-template");
 type AutoBrowserModule = typeof import("./auto-browser");
 type ServerModule = typeof import("./server");
 type LocalDatabaseModule = typeof import("./localDatabase");
+type McpServerModule = typeof import("./mcp-server");
 type SharpFactory = typeof import("sharp");
 
 let imageToolModulePromise: Promise<ImageToolModule> | null = null;
@@ -57,6 +58,7 @@ let videoTemplateModulePromise: Promise<VideoTemplateModule> | null = null;
 let autoBrowserModulePromise: Promise<AutoBrowserModule> | null = null;
 let serverModulePromise: Promise<ServerModule> | null = null;
 let localDatabaseModulePromise: Promise<LocalDatabaseModule> | null = null;
+let mcpServerModulePromise: Promise<McpServerModule> | null = null;
 let sharpModulePromise: Promise<any> | null = null;
 
 function getLocalDatabaseModule(): Promise<LocalDatabaseModule> {
@@ -173,6 +175,13 @@ async function getSharp(): Promise<SharpFactory> {
 
   const sharpModule = await sharpModulePromise;
   return sharpModule.default || sharpModule;
+}
+
+async function getMcpServerModule(): Promise<McpServerModule> {
+  if (!mcpServerModulePromise) {
+    mcpServerModulePromise = import("./mcp-server");
+  }
+  return mcpServerModulePromise;
 }
 
 function writeMainLog(
@@ -1235,6 +1244,77 @@ app.whenReady().then(() => {
     }
   });
 
+  // MCP Server 管理 IPC
+  ipcMain.handle("mcp-server:start", async () => {
+    try {
+      const { isMcpServerRunning, startMcpServer } = await getMcpServerModule();
+      if (!isMcpServerRunning()) {
+        console.log("🚀 启动 MCP Server (3210端口)...");
+        writeMainLog("INFO", "准备启动 MCP Server");
+        await startMcpServer(3210);
+        writeMainLog("INFO", "MCP Server 启动成功");
+        return { success: true, message: "MCP Server 启动成功" };
+      } else {
+        writeMainLog("INFO", "MCP Server 已在运行");
+        return { success: true, message: "MCP Server 已在运行" };
+      }
+    } catch (error: any) {
+      console.error("❌ 启动 MCP Server 失败:", error);
+      writeMainLog("ERROR", "启动 MCP Server 失败", {
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+      return { success: false, message: error?.message || "启动 MCP Server 失败" };
+    }
+  });
+
+  ipcMain.handle("mcp-server:stop", async () => {
+    try {
+      const { isMcpServerRunning, stopMcpServer } = await getMcpServerModule();
+      if (isMcpServerRunning()) {
+        console.log("🛑 停止 MCP Server...");
+        writeMainLog("INFO", "准备停止 MCP Server");
+        await stopMcpServer();
+        writeMainLog("INFO", "MCP Server 已停止");
+        return { success: true, message: "MCP Server 已停止" };
+      } else {
+        writeMainLog("INFO", "MCP Server 未运行");
+        return { success: true, message: "MCP Server 未运行" };
+      }
+    } catch (error: any) {
+      console.error("❌ 停止 MCP Server 失败:", error);
+      writeMainLog("ERROR", "停止 MCP Server 失败", {
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : error,
+      });
+      return { success: false, message: error?.message || "停止 MCP Server 失败" };
+    }
+  });
+
+  ipcMain.handle("mcp-server:status", async () => {
+    try {
+      const { isMcpServerRunning, getMcpServerPort, getMcpServerInfo } = await getMcpServerModule();
+      const info = getMcpServerInfo();
+      return {
+        running: info.running,
+        port: info.port,
+        toolCount: info.toolCount,
+      };
+    } catch (error: any) {
+      console.error("❌ 检查 MCP Server 状态失败:", error);
+      return {
+        running: false,
+        port: 3210,
+        toolCount: 0,
+        error: error?.message,
+      };
+    }
+  });
+
   // 退出确认IPC处理器
   ipcMain.handle("confirm-exit", async () => {
     if (!mainWindow) return "cancel";
@@ -1308,6 +1388,21 @@ app.on("window-all-closed", () => {
 async function cleanupBeforeQuit(): Promise<void> {
   console.log("🔄 应用即将退出，清理资源...");
   writeMainLog("INFO", "应用即将退出，开始清理资源");
+
+  // 停止 MCP Server
+  if (mcpServerModulePromise) {
+    await getMcpServerModule()
+      .then((module) => module.stopMcpServer())
+      .catch((error) => {
+        console.error("❌ 停止 MCP Server 失败:", error);
+        writeMainLog("ERROR", "停止 MCP Server 失败", {
+          error:
+            error instanceof Error
+              ? { message: error.message, stack: error.stack }
+              : error,
+        });
+      });
+  }
 
   if (autoBrowserModulePromise) {
     await getAutoBrowserModule()

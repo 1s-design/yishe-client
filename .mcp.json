@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "yishe-client": {
+      "type": "sse",
+      "url": "http://localhost:3210/sse"
+    }
+  }
+}

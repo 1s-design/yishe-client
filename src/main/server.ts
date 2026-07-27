@@ -261,6 +261,101 @@ function _startServer(port: number = 1519): () => Promise<void> {
     });
   });
 
+  /**
+   * @swagger
+   * /api/mcp/info:
+   *   get:
+   *     summary: MCP Server 信息
+   *     description: 获取 MCP Server 运行状态和可用工具列表
+   *     tags: [MCP Server]
+   *     responses:
+   *       200:
+   *         description: MCP Server 信息
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 status:
+   *                   type: string
+   *                   example: ok
+   *                 server:
+   *                   type: string
+   *                   example: yishe-client-mcp
+   *                 port:
+   *                   type: integer
+   *                   example: 3210
+   *                 transport:
+   *                   type: string
+   *                   example: SSE
+   *                 tools:
+   *                   type: array
+   *                   items:
+   *                     type: object
+   *                     properties:
+   *                       name:
+   *                         type: string
+   *                       description:
+   *                         type: string
+   *                 usage:
+   *                   type: object
+   *                   properties:
+   *                     sseUrl:
+   *                       type: string
+   *                       example: http://localhost:3210/sse
+   *                     claudeDesktopConfig:
+   *                       type: string
+   *                       example: '{"mcpServers":{"yishe-client":{"type":"sse","url":"http://localhost:3210/sse"}}}'
+   */
+  app.get("/api/mcp/info", (_req, res) => {
+    const platformTools = [
+      { name: "hotsearch_weibo", description: "采集微博热搜" },
+      { name: "hotsearch_douyin", description: "采集抖音热搜" },
+      { name: "hotsearch_bilibili", description: "采集B站热搜" },
+      { name: "hotsearch_zhihu", description: "采集知乎热榜" },
+      { name: "hotsearch_toutiao", description: "采集今日头条热搜" },
+      { name: "hotsearch_douban", description: "采集豆瓣热门" },
+      { name: "hotsearch_kuaishou", description: "采集快手热搜" },
+      { name: "hotsearch_v2ex", description: "采集V2EX热门" },
+      { name: "hotsearch_36kr", description: "采集36氪热门" },
+      { name: "hotsearch_ithome", description: "采集IT之家热门" },
+      { name: "hotsearch_github", description: "采集GitHub Trending" },
+      { name: "hotsearch_wikipedia", description: "采集维基百科热点" },
+      { name: "hotsearch_devto", description: "采集Dev.to热门文章" },
+      { name: "hotsearch_google_trends", description: "采集Google趋势" },
+      { name: "hotsearch_hackernews", description: "采集Hacker News" },
+      { name: "hotsearch_bbc_news", description: "采集BBC新闻" },
+      { name: "hotsearch_cnn", description: "采集CNN新闻" },
+      { name: "hotsearch_nytimes", description: "采集纽约时报" },
+      { name: "hotsearch_aljazeera", description: "采集半岛电视台" },
+      { name: "hotsearch_ebay_trending", description: "采集eBay热门商品" },
+      { name: "hotsearch_shopify_trending", description: "采集Shopify热门商品" },
+      { name: "hotsearch_collect_all", description: "采集所有平台" },
+      { name: "browser_invoke", description: "浏览器自动化" },
+      { name: "service_status", description: "查询服务状态" },
+    ];
+
+    res.json({
+      status: "ok",
+      server: "yishe-client-mcp",
+      version: "1.0.0",
+      port: 3210,
+      transport: "SSE",
+      tools: platformTools,
+      usage: {
+        sseUrl: "http://localhost:3210/sse",
+        claudeDesktopConfig: JSON.stringify({
+          mcpServers: {
+            "yishe-client": {
+              type: "sse",
+              url: "http://localhost:3210/sse",
+            },
+          },
+        }),
+      },
+    });
+  });
+
   app.get("/api/auth/session", async (_req, res) => {
     try {
       const authorized = !!token;
@@ -1563,9 +1658,6 @@ function _startServer(port: number = 1519): () => Promise<void> {
   const store = new Store();
   const deviceId = (store.get("deviceKey") as string) || "";
   hotSearchService.setClientDeviceId(deviceId);
-
-  // 启动定时任务轮询（每30秒检查一次）
-  hotSearchService.startSchedulePolling(30000);
 
   registerHotSearchRoutes(app, () => token);
 

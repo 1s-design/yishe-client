@@ -112,6 +112,10 @@ const api = {
   startLocalService: () => ipcRenderer.invoke('start-local-service'),
   stopLocalService: () => ipcRenderer.invoke('stop-local-service'),
   checkLocalServiceStatus: () => ipcRenderer.invoke('check-local-service-status'),
+  // MCP Server 管理
+  startMcpServer: () => ipcRenderer.invoke('mcp-server:start'),
+  stopMcpServer: () => ipcRenderer.invoke('mcp-server:stop'),
+  checkMcpServerStatus: () => ipcRenderer.invoke('mcp-server:status'),
   // 通用图片上传（在 renderer 端执行）
   downloadImageAndUploadMaterial: (params: {
     url: string

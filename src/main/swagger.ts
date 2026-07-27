@@ -17,6 +17,16 @@ const options = {
       {
         url: 'http://localhost:1519',
         description: '本地开发服务器'
+      },
+      {
+        url: 'http://localhost:3210',
+        description: 'MCP Server (SSE)'
+      }
+    ],
+    tags: [
+      {
+        name: 'MCP Server',
+        description: 'MCP Server 服务 - 供 AI Agent 调用的工具服务'
       }
     ],
     components: {
