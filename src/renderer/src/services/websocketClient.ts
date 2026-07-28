@@ -568,6 +568,7 @@ let imageProcessingRuntimeSyncInterval: ReturnType<typeof setInterval> | null =
   null;
 let videoTemplateRuntimeSyncInterval: ReturnType<typeof setInterval> | null =
   null;
+let mcpServerRuntimeSyncInterval: ReturnType<typeof setInterval> | null = null;
 let lastPingTimestamp: number | null = null;
 let intentionalDisconnect = false;
 let networkFetchPromise: Promise<void> | null = null;
@@ -4749,6 +4750,13 @@ function clearVideoTemplateRuntimeSyncInterval() {
   }
 }
 
+function clearMcpServerRuntimeSyncInterval() {
+  if (mcpServerRuntimeSyncInterval) {
+    clearInterval(mcpServerRuntimeSyncInterval);
+    mcpServerRuntimeSyncInterval = null;
+  }
+}
+
 function stopHeartbeat() {
   clearHeartbeatInterval();
   clearHeartbeatTimeout();
@@ -4756,6 +4764,7 @@ function stopHeartbeat() {
   clearPhotoshopRuntimeSyncInterval();
   clearImageProcessingRuntimeSyncInterval();
   clearVideoTemplateRuntimeSyncInterval();
+  clearMcpServerRuntimeSyncInterval();
   lastPingTimestamp = null;
 }
 
@@ -8847,6 +8856,71 @@ function registerBuiltInLocalServices() {
         message: action === "delete" ? "客户端日志已删除" : "客户端日志已读取",
         data,
       };
+    },
+  });
+
+  registerLocalService({
+    key: "mcpServer",
+    pluginKey: "mcp-server",
+    label: "MCP 服务",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi();
+      if (!nativeApi?.checkMcpServerStatus) {
+        return {
+          label: "MCP 服务",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 MCP 服务能力",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "start", "stop"],
+        };
+      }
+
+      const status = await nativeApi.checkMcpServerStatus();
+      const running = !!status?.running;
+      return {
+        label: "MCP 服务",
+        connected: running,
+        available: running,
+        status: running ? "connected" : "disconnected",
+        state: running ? "idle" : "offline",
+        busy: false,
+        message: running
+          ? `MCP 服务运行中，端口 ${status?.port || 3210}，${status?.toolCount || 0} 个工具`
+          : "MCP 服务未启动",
+        version: `port ${status?.port || 3210}`,
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "start", "stop"],
+        details: {
+          port: status?.port || 3210,
+          toolCount: status?.toolCount || 0,
+        },
+      };
+    },
+    execute: async (command) => {
+      const nativeApi = getNativeApi();
+      if (!nativeApi?.checkMcpServerStatus) {
+        throw new Error("当前环境未注入 MCP 服务能力");
+      }
+
+      if (command.action === "start") {
+        await nativeApi.startMcpServer?.();
+        await syncServiceRuntime("mcp-server");
+        return { success: true, message: "MCP 服务已启动" };
+      }
+
+      if (command.action === "stop") {
+        await nativeApi.stopMcpServer?.();
+        await syncServiceRuntime("mcp-server");
+        return { success: true, message: "MCP 服务已停止" };
+      }
+
+      throw new Error(`未支持的 MCP 服务命令: ${command.action}`);
     },
   });
 
