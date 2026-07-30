@@ -86,6 +86,28 @@ export function isTokenExist(): boolean {
 
 let stopServerFn: (() => Promise<void>) | null = null;
 let ioServer: SocketIOServer | null = null;
+
+// 本地服务密钥 — 基于机器 MAC 地址派生，同一台机器始终相同，外部攻击者无法猜测
+// Chrome 扩展和 Admin 面板可通过获取 /api/client-secret 端点拿到此密钥
+import os from "os";
+function deriveLocalSecret(): string {
+  const interfaces = os.networkInterfaces();
+  const macs: string[] = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.mac && iface.mac !== "00:00:00:00:00:00") {
+        macs.push(iface.mac);
+      }
+    }
+  }
+  macs.sort();
+  const seed = macs.join(":") + "-yishe-local-secret-v1";
+  return crypto.createHash("sha256").update(seed).digest("hex");
+}
+const LOCAL_SERVICE_SECRET = deriveLocalSecret();
+export function getLocalServiceSecret(): string {
+  return LOCAL_SERVICE_SECRET;
+}
 type ExtensionClientInfoSnapshot = {
   appVersion?: string;
   workspaceDirectory?: string;
@@ -199,13 +221,18 @@ export function getExtensionConnections() {
 function _startServer(port: number = 1519): () => Promise<void> {
   const app = express();
 
-  // 配置 CORS 选项
+  // 配置 CORS 选项 — 仅允许本地来源
   const corsOptions = {
-    origin: "*", // 允许所有来源访问
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // 允许的 HTTP 方法
-    allowedHeaders: ["Content-Type", "Authorization"], // 允许的请求头
-    credentials: true, // 允许发送凭证
-    maxAge: 86400, // 预检请求的缓存时间（秒）
+    origin: [
+      "http://localhost:1519",
+      "http://127.0.0.1:1519",
+      "http://localhost:*",
+      "http://127.0.0.1:*",
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+    maxAge: 86400,
   };
 
   // 基础中间件
@@ -213,6 +240,32 @@ function _startServer(port: number = 1519): () => Promise<void> {
   // 增加文件上传大小限制（50MB）
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+  // 本地认证中间件 — 校验内存中是否存在有效 Token
+  function requireLocalAuth(req: Request, res: Response, next: Function) {
+    if (!token) {
+      res.status(401).json({
+        code: 1,
+        status: false,
+        message: "未授权：本地服务未登录",
+      });
+      return;
+    }
+    next();
+  }
+
+  // 敏感操作认证中间件 — 校验本地服务密钥（防局域网攻击）
+  function requireServiceSecret(req: Request, res: Response, next: Function) {
+    const provided = req.headers["x-local-secret"] as string | undefined;
+    if (!provided || provided !== LOCAL_SERVICE_SECRET) {
+      res.status(403).json({
+        success: false,
+        message: "拒绝访问：无效的本地服务密钥",
+      });
+      return;
+    }
+    next();
+  }
 
   // 设置路由
   app.get("/", (_req, res) => {
@@ -256,9 +309,14 @@ function _startServer(port: number = 1519): () => Promise<void> {
       timestamp: new Date().toISOString(),
       service: "electron-server",
       version: "1.0.0",
-      isAuthorized: !!token,
       mode: "client-bridge",
     });
+  });
+
+  // 获取本地服务密钥 — 仅供已登录的可信客户端（Admin/Extension）使用
+  // 客户端拿到此密钥后，可通过 X-Local-Secret Header 调用 saveToken/logoutToken 等敏感接口
+  app.get("/api/client-secret", requireLocalAuth, (_req, res) => {
+    res.json({ secret: LOCAL_SERVICE_SECRET });
   });
 
   /**
@@ -434,7 +492,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *                   type: string
    *                   example: 'token 不能为空'
    */
-  app.post("/api/saveToken", (req, res) => {
+  app.post("/api/saveToken", requireServiceSecret, (req, res) => {
     const { token: newToken } = req.body;
     if (!newToken) {
       res.status(400).json({ success: false, message: "token 不能为空" });
@@ -463,7 +521,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *                   type: boolean
    *                   example: true
    */
-  app.post("/api/logoutToken", async (_req, res) => {
+  app.post("/api/logoutToken", requireServiceSecret, async (_req, res) => {
     clearToken();
     writeLocalServerLog("INFO", "本地服务 token 已清空，准备停止服务");
     // 登出时停止服务
@@ -481,7 +539,12 @@ function _startServer(port: number = 1519): () => Promise<void> {
   ioServer = new SocketIOServer(httpServer, {
     path: "/ws",
     cors: {
-      origin: "*",
+      origin: [
+        "http://localhost:1519",
+        "http://127.0.0.1:1519",
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+      ],
       methods: ["GET", "POST"],
     },
     transports: ["websocket", "polling"],
@@ -602,9 +665,9 @@ function _startServer(port: number = 1519): () => Promise<void> {
     });
   });
 
-  // 启动 HTTP 服务器（绑定到 0.0.0.0 以允许所有网络接口访问）
+  // 启动 HTTP 服务器（绑定到 127.0.0.1，仅本机可访问，杜绝局域网攻击面）
   httpServer
-    .listen(port, "0.0.0.0", () => {
+    .listen(port, "127.0.0.1", () => {
       console.info(`[服务] 本地接口已启动: http://localhost:${port}`);
       writeLocalServerLog("INFO", "本地 HTTP/Socket.IO 服务启动成功", {
         port,
@@ -623,7 +686,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
     });
 
   // 添加获取插件连接状态的 API
-  app.get("/api/extension/connections", (_req, res) => {
+  app.get("/api/extension/connections", requireLocalAuth, (_req, res) => {
     const connections = Array.from(extensionConnections.entries()).map(
       ([clientId, info]) => ({
         clientId,
@@ -681,7 +744,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *       500:
    *         description: 启动失败
    */
-  app.post("/api/crawler/schedule/start", async (req, res) => {
+  app.post("/api/crawler/schedule/start", requireLocalAuth, async (req, res) => {
     try {
       const { site, ...config } = req.body || {};
       if (!site) {
@@ -710,7 +773,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *       200:
    *         description: 停止成功
    */
-  app.post("/api/crawler/schedule/stop", async (req, res) => {
+  app.post("/api/crawler/schedule/stop", requireLocalAuth, async (req, res) => {
     try {
       const { site } = req.body || {};
       if (!site) {
@@ -753,7 +816,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *                   type: object
    *                   description: 当前配置
    */
-  app.get("/api/crawler/schedule/status", (req, res) => {
+  app.get("/api/crawler/schedule/status", requireLocalAuth, (req, res) => {
     try {
       const { site } = req.query as { site?: string };
       const status = crawlerCollectorService.getStatus(site as any);
@@ -786,7 +849,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *       200:
    *         description: 进度查询成功
    */
-  app.get("/api/crawler/progress", (req, res) => {
+  app.get("/api/crawler/progress", requireLocalAuth, (req, res) => {
     try {
       const { site } = req.query as { site?: string };
       const progress = crawlerCollectorService.getProgress(site as any);
@@ -829,7 +892,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *       200:
    *         description: 更新成功
    */
-  app.put("/api/crawler/schedule/config", (req, res) => {
+  app.put("/api/crawler/schedule/config", requireLocalAuth, (req, res) => {
     try {
       const { site, ...config } = req.body || {};
       if (!site) {
@@ -899,7 +962,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *       500:
    *         description: 采集失败
    */
-  app.post("/api/crawler/manual-collect", async (req, res) => {
+  app.post("/api/crawler/manual-collect", requireLocalAuth, async (req, res) => {
     try {
       const { site, maxImages } = req.body || {};
       if (!site) {
@@ -1240,7 +1303,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *       500:
    *         description: 服务器错误
    */
-  app.post("/api/upload-to-cos", async (req, res) => {
+  app.post("/api/upload-to-cos", requireLocalAuth, async (req, res) => {
     try {
       const { fileData, fileName } = req.body;
       const category =
@@ -1523,11 +1586,11 @@ function _startServer(port: number = 1519): () => Promise<void> {
    *       500:
    *         description: 服务器错误
    */
-  app.post("/api/material-upload", async (req, res) => {
+  app.post("/api/material-upload", requireLocalAuth, async (req, res) => {
     await handleMaterialUpload(req, res, "sticker");
   });
 
-  app.post("/api/file-upload", async (req, res) => {
+  app.post("/api/file-upload", requireLocalAuth, async (req, res) => {
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const requestLogPayload = { ...req.body };
     if (
@@ -1646,7 +1709,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
   // 兼容旧接口：
   // 历史上这个接口名虽然带 crawler，但现在统一转给通用上传逻辑。
   // 未显式传 target 时默认仍落图片库；若 body.target='crawler-material'，仍会按爬图库处理。
-  app.post("/api/crawler-material-upload", async (req, res) => {
+  app.post("/api/crawler-material-upload", requireLocalAuth, async (req, res) => {
     await handleMaterialUpload(req, res, "sticker");
   });
 
