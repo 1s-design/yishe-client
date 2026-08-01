@@ -423,14 +423,24 @@ function resolveImageProcessingRuntimeMeta() {
     runtime?.state === "busy" ||
     activeJobsCount > 0
   );
-  const valueText = available ? "可用" : hasChecked ? "不可用" : "检测中";
-  const tone: ServiceStatusTone = available ? "success" : "muted";
+  const valueText = available
+    ? isBusy
+      ? "处理中"
+      : "可用"
+    : hasChecked
+      ? "不可用"
+      : "检测中";
+  const tone: ServiceStatusTone = available
+    ? isBusy
+      ? "warning"
+      : "success"
+    : "muted";
   const description = !hasChecked
     ? ""
     : !available
       ? String(runtime?.message || runtime?.lastError || "当前不可用")
       : isBusy
-        ? `${activeJobsCount} 个图片任务处理中`
+        ? `正在处理中 (${activeJobsCount} 个任务)`
         : "图片处理已就绪";
 
   return {

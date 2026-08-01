@@ -3891,7 +3891,8 @@ async function getImageProcessingRuntime() {
     });
     const healthPayload = (health?.data || health || {}) as Record<string, any>;
     const isIdleNotLoaded =
-      healthPayload?.status === "idle" || healthPayload?.loaded === false;
+      healthPayload?.loaded === false ||
+      (health?.success === false && healthPayload?.status === "idle");
 
     if (isIdleNotLoaded) {
       return {
@@ -4400,6 +4401,54 @@ async function archiveImageProcessingExecutionPayload(
   };
 }
 
+async function mirrorSourceImageToCos(
+  command: ServiceCommandEnvelope,
+  recordId: string,
+  downloadedPath?: string | null,
+  originalFilename?: string | null,
+) {
+  if (!downloadedPath) return null;
+  const apiBridge = window.api as any;
+  if (!apiBridge?.generateCosKey || !apiBridge?.uploadFileToCos) {
+    return null;
+  }
+
+  try {
+    const fileName =
+      String(originalFilename || "").trim() ||
+      downloadedPath.split(/[/\\\\]/).filter(Boolean).pop() ||
+      `source_${Date.now()}.jpg`;
+
+    const keyResult = await apiBridge.generateCosKey({
+      category: "image-processing-record",
+      filename: `source_${fileName}`,
+      account: String(command.tenant?.account || "").trim() || undefined,
+      userId: String(command.tenant?.userId || "").trim() || undefined,
+      entityId: recordId,
+    });
+
+    if (!keyResult?.ok || !keyResult?.key) return null;
+
+    const uploadResult = await apiBridge.uploadFileToCos({
+      filePath: downloadedPath,
+      key: keyResult.key,
+    });
+
+    if (!uploadResult?.ok || !uploadResult?.url) return null;
+
+    return {
+      sourceImageUrl: uploadResult.url,
+      sourceImageOwned: true,
+    };
+  } catch (error) {
+    emitter.emit("log", {
+      level: "warn",
+      message: `[image-processing] source mirror to COS failed: ${serializeError(error)}`,
+    });
+    return null;
+  }
+}
+
 async function executeImageProcessingTask(command: ServiceCommandEnvelope) {
   const recordId = String(command.payload?.recordId || "").trim();
   const taskType =
@@ -4491,7 +4540,9 @@ async function executeImageProcessingTask(command: ServiceCommandEnvelope) {
           ? "图片裂变完成"
           : "图片处理完成"
         : finalStatus === "partial"
-          ? "部分结果上传失败"
+          ? taskType === "variations"
+            ? "部分裂变预设执行失败，其余已完成"
+            : "部分结果上传失败"
           : buildImageProcessingFailedMessage(archivedPayload.resultFiles);
 
     await reportImageProcessingRecordStatus(recordId, {

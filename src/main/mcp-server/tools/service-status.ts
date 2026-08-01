@@ -73,7 +73,7 @@ export const serviceStatusTool = {
           const info = await mod.getImageToolStatus();
           status.image = {
             name: 'Image Tool',
-            loaded: info?.loaded ?? false,
+            loaded: info?.success ?? false,
             status: info?.status ?? 'unknown',
           };
         } catch {
@@ -88,7 +88,7 @@ export const serviceStatusTool = {
           const info = await mod.getVideoTemplateStatus();
           status.video = {
             name: 'Video Template',
-            running: info?.running ?? false,
+            running: info?.success ?? false,
             status: info?.status ?? 'unknown',
           };
         } catch {
@@ -98,7 +98,7 @@ export const serviceStatusTool = {
 
       // MCP Server
       if (!service || service === 'mcp') {
-        const { isMcpServerRunning, getMcpServerPort, getMcpServerInfo } = await import('../index');
+        const { getMcpServerInfo } = await import('../index');
         const info = getMcpServerInfo();
         status.mcp = {
           name: 'MCP Server (SSE)',

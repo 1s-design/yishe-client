@@ -74,6 +74,29 @@ export class McpServerManager {
         }
       );
 
+      // 注册 AI 图片处理 MCP 工具
+      server.tool(
+        'image_process_execute',
+        '编程式执行图片处理操作链（如缩放、裁剪、水印、低多边形、滤镜等），方便 AI 直接调用',
+        {
+          imageUrl: z.string().describe('待处理的远程图片 URL 地址'),
+          operations: z
+            .array(
+              z.object({
+                type: z.string().describe('操作类型，如 resize, watermark, lowpoly, sepia, crop 等'),
+                params: z.record(z.string(), z.any()).optional().describe('操作参数对象'),
+              })
+            )
+            .optional()
+            .describe('按顺序排列的处理操作链'),
+          processorId: z.string().optional().describe('图像引擎 ID，如 imagemagick, sharp'),
+        },
+        async (args) => {
+          const { executeImageToolPlan } = await import('./tools/image-processing');
+          return await executeImageToolPlan(args);
+        }
+      );
+
       return server;
     };
   }

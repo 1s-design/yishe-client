@@ -1,4 +1,4 @@
-// 文件顶部已有该导入
+// Yishe Client Main Process - Pure Direct Image Download 2026-08-01
 import {
   app,
   shell,
@@ -74,22 +74,6 @@ async function getCurrentLocalDatabaseInfo() {
     store.get("workspaceDirectory", "") || "",
   ).trim();
   return getLocalDatabaseInfo(workspaceDirectory);
-}
-
-function isImageToolModuleLoaded() {
-  return !!imageToolModulePromise;
-}
-
-function getImageToolStatusSnapshot() {
-  return {
-    success: false,
-    status: "idle",
-    loaded: false,
-    message: "Image Tool 按需启动，当前尚未加载",
-    processors: [],
-    defaultProcessorId: "",
-    imageMagickDir: process.env.YISHE_IMAGEMAGICK_DIR || "",
-  };
 }
 
 function resetImageToolModule() {
@@ -879,9 +863,51 @@ function schedulePostWindowStartupTasks() {
             : error,
       });
     });
-  }, 2500);
 
-  writeMainLog("INFO", "Video Template 服务按需启动，跳过启动预热");
+    // 启动 MCP Server
+    getMcpServerModule()
+      .then(async (module) => {
+        if (!module.isMcpServerRunning()) {
+          writeMainLog("INFO", "启动 MCP Server");
+          await module.startMcpServer(3210);
+          writeMainLog("INFO", "MCP Server 启动成功");
+        }
+      })
+      .catch((error) => {
+        console.error("❌ 启动 MCP Server 失败:", error);
+        writeMainLog("ERROR", "启动 MCP Server 失败", {
+          error: error?.message,
+        });
+      });
+
+    // 预热 Video Template 服务
+    getVideoTemplateModule()
+      .then(async (module) => {
+        writeMainLog("INFO", "预热 Video Template 服务");
+        await module.warmVideoTemplateService();
+        writeMainLog("INFO", "Video Template 服务预热完成");
+      })
+      .catch((error) => {
+        console.error("❌ 预热 Video Template 失败:", error);
+        writeMainLog("ERROR", "预热 Video Template 失败", {
+          error: error?.message,
+        });
+      });
+
+    // 预热 Image Tool 服务
+    getImageToolModule()
+      .then(async (module) => {
+        writeMainLog("INFO", "预热 Image Tool 服务");
+        await module.ensureImageToolDirectories();
+        writeMainLog("INFO", "Image Tool 服务预热完成");
+      })
+      .catch((error) => {
+        console.error("❌ 预热 Image Tool 失败:", error);
+        writeMainLog("ERROR", "预热 Image Tool 失败", {
+          error: error?.message,
+        });
+      });
+  }, 2500);
 }
 
 // This method will be called when Electron has finished
@@ -1566,10 +1592,6 @@ ipcMain.handle("set-workspace-directory", async (_event, path: string) => {
 });
 
 ipcMain.handle("image-tool:get-status", async () => {
-  if (!isImageToolModuleLoaded()) {
-    return getImageToolStatusSnapshot();
-  }
-
   const { getImageToolStatus } = await getImageToolModule();
   return await getImageToolStatus();
 });

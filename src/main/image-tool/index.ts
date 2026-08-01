@@ -260,7 +260,15 @@ function getImageToolDirectories() {
   return ensureImageToolDirectories();
 }
 
-async function downloadFromUrl(url: string, targetDir: string) {
+async function downloadFromUrl(
+  url: string,
+  targetDir: string,
+  redirectCount = 0,
+): Promise<{ filename: string; path: string; size: number; originalUrl: string }> {
+  if (redirectCount > 5) {
+    throw new Error("重定向次数过多 (HTTP Redirect Loop)");
+  }
+
   return await new Promise((resolve, reject) => {
     try {
       const urlObj = new URL(url);
@@ -280,6 +288,19 @@ async function downloadFromUrl(url: string, targetDir: string) {
           },
         },
         (response) => {
+          if (
+            response.statusCode &&
+            [301, 302, 303, 307, 308].includes(response.statusCode) &&
+            response.headers.location
+          ) {
+            const redirectUrl = new URL(response.headers.location, url).toString();
+            response.resume();
+            downloadFromUrl(redirectUrl, targetDir, redirectCount + 1)
+              .then(resolve)
+              .catch(reject);
+            return;
+          }
+
           if (response.statusCode !== 200) {
             reject(new Error(`下载失败: HTTP ${response.statusCode}`));
             return;
@@ -300,7 +321,7 @@ async function downloadFromUrl(url: string, targetDir: string) {
             "image/tiff": ".tiff",
             "image/x-icon": ".ico",
           };
-          if (!extension) {
+          if (!extension || extension.length > 5) {
             extension = mimeToExtension[mimeType] || ".jpg";
           }
           if (!extension.startsWith(".")) {
@@ -330,12 +351,13 @@ async function downloadFromUrl(url: string, targetDir: string) {
         },
       );
 
-      request.on("error", reject);
+      request.on("error", (error) => reject(error));
       request.on("timeout", () => {
-        request.destroy(new Error("下载超时"));
+        request.destroy();
+        reject(new Error("下载超时 (30s)"));
       });
-    } catch (error: any) {
-      reject(new Error(`无效的 URL: ${error?.message || "未知错误"}`));
+    } catch (error) {
+      reject(error);
     }
   });
 }

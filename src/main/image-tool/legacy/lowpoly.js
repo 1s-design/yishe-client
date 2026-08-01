@@ -188,7 +188,24 @@ export async function applyLowpoly(inputPath, outputPath, params = {}) {
     points.push([x, y]);
   }
 
-  const delaunay = Delaunator.from(points);
+  let Ctor = Delaunator;
+  if (Ctor && Ctor.default) {
+    Ctor = Ctor.default;
+  }
+
+  let delaunay;
+  if (typeof Ctor.from === "function") {
+    delaunay = Ctor.from(points);
+  } else if (typeof Ctor === "function") {
+    const coords = new Float64Array(points.length * 2);
+    for (let i = 0; i < points.length; i++) {
+      coords[i * 2] = points[i][0];
+      coords[i * 2 + 1] = points[i][1];
+    }
+    delaunay = new Ctor(coords);
+  } else {
+    throw new Error("Delaunator 库未正确加载");
+  }
   const triangles = delaunay.triangles;
   const xScale = sourceWidth / scaledWidth;
   const yScale = sourceHeight / scaledHeight;

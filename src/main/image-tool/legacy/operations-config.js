@@ -203,8 +203,8 @@ export const OPERATIONS_CONFIG = [
   { type: 'solarize', category: 'effect', description: '曝光效果', params: { threshold: { type: 'number', description: '阈值（%）', default: 50, minimum: 0, maximum: 100 } } },
   { type: 'swirl', category: 'effect', description: '漩涡效果', params: { degrees: { type: 'number', description: '角度（度）', default: 90, minimum: -3600, maximum: 3600 } } },
   { type: 'wave', category: 'effect', description: '波浪效果', params: { amplitude: { type: 'number', description: '振幅', default: 25, minimum: 0, maximum: 10000 }, wavelength: { type: 'number', description: '波长', default: 150, minimum: 1, maximum: 10000 } } },
-  { type: 'implode', category: 'effect', description: '内爆效果（向中心收缩）', params: { amount: { type: 'number', description: '强度（0-1）', default: 0.5, minimum: 0, maximum: 1 } } },
-  { type: 'explode', category: 'effect', description: '爆炸效果（向外扩张）', params: { amount: { type: 'number', description: '强度（0-1）', default: 0.5, minimum: 0, maximum: 1 } } },
+  { type: 'implode', category: 'effect', description: '内爆效果（向中心收缩）', params: { amount: { type: 'number', description: '强度', default: 0.5, minimum: -10, maximum: 10 } } },
+  { type: 'explode', category: 'effect', description: '爆炸效果（向外扩张）', params: { amount: { type: 'number', description: '强度', default: 0.5, minimum: -10, maximum: 10 } } },
   { type: 'spread', category: 'effect', description: '扩散效果', params: { radius: { type: 'number', description: '半径', default: 3, minimum: 0, maximum: 1000 } } },
   // 图像增强
   { type: 'normalize', category: 'effect', description: '标准化（增强对比度）', params: {} },
