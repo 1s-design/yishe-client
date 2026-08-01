@@ -1589,16 +1589,9 @@ class ImageProcessor {
 
         // ========== 特殊效果 ==========
         case 'vignette':
-          // 晕影效果
-          const vignetteRadius = params.radius !== undefined ? params.radius : 100;
-          const vignetteSigma = params.sigma !== undefined ? params.sigma : 50;
-          // 使用 -vignette 参数（ImageMagick 7+）或通过模糊和合成实现
-          if (this.command === 'magick') {
-            args.push('-vignette', `${vignetteRadius}x${vignetteSigma}`);
-          } else {
-            // ImageMagick 6 使用模糊和合成
-            args.push('(', '-clone', '0', '-fill', 'black', '-colorize', '100%', '-blur', `${vignetteRadius}x${vignetteSigma}`, ')', '-compose', 'multiply', '-composite');
-          }
+          // 晕影暗角效果（半径设为 0 以防全图涂黑遮罩，使用 0xSigma 自动向外扩散）
+          const vignetteSigma = params.sigma !== undefined ? params.sigma : (params.intensity ? Math.round(params.intensity * 0.5) : 40);
+          args.push('-background', 'black', '-vignette', `0x${vignetteSigma}`);
           break;
 
         case 'solarize':
