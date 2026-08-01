@@ -199,13 +199,12 @@ export const OPERATIONS_CONFIG = [
   { type: 'texture', category: 'effect', description: '纹理效果', params: { textureType: { type: 'string', description: '纹理类型：Canvas|Burlap|Canvas2等', default: 'Canvas', enum: ['Canvas', 'Burlap', 'Canvas2'] } } },
   { type: 'lowpoly', category: 'effect', description: 'Low Poly 几何风格（三角面）', params: { pointCount: { type: 'number', description: '采样点数量（越大细节越多）', default: 900 }, edgeBias: { type: 'number', description: '边缘优先权重（0-1）', default: 0.65 }, edgeThreshold: { type: 'number', description: '边缘阈值（0-1）', default: 0.15 }, sampleScale: { type: 'number', description: '采样缩放（0.2-1，越小越快）', default: 1 }, colorSamples: { type: 'number', description: '每个三角形颜色采样点数（越大过渡越平滑）', default: 7 }, seed: { type: 'number', description: '随机种子（相同参数可复现）', default: 12345 }, strokeWidth: { type: 'number', description: '三角边线宽度（可选）', default: 0 }, strokeColor: { type: 'string', description: '三角边线颜色（可选）', optional: true } } },
   // 特殊效果
+  // 特殊效果与高频实用增强
   { type: 'vignette', category: 'effect', description: '晕影效果', params: { radius: { type: 'number', description: '半径（设为0开启边缘自然渐变）', default: 0, minimum: 0, maximum: 10000 }, sigma: { type: 'number', description: '羽化模糊深度 (Sigma)', default: 40, minimum: 0, maximum: 10000 } } },
-  { type: 'solarize', category: 'effect', description: '曝光效果', params: { threshold: { type: 'number', description: '阈值（%）', default: 50, minimum: 0, maximum: 100 } } },
-  { type: 'swirl', category: 'effect', description: '漩涡效果', params: { degrees: { type: 'number', description: '角度（度）', default: 90, minimum: -3600, maximum: 3600 } } },
-  { type: 'wave', category: 'effect', description: '波浪效果', params: { amplitude: { type: 'number', description: '振幅', default: 25, minimum: 0, maximum: 10000 }, wavelength: { type: 'number', description: '波长', default: 150, minimum: 1, maximum: 10000 } } },
-  { type: 'implode', category: 'effect', description: '内爆效果（向中心收缩）', params: { amount: { type: 'number', description: '强度', default: 0.5, minimum: -10, maximum: 10 } } },
-  { type: 'explode', category: 'effect', description: '爆炸效果（向外扩张）', params: { amount: { type: 'number', description: '强度', default: 0.5, minimum: -10, maximum: 10 } } },
-  { type: 'spread', category: 'effect', description: '扩散效果', params: { radius: { type: 'number', description: '半径', default: 3, minimum: 0, maximum: 1000 } } },
+  { type: 'polaroid', category: 'effect', description: '宝丽来拍立得相框风格', params: { angle: { type: 'number', description: '倾斜角度（度，0为不倾斜）', default: 0, minimum: -45, maximum: 45 } } },
+  { type: 'dropShadow', category: 'effect', description: '立体悬浮阴影', params: { opacity: { type: 'number', description: '阴影不透明度（%）', default: 60, minimum: 0, maximum: 100 }, sigma: { type: 'number', description: '模糊半径', default: 5, minimum: 1, maximum: 100 }, dx: { type: 'number', description: 'X 偏移量', default: 4, minimum: -100, maximum: 100 }, dy: { type: 'number', description: 'Y 偏移量', default: 4, minimum: -100, maximum: 100 } } },
+  { type: 'roundCorners', category: 'effect', description: '圆角矩形切角', params: { rx: { type: 'number', description: 'X圆角半径（px）', default: 20, minimum: 1, maximum: 1000 }, ry: { type: 'number', description: 'Y圆角半径（px，留空同rx）', optional: true, minimum: 1, maximum: 1000 } } },
+  { type: 'contrastStretch', category: 'effect', description: '智能补光与对比度拉伸', params: { blackPoint: { type: 'number', description: '暗部切除比例（%）', default: 0.15, minimum: 0, maximum: 10 }, whitePoint: { type: 'number', description: '亮部切除比例（%）', default: 0.05, minimum: 0, maximum: 10 } } },
   // 图像增强
   { type: 'normalize', category: 'effect', description: '标准化（增强对比度）', params: {} },
   { type: 'equalize', category: 'effect', description: '均衡化（直方图均衡）', params: {} },

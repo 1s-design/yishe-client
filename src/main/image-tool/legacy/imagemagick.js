@@ -1594,6 +1594,35 @@ class ImageProcessor {
           args.push('-background', 'black', '-vignette', `0x${vignetteSigma}`);
           break;
 
+        case 'polaroid':
+          // 宝丽来拍立得相框（自带白边与立体投影）
+          const polaroidAngle = params.angle !== undefined ? params.angle : 0;
+          args.push('-bordercolor', 'white', '-polaroid', polaroidAngle.toString());
+          break;
+
+        case 'dropShadow':
+          // 立体悬浮阴影
+          const shadowOpacity = params.opacity !== undefined ? params.opacity : 60;
+          const shadowSigma = params.sigma !== undefined ? params.sigma : 5;
+          const shadowDx = params.dx !== undefined ? params.dx : 4;
+          const shadowDy = params.dy !== undefined ? params.dy : 4;
+          args.push('(', '+clone', '-background', 'black', '-shadow', `${shadowOpacity}x${shadowSigma}+${shadowDx}+${shadowDy}`, ')', '+swap', '-background', 'transparent', '-layers', 'merge');
+          break;
+
+        case 'roundCorners':
+          // 圆角矩形卡片切角
+          const cornerRx = params.rx !== undefined ? params.rx : 20;
+          const cornerRy = params.ry !== undefined ? params.ry : cornerRx;
+          args.push('-bordercolor', 'none', '-alpha', 'set', '(', '+clone', '-alpha', 'extract', '-draw', `roundrectangle 0,0 %[fx:w],%[fx:h] ${cornerRx},${cornerRy}`, ')', '-alpha', 'off', '-compose', 'CopyOpacity', '-composite');
+          break;
+
+        case 'contrastStretch':
+          // 智能补光与对比度拉伸
+          const blackPt = params.blackPoint !== undefined ? params.blackPoint : 0.15;
+          const whitePt = params.whitePoint !== undefined ? params.whitePoint : 0.05;
+          args.push('-contrast-stretch', `${blackPt}x${whitePt}%`);
+          break;
+
         case 'solarize':
           // 曝光效果
           const solarizeThreshold = params.threshold !== undefined ? params.threshold : 50;
