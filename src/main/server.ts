@@ -8,6 +8,7 @@
  */
 import express, { type Request, type Response } from "express";
 import cors from "cors";
+import crypto from "crypto";
 import swaggerUi from "swagger-ui-express";
 import { specs } from "./swagger"; // 新增cors导入
 import { BrowserWindow } from "electron";
