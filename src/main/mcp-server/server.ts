@@ -160,6 +160,7 @@ export class McpServerManager {
           'hotsearch_collect_all',
           'browser_invoke',
           'service_status',
+          'image_process_execute',
         ],
       });
     });
