@@ -412,16 +412,34 @@ async function resolveInputPath(
   };
 }
 
-function cleanupDownloadedInputFile(imagePathInfo: any) {
-  const filePath = imagePathInfo?.downloadedFileInfo?.path;
-  if (!filePath || !fs.existsSync(filePath)) {
+function safeUnlink(filePath: string, directories?: ReturnType<typeof ensureImageToolDirectories>) {
+  if (!filePath || typeof filePath !== "string" || !fs.existsSync(filePath)) {
+    return;
+  }
+  // 保护规则：绝不删除 uploads 目录、template 目录或非 temp 目录的任何用户原始文件
+  if (directories) {
+    const isTempDir = filePath.startsWith(directories.temp);
+    if (!isTempDir) {
+      console.warn(`[原图防删保护] 跳过非临时目录文件删除: ${filePath}`);
+      return;
+    }
+  }
+  const fileName = path.basename(filePath);
+  // 只有明确是中间临时生成的 temp_* 文件才允许清理
+  if (!fileName.startsWith("temp_")) {
+    console.warn(`[原图防删保护] 保留素材/原始下载图: ${filePath}`);
     return;
   }
   try {
     fs.unlinkSync(filePath);
   } catch (error) {
-    console.warn(`清理下载的临时源图失败: ${filePath}`, error);
+    console.warn(`清理临时中间文件失败: ${filePath}`, error);
   }
+}
+
+function cleanupDownloadedInputFile(imagePathInfo: any) {
+  // 原图防删保护：绝不清理原始下载图，留存为缓存素材
+  return;
 }
 
 function resolveValidatedOperationPlan(
@@ -899,9 +917,7 @@ async function executeOperationsChain(
       commands.push(result.command);
 
       if (index > 0 && currentInputPath !== inputPath && fs.existsSync(currentInputPath)) {
-        try {
-          fs.unlinkSync(currentInputPath);
-        } catch {}
+        safeUnlink(currentInputPath, directories);
       }
 
       currentInputPath = result.outputPath;
@@ -909,9 +925,7 @@ async function executeOperationsChain(
 
     for (const tempFile of tempFiles) {
       if (fs.existsSync(tempFile) && tempFile !== currentInputPath) {
-        try {
-          fs.unlinkSync(tempFile);
-        } catch {}
+        safeUnlink(tempFile, directories);
       }
     }
 
@@ -923,9 +937,7 @@ async function executeOperationsChain(
   } catch (error) {
     for (const tempFile of tempFiles) {
       if (fs.existsSync(tempFile)) {
-        try {
-          fs.unlinkSync(tempFile);
-        } catch {}
+        safeUnlink(tempFile, directories);
       }
     }
     throw error;
