@@ -281,6 +281,7 @@ async function downloadFromUrl(
         {
           timeout: 30_000,
           headers: {
+            Host: urlObj.host,
             "User-Agent":
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           },
