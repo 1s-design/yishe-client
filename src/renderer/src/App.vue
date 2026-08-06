@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { websocketClient, autoPsdBatchState } from "./services/websocketClient";
+import { websocketClient, autoPsdBatchState, clientAgentConfig } from "./services/websocketClient";
 import {
   platformTaskAutoState,
   startPlatformTaskPolling,
@@ -377,9 +377,17 @@ function resolveVideoTemplateRuntimeMeta() {
   );
   const serviceError =
     runtime?.status === "error" || runtime?.state === "error";
-  const valueText = available ? "可用" : hasChecked ? "不可用" : "检测中";
+  const valueText = available
+    ? isBusy
+      ? "处理中"
+      : "可用"
+    : hasChecked
+      ? "不可用"
+      : "检测中";
   const tone: ServiceStatusTone = available
-    ? "success"
+    ? isBusy
+      ? "warning"
+      : "success"
     : serviceError
       ? "danger"
       : "muted";
@@ -1337,6 +1345,26 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
         loading: false,
       },
     ],
+  },
+  {
+    key: "client-agent",
+    title: "AI Agent",
+    value: clientAgentConfig.loaded
+      ? clientAgentConfig.enabled
+        ? "已启用"
+        : "未启用"
+      : "加载中",
+    description: clientAgentConfig.loaded
+      ? clientAgentConfig.enabled
+        ? `模型: ${clientAgentConfig.model || "使用 Key 默认模型"}`
+        : "在 Admin AI 设置中配置"
+      : "正在获取配置...",
+    icon: "mdi-brain",
+    tone: clientAgentConfig.loaded
+      ? clientAgentConfig.enabled
+        ? "success"
+        : "muted"
+      : "warning",
   },
 ]);
 

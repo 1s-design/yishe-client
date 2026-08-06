@@ -116,6 +116,18 @@ const FLAT_EFFECT_TYPE_MAP: Record<
   color_matrix: { baseType: "effects", effectType: "color-matrix", defaults: {} },
   distort: { baseType: "effects", effectType: "distort", defaults: {} },
   fx: { baseType: "effects", effectType: "fx", defaults: {} },
+  // 新注册：已有ImageMagick实现但未注册的效果
+  solarize: { baseType: "effects", effectType: "solarize", defaults: { threshold: 50 } },
+  swirl: { baseType: "effects", effectType: "swirl", defaults: { degrees: 60 } },
+  wave: { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
+  implode: { baseType: "effects", effectType: "implode", defaults: { amount: 0.5 } },
+  spread: { baseType: "effects", effectType: "spread", defaults: { amount: 5 } },
+  // 新功能
+  duotone: { baseType: "effects", effectType: "duotone", defaults: { color1: "#000066", color2: "#FFD700" } },
+  gradientOverlay: { baseType: "effects", effectType: "gradientOverlay", defaults: { direction: "bottom", color1: "#000000", color2: "#FFFFFF", opacity: 0.5 } },
+  autoColor: { baseType: "effects", effectType: "autoColor", defaults: {} },
+  modulate: { baseType: "effects", effectType: "modulate", defaults: { hue: 100, saturation: 100, brightness: 100 } },
+  shadow: { baseType: "effects", effectType: "shadow", defaults: { offsetX: 4, offsetY: 4, blur: 8, color: "#000000", opacity: 80 } },
 };
 
 function configureImageTool(options: { getWorkspaceDirectory?: WorkspaceResolver }) {
@@ -140,9 +152,20 @@ function createImageToolError(
 
 function getImageToolRootDirectory() {
   const configuredWorkspace = String(resolveWorkspaceDirectory?.() || "").trim();
+  // 如果配置的目录不可写，回退到 userData 目录
   const baseDirectory =
     configuredWorkspace || path.join(app.getPath("userData"), "workspace");
-  return path.join(baseDirectory, "image-tool");
+  const imageToolDir = path.join(baseDirectory, "image-tool");
+  try {
+    fs.mkdirSync(path.join(imageToolDir, "temp"), { recursive: true });
+    fs.accessSync(path.join(imageToolDir, "temp"), fs.constants.W_OK);
+    return imageToolDir;
+  } catch {
+    // 如果配置目录不可写，使用 userData 下的目录
+    const fallback = path.join(app.getPath("userData"), "workspace", "image-tool");
+    fs.mkdirSync(path.join(fallback, "temp"), { recursive: true });
+    return fallback;
+  }
 }
 
 function ensureImageToolDirectories() {
@@ -814,6 +837,101 @@ async function executeOperation(
       break;
     case "transverse":
       command = await imageProcessor.transverse(currentInputPath, outputPath);
+      break;
+    case "border":
+      command = await imageProcessor.border(currentInputPath, outputPath, {
+        width: parseInt(params.width) || 10,
+        color: params.color || "#000000",
+      });
+      break;
+    case "backgroundReplace":
+      command = await imageProcessor.backgroundReplace(currentInputPath, outputPath, {
+        targetColor: params.targetColor || "#FFFFFF",
+        newColor: params.newColor || "#FFFFFF",
+        fuzz: parseInt(params.fuzz) || 15,
+      });
+      break;
+    case "strip":
+      command = await imageProcessor.strip(currentInputPath, outputPath);
+      break;
+    case "socialPreset": {
+      const socialOutputPath = outputPath.replace(/\.[^.]+$/, ".jpg");
+      command = await imageProcessor.socialPreset(currentInputPath, socialOutputPath, {
+        platform: params.platform || "wechat-moments",
+      });
+      finalOutputPath = socialOutputPath;
+      break;
+    }
+    case "compress": {
+      const compressOutputPath = outputPath.replace(/\.[^.]+$/, `.${params.format === 'webp' ? 'webp' : params.format === 'png' ? 'png' : params.format === 'jpg' ? 'jpg' : path.extname(outputPath).slice(1) || 'jpg'}`);
+      command = await imageProcessor.compress(currentInputPath, compressOutputPath, {
+        quality: parseInt(params.quality) || 80,
+        format: params.format || 'original',
+        strip: params.strip !== false,
+        progressive: params.progressive === true,
+      });
+      finalOutputPath = compressOutputPath;
+      break;
+    }
+    case "extractExif":
+      // EXIF提取是只读操作，返回信息但不生成新文件
+      command = await imageProcessor.extractExif(currentInputPath);
+      // 不覆盖输出文件
+      finalOutputPath = currentInputPath;
+      break;
+    case "opacity":
+      command = await imageProcessor.opacity(currentInputPath, outputPath, {
+        value: parseInt(params.value) || 100,
+      });
+      break;
+    case "append":
+    case "appendImages": {
+      const appendOutputPath = outputPath.replace(/\.[^.]+$/, ".jpg");
+      command = await imageProcessor.append(currentInputPath, appendOutputPath, {
+        images: params.images || [],
+        direction: params.direction || "horizontal",
+      });
+      finalOutputPath = appendOutputPath;
+      break;
+    }
+    case "composite":
+      command = await imageProcessor.composite(currentInputPath, outputPath, {
+        foregroundUrl: params.foregroundUrl || "",
+        position: params.position || "center",
+        offsetX: parseInt(params.offsetX) || 0,
+        offsetY: parseInt(params.offsetY) || 0,
+      });
+      break;
+    case "opaque":
+      command = await imageProcessor.opaque(currentInputPath, outputPath, {
+        targetColor: params.targetColor || "#FFFFFF",
+        newColor: params.newColor || "#FF0000",
+        fuzz: parseInt(params.fuzz) || 10,
+      });
+      break;
+    case "gradient": {
+      const gradOutputPath = outputPath.replace(/\.[^.]+$/, ".jpg");
+      command = await imageProcessor.gradient(gradOutputPath, {
+        width: parseInt(params.width) || 800,
+        height: parseInt(params.height) || 800,
+        color1: params.color1 || "#000000",
+        color2: params.color2 || "#FFFFFF",
+        direction: params.direction || "vertical",
+      });
+      finalOutputPath = gradOutputPath;
+      break;
+    }
+    case "alpha":
+      command = await imageProcessor.alpha(currentInputPath, outputPath, {
+        targetColor: params.targetColor || "#FFFFFF",
+        fuzz: parseInt(params.fuzz) || 15,
+      });
+      break;
+    case "blend":
+      command = await imageProcessor.blend(currentInputPath, outputPath, {
+        imageUrl2: params.imageUrl2 || "",
+        ratio: parseInt(params.ratio) || 50,
+      });
       break;
     case "filter":
       command = await imageProcessor.applyFilter(currentInputPath, outputPath, {

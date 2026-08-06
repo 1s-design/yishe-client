@@ -1222,6 +1222,272 @@ class ImageProcessor {
   }
 
   /**
+   * 添加边框/描边
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async border(inputPath, outputPath, options = {}) {
+    const { width = 10, color = '#000000' } = options;
+    const args = [inputPath, '-bordercolor', color, '-border', `${width}x${width}`, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 替换背景颜色
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async backgroundReplace(inputPath, outputPath, options = {}) {
+    const { targetColor = '#FFFFFF', newColor = '#FFFFFF', fuzz = 15 } = options;
+    // 使用 floodfill 从左上角(0,0)开始替换目标颜色
+    const args = [inputPath, '-fuzz', `${fuzz}%`, '-fill', newColor, '-draw', `floodfill 0,0 ${targetColor}`, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 去除EXIF元数据
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async strip(inputPath, outputPath) {
+    const args = [inputPath, '-strip', outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 社交媒体预设尺寸
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async socialPreset(inputPath, outputPath, options = {}) {
+    const { platform = 'wechat-moments' } = options;
+    const presets = {
+      'wechat-moments': { width: 1080, height: 1080, crop: true },
+      'wechat-avatar': { width: 640, height: 640, crop: true },
+      'instagram-square': { width: 1080, height: 1080, crop: true },
+      'instagram-story': { width: 1080, height: 1920, crop: true },
+      'weibo-cover': { width: 920, height: 300, crop: true },
+      'xiaohongshu': { width: 1080, height: 1440, crop: true },
+      'douyin-cover': { width: 1080, height: 1920, crop: true },
+      'bilibili-cover': { width: 1146, height: 717, crop: true },
+    };
+    const preset = presets[platform] || presets['wechat-moments'];
+    const args = [inputPath, '-resize', `${preset.width}x${preset.height}^`, '-gravity', 'center', '-extent', `${preset.width}x${preset.height}`, '-quality', '90', outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 图片压缩优化
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async compress(inputPath, outputPath, options = {}) {
+    const { quality = 80, format = 'original', strip = true, progressive = false } = options;
+    const args = [inputPath];
+    
+    // 去除元数据
+    if (strip) args.push('-strip');
+    
+    // 渐进式JPEG
+    if (progressive) args.push('-interlace', 'plane');
+    
+    // 质量设置
+    args.push('-quality', String(quality));
+    
+    // 格式转换
+    if (format === 'webp') {
+      args.push('-define', 'webp:lossless=false');
+    } else if (format === 'png') {
+      args.push('-define', 'png:compression-level=9');
+    }
+    
+    args.push(outputPath);
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 提取EXIF元数据
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async extractExif(inputPath) {
+    const args = [inputPath, '-verbose'];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 提取主色调
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async colorPalette(inputPath, options = {}) {
+    const { count = 6 } = options;
+    const args = [inputPath, '-resize', '100x100!', '-colors', String(count), '-unique-colors', '-format', '%[pixel:u]', 'info:'];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 智能内容感知缩放（Liquid Rescale）
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async liquidRescale(inputPath, outputPath, options = {}) {
+    const { width, height, preserveFeatures = true } = options;
+    if (!width || !height) {
+      throw new Error('liquidRescale 需要 width 和 height 参数');
+    }
+    const args = [inputPath];
+    
+    if (preserveFeatures) {
+      // 使用 seam carving 保留重要内容
+      args.push('-liquid-rescale', `${width}x${height}!`);
+    } else {
+      // 普通缩放
+      args.push('-resize', `${width}x${height}!`);
+    }
+    
+    args.push(outputPath);
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 自动色彩校正/白平衡
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async autoColor(inputPath, outputPath) {
+    const args = [inputPath, '-auto-level', '-auto-gamma', outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 色相/饱和度/亮度组合调整
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async modulate(inputPath, outputPath, options = {}) {
+    const { hue = 100, saturation = 100, brightness = 100 } = options;
+    const args = [inputPath, '-modulate', `${brightness},${saturation},${hue}`, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 调整图片整体透明度
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async opacity(inputPath, outputPath, options = {}) {
+    const { value = 100 } = options;
+    const args = [inputPath, '-alpha', 'set', '-channel', 'A', '-evaluate', 'set', `${value}%`, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 添加投影阴影
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async shadow(inputPath, outputPath, options = {}) {
+    const { offsetX = 4, offsetY = 4, blur = 8, color = '#000000', opacity = 80 } = options;
+    const args = [
+      inputPath,
+      '(', '+clone', '-background', color, '-shadow', `${opacity}x${blur}+${offsetX}+${offsetY}`, ')',
+      '+swap', '-background', 'none', '-layers', 'merge', '+repage',
+      outputPath
+    ];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 图片拼接（水平或垂直）
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async append(inputPath, outputPath, options = {}) {
+    const { images = [], direction = 'horizontal' } = options;
+    if (!images.length) {
+      throw new Error('append 需要 images 数组参数');
+    }
+    const flag = direction === 'vertical' ? '-append' : '+append';
+    const args = [inputPath, ...images, flag, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 图片合成（将前景图叠加到背景图）
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async composite(inputPath, outputPath, options = {}) {
+    const { foregroundUrl = '', position = 'center', offsetX = 0, offsetY = 0 } = options;
+    if (!foregroundUrl) {
+      throw new Error('composite 需要 foregroundUrl 参数');
+    }
+    const gravityMap = {
+      'top-left': 'NorthWest', 'top-center': 'North', 'top-right': 'NorthEast',
+      'center-left': 'West', 'center': 'Center', 'center-right': 'East',
+      'bottom-left': 'SouthWest', 'bottom-center': 'South', 'bottom-right': 'SouthEast',
+    };
+    const gravity = gravityMap[position] || 'Center';
+    const args = [inputPath, foregroundUrl, '-gravity', gravity, '-geometry', `+${offsetX}+${offsetY}`, '-composite', outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 颜色替换（将图片中某颜色替换为新颜色）
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async opaque(inputPath, outputPath, options = {}) {
+    const { targetColor = '#FFFFFF', newColor = '#FF0000', fuzz = 10 } = options;
+    const args = [inputPath, '-fuzz', `${fuzz}%`, '-fill', newColor, '-opaque', targetColor, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 生成渐变背景图片
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async gradient(outputPath, options = {}) {
+    const { width = 800, height = 800, color1 = '#000000', color2 = '#FFFFFF', direction = 'vertical' } = options;
+    const gradientStr = direction === 'horizontal' ? `${color1}-${color2}` :
+                       direction === 'diagonal' ? `${color1}-${color2}` :
+                       `${color1}-${color2}`;
+    const size = direction === 'diagonal' ? `${width}x${height}` : 
+                 direction === 'horizontal' ? `${width}x${height}` :
+                 `${width}x${height}`;
+    const angle = direction === 'horizontal' ? '90' : direction === 'diagonal' ? '135' : '0';
+    const args = ['-size', size, `gradient:${gradientStr}`, '-rotate', angle, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 去除背景使其透明
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async alpha(inputPath, outputPath, options = {}) {
+    const { targetColor = '#FFFFFF', fuzz = 15 } = options;
+    const args = [inputPath, '-fuzz', `${fuzz}%`, '-transparent', targetColor, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 图片混合（将两张图按比例融合）
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async blend(inputPath, outputPath, options = {}) {
+    const { imageUrl2 = '', ratio = 50 } = options;
+    if (!imageUrl2) {
+      throw new Error('blend 需要 imageUrl2 参数');
+    }
+    const args = [inputPath, imageUrl2, '-compose', 'blend', '-define', `compose:args=${ratio},${100 - ratio}`, '-composite', outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
    * 应用滤镜
    * @returns {Promise<string>} 返回执行的命令字符串
    */
@@ -1758,6 +2024,64 @@ class ImageProcessor {
           const pointsStr = distortPoints.join(',');
           args.push('-distort', distortMethod, pointsStr);
           break;
+
+        // ========== 双色调效果 ==========
+        case 'duotone': {
+          const color1 = params.color1 || '#000066';
+          const color2 = params.color2 || '#FFD700';
+          // 转灰度 → 用 -fill + -tint 着色
+          args.push('-colorspace', 'Gray');
+          args.push('-fill', color2, '-tint', '50');
+          args.push('-fill', color1, '-colorize', '30%');
+          break;
+        }
+
+        // ========== 渐变叠加 ==========
+        case 'gradientOverlay': {
+          const direction = params.direction || 'bottom';
+          const gc1 = params.color1 || '#000000';
+          const gc2 = params.color2 || '#FFFFFF';
+          const opacity = params.opacity !== undefined ? parseFloat(params.opacity) : 0.5;
+          const alphaOpacity = Math.round(opacity * 100);
+          const gradientMap = {
+            'top': `${gc1}-${gc2}`,
+            'bottom': `${gc2}-${gc1}`,
+            'left': `${gc1}-${gc2}`,
+            'right': `${gc2}-${gc1}`,
+            'top-left': `${gc1}-${gc2}`,
+            'top-right': `${gc2}-${gc1}`,
+            'bottom-left': `${gc1}-${gc2}`,
+            'bottom-right': `${gc2}-${gc1}`,
+          };
+          const gradStr = gradientMap[direction] || gradientMap['bottom'];
+          args.push('(', '-size', '1x1', `gradient:${gradStr}`, '-resize', '%[fx:w]x%[fx:h]!', '-alpha', 'set', '-channel', 'A', '-evaluate', 'set', `${alphaOpacity}%`, ')', '-compose', 'over', '-composite');
+          break;
+        }
+
+        // ========== 自动色彩校正 ==========
+        case 'autoColor':
+          args.push('-auto-level', '-auto-gamma');
+          break;
+
+        // ========== 色相/饱和/亮度组合 ==========
+        case 'modulate': {
+          const mHue = params.hue !== undefined ? parseInt(params.hue) : 100;
+          const mSat = params.saturation !== undefined ? parseInt(params.saturation) : 100;
+          const mBri = params.brightness !== undefined ? parseInt(params.brightness) : 100;
+          args.push('-modulate', `${mBri},${mSat},${mHue}`);
+          break;
+        }
+
+        // ========== 阴影效果 ==========
+        case 'shadow': {
+          const sColor = params.color || '#000000';
+          const sOpacity = params.opacity !== undefined ? parseInt(params.opacity) : 80;
+          const sBlur = params.blur !== undefined ? parseInt(params.blur) : 8;
+          const sDx = params.offsetX !== undefined ? parseInt(params.offsetX) : 4;
+          const sDy = params.offsetY !== undefined ? parseInt(params.offsetY) : 4;
+          args.push('(', '+clone', '-background', sColor, '-shadow', `${sOpacity}x${sBlur}+${sDx}+${sDy}`, ')', '+swap', '-background', 'none', '-layers', 'merge', '+repage');
+          break;
+        }
 
         // ========== 自定义表达式 ==========
         case 'fx':

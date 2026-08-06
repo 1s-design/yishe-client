@@ -1,7 +1,7 @@
 import { io, type Socket } from "socket.io-client";
 import { reactive } from "vue";
 import mitt from "mitt";
-import { getTokenFromClient, logoutToken, getUserSetting } from "../api/user";
+import { getTokenFromClient, logoutToken, getUserSetting, getAiSetting } from "../api/user";
 import { stickerPsdSetApi } from "../api/stickerPsdSet";
 import photoshopApi from "../api/photoshop";
 import {
@@ -647,6 +647,15 @@ export const autoPsdBatchState = reactive({
 const browserAutomationDispatchState = reactive({
   autoDispatchEnabled: loadBrowserAutomationAutoDispatchEnabled(),
   manualClosed: loadBrowserAutomationManualClosed(),
+});
+
+// 客户端 Agent 配置状态
+export const clientAgentConfig = reactive({
+  keyId: null as number | null,
+  model: "",
+  baseUrl: "",
+  enabled: false,
+  loaded: false,
 });
 
 const browserAutomationExecutionState = reactive({
@@ -5085,6 +5094,8 @@ function bindSocketEvents(currentSocket: Socket) {
     startHeartbeatLoop();
     // 连接成功后启动配置定时同步
     startPsConfigSync();
+    // 同步客户端 Agent 配置
+    startClientAgentConfigSync();
     // WebSocket 重连后重新拉取平台任务自动执行配置，避免断连期间遗漏事件
     void syncPlatformAutoDispatchConfig();
   });
@@ -5370,6 +5381,100 @@ function bindSocketEvents(currentSocket: Socket) {
       timestamp: new Date().toISOString(),
       originalData: data,
     });
+  });
+
+  // MCP 工具调用：服务端请求客户端执行本地 MCP 工具
+  currentSocket.on(
+    "mcp-call",
+    async (data: { requestId: string; payload: { toolName: string; toolArgs?: Record<string, any> } }) => {
+      const { requestId, payload } = data || {};
+      const toolName = payload?.toolName || "";
+      const toolArgs = payload?.toolArgs || {};
+      emitter.emit("log", {
+        level: "info",
+        message: `[ws] received mcp-call: requestId=${requestId} tool=${toolName}`,
+      });
+
+      // 热搜类工具：立即返回"采集中"，后台异步执行，完成后推送结果
+      if (toolName.startsWith("hotsearch_")) {
+        socket?.emit("mcp-result", {
+          requestId,
+          result: {
+            content: [{ type: "text", text: JSON.stringify({ success: true, message: "热搜采集中，请稍候...", async: true }) }],
+          },
+        });
+        // 后台异步执行
+        (async () => {
+          try {
+            const nativeApi = getNativeApi() as any;
+            const result = await nativeApi.callMcpTool(toolName, toolArgs);
+            socket?.emit("mcp-async-result", {
+              requestId,
+              toolName,
+              result,
+            });
+          } catch (error) {
+            socket?.emit("mcp-async-result", {
+              requestId,
+              toolName,
+              result: {
+                content: [{ type: "text", text: serializeError(error) }],
+                isError: true,
+              },
+            });
+          }
+        })();
+        return;
+      }
+
+      try {
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.callMcpTool) {
+          throw new Error("当前环境未注入 MCP 工具执行能力");
+        }
+        const result = await nativeApi.callMcpTool(toolName, toolArgs);
+        socket?.emit("mcp-result", {
+          requestId,
+          result,
+        });
+      } catch (error) {
+        socket?.emit("mcp-result", {
+          requestId,
+          result: {
+            content: [{ type: "text", text: serializeError(error) }],
+            isError: true,
+          },
+        });
+      }
+    },
+  );
+
+  // MCP 工具列表：服务端请求客户端返回可用的 MCP 工具列表
+  currentSocket.on("mcp-list-tools", async (data: { requestId: string }) => {
+    const requestId = data?.requestId || "";
+    emitter.emit("log", {
+      level: "info",
+      message: `[ws] received mcp-list-tools: requestId=${requestId}`,
+    });
+    try {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.listMcpTools) {
+        throw new Error("当前环境未注入 MCP 工具列表能力");
+      }
+      const tools = await nativeApi.listMcpTools();
+      socket?.emit("mcp-result", {
+        requestId,
+        result: { tools },
+      });
+    } catch (error) {
+      socket?.emit("mcp-result", {
+        requestId,
+        result: {
+          tools: [],
+          error: serializeError(error),
+        },
+      });
+    }
   });
 
   currentSocket.on(
@@ -9677,6 +9782,91 @@ function startPsConfigSync() {
   psConfigSyncTimer = setInterval(() => {
     void fetchPsAutomationDispatchConfig();
   }, PS_CONFIG_SYNC_INTERVAL_MS);
+}
+
+// 获取客户端 Agent 配置
+async function fetchClientAgentConfig() {
+  try {
+    // 优先从 AI 设置获取 featureBindings
+    const aiSetting = await getAiSetting();
+    if (aiSetting && typeof aiSetting === "object") {
+      const binding = aiSetting.featureBindings?.["ai.client-agent.execute"];
+      if (binding && typeof binding === "object") {
+        clientAgentConfig.keyId = binding.keyId || null;
+        clientAgentConfig.model = binding.model || binding.params?.model || "";
+        clientAgentConfig.baseUrl = binding.params?.baseUrl || "";
+        clientAgentConfig.enabled = !!binding.keyId;
+        clientAgentConfig.loaded = true;
+        emitter.emit("log", {
+          level: "info",
+          message: `[agent] 配置已同步: enabled=${clientAgentConfig.enabled}, keyId=${clientAgentConfig.keyId}, model=${clientAgentConfig.model || "默认"}`,
+        });
+        return;
+      }
+    }
+    
+    // 兼容旧的用户设置方式
+    const setting = await getUserSetting();
+    if (setting && typeof setting === "object") {
+      const binding = setting.featureBindings?.["ai.client-agent.execute"];
+      if (binding && typeof binding === "object") {
+        clientAgentConfig.keyId = binding.keyId || null;
+        clientAgentConfig.model = binding.model || binding.params?.model || "";
+        clientAgentConfig.baseUrl = binding.params?.baseUrl || "";
+        clientAgentConfig.enabled = !!binding.keyId;
+        clientAgentConfig.loaded = true;
+        emitter.emit("log", {
+          level: "info",
+          message: `[agent] 配置已同步(兼容模式): enabled=${clientAgentConfig.enabled}, keyId=${clientAgentConfig.keyId}, model=${clientAgentConfig.model || "默认"}`,
+        });
+        return;
+      }
+      // 兼容旧的 clientAgent 配置
+      const legacySetting = setting.clientAgent;
+      if (legacySetting && typeof legacySetting === "object") {
+        clientAgentConfig.keyId = legacySetting.keyId || null;
+        clientAgentConfig.model = legacySetting.model || "";
+        clientAgentConfig.baseUrl = legacySetting.baseUrl || "";
+        clientAgentConfig.enabled = legacySetting.enabled || false;
+        clientAgentConfig.loaded = true;
+        emitter.emit("log", {
+          level: "info",
+          message: `[agent] 配置已同步(旧版模式): enabled=${clientAgentConfig.enabled}, keyId=${clientAgentConfig.keyId}, model=${clientAgentConfig.model || "默认"}`,
+        });
+        return;
+      }
+    }
+    clientAgentConfig.loaded = true;
+    emitter.emit("log", {
+      level: "info",
+      message: "[agent] 未找到配置，使用默认状态",
+    });
+  } catch (error) {
+    emitter.emit("log", {
+      level: "warn",
+      message: `[agent] 获取配置失败: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+
+  // 同步配置到 main 进程（供 MCP 工具使用）
+  try {
+    const nativeApi = getNativeApi() as any;
+    if (nativeApi?.setAgentConfig) {
+      await nativeApi.setAgentConfig({
+        keyId: clientAgentConfig.keyId,
+        model: clientAgentConfig.model,
+        baseUrl: clientAgentConfig.baseUrl,
+        apiKey: "", // API key 由 main 进程从数据库读取
+        enabled: clientAgentConfig.enabled,
+      });
+    }
+  } catch {
+    // ignore sync errors
+  }
+}
+
+function startClientAgentConfigSync() {
+  void fetchClientAgentConfig();
 }
 
 function stopPsConfigSync() {

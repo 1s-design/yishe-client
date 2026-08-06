@@ -1111,6 +1111,31 @@ app.whenReady().then(() => {
     }));
   });
 
+  // 客户端 Agent 配置存储（renderer → main process）
+  let storedAgentConfig: {
+    keyId: number | null;
+    model: string;
+    baseUrl: string;
+    apiKey: string;
+    enabled: boolean;
+  } = { keyId: null, model: "", baseUrl: "", apiKey: "", enabled: false };
+
+  ipcMain.handle("agent-config:set", async (_event, config: typeof storedAgentConfig) => {
+    storedAgentConfig = { ...storedAgentConfig, ...config };
+    // 同时存到全局变量，供 MCP 工具读取
+    (global as any).__agentConfig = storedAgentConfig;
+    writeMainLog("INFO", "Agent 配置已更新", {
+      enabled: storedAgentConfig.enabled,
+      model: storedAgentConfig.model,
+      keyId: storedAgentConfig.keyId,
+    });
+    return true;
+  });
+
+  ipcMain.handle("agent-config:get", async () => {
+    return storedAgentConfig;
+  });
+
   ipcMain.handle("start-external-process", async (_event, id: string) => {
     writeMainLog("INFO", "收到启动外部进程 IPC", { processId: id });
     const success = await externalProcessManager.startProcess(id);
@@ -1134,6 +1159,16 @@ app.whenReady().then(() => {
       return success;
     },
   );
+
+  ipcMain.handle("restart-external-process", async (_event, id: string) => {
+    writeMainLog("INFO", "收到重启外部进程 IPC", { processId: id });
+    const success = await externalProcessManager.restartProcess(id);
+    writeMainLog(success ? "INFO" : "ERROR", "重启外部进程 IPC 完成", {
+      processId: id,
+      success,
+    });
+    return success;
+  });
 
   ipcMain.handle("auto-browser:invoke", async (_event, request) => {
     const startedAt = Date.now();
@@ -1338,6 +1373,39 @@ app.whenReady().then(() => {
         toolCount: 0,
         error: error?.message,
       };
+    }
+  });
+
+  // MCP 工具执行 IPC
+  ipcMain.handle(
+    "mcp:call-tool",
+    async (_event, toolName: string, toolArgs: Record<string, any>) => {
+      try {
+        const { callMcpTool } = await getMcpServerModule();
+        return await callMcpTool(toolName, toolArgs || {});
+      } catch (error: any) {
+        writeMainLog("ERROR", "MCP 工具执行失败", {
+          toolName,
+          error: error?.message,
+        });
+        return {
+          content: [{ type: "text", text: error?.message || "MCP 工具执行异常" }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // MCP 工具列表 IPC
+  ipcMain.handle("mcp:list-tools", async () => {
+    try {
+      const { listMcpTools } = await getMcpServerModule();
+      return listMcpTools();
+    } catch (error: any) {
+      writeMainLog("ERROR", "MCP 工具列表获取失败", {
+        error: error?.message,
+      });
+      return [];
     }
   });
 

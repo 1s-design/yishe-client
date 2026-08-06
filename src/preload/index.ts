@@ -84,6 +84,7 @@ const api = {
   listExternalProcesses: () => ipcRenderer.invoke('list-external-processes'),
   startExternalProcess: (id: string) => ipcRenderer.invoke('start-external-process', id),
   stopExternalProcess: (id: string, force?: boolean) => ipcRenderer.invoke('stop-external-process', id, force),
+  restartExternalProcess: (id: string) => ipcRenderer.invoke('restart-external-process', id),
   invokeAutoBrowser: (request: {
     method?: string
     path: string
@@ -116,6 +117,14 @@ const api = {
   startMcpServer: () => ipcRenderer.invoke('mcp-server:start'),
   stopMcpServer: () => ipcRenderer.invoke('mcp-server:stop'),
   checkMcpServerStatus: () => ipcRenderer.invoke('mcp-server:status'),
+  // MCP 工具执行
+  callMcpTool: (toolName: string, toolArgs: Record<string, any>) =>
+    ipcRenderer.invoke('mcp:call-tool', toolName, toolArgs),
+  listMcpTools: () => ipcRenderer.invoke('mcp:list-tools'),
+  // Agent 配置同步
+  setAgentConfig: (config: { keyId: number | null; model: string; baseUrl: string; apiKey: string; enabled: boolean }) =>
+    ipcRenderer.invoke('agent-config:set', config),
+  getAgentConfig: () => ipcRenderer.invoke('agent-config:get'),
   // 通用图片上传（在 renderer 端执行）
   downloadImageAndUploadMaterial: (params: {
     url: string

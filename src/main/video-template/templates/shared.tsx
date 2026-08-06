@@ -107,11 +107,13 @@ export const sceneWindow = ({
   fadeIn?: number;
   fadeOut?: number;
 }) => {
-  const enter = interpolate(frame, [start, start + fadeIn], [0, 1], {
+  const safeFadeIn = Math.max(1, fadeIn);
+  const safeFadeOut = Math.max(1, fadeOut);
+  const enter = interpolate(frame, [start, start + safeFadeIn], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const exit = interpolate(frame, [end - fadeOut, end], [1, 0], {
+  const exit = interpolate(frame, [end - safeFadeOut, end], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });

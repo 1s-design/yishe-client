@@ -1,0 +1,50 @@
+{
+  "summary": {
+    "passed": 0,
+    "total": 7
+  },
+  "results": [
+    {
+      "name": "基础导航",
+      "success": false,
+      "details": "回答: ...",
+      "duration": "2.31s"
+    },
+    {
+      "name": "数据提取",
+      "success": false,
+      "details": "提取了 1 个项目",
+      "duration": "0.64s"
+    },
+    {
+      "name": "搜索和点击",
+      "success": false,
+      "details": "回答: ",
+      "duration": "0.55s"
+    },
+    {
+      "name": "表单交互",
+      "success": false,
+      "details": "回答: ",
+      "duration": "1.38s"
+    },
+    {
+      "name": "多步骤任务",
+      "success": false,
+      "details": "结构化输出: 否",
+      "duration": "0.56s"
+    },
+    {
+      "name": "错误恢复",
+      "success": false,
+      "details": "回答: ",
+      "duration": "0.58s"
+    },
+    {
+      "name": "JavaScript 执行",
+      "success": false,
+      "details": "回答: ",
+      "duration": "1.22s"
+    }
+  ]
+}

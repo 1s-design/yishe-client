@@ -236,28 +236,39 @@ const LayerSchema: z.ZodType<SceneLayer> = z.discriminatedUnion("type", [
     type: z.literal("eyebrow"),
     text: z.string(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("headline"),
     text: z.string(),
     fontSize: z.number().optional(),
+    maxLines: z.number().optional(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("subtitle"),
     text: z.string(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("text"),
     text: z.string(),
     maxWidth: z.number().optional(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("badge-row"),
     badges: z.array(z.string()),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("price"),
@@ -265,38 +276,58 @@ const LayerSchema: z.ZodType<SceneLayer> = z.discriminatedUnion("type", [
     originalPrice: z.string().optional(),
     label: z.string().optional(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("metrics"),
     items: z.array(MetricItemSchema),
     columns: z.number().optional(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("features"),
     items: z.array(FeatureItemSchema),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("media"),
     media: MediaSourceSchema,
     width: z.string().optional(),
     height: z.string().optional(),
+    borderRadius: z.number().optional(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("cta"),
     text: z.string(),
     subtext: z.string().optional(),
+    buttonStyle: z.enum(["pill", "square", "outline"]).optional(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("quote"),
     text: z.string(),
     author: z.string().optional(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
-  z.object({ type: z.literal("divider"), delayFrames: z.number().optional() }),
+  z.object({
+    type: z.literal("divider"),
+    color: z.string().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
   z.object({
     type: z.literal("progress-bar"),
     items: z.array(
@@ -307,11 +338,111 @@ const LayerSchema: z.ZodType<SceneLayer> = z.discriminatedUnion("type", [
       }),
     ),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
   z.object({
     type: z.literal("bullet-list"),
     items: z.array(z.string()),
+    listStyle: z.enum(["bullet", "number", "check"]).optional(),
     delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  // === NEW AI-POWERED LAYER TYPES ===
+  z.object({
+    type: z.literal("countdown"),
+    value: z.number(),
+    label: z.string().optional(),
+    prefix: z.string().optional(),
+    suffix: z.string().optional(),
+    animDuration: z.number().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("image-grid"),
+    images: z.array(z.object({ src: z.string(), alt: z.string().optional() })),
+    columns: z.number().optional(),
+    gap: z.number().optional(),
+    borderRadius: z.number().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("testimonial"),
+    text: z.string(),
+    author: z.string().optional(),
+    stars: z.number().min(1).max(5).optional(),
+    avatar: z.string().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("logo-reveal"),
+    src: z.string(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+    name: z.string().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("comparison"),
+    before: z.object({ src: z.string(), label: z.string().optional() }),
+    after: z.object({ src: z.string(), label: z.string().optional() }),
+    dividerPosition: z.number().min(0).max(100).optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("chapter-marker"),
+    number: z.union([z.number(), z.string()]),
+    title: z.string(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("rating"),
+    value: z.number().min(0).max(5),
+    max: z.number().optional(),
+    count: z.string().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("social-proof"),
+    value: z.string(),
+    label: z.string(),
+    icon: z.string().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("split-media"),
+    media: z.object({ type: z.enum(["image", "video"]), src: z.string() }),
+    side: z.enum(["left", "right"]).optional(),
+    text: z.string().optional(),
+    headline: z.string().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("accent-box"),
+    text: z.string(),
+    boxStyle: z.enum(["filled", "bordered", "glow"]).optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
   }),
 ]);
 
@@ -320,6 +451,7 @@ const SceneSchema: z.ZodType<SceneConfig> = z.object({
   background: z
     .discriminatedUnion("type", [
       z.object({ type: z.literal("gradient") }),
+      z.object({ type: z.literal("solid"), color: z.string().optional() }),
       z.object({
         type: z.literal("media"),
         media: MediaSourceSchema,
@@ -328,7 +460,11 @@ const SceneSchema: z.ZodType<SceneConfig> = z.object({
     ])
     .optional(),
   layers: z.array(LayerSchema),
-  transition: z.enum(["cut", "fade"]).optional(),
+  transition: z.enum(["cut", "fade", "slide-left", "slide-right", "zoom"]).optional(),
+  layout: z.enum(["centered", "top", "bottom", "split-left", "split-right", "fullscreen", "grid"]).optional(),
+  paddingY: z.number().optional(),
+  paddingX: z.number().optional(),
+  gap: z.number().optional(),
 });
 
 const PaletteConfigSchema: z.ZodType<PaletteConfig> = z.union([
@@ -363,6 +499,43 @@ export const AiVideoSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Animation helpers
+// ---------------------------------------------------------------------------
+
+import type { AnimationStyle, SceneLayout } from "./ai-types";
+
+function computeAnimation(
+  style: AnimationStyle | undefined,
+  entrance: number,
+  frame: number,
+): React.CSSProperties {
+  const progress = clamp01(entrance);
+  switch (style) {
+    case "fade-in":
+      return { opacity: progress };
+    case "slide-left":
+      return { opacity: progress, transform: `translateX(${mix(-60, 0, progress)}px)` };
+    case "slide-right":
+      return { opacity: progress, transform: `translateX(${mix(60, 0, progress)}px)` };
+    case "zoom-in":
+      return { opacity: progress, transform: `scale(${mix(0.6, 1, progress)})` };
+    case "zoom-out":
+      return { opacity: progress, transform: `scale(${mix(1.4, 1, progress)})` };
+    case "rotate-in":
+      return { opacity: progress, transform: `rotate(${mix(-15, 0, progress)}deg) scale(${mix(0.8, 1, progress)})` };
+    case "bounce":
+      return { opacity: progress, transform: `translateY(${mix(40, 0, progress)}px) scale(${1 + Math.sin(progress * Math.PI) * 0.05})` };
+    case "typewriter":
+      return { opacity: progress };
+    case "fade-up":
+    default:
+      return { opacity: progress, transform: `translateY(${mix(28, 0, progress)}px)` };
+  }
+}
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
+// ---------------------------------------------------------------------------
 // Layer renderers
 // ---------------------------------------------------------------------------
 
@@ -378,21 +551,35 @@ const LayerRenderer: React.FC<{
   index: number;
 }> = ({ layer, palette, index }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const delay = layer.delayFrames ?? index * 6;
   const entrance = useEntrance(delay);
-  const opacity = mix(0, 1, entrance);
-  const translateY = mix(28, 0, entrance);
+  const anim = computeAnimation(layer.animation, entrance, frame);
+  const baseOpacity = layer.opacity ?? 1;
 
   const wrapper: React.CSSProperties = {
-    opacity,
-    transform: `translateY(${translateY}px)`,
+    opacity: (anim.opacity as number) ?? 1,
+    transform: anim.transform,
+    opacity: baseOpacity,
+  };
+
+  // Typewriter effect for text layers
+  const typewriterText = (text: string, maxChars?: number) => {
+    if (layer.animation !== "typewriter") return text;
+    const charsToShow = Math.floor(
+      interpolate(frame - delay, [0, text.length * 2], [0, text.length], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      }),
+    );
+    return text.slice(0, maxChars ? Math.min(charsToShow, maxChars) : charsToShow);
   };
 
   switch (layer.type) {
     case "eyebrow":
       return (
         <div style={wrapper}>
-          <SectionEyebrow text={layer.text} palette={palette} />
+          <SectionEyebrow text={typewriterText(layer.text)} palette={palette} />
         </div>
       );
 
@@ -406,9 +593,10 @@ const LayerRenderer: React.FC<{
               color: palette.text,
               letterSpacing: "-0.02em",
               whiteSpace: "pre-line",
+              overflow: "hidden",
             }}
           >
-            {layer.text}
+            {typewriterText(layer.text)}
           </div>
         </div>
       );
@@ -424,7 +612,7 @@ const LayerRenderer: React.FC<{
               whiteSpace: "pre-line",
             }}
           >
-            {layer.text}
+            {typewriterText(layer.text)}
           </div>
         </div>
       );
@@ -442,7 +630,7 @@ const LayerRenderer: React.FC<{
               whiteSpace: "pre-line",
             }}
           >
-            {layer.text}
+            {typewriterText(layer.text)}
           </div>
         </div>
       );
@@ -536,6 +724,7 @@ const LayerRenderer: React.FC<{
             style={{
               width: layer.width ?? "100%",
               height: layer.height ?? "480px",
+              borderRadius: layer.borderRadius ?? 0,
             }}
           />
         </div>
@@ -543,6 +732,20 @@ const LayerRenderer: React.FC<{
 
     case "cta": {
       const pulse = 1 + Math.sin(frame / 18) * 0.02;
+      const btnRadius =
+        layer.buttonStyle === "square"
+          ? 8
+          : layer.buttonStyle === "outline"
+            ? 999
+            : 999;
+      const btnBg =
+        layer.buttonStyle === "outline"
+          ? "transparent"
+          : `linear-gradient(135deg, ${palette.accent}, ${palette.accentAlt})`;
+      const btnBorder =
+        layer.buttonStyle === "outline"
+          ? `2px solid ${palette.accent}`
+          : "none";
       return (
         <div
           style={{
@@ -556,8 +759,9 @@ const LayerRenderer: React.FC<{
           <div
             style={{
               padding: "18px 52px",
-              borderRadius: 999,
-              background: `linear-gradient(135deg, ${palette.accent}, ${palette.accentAlt})`,
+              borderRadius: btnRadius,
+              background: btnBg,
+              border: btnBorder,
               color: palette.background,
               fontSize: 28,
               fontWeight: 800,
@@ -599,7 +803,7 @@ const LayerRenderer: React.FC<{
             >
               "
             </span>
-            {layer.text}
+            {typewriterText(layer.text)}
             <span
               style={{
                 fontSize: 64,
@@ -627,7 +831,7 @@ const LayerRenderer: React.FC<{
             style={{
               width: "60%",
               height: 1,
-              background: `linear-gradient(90deg, transparent, ${alpha(palette.accent, 0.5)}, transparent)`,
+              background: `linear-gradient(90deg, transparent, ${alpha(layer.color || palette.accent, 0.5)}, transparent)`,
             }}
           />
         </div>
@@ -640,7 +844,9 @@ const LayerRenderer: React.FC<{
         </div>
       );
 
-    case "bullet-list":
+    case "bullet-list": {
+      const listIcon =
+        layer.listStyle === "check" ? "✓" : layer.listStyle === "number" ? null : null;
       return (
         <div
           style={{
@@ -657,16 +863,41 @@ const LayerRenderer: React.FC<{
               key={i}
               style={{ display: "flex", alignItems: "flex-start", gap: 14 }}
             >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: palette.accent,
-                  marginTop: 10,
-                  flexShrink: 0,
-                }}
-              />
+              {layer.listStyle === "number" ? (
+                <span
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color: palette.accent,
+                    minWidth: 30,
+                    textAlign: "right",
+                  }}
+                >
+                  {i + 1}.
+                </span>
+              ) : layer.listStyle === "check" ? (
+                <span
+                  style={{
+                    fontSize: 22,
+                    color: palette.accent,
+                    marginTop: 2,
+                    flexShrink: 0,
+                  }}
+                >
+                  ✓
+                </span>
+              ) : (
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: palette.accent,
+                    marginTop: 10,
+                    flexShrink: 0,
+                  }}
+                />
+              )}
               <span
                 style={{ fontSize: 26, color: palette.text, lineHeight: 1.5 }}
               >
@@ -676,6 +907,444 @@ const LayerRenderer: React.FC<{
           ))}
         </div>
       );
+    }
+
+    // === NEW AI-POWERED LAYER TYPES ===
+
+    case "countdown": {
+      const target = layer.value;
+      const dur = (layer.animDuration ?? 1.5) * fps;
+      const countProgress = interpolate(frame - delay, [0, dur], [0, 1], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
+      const current = Math.round(countProgress * target);
+      return (
+        <div
+          style={{
+            ...wrapper,
+            ...textBase,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline" }}>
+            {layer.prefix && (
+              <span style={{ fontSize: 40, color: palette.mutedText }}>
+                {layer.prefix}
+              </span>
+            )}
+            <span
+              style={{
+                fontSize: 96,
+                fontWeight: 900,
+                color: palette.accent,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {current}
+            </span>
+            {layer.suffix && (
+              <span style={{ fontSize: 40, color: palette.mutedText }}>
+                {layer.suffix}
+              </span>
+            )}
+          </div>
+          {layer.label && (
+            <div style={{ fontSize: 24, color: palette.mutedText }}>
+              {layer.label}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    case "image-grid": {
+      const cols = layer.columns ?? 2;
+      const gap = layer.gap ?? 8;
+      const radius = layer.borderRadius ?? 12;
+      return (
+        <div
+          style={{
+            ...wrapper,
+            display: "grid",
+            gridTemplateColumns: `repeat(${cols}, 1fr)`,
+            gap,
+            width: "100%",
+            maxWidth: 800,
+          }}
+        >
+          {layer.images.map((img, i) => (
+            <Img
+              key={i}
+              src={img.src}
+              style={{
+                width: "100%",
+                aspectRatio: "1",
+                objectFit: "cover",
+                borderRadius: radius,
+              }}
+            />
+          ))}
+        </div>
+      );
+    }
+
+    case "testimonial":
+      return (
+        <div
+          style={{
+            ...wrapper,
+            ...textBase,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 16,
+            maxWidth: 680,
+          }}
+        >
+          {layer.stars != null && (
+            <div style={{ fontSize: 32, letterSpacing: 4 }}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <span
+                  key={i}
+                  style={{ color: i < layer.stars! ? "#fbbf24" : alpha(palette.mutedText, 0.3) }}
+                >
+                  ★
+                </span>
+              ))}
+            </div>
+          )}
+          <div
+            style={{
+              fontSize: 28,
+              fontStyle: "italic",
+              color: palette.text,
+              lineHeight: 1.6,
+            }}
+          >
+            "{typewriterText(layer.text)}"
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {layer.avatar && (
+              <Img
+                src={layer.avatar}
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: "50%",
+                  objectFit: "cover",
+                }}
+              />
+            )}
+            {layer.author && (
+              <div style={{ fontSize: 22, color: palette.mutedText }}>
+                — {layer.author}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+
+    case "logo-reveal": {
+      const logoScale = mix(0.6, 1, entrance);
+      return (
+        <div
+          style={{
+            ...wrapper,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 20,
+          }}
+        >
+          <Img
+            src={layer.src}
+            style={{
+              width: layer.width ?? 200,
+              height: layer.height ?? 200,
+              objectFit: "contain",
+              transform: `scale(${logoScale})`,
+            }}
+          />
+          {layer.name && (
+            <div
+              style={{
+                fontSize: 36,
+                fontWeight: 700,
+                color: palette.text,
+                letterSpacing: "0.08em",
+              }}
+            >
+              {layer.name}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    case "comparison":
+      return (
+        <div
+          style={{
+            ...wrapper,
+            display: "flex",
+            width: "100%",
+            maxWidth: 900,
+            gap: 4,
+            borderRadius: 16,
+            overflow: "hidden",
+          }}
+        >
+          <div style={{ flex: 1, position: "relative" }}>
+            <Img
+              src={layer.before.src}
+              style={{ width: "100%", height: 300, objectFit: "cover" }}
+            />
+            {layer.before.label && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 12,
+                  left: 12,
+                  padding: "6px 14px",
+                  borderRadius: 8,
+                  background: alpha(palette.background, 0.8),
+                  color: palette.text,
+                  fontSize: 18,
+                  fontWeight: 600,
+                }}
+              >
+                {layer.before.label}
+              </div>
+            )}
+          </div>
+          <div style={{ flex: 1, position: "relative" }}>
+            <Img
+              src={layer.after.src}
+              style={{ width: "100%", height: 300, objectFit: "cover" }}
+            />
+            {layer.after.label && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 12,
+                  left: 12,
+                  padding: "6px 14px",
+                  borderRadius: 8,
+                  background: alpha(palette.accent, 0.9),
+                  color: palette.background,
+                  fontSize: 18,
+                  fontWeight: 600,
+                }}
+              >
+                {layer.after.label}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+
+    case "chapter-marker":
+      return (
+        <div
+          style={{
+            ...wrapper,
+            display: "flex",
+            alignItems: "center",
+            gap: 20,
+          }}
+        >
+          <div
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: "50%",
+              background: `linear-gradient(135deg, ${palette.accent}, ${palette.accentAlt})`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 28,
+              fontWeight: 800,
+              color: palette.background,
+            }}
+          >
+            {layer.number}
+          </div>
+          <div
+            style={{
+              fontSize: 32,
+              fontWeight: 700,
+              color: palette.text,
+            }}
+          >
+            {layer.title}
+          </div>
+        </div>
+      );
+
+    case "rating": {
+      const max = layer.max ?? 5;
+      const filled = Math.round(layer.value);
+      return (
+        <div
+          style={{
+            ...wrapper,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <div style={{ fontSize: 48, letterSpacing: 6 }}>
+            {Array.from({ length: max }).map((_, i) => (
+              <span
+                key={i}
+                style={{ color: i < filled ? "#fbbf24" : alpha(palette.mutedText, 0.3) }}
+              >
+                ★
+              </span>
+            ))}
+          </div>
+          {layer.count && (
+            <div style={{ fontSize: 20, color: palette.mutedText }}>
+              {layer.count}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    case "social-proof":
+      return (
+        <div
+          style={{
+            ...wrapper,
+            ...textBase,
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+          }}
+        >
+          {layer.icon && (
+            <span style={{ fontSize: 40 }}>{layer.icon}</span>
+          )}
+          <div>
+            <div
+              style={{
+                fontSize: 48,
+                fontWeight: 900,
+                color: palette.accent,
+              }}
+            >
+              {layer.value}
+            </div>
+            <div style={{ fontSize: 22, color: palette.mutedText }}>
+              {layer.label}
+            </div>
+          </div>
+        </div>
+      );
+
+    case "split-media":
+      return (
+        <div
+          style={{
+            ...wrapper,
+            display: "flex",
+            width: "100%",
+            maxWidth: 900,
+            gap: 24,
+            alignItems: "center",
+            flexDirection: layer.side === "right" ? "row-reverse" : "row",
+          }}
+        >
+          <div style={{ flex: 1 }}>
+            {layer.media.type === "video" ? (
+              <OffthreadVideo
+                src={layer.media.src}
+                style={{ width: "100%", height: 300, objectFit: "cover", borderRadius: 16 }}
+              />
+            ) : (
+              <Img
+                src={layer.media.src}
+                style={{ width: "100%", height: 300, objectFit: "cover", borderRadius: 16 }}
+              />
+            )}
+          </div>
+          <div style={{ flex: 1, ...textBase }}>
+            {layer.headline && (
+              <div
+                style={{
+                  fontSize: 36,
+                  fontWeight: 800,
+                  color: palette.text,
+                  marginBottom: 12,
+                }}
+              >
+                {layer.headline}
+              </div>
+            )}
+            {layer.text && (
+              <div
+                style={{
+                  fontSize: 22,
+                  color: palette.mutedText,
+                  lineHeight: 1.6,
+                }}
+              >
+                {layer.text}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+
+    case "accent-box": {
+      const boxBg =
+        layer.boxStyle === "glow"
+          ? `linear-gradient(135deg, ${alpha(palette.accent, 0.15)}, ${alpha(palette.accentAlt, 0.1)})`
+          : layer.boxStyle === "bordered"
+            ? "transparent"
+            : alpha(palette.accent, 0.12);
+      const boxBorder =
+        layer.boxStyle === "bordered"
+          ? `2px solid ${alpha(palette.accent, 0.4)}`
+          : layer.boxStyle === "glow"
+            ? `1px solid ${alpha(palette.accent, 0.3)}`
+            : "none";
+      const boxShadow =
+        layer.boxStyle === "glow"
+          ? `0 0 40px ${alpha(palette.accent, 0.2)}, 0 0 80px ${alpha(palette.accent, 0.1)}`
+          : "none";
+      return (
+        <div
+          style={{
+            ...wrapper,
+            ...textBase,
+            padding: "24px 36px",
+            borderRadius: 16,
+            background: boxBg,
+            border: boxBorder,
+            boxShadow,
+            maxWidth: 700,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 28,
+              fontWeight: 600,
+              color: palette.text,
+              lineHeight: 1.5,
+            }}
+          >
+            {typewriterText(layer.text)}
+          </div>
+        </div>
+      );
+    }
 
     default:
       return null;
@@ -685,6 +1354,26 @@ const LayerRenderer: React.FC<{
 // ---------------------------------------------------------------------------
 // Scene renderer
 // ---------------------------------------------------------------------------
+
+function getLayoutStyle(layout: SceneLayout | undefined): React.CSSProperties {
+  switch (layout) {
+    case "top":
+      return { justifyContent: "flex-start", alignItems: "center" };
+    case "bottom":
+      return { justifyContent: "flex-end", alignItems: "center" };
+    case "split-left":
+      return { flexDirection: "row", justifyContent: "center", alignItems: "center" };
+    case "split-right":
+      return { flexDirection: "row-reverse", justifyContent: "center", alignItems: "center" };
+    case "fullscreen":
+      return { padding: 0, justifyContent: "center", alignItems: "center" };
+    case "grid":
+      return { justifyContent: "center", alignItems: "center" };
+    case "centered":
+    default:
+      return { justifyContent: "center", alignItems: "center" };
+  }
+}
 
 const SceneRenderer: React.FC<{
   scene: SceneConfig;
@@ -703,15 +1392,39 @@ const SceneRenderer: React.FC<{
     fadeOut,
   });
 
+  // Scene-level transition transforms
+  let sceneTransform = "";
+  if (transition === "slide-left") {
+    sceneTransform = `translateX(${mix(100, 0, sceneOpacity)}%)`;
+  } else if (transition === "slide-right") {
+    sceneTransform = `translateX(${mix(-100, 0, sceneOpacity)}%)`;
+  } else if (transition === "zoom") {
+    sceneTransform = `scale(${mix(0.8, 1, sceneOpacity)})`;
+  }
+
   const bgType = scene.background?.type ?? "gradient";
+  const layoutStyle = getLayoutStyle(scene.layout);
 
   return (
-    <AbsoluteFill style={{ opacity: sceneOpacity }}>
+    <AbsoluteFill
+      style={{
+        opacity: sceneOpacity,
+        transform: sceneTransform || undefined,
+      }}
+    >
       {/* Background */}
       {bgType === "gradient" ? (
         <GradientStage palette={palette} frame={frame}>
           <AbsoluteFill />
         </GradientStage>
+      ) : bgType === "solid" ? (
+        <AbsoluteFill
+          style={{
+            background: scene.background && "color" in scene.background
+              ? (scene.background as any).color || palette.background
+              : palette.background,
+          }}
+        />
       ) : bgType === "media" &&
         scene.background &&
         "media" in scene.background ? (
@@ -744,10 +1457,9 @@ const SceneRenderer: React.FC<{
         style={{
           display: "flex",
           flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          padding: "60px 48px",
-          gap: 22,
+          padding: `${scene.paddingY ?? 60}px ${scene.paddingX ?? 48}px`,
+          gap: scene.gap ?? 22,
+          ...layoutStyle,
         }}
       >
         {scene.layers.map((layer, i) => (

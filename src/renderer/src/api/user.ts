@@ -135,6 +135,16 @@ export function getUserSetting(key?: string | { key?: string }) {
     .then((response) => unwrapApiData<Record<string, any>>(response, {}));
 }
 
+// 获取用户 AI 设置（包含 featureBindings）
+export function getAiSetting() {
+  return request
+    .post<Record<string, any>>({
+    url: "/user/getAiSetting",
+    data: {},
+  })
+    .then((response) => unwrapApiData<Record<string, any>>(response, {}));
+}
+
 // 社交媒体登录状态检测
 export function checkSocialMediaLogin() {
   return request.get({

@@ -5,6 +5,7 @@ import { is } from "@electron-toolkit/utils";
 import { ProcessConfig } from "./externalProcessManager";
 
 const PS_AUTOMATION_PORT = "1595";
+const BROWSER_AGENT_PORT = "1596";
 
 function resolveBundledResourcePath(relativePath: string): string {
   if (is.dev) {
@@ -306,8 +307,132 @@ function buildPsAutomationConfig(): ProcessConfig | null {
 
 const psAutomationConfig = buildPsAutomationConfig();
 
+function resolveBrowserAgentProjectRoot(): string {
+  if (is.dev) {
+    return resolve(__dirname, "../../src/main/browser-agent");
+  }
+
+  return resolveBundledResourcePath("resources/browser-agent");
+}
+
+function resolveBrowserAgentPythonExecutable(projectRoot: string): string {
+  const venvPython = join(projectRoot, ".venv", "bin", "python");
+  if (existsSync(venvPython)) {
+    console.log(`[browser-agent] 使用 venv Python: ${venvPython}`);
+    return venvPython;
+  }
+
+  const candidates = [
+    process.env.YISHE_BROWSER_AGENT_PYTHON,
+    join(projectRoot, ".venv", "Scripts", "python.exe"),
+    "python3",
+    "python",
+  ].filter((value): value is string => !!value);
+
+  const result = candidates.find((candidate) => {
+    if (candidate === "python3" || candidate === "python") {
+      return true;
+    }
+    return existsSync(candidate);
+  }) || "python3";
+
+  console.log(`[browser-agent] 未找到 venv，回退到: ${result}`);
+  return result;
+}
+
+function buildBrowserAgentConfig(): ProcessConfig {
+  const projectRoot = resolveBrowserAgentProjectRoot();
+
+  if (is.dev) {
+    const entryFile = join(projectRoot, "browser_agent.py");
+    if (!existsSync(entryFile)) {
+      return {
+        id: "browser-agent",
+        name: "浏览器自动化 Agent",
+        executable: "echo",
+        args: ["browser-agent entry not found"],
+        platforms: ["win32", "darwin"],
+        autoStart: false,
+      };
+    }
+
+    return {
+      id: "browser-agent",
+      name: "浏览器自动化 Agent",
+      executable: resolveBrowserAgentPythonExecutable(projectRoot),
+      cwd: projectRoot,
+      args: [entryFile, "--host", "127.0.0.1", "--port", BROWSER_AGENT_PORT],
+      env: {
+        PYTHONIOENCODING: "utf-8",
+        PORT: BROWSER_AGENT_PORT,
+      },
+      platforms: ["win32", "darwin"],
+      autoStart: true,
+      autoRestart: true,
+      restartDelay: 3000,
+      cleanupBeforeStart: true,
+      cleanupPorts: [Number(BROWSER_AGENT_PORT)],
+      stopTimeout: 10000,
+      killTimeout: 5000,
+      healthCheck: {
+        type: "http",
+        url: `http://127.0.0.1:${BROWSER_AGENT_PORT}/health`,
+        interval: 8000,
+        timeout: 3000,
+        failureThreshold: 2,
+      },
+    };
+  }
+
+  const browserAgentExecutable = resolvePlatformPluginPath(
+    "browser-agent/yishe-browser-agent.exe",
+    "yishe-browser-agent",
+  );
+
+  if (!hasBundledResource(browserAgentExecutable)) {
+    return {
+      id: "browser-agent",
+      name: "浏览器自动化 Agent",
+      executable: "echo",
+      args: ["browser-agent executable not found"],
+      platforms: ["win32", "darwin"],
+      autoStart: false,
+    };
+  }
+
+  return {
+    id: "browser-agent",
+    name: "浏览器自动化 Agent",
+    executable: browserAgentExecutable,
+    env: {
+      PORT: BROWSER_AGENT_PORT,
+    },
+    platforms: ["win32", "darwin"],
+    autoStart: true,
+    autoRestart: true,
+    restartDelay: 3000,
+    cleanupBeforeStart: true,
+    cleanupPorts: [Number(BROWSER_AGENT_PORT)],
+    stopTimeout: 10000,
+    killTimeout: 5000,
+    healthCheck: {
+      type: "http",
+      url: `http://127.0.0.1:${BROWSER_AGENT_PORT}/health`,
+      interval: 8000,
+      timeout: 3000,
+      failureThreshold: 2,
+    },
+  };
+}
+
+const browserAgentConfig = buildBrowserAgentConfig();
+
 if (psAutomationConfig) {
   pluginProcessConfigsInternal.push(psAutomationConfig);
+}
+
+if (browserAgentConfig) {
+  pluginProcessConfigsInternal.push(browserAgentConfig);
 }
 
 if (

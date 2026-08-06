@@ -276,12 +276,24 @@ declare global {
           cacheFolder?: string
         }>
       }): Promise<{
-        success: boolean
         total?: number
         successCount?: number
         results?: Array<any>
         error?: string
       }>
+      // MCP 工具执行
+      callMcpTool(toolName: string, toolArgs: Record<string, any>): Promise<{
+        content: Array<{ type: string; text?: string }>
+        isError?: boolean
+      }>
+      listMcpTools(): Promise<Array<{
+        name: string
+        description: string
+        inputSchema: Record<string, any>
+      }>>
+      // Agent 配置同步
+      setAgentConfig(config: { keyId: number | null; model: string; baseUrl: string; apiKey: string; enabled: boolean }): Promise<boolean>
+      getAgentConfig(): Promise<{ keyId: number | null; model: string; baseUrl: string; apiKey: string; enabled: boolean }>
     }
   }
 }

@@ -156,6 +156,15 @@ export const OPERATIONS_CONFIG = [
     description: '副对角线翻转（右上到左下，旋转90度+垂直翻转）',
     params: {}
   },
+  {
+    type: 'border',
+    category: 'basic',
+    description: '添加边框/描边',
+    params: {
+      width: { type: 'number', description: '边框宽度（像素）', required: true, minimum: 1, maximum: 500 },
+      color: { type: 'string', description: '边框颜色', default: '#000000' }
+    }
+  },
   // 图片效果
   { type: 'grayscale', category: 'effect', description: '黑白化', params: { intensity: { type: 'number', description: '强度（%）', default: 100, minimum: 0, maximum: 100 }, method: { type: 'string', description: '方法', optional: true } } },
   { type: 'blur', category: 'effect', description: '模糊', params: { radius: { type: 'number', description: '半径', default: 5, minimum: 0, maximum: 1000 }, sigma: { type: 'number', description: 'Sigma', default: 5, minimum: 0, maximum: 1000 } } },
@@ -227,7 +236,37 @@ export const OPERATIONS_CONFIG = [
   // 扭曲变形
   { type: 'distort', category: 'effect', description: '扭曲变形', params: { method: { type: 'string', description: '方法：Affine|AffineProjection|Perspective|PerspectiveProjection|BilinearForward|BilinearReverse|Polynomial|Arc|Polar|DePolar|Barrel|BarrelInverse|Shepards|Resize', required: true, enum: ['Affine', 'AffineProjection', 'Perspective', 'PerspectiveProjection', 'BilinearForward', 'BilinearReverse', 'Polynomial', 'Arc', 'Polar', 'DePolar', 'Barrel', 'BarrelInverse', 'Shepards', 'Resize'] }, points: { type: 'array', description: '控制点数组', required: true, items: { type: 'number' } } } },
   // 其他效果
-  { type: 'fx', category: 'effect', description: '自定义表达式（FX）', params: { expression: { type: 'string', description: 'FX表达式', required: true } } }
+  { type: 'fx', category: 'effect', description: '自定义表达式（FX）', params: { expression: { type: 'string', description: 'FX表达式', required: true } } },
+  // === 新增：已实现但未注册的效果 ===
+  { type: 'solarize', category: 'effect', description: '曝光过度效果（负片+阈值混合）', params: { threshold: { type: 'number', description: '阈值（0-100%）', default: 50, minimum: 0, maximum: 100 } } },
+  { type: 'swirl', category: 'effect', description: '漩涡扭曲', params: { degrees: { type: 'number', description: '旋转角度', default: 60, minimum: -360, maximum: 360 } } },
+  { type: 'wave', category: 'effect', description: '波浪变形', params: { amplitude: { type: 'number', description: '振幅（像素）', default: 10, minimum: 1, maximum: 500 }, wavelength: { type: 'number', description: '波长（像素）', default: 100, minimum: 1, maximum: 5000 } } },
+  { type: 'implode', category: 'effect', description: '内缩扭曲（负值为外爆）', params: { amount: { type: 'number', description: '内缩程度（-1到1）', default: 0.5, minimum: -1, maximum: 1 } } },
+  { type: 'spread', category: 'effect', description: '像素扩散/抖动', params: { amount: { type: 'number', description: '扩散距离（像素）', default: 5, minimum: 1, maximum: 100 } } },
+  // === 新增：高商业价值功能 ===
+  { type: 'backgroundReplace', category: 'basic', description: '替换指定背景颜色为新颜色', params: { targetColor: { type: 'string', description: '要替换的目标颜色', required: true }, newColor: { type: 'string', description: '替换后的颜色', required: true }, fuzz: { type: 'number', description: '颜色容差（%）', default: 15, minimum: 0, maximum: 100 } } },
+  { type: 'duotone', category: 'effect', description: '双色调效果（黑白照片着两种颜色）', params: { color1: { type: 'string', description: '暗部颜色', default: '#000066' }, color2: { type: 'string', description: '亮部颜色', default: '#FFD700' } } },
+  { type: 'strip', category: 'basic', description: '去除EXIF元数据', params: {} },
+  { type: 'socialPreset', category: 'basic', description: '社交媒体预设尺寸裁剪', params: { platform: { type: 'string', description: '平台预设', required: true, enum: ['wechat-moments', 'wechat-avatar', 'instagram-square', 'instagram-story', 'weibo-cover', 'xiaohongshu', 'douyin-cover', 'bilibili-cover'] } } },
+  { type: 'gradientOverlay', category: 'effect', description: '渐变叠加（半透明渐变覆盖）', params: { direction: { type: 'string', description: '方向', default: 'bottom', enum: ['top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'] }, color1: { type: 'string', description: '起始颜色', default: '#000000' }, color2: { type: 'string', description: '结束颜色', default: '#FFFFFF' }, opacity: { type: 'number', description: '不透明度（0-1）', default: 0.5, minimum: 0, maximum: 1 } } },
+  // === 新增：通用图片处理工具 ===
+  { type: 'compress', category: 'basic', description: '图片压缩优化（减小文件体积，适用于Web）', params: { quality: { type: 'number', description: '压缩质量（1-100）', default: 80, minimum: 1, maximum: 100 }, format: { type: 'string', description: '输出格式（保持原格式/转webp）', default: 'original', enum: ['original', 'webp', 'jpg', 'png'] }, strip: { type: 'boolean', description: '去除元数据', default: true }, progressive: { type: 'boolean', description: '渐进式JPEG（加载更快）', default: false } } },
+  { type: 'extractExif', category: 'basic', description: '提取图片EXIF元数据信息', params: {} },
+  { type: 'colorPalette', category: 'basic', description: '提取图片主色调（返回颜色数组）', params: { count: { type: 'number', description: '提取颜色数量', default: 6, minimum: 2, maximum: 32 } } },
+  { type: 'compare', category: 'basic', description: '对比两张图片差异（返回差异百分比）', params: { imageUrl2: { type: 'string', description: '第二张图片URL', required: true }, metric: { type: 'string', description: '对比指标', default: 'AE', enum: ['AE', 'MAE', 'MSE', 'PSNR', 'SSIM', 'NCC'] } } },
+  { type: 'liquidRescale', category: 'basic', description: '智能内容感知缩放（保护重要内容不变形）', params: { width: { type: 'number', description: '目标宽度（像素）', required: true, minimum: 1, maximum: 10000 }, height: { type: 'number', description: '目标高度（像素）', required: true, minimum: 1, maximum: 10000 }, preserveFeatures: { type: 'boolean', description: '保护人脸/重要特征', default: true } } },
+  { type: 'autoColor', category: 'effect', description: '自动色彩校正/白平衡', params: {} },
+  { type: 'tile', category: 'basic', description: '图片拼贴/网格（多图排列）', params: { images: { type: 'array', description: '图片URL数组', required: true, items: { type: 'string' } }, columns: { type: 'number', description: '列数', default: 2, minimum: 1, maximum: 10 }, tileWidth: { type: 'number', description: '每格宽度（像素）', default: 400, minimum: 50, maximum: 5000 }, tileHeight: { type: 'number', description: '每格高度（像素）', default: 400, minimum: 50, maximum: 5000 }, gap: { type: 'number', description: '间距（像素）', default: 10, minimum: 0, maximum: 100 }, backgroundColor: { type: 'string', description: '背景颜色', default: '#FFFFFF' } } },
+  // === 新增：通用快捷处理特效 ===
+  { type: 'modulate', category: 'effect', description: '色相/饱和度/亮度组合调整', params: { hue: { type: 'number', description: '色相偏移（100=不变，>100偏暖，<100偏冷）', default: 100, minimum: 0, maximum: 200 }, saturation: { type: 'number', description: '饱和度（100=不变，0=灰度，200=超饱和）', default: 100, minimum: 0, maximum: 200 }, brightness: { type: 'number', description: '亮度（100=不变，0=全黑，200=全白）', default: 100, minimum: 0, maximum: 200 } } },
+  { type: 'opacity', category: 'basic', description: '调整图片整体透明度', params: { value: { type: 'number', description: '透明度（0=全透明，100=不透明）', default: 100, minimum: 0, maximum: 100 } } },
+  { type: 'shadow', category: 'effect', description: '添加投影阴影', params: { offsetX: { type: 'number', description: 'X偏移（像素）', default: 4, minimum: -100, maximum: 100 }, offsetY: { type: 'number', description: 'Y偏移（像素）', default: 4, minimum: -100, maximum: 100 }, blur: { type: 'number', description: '模糊半径', default: 8, minimum: 0, maximum: 50 }, color: { type: 'string', description: '阴影颜色', default: '#000000' }, opacity: { type: 'number', description: '阴影不透明度（0-100）', default: 80, minimum: 0, maximum: 100 } } },
+  { type: 'append', category: 'basic', description: '图片拼接（水平或垂直）', params: { images: { type: 'array', description: '图片URL数组', required: true, items: { type: 'string' } }, direction: { type: 'string', description: '拼接方向', default: 'horizontal', enum: ['horizontal', 'vertical'] } } },
+  { type: 'composite', category: 'basic', description: '图片合成（将前景图叠加到背景图）', params: { foregroundUrl: { type: 'string', description: '前景图片URL', required: true }, position: { type: 'string', description: '位置', default: 'center', enum: ['top-left', 'top-center', 'top-right', 'center-left', 'center', 'center-right', 'bottom-left', 'bottom-center', 'bottom-right'] }, offsetX: { type: 'number', description: 'X偏移（像素）', default: 0 }, offsetY: { type: 'number', description: 'Y偏移（像素）', default: 0 } } },
+  { type: 'opaque', category: 'basic', description: '颜色替换（将图片中某颜色替换为新颜色）', params: { targetColor: { type: 'string', description: '要替换的颜色', required: true }, newColor: { type: 'string', description: '替换后的颜色', required: true }, fuzz: { type: 'number', description: '颜色容差（%）', default: 10, minimum: 0, maximum: 100 } } },
+  { type: 'gradient', category: 'basic', description: '生成渐变背景图片', params: { width: { type: 'number', description: '宽度（像素）', default: 800, minimum: 1, maximum: 10000 }, height: { type: 'number', description: '高度（像素）', default: 800, minimum: 1, maximum: 10000 }, color1: { type: 'string', description: '起始颜色', default: '#000000' }, color2: { type: 'string', description: '结束颜色', default: '#FFFFFF' }, direction: { type: 'string', description: '方向', default: 'vertical', enum: ['horizontal', 'vertical', 'diagonal'] } } },
+  { type: 'alpha', category: 'basic', description: '去除背景使其透明（适合产品图）', params: { targetColor: { type: 'string', description: '要变透明的颜色（默认白色）', default: '#FFFFFF' }, fuzz: { type: 'number', description: '颜色容差（%）', default: 15, minimum: 0, maximum: 100 } } },
+  { type: 'blend', category: 'basic', description: '图片混合（将两张图按比例融合）', params: { imageUrl2: { type: 'string', description: '第二张图片URL', required: true }, ratio: { type: 'number', description: '混合比例（0=全第一张，100=全第二张）', default: 50, minimum: 0, maximum: 100 } } }
 ];
 
 /**

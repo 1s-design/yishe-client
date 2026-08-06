@@ -56,3 +56,33 @@ export function getMcpServerInfo(): {
   }
   return mcpManager.getInfo();
 }
+
+/**
+ * 执行 MCP 工具
+ */
+export async function callMcpTool(
+  toolName: string,
+  toolArgs: Record<string, any> = {},
+): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
+  if (!mcpManager) {
+    return {
+      content: [{ type: 'text', text: 'MCP Server 未运行' }],
+      isError: true,
+    };
+  }
+  return mcpManager.callTool(toolName, toolArgs);
+}
+
+/**
+ * 列出所有可用的 MCP 工具
+ */
+export function listMcpTools(): Array<{
+  name: string;
+  description: string;
+  inputSchema: Record<string, any>;
+}> {
+  if (!mcpManager) {
+    return [];
+  }
+  return mcpManager.listTools();
+}
