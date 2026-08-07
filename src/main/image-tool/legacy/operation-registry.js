@@ -25,6 +25,8 @@ export function normalizeOperationApiType(apiType) {
   if (!type) return null;
 
   if (type === 'shape-crop') type = 'shapeCrop';
+  if (type === 'round-corners' || type === 'round_corners' || type === 'roundedCorners' || type === 'rounded-corners') type = 'roundCorners';
+  if (type === 'drop-shadow' || type === 'drop_shadow') type = 'dropShadow';
   if (type.startsWith('effects-')) type = type.slice('effects-'.length);
   if (type.startsWith('effect-')) type = type.slice('effect-'.length);
   if (type.startsWith('filter_')) type = type.replace(/^filter_/, 'filter-');

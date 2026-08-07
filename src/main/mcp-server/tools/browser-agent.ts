@@ -9,6 +9,9 @@ import { z } from 'zod';
 const BROWSER_AGENT_PORT = 1596;
 const BROWSER_AGENT_URL = `http://127.0.0.1:${BROWSER_AGENT_PORT}`;
 
+const BROWSER_AGENT_TIMEOUT_MS = 285_000;
+const BROWSER_START_TIMEOUT_MS = 15_000;
+
 interface TaskResult {
   success: boolean;
   final_answer: string;
@@ -21,30 +24,22 @@ interface TaskResult {
   error?: string;
 }
 
-// 检查 Python 服务是否可用
-async function isServiceAvailable(): Promise<boolean> {
-  try {
-    const response = await fetch(`${BROWSER_AGENT_URL}/health`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(3000),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
+interface BrowserAgentHealth {
+  status?: string;
+  config_loaded?: boolean;
+  browser_use_available?: boolean;
 }
 
-// 检查配置是否已加载
-async function isConfigLoaded(): Promise<boolean> {
+async function getServiceHealth(): Promise<BrowserAgentHealth | null> {
   try {
     const response = await fetch(`${BROWSER_AGENT_URL}/health`, {
       method: 'GET',
       signal: AbortSignal.timeout(3000),
     });
-    const data = await response.json() as any;
-    return data.config_loaded === true;
+    if (!response.ok) return null;
+    return response.json() as Promise<BrowserAgentHealth>;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -65,6 +60,16 @@ async function detectCdpPort(): Promise<string | null> {
   return null;
 }
 
+async function waitForCdp(timeoutMs = BROWSER_START_TIMEOUT_MS): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const cdpUrl = await detectCdpPort();
+    if (cdpUrl) return cdpUrl;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  } while (Date.now() < deadline);
+  return null;
+}
+
 // 调用 Python browser-use 服务
 async function callBrowserUseService(params: {
   task: string;
@@ -73,8 +78,22 @@ async function callBrowserUseService(params: {
   baseUrl?: string;
   model?: string;
   skillPrompt?: string;
+  cdpUrl?: string;
 }): Promise<TaskResult> {
-  const cdpUrl = await detectCdpPort();
+  // 使用传入的 cdpUrl 或检测
+  const cdpUrl = params.cdpUrl || await detectCdpPort();
+
+  // 严格检查：必须检测到浏览器 CDP
+  if (!cdpUrl) {
+    return {
+      success: false,
+      final_answer: '',
+      steps_count: 0,
+      steps: [],
+      error: '未检测到客户端浏览器。请确保客户端浏览器服务可用。',
+    };
+  }
+
   const body: Record<string, any> = {
     task: params.task,
     max_steps: params.maxSteps || 25,
@@ -84,6 +103,7 @@ async function callBrowserUseService(params: {
   if (params.baseUrl) body.base_url = params.baseUrl;
   if (params.model) body.model = params.model;
   if (params.skillPrompt) body.skill_prompt = params.skillPrompt;
+  body.timeout_seconds = Math.floor((BROWSER_AGENT_TIMEOUT_MS - 5_000) / 1000);
 
   console.log(`[BrowserAgent] 执行任务: ${params.task.substring(0, 50)}...`, { cdpUrl, model: params.model, hasSkillPrompt: !!params.skillPrompt });
 
@@ -91,6 +111,7 @@ async function callBrowserUseService(params: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(BROWSER_AGENT_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -106,7 +127,7 @@ export const browserAgentTool = {
   definition: {
     name: 'browser_agent_execute',
     description:
-      'AI 浏览器自动化 Agent：使用自然语言描述任务，browser-use 会自动操作浏览器完成。支持导航、点击、输入、采集数据、截图等。需要浏览器已启动且 AI 配置已加载。',
+      'AI 浏览器自动化 Agent：使用自然语言描述任务，browser-use 会自动操作浏览器完成。支持导航、点击、输入、采集数据、截图等。会自动启动浏览器（如未运行）。',
     inputSchema: {
       task: z.string().describe('要执行的浏览器任务描述，如"打开百度搜索AI助手"'),
       maxSteps: z.number().optional().describe('最大执行步数，默认 25'),
@@ -125,9 +146,9 @@ export const browserAgentTool = {
     skillPrompt?: string;
   }) {
     try {
-      // 检查 Python 服务
-      const available = await isServiceAvailable();
-      if (!available) {
+      // 检查 Python 服务及 browser-use 依赖
+      const health = await getServiceHealth();
+      if (!health) {
         return {
           content: [
             {
@@ -141,9 +162,66 @@ export const browserAgentTool = {
           isError: true,
         };
       }
+      if (health.browser_use_available !== true) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'browser-use Python 依赖不可用' }) }],
+          isError: true,
+        };
+      }
+      if (!args.apiKey && health.config_loaded !== true) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'browser-use AI 配置尚未加载' }) }],
+          isError: true,
+        };
+      }
 
-      // 调用 browser-use 服务（配置可由 mcp_bridge 注入或 Python 服务已缓存）
-      console.log(`[BrowserAgent] 调用 browser-use 执行任务: ${args.task}`);
+      // 确保浏览器已启动（自动检测或启动）
+      let cdpUrl = await detectCdpPort();
+      if (!cdpUrl) {
+        console.log('[BrowserAgent] 未检测到浏览器，尝试启动...');
+        // 通过 browser_invoke 工具启动浏览器
+        try {
+          const { browserInvokeTool } = await import('./browser-automation');
+          const response = await browserInvokeTool.execute({
+            method: 'POST',
+            path: '/api/browser/connect',
+          });
+          const parsed = JSON.parse(
+            (response.content?.[0] as any)?.text || '{}',
+          );
+          console.log(
+            `[BrowserAgent] browser_invoke /api/browser/connect 结果:`,
+            JSON.stringify(parsed),
+          );
+          if (response.isError || parsed?.success === false || parsed?.status === false) {
+            throw new Error(parsed?.error || parsed?.message || '浏览器连接失败');
+          }
+          cdpUrl = await waitForCdp();
+        } catch (e) {
+          console.log('[BrowserAgent] 启动浏览器失败:', e);
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: false, error: (e as Error)?.message || String(e) }) }],
+            isError: true,
+          };
+        }
+      }
+
+      if (!cdpUrl) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: '无法启动浏览器。请确认客户端浏览器服务可用。',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      console.log(`[BrowserAgent] 调用 browser-use 执行任务: ${args.task}，CDP: ${cdpUrl}`);
 
       const result = await callBrowserUseService({
         task: args.task,
@@ -152,6 +230,7 @@ export const browserAgentTool = {
         baseUrl: args.baseUrl,
         model: args.model,
         skillPrompt: args.skillPrompt,
+        cdpUrl: cdpUrl,
       });
 
       console.log(`[BrowserAgent] 任务完成: ${result.success ? '成功' : '失败'}`);

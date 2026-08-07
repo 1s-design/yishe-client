@@ -4410,7 +4410,7 @@ async function archiveImageProcessingExecutionPayload(
   };
 }
 
-async function mirrorSourceImageToCos(
+export async function mirrorSourceImageToCos(
   command: ServiceCommandEnvelope,
   recordId: string,
   downloadedPath?: string | null,

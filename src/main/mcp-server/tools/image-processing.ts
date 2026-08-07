@@ -15,7 +15,6 @@ export async function executeImageToolPlan(args: {
     if (result.success && result.localPath) {
       try {
         const http = await import('http');
-        const fs = await import('fs');
         
         const fileName = result.outputFile || `processed_${Date.now()}.jpg`;
         const serverUrl = process.env.VITE_BASE_URL || 'http://localhost:1520';

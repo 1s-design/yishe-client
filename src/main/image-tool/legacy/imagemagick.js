@@ -1404,11 +1404,40 @@ class ImageProcessor {
    */
   async append(inputPath, outputPath, options = {}) {
     const { images = [], direction = 'horizontal' } = options;
-    if (!images.length) {
-      throw new Error('append 需要 images 数组参数');
+    const rawList = Array.isArray(images) && images.length > 0 ? images : [inputPath];
+    const isImageFile = (p) => p && typeof p === 'string' && fs.existsSync(p) && !['.html', '.htm', '.txt', '.xml'].includes(path.extname(p).toLowerCase());
+    const validImages = rawList.filter(isImageFile);
+    const allImages = validImages.length > 0 ? validImages : (isImageFile(inputPath) ? [inputPath] : []);
+    if (!allImages.length) {
+      throw new Error('append 没有有效的可读图片路径');
     }
     const flag = direction === 'vertical' ? '-append' : '+append';
-    const args = [inputPath, ...images, flag, outputPath];
+    const args = [...allImages, flag, outputPath];
+    const result = await this.executeCommand(args);
+    return result.command;
+  }
+
+  /**
+   * 图片拼贴/网格阵列 (montage/tile)
+   * @returns {Promise<string>} 返回执行的命令字符串
+   */
+  async tile(inputPath, outputPath, options = {}) {
+    const { images = [], columns = 2, tileWidth = 400, tileHeight = 400, gap = 10, backgroundColor = '#FFFFFF' } = options;
+    const rawList = Array.isArray(images) && images.length > 0 ? images : [inputPath];
+    const isImageFile = (p) => p && typeof p === 'string' && fs.existsSync(p) && !['.html', '.htm', '.txt', '.xml'].includes(path.extname(p).toLowerCase());
+    const validImages = rawList.filter(isImageFile);
+    const allImages = validImages.length > 0 ? validImages : (isImageFile(inputPath) ? [inputPath] : []);
+    if (!allImages.length) {
+      throw new Error('tile 没有有效的可读图片路径');
+    }
+    const args = [
+      'montage',
+      ...allImages,
+      '-tile', `${columns}x`,
+      '-geometry', `${tileWidth}x${tileHeight}+${gap}+${gap}`,
+      '-background', backgroundColor,
+      outputPath
+    ];
     const result = await this.executeCommand(args);
     return result.command;
   }
@@ -1595,7 +1624,9 @@ class ImageProcessor {
 
     // 按顺序应用每个效果
     for (const effect of effects) {
-      const { type, ...params } = effect;
+      const rawType = effect.type || effect.operationType || '';
+      const type = typeof rawType === 'string' ? rawType.replace(/^(effects?|filter)[-_]/i, '') : rawType;
+      const params = effect.params && typeof effect.params === 'object' ? { ...effect, ...effect.params } : effect;
 
       switch (type) {
         // ========== 基础效果 ==========
@@ -1866,14 +1897,27 @@ class ImageProcessor {
           args.push('-bordercolor', 'white', '-polaroid', polaroidAngle.toString());
           break;
 
+        // ========== 阴影效果 ==========
+        case 'effects-dropShadow':
         case 'dropShadow':
-          // 立体悬浮阴影
-          const shadowOpacity = params.opacity !== undefined ? params.opacity : 60;
-          const shadowSigma = params.sigma !== undefined ? params.sigma : 5;
-          const shadowDx = params.dx !== undefined ? params.dx : 4;
-          const shadowDy = params.dy !== undefined ? params.dy : 4;
-          args.push('(', '+clone', '-background', 'black', '-shadow', `${shadowOpacity}x${shadowSigma}+${shadowDx}+${shadowDy}`, ')', '+swap', '-background', 'transparent', '-layers', 'merge');
+          // 立体悬浮阴影：先增加外围留白画布放投影，再生成弥散阴影
+          const shadowOpacity = params.opacity !== undefined ? params.opacity : 70;
+          const shadowSigma = params.sigma !== undefined ? params.sigma : 12;
+          const shadowDx = params.dx !== undefined ? params.dx : 10;
+          const shadowDy = params.dy !== undefined ? params.dy : 10;
+          args.push('-bordercolor', 'white', '-border', '24', '(', '+clone', '-background', 'black', '-shadow', `${shadowOpacity}x${shadowSigma}+${shadowDx}+${shadowDy}`, ')', '+swap', '-background', 'white', '-layers', 'merge', '+repage');
           break;
+
+        case 'effects-shadow':
+        case 'shadow': {
+          const sColor = params.color || '#000000';
+          const sOpacity = params.opacity !== undefined ? parseInt(params.opacity) : 70;
+          const sBlur = params.blur !== undefined ? parseInt(params.blur) : 12;
+          const sDx = params.offsetX !== undefined ? parseInt(params.offsetX) : 10;
+          const sDy = params.offsetY !== undefined ? parseInt(params.offsetY) : 10;
+          args.push('-bordercolor', 'white', '-border', '24', '(', '+clone', '-background', sColor, '-shadow', `${sOpacity}x${sBlur}+${sDx}+${sDy}`, ')', '+swap', '-background', 'white', '-layers', 'merge', '+repage');
+          break;
+        }
 
         case 'roundCorners':
           // 圆角矩形卡片切角
@@ -2075,11 +2119,11 @@ class ImageProcessor {
         // ========== 阴影效果 ==========
         case 'shadow': {
           const sColor = params.color || '#000000';
-          const sOpacity = params.opacity !== undefined ? parseInt(params.opacity) : 80;
-          const sBlur = params.blur !== undefined ? parseInt(params.blur) : 8;
-          const sDx = params.offsetX !== undefined ? parseInt(params.offsetX) : 4;
-          const sDy = params.offsetY !== undefined ? parseInt(params.offsetY) : 4;
-          args.push('(', '+clone', '-background', sColor, '-shadow', `${sOpacity}x${sBlur}+${sDx}+${sDy}`, ')', '+swap', '-background', 'none', '-layers', 'merge', '+repage');
+          const sOpacity = params.opacity !== undefined ? parseInt(params.opacity) : 70;
+          const sBlur = params.blur !== undefined ? parseInt(params.blur) : 12;
+          const sDx = params.offsetX !== undefined ? parseInt(params.offsetX) : 10;
+          const sDy = params.offsetY !== undefined ? parseInt(params.offsetY) : 10;
+          args.push('-bordercolor', 'white', '-border', '24', '(', '+clone', '-background', sColor, '-shadow', `${sOpacity}x${sBlur}+${sDx}+${sDy}`, ')', '+swap', '-background', 'white', '-layers', 'merge', '+repage');
           break;
         }
 

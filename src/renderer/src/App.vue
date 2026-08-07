@@ -10,7 +10,6 @@ import { getExecutableTaskDisplayList } from "./config/executable-tasks";
 import { getUserInfo, logout, type UserInfo } from "./api/auth";
 import { getTokenFromClient } from "./api/user";
 import { LOCAL_API_BASE, getServiceMode } from "./config/api";
-import request from "./api/request";
 import { downloadImageAndUploadMaterial } from "./services/materialUpload";
 import { uploadFileResource } from "./services/fileUpload";
 import { useToast } from "./composables/useToast";

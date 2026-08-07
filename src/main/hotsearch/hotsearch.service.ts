@@ -75,6 +75,7 @@ class HotSearchService {
 
   setClientDeviceId(id: string) {
     clientDeviceId = id;
+    console.log(`[HotSearch] clientDeviceId updated to: ${clientDeviceId}`);
   }
 
   /**

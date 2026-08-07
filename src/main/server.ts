@@ -243,7 +243,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
   // 本地认证中间件 — 校验内存中是否存在有效 Token
-  function requireLocalAuth(req: Request, res: Response, next: Function) {
+  function requireLocalAuth(_req: Request, res: Response, next: Function) {
     if (!token) {
       res.status(401).json({
         code: 1,

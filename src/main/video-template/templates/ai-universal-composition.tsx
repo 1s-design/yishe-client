@@ -6,6 +6,7 @@ import {
   Sequence,
   useCurrentFrame,
   useVideoConfig,
+  interpolate,
 } from "remotion";
 import { z } from "zod";
 
@@ -444,7 +445,7 @@ const LayerSchema: z.ZodType<SceneLayer> = z.discriminatedUnion("type", [
     animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
     opacity: z.number().min(0).max(1).optional(),
   }),
-]);
+]) as unknown as z.ZodType<SceneLayer>;
 
 const SceneSchema: z.ZodType<SceneConfig> = z.object({
   duration: z.number().min(0.1),
@@ -507,7 +508,7 @@ import type { AnimationStyle, SceneLayout } from "./ai-types";
 function computeAnimation(
   style: AnimationStyle | undefined,
   entrance: number,
-  frame: number,
+  _frame: number,
 ): React.CSSProperties {
   const progress = clamp01(entrance);
   switch (style) {
@@ -558,9 +559,8 @@ const LayerRenderer: React.FC<{
   const baseOpacity = layer.opacity ?? 1;
 
   const wrapper: React.CSSProperties = {
-    opacity: (anim.opacity as number) ?? 1,
+    opacity: ((anim.opacity as number) ?? 1) * baseOpacity,
     transform: anim.transform,
-    opacity: baseOpacity,
   };
 
   // Typewriter effect for text layers
@@ -845,8 +845,6 @@ const LayerRenderer: React.FC<{
       );
 
     case "bullet-list": {
-      const listIcon =
-        layer.listStyle === "check" ? "✓" : layer.listStyle === "number" ? null : null;
       return (
         <div
           style={{

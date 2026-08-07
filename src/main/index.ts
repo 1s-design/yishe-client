@@ -81,17 +81,12 @@ function resetImageToolModule() {
 }
 
 async function getImageToolModule() {
-  if (!imageToolModulePromise) {
-    imageToolModulePromise = import("./image-tool").then((module) => {
-      module.configureImageTool({
-        getWorkspaceDirectory: () =>
-          (store.get("workspaceDirectory", "") as string) || "",
-      });
-      return module;
-    });
-  }
-
-  return imageToolModulePromise;
+  const module = await import("./image-tool");
+  module.configureImageTool({
+    getWorkspaceDirectory: () =>
+      (store.get("workspaceDirectory", "") as string) || "",
+  });
+  return module;
 }
 
 async function getVideoTemplateModule() {
@@ -1358,7 +1353,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("mcp-server:status", async () => {
     try {
-      const { isMcpServerRunning, getMcpServerPort, getMcpServerInfo } = await getMcpServerModule();
+      const { getMcpServerInfo } = await getMcpServerModule();
       const info = getMcpServerInfo();
       return {
         running: info.running,

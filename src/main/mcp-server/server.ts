@@ -16,6 +16,54 @@ import {
   executeAllPlatformCollect,
 } from './tools/hotsearch-platforms';
 import { getTokenValue } from '../server';
+import { listOperationDefinitions } from '../image-tool/legacy/operation-registry.js';
+import { browserTools } from './tools/browser-tools';
+
+type ToolCapability = {
+  key: string;
+  label: string;
+  description?: string;
+  inputSchema?: Record<string, any>;
+  aliases?: string[];
+};
+
+function zodToJsonSchema(schema: any): Record<string, any> {
+  let current = schema;
+  let optional = false;
+  while (current?._def?.typeName === 'ZodOptional' || current?._def?.typeName === 'ZodDefault') {
+    optional = true;
+    current = current._def.innerType;
+  }
+  const typeName = current?._def?.typeName;
+  const result: Record<string, any> = {};
+  if (typeName === 'ZodString') result.type = 'string';
+  else if (typeName === 'ZodNumber') result.type = 'number';
+  else if (typeName === 'ZodBoolean') result.type = 'boolean';
+  else if (typeName === 'ZodArray') {
+    result.type = 'array';
+    result.items = zodToJsonSchema(current._def.type);
+  } else if (typeName === 'ZodEnum') {
+    result.type = 'string';
+    result.enum = current._def.values;
+  } else if (typeName === 'ZodObject') {
+    result.type = 'object';
+    result.properties = Object.fromEntries(
+      Object.entries(current._def.shape()).map(([key, value]) => [key, zodToJsonSchema(value)]),
+    );
+  } else {
+    result.type = 'object';
+  }
+  if (current?._def?.description) result.description = current._def.description;
+  if (optional) result.optional = true;
+  return result;
+}
+
+function zodShapeToInputSchema(shape: Record<string, any>): Record<string, any> {
+  const properties = Object.fromEntries(
+    Object.entries(shape || {}).map(([key, value]) => [key, zodToJsonSchema(value)]),
+  );
+  return { type: 'object', properties };
+}
 
 let serviceStatusTool: any = null;
 
@@ -29,6 +77,10 @@ interface RegisteredTool {
   name: string;
   description: string;
   inputSchema: Record<string, any>;
+  category?: string;
+  capability?: { key: string; label: string; description?: string };
+  operations?: ToolCapability[];
+  actions?: ToolCapability[];
   handler: (args: Record<string, any>) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
 }
 
@@ -55,6 +107,24 @@ export class McpServerManager {
         { capabilities: { tools: {} } }
       );
 
+      // 注册客户端服务状态工具
+      server.tool(
+        serviceStatusTool.definition.name,
+        serviceStatusTool.definition.description,
+        {
+          service: z.string().optional().describe('要查询的服务名称，留空则查询所有服务'),
+        },
+        async (args) => serviceStatusTool.execute(args) as any,
+      );
+      this.toolRegistry.set(serviceStatusTool.definition.name, {
+        name: serviceStatusTool.definition.name,
+        description: serviceStatusTool.definition.description,
+        inputSchema: serviceStatusTool.definition.inputSchema,
+        category: 'system',
+        capability: { key: 'service_status', label: '本地服务状态', description: '查询客户端本地服务健康状态。' },
+        handler: async (args) => serviceStatusTool.execute(args) as any,
+      });
+
       // 注册平台采集工具
       const platforms = getAllPlatformConfigs();
       for (const [key, config] of Object.entries(platforms)) {
@@ -73,6 +143,9 @@ export class McpServerManager {
           name: toolName,
           description: config.description,
           inputSchema: { reportToServer: { type: 'boolean', optional: true } },
+          category: 'hotsearch',
+          capability: { key: 'platform_hotsearch', label: '平台热搜采集', description: '采集指定平台的热搜数据。' },
+          actions: [{ key, label: `${key} 热搜采集`, description: config.description }],
           handler: async (args) => executePlatformCollect(key, args.reportToServer ?? true),
         });
       }
@@ -93,6 +166,8 @@ export class McpServerManager {
         name: 'hotsearch_collect_all',
         description: '采集所有启用平台的热搜数据（并发采集）',
         inputSchema: { platforms: { type: 'array', items: { type: 'string' }, optional: true }, reportToServer: { type: 'boolean', optional: true } },
+        category: 'hotsearch',
+        capability: { key: 'platform_hotsearch', label: '全平台热搜采集', description: '并发采集所有启用平台热搜。' },
         handler: async (args) => executeAllPlatformCollect(args.platforms, args.reportToServer ?? true),
       });
 
@@ -126,9 +201,22 @@ export class McpServerManager {
           operations: { type: 'array', optional: true },
           processorId: { type: 'string', optional: true },
         },
+        category: 'image',
+        capability: {
+          key: 'image_processing',
+          label: '图片处理执行器',
+          description: '按顺序执行多个图片处理操作。',
+        },
+        operations: listOperationDefinitions().map((operation: any) => ({
+          key: operation.type,
+          label: operation.description || operation.type,
+          description: operation.description,
+          inputSchema: operation.jsonSchemaParams,
+          aliases: operation.aliases,
+        })),
         handler: async (args) => {
           const { executeImageToolPlan } = await import('./tools/image-processing');
-          return executeImageToolPlan(args);
+          return executeImageToolPlan(args as any);
         },
       });
 
@@ -162,6 +250,20 @@ export class McpServerManager {
           width: { type: 'number', optional: true },
           height: { type: 'number', optional: true },
         },
+        category: 'video',
+        capability: {
+          key: 'video_rendering',
+          label: '视频渲染执行器',
+          description: '提交视频渲染、查询任务和 AI 视频生成。',
+        },
+        actions: [
+          { key: 'render', label: '模板渲染', description: '使用模板提交渲染任务。' },
+          { key: 'status', label: '查询状态', description: '查询渲染任务状态。' },
+          { key: 'list', label: '任务列表', description: '查看渲染任务列表。' },
+          { key: 'catalog', label: '模板目录', description: '查看可用视频模板。' },
+          { key: 'ai-generate', label: 'AI 模板生成', description: '根据描述匹配模板并生成视频。' },
+          { key: 'ai-free-generate', label: 'AI 自由编排', description: '根据自然语言生成 SceneGraph 视频。' },
+        ],
         handler: async (args) => {
           const { executeVideoRender } = await import('./tools/video-rendering');
           return executeVideoRender(args);
@@ -178,10 +280,11 @@ export class McpServerManager {
           baseUrl: z.string().describe('AI API Base URL'),
           model: z.string().describe('AI 模型名称'),
           maxSteps: z.number().optional().describe('最大执行步数，默认 25'),
+          skillPrompt: z.string().optional().describe('匹配到的 Skill 指引（包含 goal 和 agentPrompt）'),
         },
         async (args) => {
           const { browserAgentTool } = await import('./tools/browser-agent');
-          return browserAgentTool.execute(args as any);
+          return browserAgentTool.execute(args as any) as any;
         }
       );
       this.toolRegistry.set('browser_agent_execute', {
@@ -193,7 +296,16 @@ export class McpServerManager {
           baseUrl: { type: 'string' },
           model: { type: 'string' },
           maxSteps: { type: 'number', optional: true },
+          skillPrompt: { type: 'string', optional: true },
         },
+        category: 'browser',
+        capability: { key: 'browser_intelligent_automation', label: '浏览器智能操作', description: '使用 browser-use 执行复杂网页任务。' },
+        actions: [
+          { key: 'navigate', label: '网页导航' },
+          { key: 'interact', label: '点击与输入' },
+          { key: 'understand', label: '页面理解' },
+          { key: 'extract', label: '网页采集' },
+        ],
         handler: async (args) => {
           const { browserAgentTool } = await import('./tools/browser-agent');
           return browserAgentTool.execute(args as any);
@@ -207,7 +319,7 @@ export class McpServerManager {
         {
           method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional().describe('HTTP 方法，默认 GET'),
           path: z.string().describe('API 路径，如 /api/browser/connect'),
-          body: z.record(z.any()).optional().describe('请求体'),
+          body: z.record(z.string(), z.any()).optional().describe('请求体'),
         },
         async (args) => {
           const { browserInvokeTool } = await import('./tools/browser-automation');
@@ -222,6 +334,14 @@ export class McpServerManager {
           path: { type: 'string' },
           body: { type: 'object', optional: true },
         },
+        category: 'browser',
+        capability: { key: 'browser_lifecycle', label: '浏览器生命周期', description: '启动、关闭和查询本地浏览器。' },
+        actions: [
+          { key: 'connect', label: '连接或启动浏览器' },
+          { key: 'status', label: '查询浏览器状态' },
+          { key: 'close', label: '关闭浏览器' },
+          { key: 'pages', label: '查询页面列表' },
+        ],
         handler: async (args) => {
           const { browserInvokeTool } = await import('./tools/browser-automation');
           return browserInvokeTool.execute(args as any);
@@ -236,21 +356,30 @@ export class McpServerManager {
         'browser_scrape_list',
       ];
       for (const toolName of browserToolNames) {
+        const browserDefinition = browserTools.find((tool) => tool.name === toolName);
         server.tool(
           toolName,
-          `浏览器操作: ${toolName}`,
-          {},
+          browserDefinition?.description || `浏览器操作: ${toolName}`,
+          (browserDefinition?.schema || {}) as any,
           async (args) => {
             const { browserToolMap } = await import('./tools/browser-tools');
             const tool = browserToolMap.get(toolName);
-            if (!tool) return { content: [{ type: 'text', text: `工具 ${toolName} 不存在` }], isError: true };
-            return tool.execute(args as any);
+            if (!tool) return { content: [{ type: 'text' as const, text: `工具 ${toolName} 不存在` }], isError: true };
+            return (await tool.execute(args as any)) as any;
           }
         );
         this.toolRegistry.set(toolName, {
           name: toolName,
-          description: `浏览器操作: ${toolName}`,
-          inputSchema: {},
+          description: browserDefinition?.description || `浏览器操作: ${toolName}`,
+          inputSchema: zodShapeToInputSchema(browserDefinition?.schema || {}),
+          category: 'browser',
+          capability: { key: 'browser_page_actions', label: '浏览器页面操作', description: '对当前页面执行单步交互。' },
+          actions: [{
+            key: toolName.replace(/^browser_/, ''),
+            label: toolName.replace(/^browser_/, ''),
+            description: browserDefinition?.description,
+            inputSchema: zodShapeToInputSchema(browserDefinition?.schema || {}),
+          }],
           handler: async (args) => {
             const { browserToolMap } = await import('./tools/browser-tools');
             const tool = browserToolMap.get(toolName);
@@ -295,7 +424,7 @@ export class McpServerManager {
     this.app.use(express.json());
 
     // SSE 端点 - 每次连接创建新的 McpServer 实例
-    this.app.get('/sse', async (req, res) => {
+    this.app.get('/sse', async (_req, res) => {
       console.log('[MCP Server] 新的 SSE 连接');
 
       // 关闭旧连接
@@ -319,7 +448,7 @@ export class McpServerManager {
     });
 
     // 健康检查
-    this.app.get('/health', (req, res) => {
+    this.app.get('/health', (_req, res) => {
       const platformNames = Object.keys(getAllPlatformConfigs());
       const registeredTools = Array.from(this.toolRegistry.keys());
       res.json({
@@ -341,9 +470,8 @@ export class McpServerManager {
 
     await new Promise<void>((resolve, reject) => {
       this.httpServer!.listen(this.port, '127.0.0.1', () => {
-        const platformCount = Object.keys(getAllPlatformConfigs()).length;
         console.log(`[MCP Server] 已启动，监听 http://127.0.0.1:${this.port}`);
-        console.log(`[MCP Server] 已注册 ${platformCount} 个平台采集工具 + 3 个通用工具`);
+        console.log(`[MCP Server] 已注册 ${this.toolRegistry.size} 个工具`);
         this.running = true;
         resolve();
       });
@@ -460,11 +588,10 @@ export class McpServerManager {
   }
 
   getInfo(): { running: boolean; port: number; toolCount: number } {
-    const platformCount = Object.keys(getAllPlatformConfigs()).length;
     return {
       running: this.running,
       port: this.port,
-      toolCount: platformCount + 3, // 平台工具 + collect_all + browser + status
+      toolCount: this.toolRegistry.size,
     };
   }
 
@@ -489,11 +616,23 @@ export class McpServerManager {
     }
   }
 
-  listTools(): Array<{ name: string; description: string; inputSchema: Record<string, any> }> {
+  listTools(): Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, any>;
+    category?: string;
+    capability?: RegisteredTool['capability'];
+    operations?: ToolCapability[];
+    actions?: ToolCapability[];
+  }> {
     return Array.from(this.toolRegistry.values()).map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
+      category: tool.category,
+      capability: tool.capability,
+      operations: tool.operations,
+      actions: tool.actions,
     }));
   }
 }

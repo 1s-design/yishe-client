@@ -34,12 +34,12 @@ const TEMPLATE_KEYWORDS: Record<string, string[]> = {
 // Palette presets available for AI free-form
 // ---------------------------------------------------------------------------
 
-const PALETTE_PRESETS = [
-  'noirGold', 'pearlSkin', 'flashCrimson', 'midnightTech',
-  'splitBeauty', 'graphiteAudio', 'creatorBlue', 'financeAmber',
-  'healingMist', 'firePulse', 'storySlate', 'eduCyan',
-  'reportEmerald', 'brandIvory', 'prismChrome', 'keynoteMint',
-];
+// const PALETTE_PRESETS = [
+//   'noirGold', 'pearlSkin', 'flashCrimson', 'midnightTech',
+//   'splitBeauty', 'graphiteAudio', 'creatorBlue', 'financeAmber',
+//   'healingMist', 'firePulse', 'storySlate', 'eduCyan',
+//   'reportEmerald', 'brandIvory', 'prismChrome', 'keynoteMint',
+// ];
 
 // ---------------------------------------------------------------------------
 // SceneGraph generation from natural language

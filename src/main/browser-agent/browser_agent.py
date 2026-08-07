@@ -55,6 +55,7 @@ class ExecuteTaskRequest(BaseModel):
     base_url: Optional[str] = None
     model: Optional[str] = None
     skill_prompt: Optional[str] = None
+    timeout_seconds: int = 280
 
     def get_task(self) -> str:
         return self.task or self.instruction or ""
@@ -80,19 +81,45 @@ class HealthResponse(BaseModel):
 
 # --------------- Agent ---------------
 
+BROWSER_EXECUTION_LOCK = asyncio.Lock()
+
+async def detect_cdp_url() -> Optional[str]:
+    """检测浏览器 CDP 端口，返回 CDP URL"""
+    import aiohttp
+
+    for port in [9333, 9334, 9222]:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"http://127.0.0.1:{port}/json/version",
+                    timeout=aiohttp.ClientTimeout(total=2)
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info("检测到浏览器 CDP: port=%d", port)
+                        return f"http://127.0.0.1:{port}"
+        except:
+            pass
+
+    return None
+
+
 async def execute_with_browser_use(
     task: str,
     max_steps: int = 25,
     cdp_url: Optional[str] = None,
     skill_prompt: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    timeout_seconds: int = 280,
 ) -> TaskResult:
     """使用 browser-use 执行任务，连接客户端已有浏览器"""
     try:
-        api_key = AI_CONFIG["api_key"]
-        base_url = AI_CONFIG["base_url"]
-        model = AI_CONFIG["model"]
+        effective_api_key = api_key or AI_CONFIG["api_key"]
+        effective_base_url = base_url or AI_CONFIG["base_url"]
+        effective_model = model or AI_CONFIG["model"]
 
-        if not api_key:
+        if not effective_api_key:
             return TaskResult(
                 success=False,
                 final_answer="",
@@ -105,23 +132,23 @@ async def execute_with_browser_use(
 
         # ChatOpenAILike: 兼容 OpenAI 格式的自定义 API
         llm = ChatOpenAILike(
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
+            model=effective_model,
+            api_key=effective_api_key,
+            base_url=effective_base_url,
         )
 
-        # 连接客户端已有浏览器
-        effective_cdp = cdp_url or AI_CONFIG.get("cdp_url")
-        if effective_cdp:
-            browser_profile = BrowserProfile(cdp_url=effective_cdp)
-            logger.info("使用客户端浏览器 CDP: %s", effective_cdp)
-        else:
-            browser_profile = BrowserProfile(
-                headless=False,
-                disable_security=True,
-                extra_args=['--no-proxy-server', '--disable-extensions'],
+        # 检测浏览器 CDP
+        effective_cdp = cdp_url or AI_CONFIG.get("cdp_url") or await detect_cdp_url()
+
+        if not effective_cdp:
+            return TaskResult(
+                success=False,
+                final_answer="",
+                error="未检测到客户端浏览器。MCP 工具应自动启动浏览器，请检查客户端浏览器服务。",
             )
-            logger.info("启动新浏览器实例")
+
+        browser_profile = BrowserProfile(cdp_url=effective_cdp)
+        logger.info("连接客户端浏览器 CDP: %s", effective_cdp)
 
         # 如果有 skill_prompt，添加到任务描述中
         effective_task = task
@@ -138,8 +165,12 @@ async def execute_with_browser_use(
             use_vision=False,  # 禁用截图，避免 413 请求体过大
         )
 
-        # 执行任务 - agent.run() 返回 AgentHistoryList
-        agent_result = await agent.run(max_steps=max_steps)
+        # 同一 CDP 浏览器只允许一个 Agent 操作，并限制最长执行时间。
+        async with BROWSER_EXECUTION_LOCK:
+            agent_result = await asyncio.wait_for(
+                agent.run(max_steps=max_steps),
+                timeout=max(30, min(timeout_seconds, 280)),
+            )
 
         # 用官方 API 判断结果
         is_done = agent_result.is_done() if agent_result else False
@@ -171,6 +202,13 @@ async def execute_with_browser_use(
             error="; ".join(str(e) for e in errors[:3]) if errors and not is_successful else None,
         )
 
+    except asyncio.TimeoutError:
+        logger.error("browser-use 执行超时: %ss", timeout_seconds)
+        return TaskResult(
+            success=False,
+            final_answer="",
+            error=f"browser-use 执行超时（{timeout_seconds}s）",
+        )
     except Exception as e:
         logger.error("browser-use 执行失败: %s", e)
         return TaskResult(
@@ -214,16 +252,6 @@ async def health():
 
 @app.post("/execute", response_model=TaskResult)
 async def execute(req: ExecuteTaskRequest):
-    # 请求级配置覆盖（mcp_bridge 注入的 apiKey/baseUrl/model）
-    if req.api_key:
-        AI_CONFIG["api_key"] = req.api_key
-    if req.base_url:
-        AI_CONFIG["base_url"] = req.base_url
-    if req.model:
-        AI_CONFIG["model"] = req.model
-    if req.cdp_url:
-        AI_CONFIG["cdp_url"] = req.cdp_url
-
     task = req.get_task()
     if not task:
         return TaskResult(success=False, final_answer="", error="缺少 task 或 instruction 参数")
@@ -233,6 +261,10 @@ async def execute(req: ExecuteTaskRequest):
         max_steps=req.max_steps,
         cdp_url=req.cdp_url,
         skill_prompt=req.skill_prompt,
+        api_key=req.api_key,
+        base_url=req.base_url,
+        model=req.model,
+        timeout_seconds=req.timeout_seconds,
     )
     return result
 
@@ -248,7 +280,7 @@ async def update_config(config: dict):
         AI_CONFIG["model"] = config["model"]
     if "cdp_url" in config:
         AI_CONFIG["cdp_url"] = config["cdp_url"]
-    
+
     logger.info("AI 配置已更新: model=%s, base_url=%s, cdp_url=%s", 
                 AI_CONFIG["model"], AI_CONFIG["base_url"], AI_CONFIG.get("cdp_url", ""))
     return {"status": "ok", "config": AI_CONFIG}

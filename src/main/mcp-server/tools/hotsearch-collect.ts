@@ -17,10 +17,10 @@ async function getHotSearchService() {
 }
 
 // 远程 API 地址
-const REMOTE_API_BASE =
-  process.env.NODE_ENV === 'development'
-    ? 'http://localhost:1520/api'
-    : 'https://1s.design:1520/api';
+// const REMOTE_API_BASE =
+//   process.env.NODE_ENV === 'development'
+//     ? 'http://localhost:1520/api'
+//     : 'https://1s.design:1520/api';
 
 export const hotsearchCollectTool = {
   definition: {

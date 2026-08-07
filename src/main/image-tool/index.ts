@@ -94,6 +94,10 @@ const FLAT_EFFECT_TYPE_MAP: Record<
   polaroid: { baseType: "effects", effectType: "polaroid", defaults: { angle: 0 } },
   dropShadow: { baseType: "effects", effectType: "dropShadow", defaults: { opacity: 60, sigma: 5, dx: 4, dy: 4 } },
   roundCorners: { baseType: "effects", effectType: "roundCorners", defaults: { rx: 24 } },
+  round_corners: { baseType: "effects", effectType: "roundCorners", defaults: { rx: 24 } },
+  "round-corners": { baseType: "effects", effectType: "roundCorners", defaults: { rx: 24 } },
+  roundedCorners: { baseType: "effects", effectType: "roundCorners", defaults: { rx: 24 } },
+  "rounded-corners": { baseType: "effects", effectType: "roundCorners", defaults: { rx: 24 } },
   contrastStretch: { baseType: "effects", effectType: "contrastStretch", defaults: { blackPoint: 0.15, whitePoint: 0.05 } },
   normalize: { baseType: "effects", effectType: "normalize", defaults: {} },
   equalize: { baseType: "effects", effectType: "equalize", defaults: {} },
@@ -112,14 +116,21 @@ const FLAT_EFFECT_TYPE_MAP: Record<
   auto_gamma: { baseType: "effects", effectType: "auto-gamma", defaults: {} },
   "auto-contrast": { baseType: "effects", effectType: "auto-contrast", defaults: {} },
   auto_contrast: { baseType: "effects", effectType: "auto-contrast", defaults: {} },
-  "color-matrix": { baseType: "effects", effectType: "color-matrix", defaults: {} },
-  color_matrix: { baseType: "effects", effectType: "color-matrix", defaults: {} },
-  distort: { baseType: "effects", effectType: "distort", defaults: {} },
-  fx: { baseType: "effects", effectType: "fx", defaults: {} },
+  "color-matrix": { baseType: "effects", effectType: "color-matrix", defaults: { matrix: [1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,1,0, 0,0,0,0,1] } },
+  color_matrix: { baseType: "effects", effectType: "color-matrix", defaults: { matrix: [1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,1,0, 0,0,0,0,1] } },
+  distort: { baseType: "effects", effectType: "distort", defaults: { method: "Affine", points: [0,0,0,0, 100,0,100,0, 0,100,0,100, 100,100,100,100] } },
+  fx: { baseType: "effects", effectType: "fx", defaults: { expression: "u" } },
   // 新注册：已有ImageMagick实现但未注册的效果
   solarize: { baseType: "effects", effectType: "solarize", defaults: { threshold: 50 } },
   swirl: { baseType: "effects", effectType: "swirl", defaults: { degrees: 60 } },
   wave: { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
+  "wave-distort": { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
+  wave_distort: { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
+  ripple: { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
+  "sine-wave": { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
+  sine_wave: { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
+  "water-effect": { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
+  water_effect: { baseType: "effects", effectType: "wave", defaults: { amplitude: 10, wavelength: 100 } },
   implode: { baseType: "effects", effectType: "implode", defaults: { amount: 0.5 } },
   spread: { baseType: "effects", effectType: "spread", defaults: { amount: 5 } },
   // 新功能
@@ -152,20 +163,32 @@ function createImageToolError(
 
 function getImageToolRootDirectory() {
   const configuredWorkspace = String(resolveWorkspaceDirectory?.() || "").trim();
-  // 如果配置的目录不可写，回退到 userData 目录
-  const baseDirectory =
-    configuredWorkspace || path.join(app.getPath("userData"), "workspace");
-  const imageToolDir = path.join(baseDirectory, "image-tool");
-  try {
-    fs.mkdirSync(path.join(imageToolDir, "temp"), { recursive: true });
-    fs.accessSync(path.join(imageToolDir, "temp"), fs.constants.W_OK);
-    return imageToolDir;
-  } catch {
-    // 如果配置目录不可写，使用 userData 下的目录
-    const fallback = path.join(app.getPath("userData"), "workspace", "image-tool");
-    fs.mkdirSync(path.join(fallback, "temp"), { recursive: true });
-    return fallback;
+  const candidates = [
+    configuredWorkspace ? path.join(configuredWorkspace, "image-tool") : "",
+    app?.getPath ? path.join(app.getPath("userData"), "workspace", "image-tool") : "",
+    app?.getPath ? path.join(app.getPath("temp"), "yishe-image-tool") : "",
+  ].filter(Boolean);
+
+  for (const dir of candidates) {
+    try {
+      const subdirs = ["uploads", "output", "template", "temp"];
+      let allWritable = true;
+      for (const sub of subdirs) {
+        const full = path.join(dir, sub);
+        fs.mkdirSync(full, { recursive: true });
+        try {
+          fs.accessSync(full, fs.constants.W_OK);
+        } catch {
+          allWritable = false;
+          break;
+        }
+      }
+      if (allWritable) return dir;
+    } catch {
+      continue;
+    }
   }
+  return candidates[candidates.length - 1] || path.join(process.cwd(), "temp-image-tool");
 }
 
 function ensureImageToolDirectories() {
@@ -328,10 +351,21 @@ async function downloadFromUrl(
             return;
           }
 
-          let extension = path.extname(urlObj.pathname);
           const mimeType = String(response.headers["content-type"] || "")
             .split(";")[0]
-            .trim();
+            .trim()
+            .toLowerCase();
+
+          if (mimeType.includes("html") || (mimeType && !mimeType.startsWith("image/") && mimeType !== "application/octet-stream")) {
+            reject(new Error(`下载目标不是有效图片，返回类型: ${mimeType}`));
+            return;
+          }
+
+          let extension = path.extname(urlObj.pathname).toLowerCase();
+          if ([".html", ".htm", ".php", ".jsp", ".asp"].includes(extension)) {
+            extension = "";
+          }
+
           const mimeToExtension: Record<string, string> = {
             "image/jpeg": ".jpg",
             "image/jpg": ".jpg",
@@ -469,8 +503,41 @@ function resolveValidatedOperationPlan(
   operations: Array<Record<string, any>>,
   contextLabel = "操作链",
 ) {
-  const validation = validateAndNormalizeOperationPlan(operations);
+  // 第一步：将纯字符串操作名和各种别名格式统一转为 { type, params } 标准对象，
+  // 利用 normalizeOperation 预填所有默认参数，但保留原始 type 名（如 "lowpoly"、"filter-blur"），
+  // 确保 validateAndNormalizeOperationPlan 能够在 registry 中正常查找到对应的操作定义。
+  const cleanedOperations = operations.map((op: any) => {
+    if (typeof op === "string") {
+      const normalized = normalizeOperation(op, {});
+      return { type: normalized.type, params: normalized.params || {} };
+    }
+    if (!op || typeof op !== "object") return op;
+    const opType = String(op.type || "").trim();
+    const { type: _, params: nestedParams, ...flatParams } = op;
+    const opParams = typeof nestedParams === "object" && nestedParams !== null && !Array.isArray(nestedParams)
+      ? { ...flatParams, ...nestedParams }
+      : flatParams;
+    const normalized = normalizeOperation(opType, opParams);
+    return { type: normalized.type, params: normalized.params || {} };
+  });
+
+  const validation = validateAndNormalizeOperationPlan(cleanedOperations);
   if (!validation.ok) {
+    // 容错增强：若 AI 生成了多步操作且个别词语无法识别，尝试过滤掉无法识别的操作项
+    const validOperations = cleanedOperations.filter((op: any) => {
+      if (!op || !op.type) return false;
+      return Boolean(FLAT_EFFECT_TYPE_MAP[op.type] || getOperationDefinition(op.type));
+    });
+    if (validOperations.length > 0) {
+      const reValidation = validateAndNormalizeOperationPlan(validOperations);
+      if (reValidation.ok) {
+        return reValidation.operations.map((operation: any) => ({
+          type: operation.type,
+          params: operation.params || {},
+        }));
+      }
+    }
+
     throw createImageToolError("INVALID_OPERATION_PLAN", `${contextLabel}校验失败`, {
       errors: validation.errors,
       operationCount: Array.isArray(operations) ? operations.length : 0,
@@ -504,14 +571,21 @@ function normalizeOperation(type: string, params: Record<string, any> = {}) {
     }
   }
 
-  const mappedEffect = FLAT_EFFECT_TYPE_MAP[type];
+  let mappedEffect = FLAT_EFFECT_TYPE_MAP[type];
+  if (!mappedEffect) {
+    // 智能模糊降级：去除常见修饰后缀/前缀（如 -distort, -effect, _effect, sine- 等）
+    const sanitized = type
+      .replace(/[-_](distort|effect|filter|style|type)$/i, "")
+      .replace(/^(effects?|filter|sine|water)[-_]/i, "");
+    mappedEffect = FLAT_EFFECT_TYPE_MAP[sanitized];
+  }
+
   if (mappedEffect) {
     return {
-      type: mappedEffect.baseType,
+      type: mappedEffect.effectType || type,
       params: {
         ...mappedEffect.defaults,
         ...params,
-        effectType: mappedEffect.effectType,
       },
     };
   }
@@ -521,15 +595,100 @@ function normalizeOperation(type: string, params: Record<string, any> = {}) {
     return { type, params };
   }
 
+  // 补全默认参数以防参数校验因缺失默认值而失败 (例如 shapeCrop 的 width / height)
+  const filledParams = { ...params };
+  if (definition.params) {
+    for (const [key, paramConfig] of Object.entries(definition.params as Record<string, any>)) {
+      if (filledParams[key] === undefined || filledParams[key] === null || filledParams[key] === "") {
+        if (paramConfig.default !== undefined) {
+          filledParams[key] = paramConfig.default;
+        }
+      }
+    }
+  }
+
+  // ── 有 required 参数但无 registry default 的操作：补充智能默认值 ──
+  // 这是 UI 和 Agent 共享的容错层，确保即使参数不完整也能有合理的执行行为。
+  if (definition.type === "resize") {
+    if (!filledParams.width && !filledParams.height) {
+      filledParams.width = 800;
+      filledParams.height = 800;
+    }
+  }
+  if (definition.type === "crop") {
+    // 裁剪操作必须指定 width/height，若缺失默认保留 200x200 中心区域
+    if (!filledParams.width || Number(filledParams.width) <= 0) filledParams.width = 200;
+    if (!filledParams.height || Number(filledParams.height) <= 0) filledParams.height = 200;
+  }
+  if (definition.type === "shapeCrop") {
+    if (!filledParams.shape) filledParams.shape = "circle";
+  }
+  if (definition.type === "rotate") {
+    // degrees 是必填，缺失时默认顺时针 90 度
+    if (filledParams.degrees === undefined || filledParams.degrees === null) {
+      filledParams.degrees = 90;
+    }
+  }
+  if (definition.type === "convert") {
+    // format 是必填，缺失时默认 webp
+    if (!filledParams.format) filledParams.format = "webp";
+  }
+  if (definition.type === "border") {
+    // width 是必填，缺失时默认 5px 黑色边框
+    if (!filledParams.width || Number(filledParams.width) <= 0) filledParams.width = 5;
+    if (!filledParams.color) filledParams.color = "#000000";
+  }
+  if (definition.type === "morphology") {
+    // method 是必填，缺失时默认 Erode（腐蚀，最常用的形态学操作）
+    if (!filledParams.method) filledParams.method = "Erode";
+  }
+  if (definition.type === "colorspace") {
+    // space 是必填，缺失时默认 Gray（灰度空间，最常见的色彩空间转换）
+    if (!filledParams.space) filledParams.space = "Gray";
+  }
+  if (definition.type === "backgroundReplace") {
+    if (!filledParams.targetColor) filledParams.targetColor = "#FFFFFF";
+    if (!filledParams.newColor) filledParams.newColor = "transparent";
+  }
+  if (definition.type === "roundCorners") {
+    if (!filledParams.rx) {
+      filledParams.rx = filledParams.radius || filledParams.r || filledParams.cornerRadius || 24;
+    }
+  }
+  if (definition.type === "socialPreset") {
+    if (!filledParams.platform) filledParams.platform = "xiaohongshu";
+  }
+  if (definition.type === "opaque") {
+    if (!filledParams.targetColor) filledParams.targetColor = "#FFFFFF";
+    if (!filledParams.newColor) filledParams.newColor = "#000000";
+  }
+  if (definition.type === "liquidRescale") {
+    if (!filledParams.width) filledParams.width = 800;
+    if (!filledParams.height) filledParams.height = 600;
+  }
+  // 多图与合成操作：提供兜底素材 URL 防止参数缺失触发校验失败
+  const fallbackSampleUrl = "https://gips1.baidu.com/it/u=1971954603,2916157720&fm=3028&app=3028&f=JPEG&fmt=auto?w=1920&h=2560";
+  if (definition.type === "composite") {
+    if (!filledParams.foregroundUrl) filledParams.foregroundUrl = fallbackSampleUrl;
+  }
+  if (definition.type === "tile" || definition.type === "append") {
+    if (!Array.isArray(filledParams.images) || filledParams.images.length === 0) {
+      filledParams.images = [fallbackSampleUrl];
+    }
+  }
+  if (definition.type === "compare" || definition.type === "blend") {
+    if (!filledParams.imageUrl2) filledParams.imageUrl2 = fallbackSampleUrl;
+  }
+
   if (definition.category === "basic") {
-    return { type: definition.type, params };
+    return { type: definition.type, params: filledParams };
   }
 
   if (definition.category === "effect") {
     return {
       type: "effects",
       params: {
-        ...params,
+        ...filledParams,
         effectType: definition.type,
       },
     };
@@ -540,18 +699,18 @@ function normalizeOperation(type: string, params: Record<string, any> = {}) {
     return {
       type: "filter",
       params: {
-        ...params,
+        ...filledParams,
         filterType:
           definition.filterType || definition.type.replace(/^filter-/, ""),
         intensity:
-          params.intensity !== undefined
-            ? parseFloat(params.intensity) || defaultIntensity
+          filledParams.intensity !== undefined
+            ? parseFloat(filledParams.intensity) || defaultIntensity
             : defaultIntensity,
       },
     };
   }
 
-  return { type: definition.type, params };
+  return { type: definition.type, params: filledParams };
 }
 
 function resolveWatermarkImagePath(
@@ -585,7 +744,14 @@ function preflightOperationPlan(options: {
   directories: ReturnType<typeof ensureImageToolDirectories>;
   prompt?: string | null;
 }) {
-  const { imageInfo, operations, directories, prompt } = options;
+  const { imageInfo, operations: rawOperations, directories, prompt } = options;
+
+  const operations = rawOperations.map((op: any) => {
+    if (typeof op === "string") {
+      return { type: op, params: {} };
+    }
+    return op;
+  });
 
   if (!Array.isArray(operations) || operations.length === 0) {
     throw createImageToolError("INVALID_OPERATION_PLAN", "AI 未生成有效的操作链", {
@@ -714,6 +880,26 @@ function preflightOperationPlan(options: {
   });
 }
 
+async function resolveLocalImagePath(
+  imageUrl: string,
+  directories: ReturnType<typeof ensureImageToolDirectories>,
+): Promise<string> {
+  if (!imageUrl || typeof imageUrl !== "string") return imageUrl;
+  if (isValidHttpUrl(imageUrl)) {
+    const downloaded = await downloadFromUrl(imageUrl, directories.temp);
+    return downloaded.path;
+  }
+  if (path.isAbsolute(imageUrl) && fs.existsSync(imageUrl)) {
+    return imageUrl;
+  }
+  const candidates = [
+    path.join(directories.uploads, imageUrl),
+    path.join(directories.template, imageUrl),
+    path.join(directories.temp, imageUrl),
+  ];
+  return candidates.find((c) => fs.existsSync(c)) || imageUrl;
+}
+
 async function executeOperation(
   imageProcessor: any,
   type: string,
@@ -776,44 +962,39 @@ async function executeOperation(
     case "watermark":
       command = await imageProcessor.watermark(currentInputPath, outputPath, {
         type: params.type || "text",
-        text: params.text || "",
+        text: params.text || "Watermark",
         fontSize: parseInt(params.fontSize) || 24,
         fontFamily: params.fontFamily || "Microsoft YaHei",
         color: params.color || "#FFFFFF",
         strokeColor: params.strokeColor || "",
         strokeWidth: parseInt(params.strokeWidth) || 0,
-        watermarkImage: params.watermarkImageFilename
-          ? resolveWatermarkImagePath(params.watermarkImageFilename, directories)
-          : null,
-        watermarkScale:
-          params.watermarkScale !== undefined
-            ? parseFloat(params.watermarkScale)
-            : 1,
+        watermarkImageFilename: resolveWatermarkImagePath(
+          params.watermarkImageFilename,
+          directories,
+        ),
+        watermarkScale: parseFloat(params.watermarkScale) || 1.0,
         position: params.position || "bottom-right",
+        marginX: parseInt(params.marginX) || 10,
+        marginY: parseInt(params.marginY) || 10,
+        opacity: parseFloat(params.opacity) || 0.5,
+        angle: parseFloat(params.angle) || 0,
+        repeat: params.repeat === true,
+        tileSize: parseInt(params.tileSize) || 200,
         x: params.x !== undefined ? parseInt(params.x) : null,
         y: params.y !== undefined ? parseInt(params.y) : null,
-        marginX: params.marginX !== undefined ? parseInt(params.marginX) : 10,
-        marginY: params.marginY !== undefined ? parseInt(params.marginY) : 10,
-        opacity: params.opacity !== undefined ? parseFloat(params.opacity) : 1,
-        angle: params.angle !== undefined ? parseFloat(params.angle) : 0,
-        repeat: params.repeat === true,
-        tileSize:
-          params.tileSize !== undefined && params.tileSize !== null
-            ? parseInt(params.tileSize)
-            : null,
       });
       break;
     case "adjust":
       command = await imageProcessor.adjust(currentInputPath, outputPath, {
-        brightness: parseFloat(params.brightness) || 0,
-        contrast: parseFloat(params.contrast) || 0,
-        saturation: parseFloat(params.saturation) || 0,
+        brightness: parseInt(params.brightness) || 0,
+        contrast: parseInt(params.contrast) || 0,
+        saturation: parseInt(params.saturation) || 0,
       });
       break;
     case "trim":
       command = await imageProcessor.trim(currentInputPath, outputPath, {
-        fuzz: params.fuzz !== undefined ? parseFloat(params.fuzz) : 0,
-        backgroundColor: params.backgroundColor,
+        fuzz: parseInt(params.fuzz) || 0,
+        backgroundColor: params.backgroundColor || "",
       });
       break;
     case "extent":
@@ -823,7 +1004,7 @@ async function executeOperation(
         x: parseInt(params.x) || 0,
         y: parseInt(params.y) || 0,
         backgroundColor: params.backgroundColor || "white",
-        gravity: params.gravity,
+        gravity: params.gravity || "center",
       });
       break;
     case "flip":
@@ -874,9 +1055,7 @@ async function executeOperation(
       break;
     }
     case "extractExif":
-      // EXIF提取是只读操作，返回信息但不生成新文件
       command = await imageProcessor.extractExif(currentInputPath);
-      // 不覆盖输出文件
       finalOutputPath = currentInputPath;
       break;
     case "opacity":
@@ -887,21 +1066,45 @@ async function executeOperation(
     case "append":
     case "appendImages": {
       const appendOutputPath = outputPath.replace(/\.[^.]+$/, ".jpg");
+      const rawImgs = Array.isArray(params.images) && params.images.length > 0 ? params.images : [currentInputPath];
+      const localImgs = await Promise.all(
+        rawImgs.map((imgUrl: string) => resolveLocalImagePath(imgUrl, directories))
+      );
       command = await imageProcessor.append(currentInputPath, appendOutputPath, {
-        images: params.images || [],
+        images: localImgs,
         direction: params.direction || "horizontal",
       });
       finalOutputPath = appendOutputPath;
       break;
     }
-    case "composite":
+    case "tile":
+    case "tileGrid": {
+      const tileOutputPath = outputPath.replace(/\.[^.]+$/, ".jpg");
+      const rawImgs = Array.isArray(params.images) && params.images.length > 0 ? params.images : [currentInputPath];
+      const localImgs = await Promise.all(
+        rawImgs.map((imgUrl: string) => resolveLocalImagePath(imgUrl, directories))
+      );
+      command = await imageProcessor.tile(currentInputPath, tileOutputPath, {
+        images: localImgs,
+        columns: parseInt(params.columns) || 2,
+        tileWidth: parseInt(params.tileWidth) || 400,
+        tileHeight: parseInt(params.tileHeight) || 400,
+        gap: parseInt(params.gap) || 10,
+        backgroundColor: params.backgroundColor || "#FFFFFF",
+      });
+      finalOutputPath = tileOutputPath;
+      break;
+    }
+    case "composite": {
+      const localFg = await resolveLocalImagePath(params.foregroundUrl || "", directories);
       command = await imageProcessor.composite(currentInputPath, outputPath, {
-        foregroundUrl: params.foregroundUrl || "",
+        foregroundUrl: localFg,
         position: params.position || "center",
         offsetX: parseInt(params.offsetX) || 0,
         offsetY: parseInt(params.offsetY) || 0,
       });
       break;
+    }
     case "opaque":
       command = await imageProcessor.opaque(currentInputPath, outputPath, {
         targetColor: params.targetColor || "#FFFFFF",
@@ -940,7 +1143,33 @@ async function executeOperation(
           params.intensity !== undefined ? parseFloat(params.intensity) || 1 : 1,
       });
       break;
-    case "effects": {
+    case "effects":
+    case "shadow":
+    case "dropShadow":
+    case "sepia":
+    case "vignette":
+    case "polaroid":
+    case "blur":
+    case "grayscale":
+    case "contrast":
+    case "brightness":
+    case "saturation":
+    case "hue":
+    case "duotone":
+    case "pixelate":
+    case "mosaic":
+    case "swirl":
+    case "wave":
+    case "solarize":
+    case "implode":
+    case "spread":
+    case "sharpen":
+    case "unsharp":
+    case "charcoal":
+    case "oil-painting":
+    case "sketch":
+    case "emboss":
+    case "negate": {
       let effectsArray = [];
       if (Array.isArray(params.effects) && params.effects.length > 0) {
         effectsArray = params.effects.map((effect: any) => {
@@ -951,14 +1180,7 @@ async function executeOperation(
           };
         });
       } else {
-        const effect: Record<string, any> = {
-          type: params.effectType || params.type,
-        };
-        Object.keys(params).forEach((key) => {
-          if (key === "effectType" || key === "type") return;
-          effect[key] = params[key];
-        });
-        effectsArray = [effect];
+        effectsArray = [{ type, ...params }];
       }
 
       const hasLowpoly = effectsArray.some((effect: any) => {
@@ -980,8 +1202,29 @@ async function executeOperation(
       }
       break;
     }
-    default:
+    default: {
+      const opDef = getOperationDefinition(type);
+      const isEffectOrFilter = Boolean(
+        FLAT_EFFECT_TYPE_MAP[type] ||
+        opDef?.category === "effect" ||
+        opDef?.category === "filter"
+      );
+
+      if (isEffectOrFilter) {
+        const effectType = String(type || "").toLowerCase();
+        const hasLowpoly = ["lowpoly", "low-poly", "low_poly"].includes(effectType);
+        if (hasLowpoly) {
+          command = await applyLowpoly(currentInputPath, outputPath, params || {});
+        } else {
+          command = await imageProcessor.applyEffects(currentInputPath, outputPath, [
+            { type, ...params },
+          ]);
+        }
+        break;
+      }
+
       throw new Error(`不支持的操作类型: ${type}`);
+    }
   }
 
   return { command, outputPath: finalOutputPath };
@@ -1132,7 +1375,14 @@ async function processImage(payload: Record<string, any> = {}) {
   const directories = ensureImageToolDirectories();
 
   try {
-    const operations = Array.isArray(payload.operations) ? payload.operations : [];
+    const rawOperations = Array.isArray(payload.operations) ? payload.operations : [];
+    const operations = rawOperations.map((op: any) => {
+      if (typeof op === "string") {
+        return { type: op, params: {} };
+      }
+      return op;
+    });
+
     if (operations.length === 0) {
       throw createImageToolError("INVALID_OPERATION_PLAN", "operations 必须是非空数组");
     }

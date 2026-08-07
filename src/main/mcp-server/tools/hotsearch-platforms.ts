@@ -3,7 +3,7 @@
  * 为每个平台生成独立的采集工具
  */
 
-import { z } from 'zod';
+// import { z } from 'zod';
 
 // 平台配置映射
 const PLATFORM_CONFIGS: Record<string, { name: string; description: string; environment: string }> = {
@@ -54,7 +54,7 @@ export function getPlatformToolDefinitions() {
  */
 export async function executePlatformCollect(
   platformKey: string,
-  reportToServer: boolean = true
+  _reportToServer: boolean = true
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     const { hotSearchService } = await import('../../hotsearch/hotsearch.service');
@@ -98,7 +98,7 @@ export async function executePlatformCollect(
  */
 export function executeAllPlatformCollect(
   platformKeys?: string[],
-  reportToServer: boolean = true
+  _reportToServer: boolean = true
 ): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
   // 后台异步执行采集，不阻塞 MCP 响应
   (async () => {
