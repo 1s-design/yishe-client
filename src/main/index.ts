@@ -60,6 +60,12 @@ import {
   syncRawpixelToMaterialLibrary,
   downloadRawpixelImage,
 } from "./rawpixel";
+import {
+  searchStockSnap,
+  getStockSnapStatus,
+  syncStockSnapToMaterialLibrary,
+  downloadStockSnapImage,
+} from "./stocksnap";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
@@ -2812,6 +2818,64 @@ ipcMain.handle(
       const { imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await syncRawpixelToMaterialLibrary(imageUrl, metadata);
+      return { ok: res.success, msg: res.message, data: res.data };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// StockSnap 免版权图搜与下载
+ipcMain.handle(
+  "stocksnap:search",
+  async (
+    _event,
+    payload: {
+      keyword: string;
+      limit?: number;
+      page?: number;
+      sort?: string;
+    },
+  ) => {
+    return searchStockSnap(payload?.keyword || "", {
+      limit: payload?.limit,
+      page: payload?.page,
+      sort: payload?.sort,
+    });
+  },
+);
+
+ipcMain.handle("stocksnap:status", async () => {
+  return getStockSnapStatus();
+});
+
+ipcMain.handle(
+  "stocksnap:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadStockSnapImage(imageUrl, { filename });
+      return { ok: res.success, filePath: res.filePath, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "stocksnap:sync",
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncStockSnapToMaterialLibrary(imageUrl, metadata);
       return { ok: res.success, msg: res.message, data: res.data };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };

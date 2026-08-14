@@ -188,6 +188,14 @@ const api = {
     ipcRenderer.invoke('rawpixel:download', payload),
   syncRawpixelToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
     ipcRenderer.invoke('rawpixel:sync', { imageUrl, metadata }),
+  // StockSnap API 导出
+  searchStockSnap: (payload: { keyword: string; limit?: number; page?: number; sort?: string }) =>
+    ipcRenderer.invoke('stocksnap:search', payload),
+  getStockSnapStatus: () => ipcRenderer.invoke('stocksnap:status'),
+  downloadStockSnapImage: (payload: { imageUrl: string; filename?: string }) =>
+    ipcRenderer.invoke('stocksnap:download', payload),
+  syncStockSnapToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('stocksnap:sync', { imageUrl, metadata }),
   // 通用图片压缩：限制尺寸与大小（不裁剪不填充）
   processImageWithLimits: (payload: {
     sourcePath: string

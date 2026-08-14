@@ -14,6 +14,7 @@ import { registerWikimediaCapabilities } from './wikimedia';
 import { registerPexelsCapabilities } from './pexels';
 import { registerPixabayCapabilities } from './pixabay';
 import { registerRawpixelCapabilities } from './rawpixel';
+import { registerStockSnapCapabilities } from './stocksnap';
 import { CapabilityRegistry } from './registry';
 import type { CapabilityResult, RegisteredCapability } from './types';
 
@@ -37,6 +38,7 @@ export function registerAllCapabilities(): void {
   registerPexelsCapabilities();
   registerPixabayCapabilities();
   registerRawpixelCapabilities();
+  registerStockSnapCapabilities();
 
   initialized = true;
   console.log(`[Capabilities] 全部注册完成，共 ${CapabilityRegistry.size} 个能力`);
