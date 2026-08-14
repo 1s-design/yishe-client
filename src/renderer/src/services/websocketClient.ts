@@ -9154,7 +9154,7 @@ function registerBuiltInLocalServices() {
       }
 
       if (command.action === "collect") {
-        const { keyword, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        const { keyword, maxCount = 10, syncToMaterial = true, qualityPreference = 'min' } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
@@ -9174,30 +9174,45 @@ function registerBuiltInLocalServices() {
         }
 
         const links = searchResult.links;
+        const items = searchResult.items || [];
         const images: any[] = [];
         let successCount = 0;
         let failCount = 0;
 
         // Step 2: 逐个下载
-        for (const link of links) {
+        for (let i = 0; i < links.length; i++) {
+          const link = links[i];
+          const itemMeta = items[i] || {};
           try {
             const zoomsResult = await nativeApi.getGoogleArtZooms(link);
             if (!zoomsResult?.ok || !zoomsResult?.zooms?.length) {
               failCount++;
               continue;
             }
-            const maxZoom = zoomsResult.zooms[zoomsResult.zooms.length - 1];
+            const sortedZooms = [...zoomsResult.zooms].sort((a: any, b: any) => (a.width * a.height) - (b.width * b.height));
+            const selectedZoom = qualityPreference === 'max' ? sortedZooms[sortedZooms.length - 1] : sortedZooms[0];
 
             if (syncToMaterial) {
               const syncResult = await nativeApi.syncGoogleArtToMaterialLibrary({
                 url: link,
-                zoomLevel: maxZoom.idx,
+                zoomLevel: selectedZoom.idx,
+                qualityPreference,
+                metadata: {
+                  title: itemMeta.title,
+                  artist: itemMeta.artist,
+                  institution: itemMeta.institution,
+                  color: itemMeta.color,
+                  thumbnail: itemMeta.thumbnail,
+                  aspectRatio: itemMeta.aspectRatio,
+                  hasPixels: itemMeta.hasPixels,
+                  id: itemMeta.id,
+                },
               });
               if (syncResult?.ok) {
                 images.push({
                   url: syncResult.filePath,
-                  width: maxZoom.width,
-                  height: maxZoom.height,
+                  width: selectedZoom.width,
+                  height: selectedZoom.height,
                   fileSize: syncResult.fileSize,
                   originUrl: link,
                 });
@@ -9223,6 +9238,718 @@ function registerBuiltInLocalServices() {
       }
 
       throw new Error(`未实现的 Google Art 命令: ${command.action}`);
+    },
+  });
+
+  registerLocalService({
+    key: "pinterest",
+    pluginKey: "pinterest",
+    label: "Pinterest",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi();
+      if (!nativeApi?.getPinterestStatus) {
+        return {
+          label: "Pinterest",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 Pinterest 能力",
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+
+      const status = await nativeApi.getPinterestStatus();
+      const connected = true;
+      const siteAvailable = !!status?.siteAvailable;
+      const available = siteAvailable;
+
+      return {
+        label: "Pinterest",
+        connected,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || (available ? "Pinterest 可用" : "Pinterest 不可用"),
+        endpoint: status?.siteUrl || "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: {
+          siteAvailable,
+          siteStatus: status?.siteStatus ?? null,
+          siteLatencyMs: status?.siteLatencyMs ?? null,
+          runtime: "desktop",
+        },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const { keyword, scope = 'pins', limit = 25, imageOnly = true, bookmark } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchPinterest) {
+          throw new Error("当前环境未注入桌面端 Pinterest 搜索能力");
+        }
+        const result = await nativeApi.searchPinterest({ keyword, scope, limit, imageOnly, bookmark });
+        return {
+          success: result?.success ?? false,
+          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          data: result,
+        };
+      }
+
+      if (command.action === "download") {
+        const { imageUrl, filename } = command.payload || {};
+        const nativeApi = getNativeApi();
+        if (!imageUrl) {
+          throw new Error("缺少 Pinterest 图片链接");
+        }
+        if (!nativeApi?.downloadPinterestImage) {
+          throw new Error("当前环境未注入桌面端 Pinterest 下载能力");
+        }
+        const data = await nativeApi.downloadPinterestImage({ imageUrl, filename });
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          data,
+        };
+      }
+
+      if (command.action === "sync") {
+        const { imageUrl, metadata } = command.payload || {};
+        const nativeApi = getNativeApi();
+        if (!imageUrl) {
+          throw new Error("缺少 Pinterest 图片链接");
+        }
+        if (!nativeApi?.syncPinterestToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Pinterest 同步能力");
+        }
+        const data = await nativeApi.syncPinterestToMaterialLibrary({ imageUrl, metadata });
+        await syncServiceRuntime("pinterest");
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const { keyword, maxCount = 5, imageOnly = true, syncToMaterial = true } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchPinterest || !nativeApi?.syncPinterestToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Pinterest 采集能力");
+        }
+
+        const searchResult = await nativeApi.searchPinterest({ keyword, scope: 'pins', limit: maxCount, imageOnly });
+        if (!searchResult?.success || !searchResult?.items?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, images: [] },
+          };
+        }
+
+        const items = searchResult.items;
+        const images: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of items) {
+          try {
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncPinterestToMaterialLibrary({
+                imageUrl: item.image,
+                metadata: {
+                  title: item.title,
+                  description: item.description,
+                  link: item.link,
+                  boardName: item.boardName,
+                  pinner: item.pinner,
+                  image: item.image,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                  isVideo: item.isVideo,
+                },
+              });
+              if (syncResult?.ok) {
+                images.push({
+                  url: syncResult.filePath,
+                  fileSize: syncResult.fileSize,
+                  materialId: syncResult.materialLibraryOk ? syncResult.fileName : "",
+                  originUrl: item.image,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              const dl = await nativeApi.downloadPinterestImage({ imageUrl: item.image });
+              if (dl?.ok) {
+                images.push({ url: dl.filePath, originUrl: item.image });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("pinterest");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, images },
+        };
+      }
+
+      throw new Error(`未实现的 Pinterest 命令: ${command.action}`);
+    },
+  });
+
+  registerLocalService({
+    key: "wikimedia",
+    pluginKey: "wikimedia",
+    label: "Wikimedia Commons",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi();
+      if (!nativeApi?.getWikimediaStatus) {
+        return {
+          label: "Wikimedia Commons",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 Wikimedia 能力",
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+
+      const status = await nativeApi.getWikimediaStatus();
+      const connected = true;
+      const siteAvailable = !!status?.siteAvailable;
+      const available = siteAvailable;
+
+      return {
+        label: "Wikimedia Commons",
+        connected,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || (available ? "Wikimedia Commons 可用" : "Wikimedia Commons 不可用"),
+        endpoint: status?.siteUrl || "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: {
+          siteAvailable,
+          siteStatus: status?.siteStatus ?? null,
+          siteLatencyMs: status?.siteLatencyMs ?? null,
+          runtime: "desktop",
+        },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const { keyword, limit = 25, imageOnly = true, offset } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchWikimedia) {
+          throw new Error("当前环境未注入桌面端 Wikimedia 搜索能力");
+        }
+        const result = await nativeApi.searchWikimedia({ keyword, limit, imageOnly, offset });
+        return {
+          success: result?.success ?? false,
+          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          data: result,
+        };
+      }
+
+      if (command.action === "download") {
+        const { imageUrl, filename } = command.payload || {};
+        const nativeApi = getNativeApi();
+        if (!imageUrl) {
+          throw new Error("缺少 Wikimedia 图片链接");
+        }
+        if (!nativeApi?.downloadWikimediaImage) {
+          throw new Error("当前环境未注入桌面端 Wikimedia 下载能力");
+        }
+        const data = await nativeApi.downloadWikimediaImage({ imageUrl, filename });
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          data,
+        };
+      }
+
+      if (command.action === "sync") {
+        const { imageUrl, metadata } = command.payload || {};
+        const nativeApi = getNativeApi();
+        if (!imageUrl) {
+          throw new Error("缺少 Wikimedia 图片链接");
+        }
+        if (!nativeApi?.syncWikimediaToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Wikimedia 同步能力");
+        }
+        const data = await nativeApi.syncWikimediaToMaterialLibrary({ imageUrl, metadata });
+        await syncServiceRuntime("wikimedia");
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const { keyword, maxCount = 5, imageOnly = true, syncToMaterial = true } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchWikimedia || !nativeApi?.syncWikimediaToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Wikimedia 采集能力");
+        }
+
+        const searchResult = await nativeApi.searchWikimedia({ keyword, limit: maxCount, imageOnly });
+        if (!searchResult?.success || !searchResult?.items?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, images: [] },
+          };
+        }
+
+        const items = searchResult.items;
+        const images: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of items) {
+          try {
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncWikimediaToMaterialLibrary({
+                imageUrl: item.image,
+                metadata: {
+                  title: item.title,
+                  description: item.description,
+                  link: item.link,
+                  author: item.author,
+                  license: item.license,
+                  date: item.date,
+                  image: item.image,
+                  width: item.width,
+                  height: item.height,
+                  mime: item.mime,
+                  id: item.id,
+                },
+              });
+              if (syncResult?.ok) {
+                images.push({
+                  url: syncResult.filePath,
+                  fileSize: syncResult.fileSize,
+                  materialId: syncResult.materialLibraryOk ? syncResult.fileName : "",
+                  originUrl: item.image,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              const dl = await nativeApi.downloadWikimediaImage({ imageUrl: item.image });
+              if (dl?.ok) {
+                images.push({ url: dl.filePath, originUrl: item.image });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("wikimedia");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, images },
+        };
+      }
+
+      throw new Error(`未实现的 Wikimedia 命令: ${command.action}`);
+    },
+  });
+
+  registerLocalService({
+    key: "pexels",
+    pluginKey: "pexels",
+    label: "Pexels 高清摄影",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi();
+      if (!nativeApi?.getPexelsStatus) {
+        return {
+          label: "Pexels 高清摄影",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 Pexels 能力",
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+
+      const status = await nativeApi.getPexelsStatus();
+      const connected = true;
+      const available = true;
+
+      return {
+        label: "Pexels 高清摄影",
+        connected,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || "Pexels 可用",
+        endpoint: status?.siteUrl || "https://www.pexels.com/",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: {
+          siteAvailable: true,
+          runtime: "desktop",
+        },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const { keyword, limit = 20, page = 1 } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchPexels) {
+          throw new Error("当前环境未注入桌面端 Pexels 搜索能力");
+        }
+        const result = await nativeApi.searchPexels({ keyword, limit, page });
+        return {
+          success: result?.success ?? false,
+          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          data: result,
+        };
+      }
+
+      if (command.action === "download") {
+        const { imageUrl, filename } = command.payload || {};
+        const nativeApi = getNativeApi();
+        if (!imageUrl) {
+          throw new Error("缺少 Pexels 图片链接");
+        }
+        if (!nativeApi?.downloadPexelsImage) {
+          throw new Error("当前环境未注入桌面端 Pexels 下载能力");
+        }
+        const data = await nativeApi.downloadPexelsImage({ imageUrl, filename });
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          data,
+        };
+      }
+
+      if (command.action === "sync") {
+        const { imageUrl, metadata } = command.payload || {};
+        const nativeApi = getNativeApi();
+        if (!imageUrl) {
+          throw new Error("缺少 Pexels 图片链接");
+        }
+        if (!nativeApi?.syncPexelsToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Pexels 同步能力");
+        }
+        const data = await nativeApi.syncPexelsToMaterialLibrary({ imageUrl, metadata });
+        await syncServiceRuntime("pexels");
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const { keyword, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchPexels || !nativeApi?.syncPexelsToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Pexels 采集能力");
+        }
+
+        const searchResult = await nativeApi.searchPexels({ keyword, limit: maxCount });
+        if (!searchResult?.success || !searchResult?.items?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, images: [] },
+          };
+        }
+
+        const items = searchResult.items;
+        const images: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of items) {
+          try {
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncPexelsToMaterialLibrary({
+                imageUrl: item.image,
+                metadata: {
+                  title: item.title,
+                  url: item.url,
+                  photographer: item.photographer,
+                  photographerUrl: item.photographerUrl,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                },
+              });
+              if (syncResult?.ok) {
+                images.push({
+                  url: syncResult.filePath,
+                  originUrl: item.image,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              const dl = await nativeApi.downloadPexelsImage({ imageUrl: item.image });
+              if (dl?.ok) {
+                images.push({ url: dl.filePath, originUrl: item.image });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("pexels");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, images },
+        };
+      }
+
+      throw new Error(`未实现的 Pexels 命令: ${command.action}`);
+    },
+  });
+
+  registerLocalService({
+    key: "pixabay",
+    pluginKey: "pixabay",
+    label: "Pixabay 免费图库",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi();
+      if (!nativeApi?.getPixabayStatus) {
+        return {
+          label: "Pixabay 免费图库",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 Pixabay 能力",
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+
+      const status = await nativeApi.getPixabayStatus();
+      const connected = true;
+      const available = true;
+
+      return {
+        label: "Pixabay 免费图库",
+        connected,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || "Pixabay 可用",
+        endpoint: status?.siteUrl || "https://pixabay.com/",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: {
+          siteAvailable: true,
+          runtime: "desktop",
+        },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const { keyword, limit = 20, page = 1 } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchPixabay) {
+          throw new Error("当前环境未注入桌面端 Pixabay 搜索能力");
+        }
+        const result = await nativeApi.searchPixabay({ keyword, limit, page });
+        return {
+          success: result?.success ?? false,
+          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          data: result,
+        };
+      }
+
+      if (command.action === "download") {
+        const { imageUrl, filename } = command.payload || {};
+        const nativeApi = getNativeApi();
+        if (!imageUrl) {
+          throw new Error("缺少 Pixabay 图片链接");
+        }
+        if (!nativeApi?.downloadPixabayImage) {
+          throw new Error("当前环境未注入桌面端 Pixabay 下载能力");
+        }
+        const data = await nativeApi.downloadPixabayImage({ imageUrl, filename });
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          data,
+        };
+      }
+
+      if (command.action === "sync") {
+        const { imageUrl, metadata } = command.payload || {};
+        const nativeApi = getNativeApi();
+        if (!imageUrl) {
+          throw new Error("缺少 Pixabay 图片链接");
+        }
+        if (!nativeApi?.syncPixabayToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Pixabay 同步能力");
+        }
+        const data = await nativeApi.syncPixabayToMaterialLibrary({ imageUrl, metadata });
+        await syncServiceRuntime("pixabay");
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const { keyword, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchPixabay || !nativeApi?.syncPixabayToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Pixabay 采集能力");
+        }
+
+        const searchResult = await nativeApi.searchPixabay({ keyword, limit: maxCount });
+        if (!searchResult?.success || !searchResult?.items?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, images: [] },
+          };
+        }
+
+        const items = searchResult.items;
+        const images: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of items) {
+          try {
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncPixabayToMaterialLibrary({
+                imageUrl: item.image,
+                metadata: {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                },
+              });
+              if (syncResult?.ok) {
+                images.push({
+                  url: syncResult.filePath,
+                  originUrl: item.image,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              const dl = await nativeApi.downloadPixabayImage({ imageUrl: item.image });
+              if (dl?.ok) {
+                images.push({ url: dl.filePath, originUrl: item.image });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("pixabay");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, images },
+        };
+      }
+
+      throw new Error(`未实现的 Pixabay 命令: ${command.action}`);
     },
   });
 }

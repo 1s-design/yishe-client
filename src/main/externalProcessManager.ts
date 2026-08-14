@@ -93,12 +93,15 @@ function splitProcessOutputLines(value: unknown) {
 }
 
 function isNoisyProcessOutput(config: ProcessConfig, output: string) {
-  if (config.id !== 'ps-automation') {
+  if (/"\w+\s+\/(?:health|photoshopStatus|browserStatus)(?:\?[^"\s]*)?\s+HTTP\/[\d.]+"\s+2\d\d\b/.test(output)) {
+    return true
+  }
+
+  if (config.id !== 'ps-automation' && config.id !== 'browser-automation') {
     return false
   }
 
   return (
-    /"\w+\s+\/(?:health|photoshopStatus)(?:\?[^"\s]*)?\s+HTTP\/[\d.]+"\s+2\d\d\b/.test(output) ||
     /^=+$/.test(output) ||
     /^PSD 智能对象替换 API 服务/.test(output) ||
     /^(服务地址|API 文档|健康检查|自动重载|工作进程|注意事项|PID 文件|提示):/.test(output) ||

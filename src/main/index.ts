@@ -30,6 +30,30 @@ import {
   getGoogleArtStatus,
   searchGoogleArts,
 } from "./googleArt";
+import {
+  searchPinterest,
+  getPinterestStatus,
+  syncPinterestToMaterialLibrary,
+  PinterestClient,
+} from "./pinterest";
+import {
+  searchWikimedia,
+  getWikimediaStatus,
+  syncWikimediaToMaterialLibrary,
+  downloadWikimediaImage,
+} from "./wikimedia";
+import {
+  searchPexels,
+  getPexelsStatus,
+  syncPexelsToMaterialLibrary,
+  downloadPexelsImage,
+} from "./pexels";
+import {
+  searchPixabay,
+  getPixabayStatus,
+  syncPixabayToMaterialLibrary,
+  downloadPixabayImage,
+} from "./pixabay";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
@@ -2349,6 +2373,62 @@ ipcMain.handle("check-local-file-exists", async (_event, filePath: string) => {
   }
 });
 
+// Pixabay 免费图库图搜与下载
+ipcMain.handle(
+  "pixabay:search",
+  async (
+    _event,
+    payload: {
+      keyword: string;
+      limit?: number;
+      page?: number;
+    },
+  ) => {
+    return searchPixabay(payload?.keyword || "", {
+      limit: payload?.limit,
+      page: payload?.page,
+    });
+  },
+);
+
+ipcMain.handle("pixabay:status", async () => {
+  return getPixabayStatus();
+});
+
+ipcMain.handle(
+  "pixabay:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadPixabayImage(imageUrl, { filename });
+      return { ok: res.success, filePath: res.filePath, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "pixabay:sync",
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncPixabayToMaterialLibrary(imageUrl, metadata);
+      return { ok: res.success, msg: res.message, data: res.data };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
 // Google Arts & Culture 高清下载 - 支持 Windows 和 macOS
 ipcMain.handle(
   "convert-to-png",
@@ -2493,6 +2573,185 @@ ipcMain.handle(
       workspaceDir,
     });
     return result;
+  },
+);
+
+// Pinterest 图搜与下载
+ipcMain.handle(
+  "pinterest:search",
+  async (
+    _event,
+    payload: {
+      keyword: string;
+      scope?: string;
+      limit?: number;
+      imageOnly?: boolean;
+      bookmark?: string | null;
+    },
+  ) => {
+    return searchPinterest(payload?.keyword || "", {
+      scope: payload?.scope as any,
+      limit: payload?.limit,
+      imageOnly: payload?.imageOnly,
+      bookmark: payload?.bookmark,
+    });
+  },
+);
+
+ipcMain.handle("pinterest:status", async () => {
+  return getPinterestStatus();
+});
+
+ipcMain.handle(
+  "pinterest:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const client = new PinterestClient();
+      const destDir = join(process.env.PINTEREST_TMP_DIR || join(app.getPath("temp"), "pinterest"));
+      const filePath = await client.downloadImage(imageUrl, destDir, filename);
+      return { ok: true, filePath };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "pinterest:sync",
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    const workspaceDir = store.get("workspaceDirectory", "") as string;
+    if (!workspaceDir) {
+      return { ok: false, msg: "工作目录未设置" };
+    }
+    return syncPinterestToMaterialLibrary({
+      imageUrl: payload?.imageUrl,
+      workspaceDir,
+      metadata: payload?.metadata,
+    });
+  },
+);
+
+// Wikimedia Commons 图搜与下载
+ipcMain.handle(
+  "wikimedia:search",
+  async (
+    _event,
+    payload: {
+      keyword: string;
+      limit?: number;
+      imageOnly?: boolean;
+      offset?: number | null;
+    },
+  ) => {
+    return searchWikimedia(payload?.keyword || "", {
+      limit: payload?.limit,
+      imageOnly: payload?.imageOnly,
+      offset: payload?.offset,
+    });
+  },
+);
+
+ipcMain.handle("wikimedia:status", async () => {
+  return getWikimediaStatus();
+});
+
+ipcMain.handle(
+  "wikimedia:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const destDir = join(process.env.WIKIMEDIA_TMP_DIR || join(app.getPath("temp"), "wikimedia"));
+      const filePath = await downloadWikimediaImage(imageUrl, destDir, filename);
+      return { ok: true, filePath };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "wikimedia:sync",
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    const workspaceDir = store.get("workspaceDirectory", "") as string;
+    if (!workspaceDir) {
+      return { ok: false, msg: "工作目录未设置" };
+    }
+    return syncWikimediaToMaterialLibrary({
+      imageUrl: payload?.imageUrl,
+      workspaceDir,
+      metadata: payload?.metadata,
+    });
+  },
+);
+
+// Pexels 高清摄影图搜与下载
+ipcMain.handle(
+  "pexels:search",
+  async (
+    _event,
+    payload: {
+      keyword: string;
+      limit?: number;
+      page?: number;
+    },
+  ) => {
+    return searchPexels(payload?.keyword || "", {
+      limit: payload?.limit,
+      page: payload?.page,
+    });
+  },
+);
+
+ipcMain.handle("pexels:status", async () => {
+  return getPexelsStatus();
+});
+
+ipcMain.handle(
+  "pexels:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadPexelsImage(imageUrl, { filename });
+      return { ok: res.success, filePath: res.filePath, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "pexels:sync",
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncPexelsToMaterialLibrary(imageUrl, metadata);
+      return { ok: res.success, msg: res.message, data: res.data };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
   },
 );
 

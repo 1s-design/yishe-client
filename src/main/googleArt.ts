@@ -336,7 +336,8 @@ async function uploadToMaterialLibrary(
 
 export async function syncGoogleArtToMaterialLibrary(options: {
   url: string
-  zoomLevel: number
+  zoomLevel?: number
+  qualityPreference?: 'max' | 'min'
   workspaceDir: string
   metadata?: {
     title?: string;
@@ -350,15 +351,32 @@ export async function syncGoogleArtToMaterialLibrary(options: {
     id?: string;
   }
 }): Promise<{ ok: boolean; msg?: string; filePath?: string; fileName?: string; fileSize?: number; materialLibraryOk?: boolean }> {
-  const { url, zoomLevel, workspaceDir, metadata } = options
+  const { url, workspaceDir, metadata, qualityPreference = 'min' } = options
+  let zoomLevel = options.zoomLevel
 
   if (!url || !/^https?:\/\/(www\.)?artsandculture\.google\.com\//.test(url)) {
     return { ok: false, msg: '请输入有效的 Google Arts 链接（以 artsandculture.google.com 开头）' }
   }
-  if (typeof zoomLevel !== 'number') {
-    return { ok: false, msg: '请先选择分辨率' }
-  }
   if (!workspaceDir) return { ok: false, msg: '工作目录未设置' }
+
+  // 若未指定具体数字 zoomLevel，按 qualityPreference (max/min) 自动分析并选择缩放层级
+  if (typeof zoomLevel !== 'number') {
+    try {
+      const zoomRes = await getGoogleArtZooms(url)
+      if (zoomRes.ok && zoomRes.zooms && zoomRes.zooms.length > 0) {
+        const sorted = [...zoomRes.zooms].sort((a, b) => (a.width * a.height) - (b.width * b.height))
+        if (qualityPreference === 'min') {
+          zoomLevel = sorted[0].idx
+        } else {
+          zoomLevel = sorted[sorted.length - 1].idx
+        }
+      } else {
+        zoomLevel = 1
+      }
+    } catch {
+      zoomLevel = 1
+    }
+  }
 
   const binary = resolveBinaryPath()
   if (!binary) {

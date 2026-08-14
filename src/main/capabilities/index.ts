@@ -9,6 +9,10 @@ import { registerSystemInfoCapabilities } from './system-info';
 import { registerScreenMediaCapabilities } from './screen-media';
 import { registerNetworkCapabilities } from './network';
 import { registerPrintCapabilities } from './print';
+import { registerPinterestCapabilities } from './pinterest';
+import { registerWikimediaCapabilities } from './wikimedia';
+import { registerPexelsCapabilities } from './pexels';
+import { registerPixabayCapabilities } from './pixabay';
 import { CapabilityRegistry } from './registry';
 import type { CapabilityResult, RegisteredCapability } from './types';
 
@@ -27,6 +31,10 @@ export function registerAllCapabilities(): void {
   registerScreenMediaCapabilities();
   registerNetworkCapabilities();
   registerPrintCapabilities();
+  registerPinterestCapabilities();
+  registerWikimediaCapabilities();
+  registerPexelsCapabilities();
+  registerPixabayCapabilities();
 
   initialized = true;
   console.log(`[Capabilities] 全部注册完成，共 ${CapabilityRegistry.size} 个能力`);

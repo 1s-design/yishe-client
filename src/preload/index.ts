@@ -98,6 +98,38 @@ const api = {
     ipcRenderer.invoke('google-art:search', payload),
   syncGoogleArtToMaterialLibrary: (payload: { url: string; zoomLevel: number }) =>
     ipcRenderer.invoke('google-art:sync', payload),
+  // Pinterest 图搜与下载
+  searchPinterest: (payload: { keyword: string; scope?: string; limit?: number; imageOnly?: boolean; bookmark?: string | null }) =>
+    ipcRenderer.invoke('pinterest:search', payload),
+  getPinterestStatus: () => ipcRenderer.invoke('pinterest:status'),
+  downloadPinterestImage: (payload: { imageUrl: string; filename?: string }) =>
+    ipcRenderer.invoke('pinterest:download', payload),
+  syncPinterestToMaterialLibrary: (payload: { imageUrl: string; metadata?: Record<string, any> }) =>
+    ipcRenderer.invoke('pinterest:sync', payload),
+  // Wikimedia Commons 图搜与下载
+  searchWikimedia: (payload: { keyword: string; limit?: number; imageOnly?: boolean; offset?: number | null }) =>
+    ipcRenderer.invoke('wikimedia:search', payload),
+  getWikimediaStatus: () => ipcRenderer.invoke('wikimedia:status'),
+  downloadWikimediaImage: (payload: { imageUrl: string; filename?: string }) =>
+    ipcRenderer.invoke('wikimedia:download', payload),
+  syncWikimediaToMaterialLibrary: (payload: { imageUrl: string; metadata?: Record<string, any> }) =>
+    ipcRenderer.invoke('wikimedia:sync', payload),
+  // Pexels 高清摄影图搜与下载
+  searchPexels: (payload: { keyword: string; limit?: number; page?: number }) =>
+    ipcRenderer.invoke('pexels:search', payload),
+  getPexelsStatus: () => ipcRenderer.invoke('pexels:status'),
+  downloadPexelsImage: (payload: { imageUrl: string; filename?: string }) =>
+    ipcRenderer.invoke('pexels:download', payload),
+  syncPexelsToMaterialLibrary: (payload: { imageUrl: string; metadata?: Record<string, any> }) =>
+    ipcRenderer.invoke('pexels:sync', payload),
+  // Pixabay 免费图库图搜与下载
+  searchPixabay: (payload: { keyword: string; limit?: number; page?: number }) =>
+    ipcRenderer.invoke('pixabay:search', payload),
+  getPixabayStatus: () => ipcRenderer.invoke('pixabay:status'),
+  downloadPixabayImage: (payload: { imageUrl: string; filename?: string }) =>
+    ipcRenderer.invoke('pixabay:download', payload),
+  syncPixabayToMaterialLibrary: (payload: { imageUrl: string; metadata?: Record<string, any> }) =>
+    ipcRenderer.invoke('pixabay:sync', payload),
   uploadFileToCos: (payload: { filePath: string; key?: string }) =>
     ipcRenderer.invoke('cos:upload-file', payload),
   generateCosKey: (payload: {

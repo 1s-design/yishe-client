@@ -1,0 +1,321 @@
+/**
+ * Pixabay 免费摄影图片采集能力
+ * 提供：图搜 / 单图下载 / 同步素材库
+ */
+import fs from 'fs'
+import { join } from 'path'
+import { app, session } from 'electron'
+import { uploadFileToCos, generateCosKey } from './cos'
+import { checkSiteAvailability } from './siteAvailability'
+
+const PIXABAY_SITE_URL = 'https://pixabay.com/'
+
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
+export interface PixabayPhoto {
+  id: string
+  title: string
+  description: string
+  image: string
+  thumbnail: string
+  link: string
+  url: string
+  width?: number
+  height?: number
+  author?: string
+  tags?: string
+}
+
+export interface PixabaySearchResult {
+  success: boolean
+  query: string
+  count: number
+  total?: number
+  items: PixabayPhoto[]
+  links: string[]
+  page: number
+  nextPage: number | null
+  error?: string
+}
+
+interface PixabaySearchOptions {
+  page?: number
+  limit?: number
+  pageSize?: number
+}
+
+function sanitizeName(str: string): string {
+  return (str || '')
+    .replace(/[\\/:\*\?"<>\|]/g, '_')
+    .replace(/\s+/g, '_')
+    .trim()
+}
+
+/**
+ * 检查 Pixabay 服务状态
+ */
+export async function getPixabayStatus() {
+  const site = await checkSiteAvailability(PIXABAY_SITE_URL, { timeoutMs: 5000 })
+  return {
+    key: 'pixabay',
+    pluginKey: 'pixabay',
+    label: 'Pixabay 免费图库采集',
+    connected: site.ok,
+    available: site.ok,
+    status: site.ok ? 'connected' : 'error',
+    state: site.ok ? 'idle' : 'offline',
+    message: site.ok ? 'Pixabay 可用' : `Pixabay 无法连接: ${site.error || '超时'}`,
+    lastCheckedAt: new Date().toISOString(),
+    supportedCommands: ['search', 'download', 'sync', 'collect', 'refreshRuntime']
+  }
+}
+
+/**
+ * 抓取 Pixabay 搜索结果页面并提取图片
+ */
+export async function searchPixabay(
+  query: string,
+  options: PixabaySearchOptions = {}
+): Promise<PixabaySearchResult> {
+  const keyword = (query || '').trim()
+  if (!keyword) {
+    return { success: false, query: '', count: 0, items: [], links: [], page: 1, nextPage: null, error: '缺少搜索关键词' }
+  }
+
+  const page = Math.max(Number(options.page) || 1, 1)
+  const limit = Math.min(Math.max(Number(options.limit) || Number(options.pageSize) || 20, 1), 100)
+
+  try {
+    const searchUrl = `https://pixabay.com/zh/photos/search/${encodeURIComponent(keyword)}/?pagi=${page}`
+    
+    let html = ''
+    try {
+      const fetchFn = session?.defaultSession?.fetch || globalThis.fetch
+      const res = await fetchFn(searchUrl, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Referer': 'https://pixabay.com/'
+        }
+      })
+      html = await res.text()
+    } catch {
+      const res = await fetch(searchUrl, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }
+      })
+      html = await res.text()
+    }
+
+    const items: PixabayPhoto[] = []
+    const seen = new Set<string>()
+
+    // 1. 解析 HTML 中的内嵌 JSON 数据
+    const jsonMatches = html.match(/<script[^>]*>(.*?)<\/script>/gs) || []
+    for (const scriptText of jsonMatches) {
+      if (scriptText.includes('largeImageURL') || scriptText.includes('webformatURL') || scriptText.includes('pageURL')) {
+        try {
+          const rawJson = scriptText.replace(/<script[^>]*>/, '').replace(/<\/script>/, '').trim()
+          const photoMatches = rawJson.match(/\{[^{}]*"(?:largeImageURL|webformatURL|previewURL)"[^{}]*\}/g) || []
+          for (const matchStr of photoMatches) {
+            try {
+              const p = JSON.parse(matchStr)
+              const id = String(p.id || p.id_hash || Date.now())
+              if (seen.has(id)) continue
+              seen.add(id)
+
+              const origImage = p.largeImageURL || p.fullHDURL || p.webformatURL || ''
+              const thumbImage = p.previewURL || p.webformatURL || origImage
+              const author = p.user || p.user_id || 'Pixabay Contributor'
+              const title = p.tags || `${keyword} photo by ${author}`
+
+              if (origImage) {
+                items.push({
+                  id,
+                  title,
+                  description: p.tags || title,
+                  image: origImage,
+                  thumbnail: thumbImage,
+                  link: p.pageURL || `https://pixabay.com/photos/${id}/`,
+                  url: p.pageURL || `https://pixabay.com/photos/${id}/`,
+                  width: p.imageWidth || p.webformatWidth || null,
+                  height: p.imageHeight || p.webformatHeight || null,
+                  author,
+                  tags: p.tags || '',
+                })
+              }
+            } catch {}
+          }
+        } catch {}
+      }
+    }
+
+    // 2. 提取 cdn.pixabay.com 图片链接与 ID
+    if (items.length === 0) {
+      const cdnRegex = /https:\/\/cdn\.pixabay\.com\/photo\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/\d{2}\/([a-zA-Z0-9_-]+)__([34]80|\d+)\.(jpg|png|jpeg|webp)/g
+      let match: RegExpExecArray | null
+      while ((match = cdnRegex.exec(html)) !== null) {
+        const rawUrl = match[0]
+        const filename = match[1]
+        const resolution = match[2]
+
+        const id = filename
+        if (seen.has(id)) continue
+        seen.add(id)
+
+        const highResUrl = rawUrl.replace(`__${resolution}.`, '_1280.')
+        const thumbUrl = rawUrl.replace(`__${resolution}.`, '_340.')
+        const title = `${keyword} - ${filename.replace(/[-_]/g, ' ')}`
+
+        items.push({
+          id,
+          title,
+          description: `Pixabay photo ${filename}`,
+          image: highResUrl,
+          thumbnail: thumbUrl,
+          link: `https://pixabay.com/photos/${filename}/`,
+          url: `https://pixabay.com/photos/${filename}/`,
+          author: 'Pixabay Contributor',
+        })
+      }
+    }
+
+    // 3. 通用图片 URL 回退提取
+    if (items.length === 0) {
+      const fallbackRegex = /https:\/\/cdn\.pixabay\.com\/photo\/[^\s"'\)]+/g
+      let fMatch: RegExpExecArray | null
+      while ((fMatch = fallbackRegex.exec(html)) !== null) {
+        const rawUrl = fMatch[0]
+        const idMatch = rawUrl.match(/\/([^\/]+)_(1280|640|340|180)\.(jpg|png|jpeg|webp)/i)
+        const id = idMatch ? idMatch[1] : `pixabay-${items.length + 1}`
+        if (seen.has(id)) continue
+        seen.add(id)
+
+        items.push({
+          id,
+          title: `Pixabay Photo ${id}`,
+          description: `Pixabay photo ${id}`,
+          image: rawUrl,
+          thumbnail: rawUrl,
+          link: `https://pixabay.com/zh/photos/search/${encodeURIComponent(keyword)}/`,
+          url: `https://pixabay.com/zh/photos/search/${encodeURIComponent(keyword)}/`,
+          author: 'Pixabay Contributor',
+        })
+      }
+    }
+
+    const finalItems = items.slice(0, limit)
+    return {
+      success: true,
+      query: keyword,
+      count: finalItems.length,
+      items: finalItems,
+      links: finalItems.map((f) => f.image).filter(Boolean),
+      page,
+      nextPage: finalItems.length > 0 ? page + 1 : null,
+    }
+  } catch (error: any) {
+    return {
+      success: false,
+      query: keyword,
+      count: 0,
+      items: [],
+      links: [],
+      page,
+      nextPage: null,
+      error: error?.message || String(error),
+    }
+  }
+}
+
+/**
+ * 下载 Pixabay 图片到本地
+ */
+export async function downloadPixabayImage(
+  imageUrl: string,
+  options: { filename?: string; destDir?: string } = {}
+): Promise<{ success: boolean; filePath?: string; error?: string }> {
+  if (!imageUrl) return { success: false, error: '缺少图片 URL' }
+  try {
+    const fetchFn = session?.defaultSession?.fetch || globalThis.fetch
+    const res = await fetchFn(imageUrl, {
+      headers: { 'User-Agent': USER_AGENT, 'Referer': 'https://pixabay.com/' }
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const arrayBuffer = await res.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+
+    const destDir = options.destDir || join(app.getPath('temp'), 'pixabay')
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true })
+    }
+    const filename = options.filename || `pixabay-${Date.now()}.jpg`
+    const filePath = join(destDir, filename)
+    fs.writeFileSync(filePath, buffer)
+    return { success: true, filePath }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+}
+
+/**
+ * 同步 Pixabay 图片到系统素材库
+ */
+export async function syncPixabayToMaterialLibrary(
+  imageUrl: string,
+  metadata?: Record<string, any>
+): Promise<{ success: boolean; message: string; data?: any }> {
+  if (!imageUrl) {
+    return { success: false, message: '缺少图片 URL' }
+  }
+
+  try {
+    const fetchFn = session?.defaultSession?.fetch || globalThis.fetch
+    const res = await fetchFn(imageUrl, {
+      headers: { 'User-Agent': USER_AGENT, 'Referer': 'https://pixabay.com/' }
+    })
+    if (!res.ok) {
+      return { success: false, message: `下载图片失败: HTTP ${res.status}` }
+    }
+
+    const arrayBuffer = await res.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+
+    const workspaceDir = app.getPath('userData')
+    const outputDir = join(workspaceDir, 'pixabay')
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true })
+    }
+
+    const title = metadata?.title || `pixabay-${metadata?.id || Date.now()}`
+    const safeName = sanitizeName(title).slice(0, 60) || `pixabay-${Date.now()}`
+    const fileName = `${safeName}.jpg`
+    const localFilePath = join(outputDir, fileName)
+    fs.writeFileSync(localFilePath, buffer)
+
+    const cosKey = await generateCosKey({ category: 'pixabay', filename: fileName })
+    const cosResult = await uploadFileToCos(localFilePath, cosKey)
+    if (!cosResult.ok || !cosResult.url) {
+      return { success: false, message: 'COS 上传失败' }
+    }
+
+    return {
+      success: true,
+      message: '已成功同步至素材库',
+      data: {
+        cosUrl: cosResult.url,
+        localFilePath,
+      },
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || String(err),
+    }
+  }
+}

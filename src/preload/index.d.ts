@@ -207,6 +207,99 @@ declare global {
         fileSize?: number
         materialLibraryOk?: boolean
       }>
+      // Pinterest 图搜与下载
+      searchPinterest(payload: { keyword: string; scope?: string; limit?: number; imageOnly?: boolean; bookmark?: string | null }): Promise<{
+        success: boolean
+        query: string
+        count: number
+        items: Array<{
+          id: string
+          title: string
+          description: string
+          image: string
+          thumbnail: string
+          link: string
+          url: string
+          boardName: string
+          pinner: string
+          width?: number
+          height?: number
+          isVideo: boolean
+        }>
+        links: string[]
+        bookmark: string | null
+        error?: string
+      }>
+      getPinterestStatus(): Promise<{
+        ok: boolean
+        siteUrl: string
+        siteAvailable: boolean
+        siteStatus?: number | null
+        siteLatencyMs?: number | null
+        siteCheckedAt: string
+        siteError?: string | null
+        message: string
+      }>
+      downloadPinterestImage(payload: { imageUrl: string; filename?: string }): Promise<{
+        ok: boolean
+        msg?: string
+        filePath?: string
+      }>
+      syncPinterestToMaterialLibrary(payload: { imageUrl: string; metadata?: Record<string, any> }): Promise<{
+        ok: boolean
+        msg?: string
+        filePath?: string
+        fileName?: string
+        fileSize?: number
+        materialLibraryOk?: boolean
+      }>
+      // Wikimedia Commons 图搜与下载
+      searchWikimedia(payload: { keyword: string; limit?: number; imageOnly?: boolean; offset?: number | null }): Promise<{
+        success: boolean
+        query: string
+        count: number
+        items: Array<{
+          id: string
+          title: string
+          description: string
+          image: string
+          thumbnail: string
+          link: string
+          url: string
+          width?: number
+          height?: number
+          mime?: string
+          author?: string
+          license?: string
+          date?: string
+        }>
+        links: string[]
+        nextOffset: number | null
+        error?: string
+      }>
+      getWikimediaStatus(): Promise<{
+        ok: boolean
+        siteUrl: string
+        siteAvailable: boolean
+        siteStatus?: number | null
+        siteLatencyMs?: number | null
+        siteCheckedAt: string
+        siteError?: string | null
+        message: string
+      }>
+      downloadWikimediaImage(payload: { imageUrl: string; filename?: string }): Promise<{
+        ok: boolean
+        msg?: string
+        filePath?: string
+      }>
+      syncWikimediaToMaterialLibrary(payload: { imageUrl: string; metadata?: Record<string, any> }): Promise<{
+        ok: boolean
+        msg?: string
+        filePath?: string
+        fileName?: string
+        fileSize?: number
+        materialLibraryOk?: boolean
+      }>
       uploadFileToCos(payload: { filePath: string; key?: string }): Promise<{
         ok: boolean
         msg?: string
