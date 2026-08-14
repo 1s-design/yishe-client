@@ -196,6 +196,14 @@ const api = {
     ipcRenderer.invoke('stocksnap:download', payload),
   syncStockSnapToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
     ipcRenderer.invoke('stocksnap:sync', { imageUrl, metadata }),
+  // Openverse API 导出
+  searchOpenverse: (payload: { query: string; limit?: number; page?: number }) =>
+    ipcRenderer.invoke('openverse:search', payload),
+  getOpenverseStatus: () => ipcRenderer.invoke('openverse:status'),
+  downloadOpenverseImage: (payload: { imageUrl: string; filename?: string }) =>
+    ipcRenderer.invoke('openverse:download', payload),
+  syncOpenverseToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('openverse:sync', { imageUrl, metadata }),
   // 通用图片压缩：限制尺寸与大小（不裁剪不填充）
   processImageWithLimits: (payload: {
     sourcePath: string

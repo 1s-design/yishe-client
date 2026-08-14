@@ -66,6 +66,12 @@ import {
   syncStockSnapToMaterialLibrary,
   downloadStockSnapImage,
 } from "./stocksnap";
+import {
+  searchOpenverse,
+  getOpenverseStatus,
+  syncOpenverseToMaterialLibrary,
+  downloadOpenverseImage,
+} from "./openverse";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
@@ -2876,6 +2882,63 @@ ipcMain.handle(
       const { imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await syncStockSnapToMaterialLibrary(imageUrl, metadata);
+      return { ok: res.success, msg: res.message, data: res.data };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "openverse:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+    },
+  ) => {
+    const { query, page, limit, pageSize } = payload || {};
+    return searchOpenverse(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+    });
+  },
+);
+
+ipcMain.handle("openverse:status", async () => {
+  return getOpenverseStatus();
+});
+
+ipcMain.handle(
+  "openverse:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadOpenverseImage(imageUrl, { filename });
+      return { ok: res.success, filePath: res.filePath, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "openverse:sync",
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncOpenverseToMaterialLibrary(imageUrl, metadata);
       return { ok: res.success, msg: res.message, data: res.data };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
