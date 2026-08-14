@@ -4,7 +4,7 @@
  */
 import fs from 'fs'
 import { join } from 'path'
-import { app, session } from 'electron'
+import { app } from 'electron'
 import { uploadFileToCos, generateCosKey } from './cos'
 import { checkSiteAvailability } from './siteAvailability'
 
@@ -64,7 +64,7 @@ export async function getStockSnapStatus() {
   return {
     key: 'stocksnap',
     pluginKey: 'stocksnap',
-    label: 'StockSnap 免版权图库采集',
+    label: 'StockSnap 免版权图库',
     connected: site.ok,
     available: site.ok,
     status: site.ok ? 'connected' : 'error',
@@ -101,10 +101,7 @@ export async function searchStockSnap(
   const sort = options.sort || 'date'
 
   try {
-    const fetchFn = session?.defaultSession?.fetch
-      ? session.defaultSession.fetch.bind(session.defaultSession)
-      : globalThis.fetch
-
+    const fetchFn = await getFetchImpl()
     let rawItems: any[] = []
 
     // 策略 1：StockSnap XHR API 接口
@@ -241,24 +238,14 @@ function parseStockSnapHtml(html: string): any[] {
     const photoSlug = match[2]
     const thumbUrl = match[3]
     const alt = match[4]
-
-    const photoId = photoSlug.includes('-') ? photoSlug.split('-').pop() : photoSlug
-    const hdImage = thumbUrl.replace('/280h/', '/960w/')
-    const detailLink = href.startsWith('/') ? `https://stocksnap.io${href}` : href
-    const title = alt.trim() ? alt.trim() : `StockSnap #${photoId}`
+    const photoId = photoSlug.split('-').pop() || photoSlug
 
     items.push({
-      id: photoId,
-      title,
-      description: alt.trim(),
-      image: hdImage,
+      img_id: photoId,
+      title: alt.trim(),
+      image: thumbUrl.replace('/280h/', '/960w/'),
       thumbnail: thumbUrl,
-      downloadUrl: `https://stocksnap.io/photo/download/${photoId}`,
-      link: detailLink,
-      url: detailLink,
-      author: 'StockSnap Photographer',
-      license: 'CC0 Free for Commercial Use',
-      isFree: true,
+      url: `https://stocksnap.io${href}`,
     })
   }
 
@@ -266,7 +253,7 @@ function parseStockSnapHtml(html: string): any[] {
 }
 
 /**
- * 下载单张图片
+ * 下载单张 StockSnap 图片
  */
 export async function downloadStockSnapImage(
   imageUrl: string,
@@ -277,9 +264,7 @@ export async function downloadStockSnapImage(
   }
 
   try {
-    const fetchFn = session?.defaultSession?.fetch
-      ? session.defaultSession.fetch.bind(session.defaultSession)
-      : globalThis.fetch
+    const fetchFn = await getFetchImpl()
 
     const r = await fetchFn(imageUrl, {
       method: 'GET',
@@ -358,4 +343,25 @@ export async function syncStockSnapToMaterialLibrary(
       message: err?.message || String(err),
     }
   }
+}
+
+// ─── fetch 实现 ───
+let fetchImplPromise: Promise<typeof fetch> | null = null
+
+async function getFetchImpl(): Promise<typeof fetch> {
+  if (!fetchImplPromise) {
+    fetchImplPromise = (async () => {
+      try {
+        const electron = await import('electron')
+        const net = electron.net
+        if (net && typeof (net as any).fetch === 'function') {
+          return (net as any).fetch.bind(net) as typeof fetch
+        }
+      } catch {
+        // non-electron env
+      }
+      return fetch
+    })()
+  }
+  return fetchImplPromise
 }
