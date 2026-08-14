@@ -277,6 +277,11 @@ declare global {
         nextOffset: number | null
         error?: string
       }>
+      // Rawpixel 接口声明
+      searchRawpixel(payload: { keyword: string; limit?: number; page?: number; sort?: string }): Promise<any>
+      getRawpixelStatus(): Promise<any>
+      downloadRawpixelImage(payload: { imageUrl: string; filename?: string }): Promise<any>
+      syncRawpixelToMaterialLibrary(imageUrl: string, metadata?: Record<string, any>): Promise<any>
       getWikimediaStatus(): Promise<{
         ok: boolean
         siteUrl: string

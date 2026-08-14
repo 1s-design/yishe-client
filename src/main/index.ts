@@ -54,6 +54,12 @@ import {
   syncPixabayToMaterialLibrary,
   downloadPixabayImage,
 } from "./pixabay";
+import {
+  searchRawpixel,
+  getRawpixelStatus,
+  syncRawpixelToMaterialLibrary,
+  downloadRawpixelImage,
+} from "./rawpixel";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
@@ -2748,6 +2754,64 @@ ipcMain.handle(
       const { imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await syncPexelsToMaterialLibrary(imageUrl, metadata);
+      return { ok: res.success, msg: res.message, data: res.data };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// Rawpixel 免版权艺术图搜与下载
+ipcMain.handle(
+  "rawpixel:search",
+  async (
+    _event,
+    payload: {
+      keyword: string;
+      limit?: number;
+      page?: number;
+      sort?: string;
+    },
+  ) => {
+    return searchRawpixel(payload?.keyword || "", {
+      limit: payload?.limit,
+      page: payload?.page,
+      sort: payload?.sort,
+    });
+  },
+);
+
+ipcMain.handle("rawpixel:status", async () => {
+  return getRawpixelStatus();
+});
+
+ipcMain.handle(
+  "rawpixel:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadRawpixelImage(imageUrl, { filename });
+      return { ok: res.success, filePath: res.filePath, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "rawpixel:sync",
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncRawpixelToMaterialLibrary(imageUrl, metadata);
       return { ok: res.success, msg: res.message, data: res.data };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };

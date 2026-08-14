@@ -66,7 +66,7 @@ export const googleArtSearchTool = {
     const maxCount = countInput ? Number(countInput) : undefined;
 
     try {
-      const result = await searchGoogleArts({ keyword, page, hl, maxCount });
+      const result = await searchGoogleArts(keyword, page, hl);
 
       // 截断到 maxCount
       let items = result.items;

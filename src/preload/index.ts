@@ -179,8 +179,15 @@ const api = {
     ipcRenderer.invoke('material:download-and-upload', params),
   // 图片转PNG转换（支持SVG、WebP等）
   convertToPng: (payload: { inputPath: string; pngPath: string; width?: number; height?: number }) =>
-    ipcRenderer.invoke('convert-to-png', payload)
-  ,
+    ipcRenderer.invoke('convert-to-png', payload),
+  // Rawpixel API 导出
+  searchRawpixel: (payload: { keyword: string; limit?: number; page?: number; sort?: string }) =>
+    ipcRenderer.invoke('rawpixel:search', payload),
+  getRawpixelStatus: () => ipcRenderer.invoke('rawpixel:status'),
+  downloadRawpixelImage: (payload: { imageUrl: string; filename?: string }) =>
+    ipcRenderer.invoke('rawpixel:download', payload),
+  syncRawpixelToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('rawpixel:sync', { imageUrl, metadata }),
   // 通用图片压缩：限制尺寸与大小（不裁剪不填充）
   processImageWithLimits: (payload: {
     sourcePath: string

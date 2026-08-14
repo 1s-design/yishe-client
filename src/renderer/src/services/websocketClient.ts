@@ -9246,7 +9246,7 @@ function registerBuiltInLocalServices() {
     pluginKey: "pinterest",
     label: "Pinterest",
     getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi();
+      const nativeApi = getNativeApi() as any;
       if (!nativeApi?.getPinterestStatus) {
         return {
           label: "Pinterest",
@@ -9309,7 +9309,7 @@ function registerBuiltInLocalServices() {
 
       if (command.action === "download") {
         const { imageUrl, filename } = command.payload || {};
-        const nativeApi = getNativeApi();
+        const nativeApi = getNativeApi() as any;
         if (!imageUrl) {
           throw new Error("缺少 Pinterest 图片链接");
         }
@@ -9326,7 +9326,7 @@ function registerBuiltInLocalServices() {
 
       if (command.action === "sync") {
         const { imageUrl, metadata } = command.payload || {};
-        const nativeApi = getNativeApi();
+        const nativeApi = getNativeApi() as any;
         if (!imageUrl) {
           throw new Error("缺少 Pinterest 图片链接");
         }
@@ -9428,7 +9428,7 @@ function registerBuiltInLocalServices() {
     pluginKey: "wikimedia",
     label: "Wikimedia Commons",
     getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi();
+      const nativeApi = getNativeApi() as any;
       if (!nativeApi?.getWikimediaStatus) {
         return {
           label: "Wikimedia Commons",
@@ -9491,7 +9491,7 @@ function registerBuiltInLocalServices() {
 
       if (command.action === "download") {
         const { imageUrl, filename } = command.payload || {};
-        const nativeApi = getNativeApi();
+        const nativeApi = getNativeApi() as any;
         if (!imageUrl) {
           throw new Error("缺少 Wikimedia 图片链接");
         }
@@ -9508,7 +9508,7 @@ function registerBuiltInLocalServices() {
 
       if (command.action === "sync") {
         const { imageUrl, metadata } = command.payload || {};
-        const nativeApi = getNativeApi();
+        const nativeApi = getNativeApi() as any;
         if (!imageUrl) {
           throw new Error("缺少 Wikimedia 图片链接");
         }
@@ -9611,7 +9611,7 @@ function registerBuiltInLocalServices() {
     pluginKey: "pexels",
     label: "Pexels 高清摄影",
     getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi();
+      const nativeApi = getNativeApi() as any;
       if (!nativeApi?.getPexelsStatus) {
         return {
           label: "Pexels 高清摄影",
@@ -9671,7 +9671,7 @@ function registerBuiltInLocalServices() {
 
       if (command.action === "download") {
         const { imageUrl, filename } = command.payload || {};
-        const nativeApi = getNativeApi();
+        const nativeApi = getNativeApi() as any;
         if (!imageUrl) {
           throw new Error("缺少 Pexels 图片链接");
         }
@@ -9688,7 +9688,7 @@ function registerBuiltInLocalServices() {
 
       if (command.action === "sync") {
         const { imageUrl, metadata } = command.payload || {};
-        const nativeApi = getNativeApi();
+        const nativeApi = getNativeApi() as any;
         if (!imageUrl) {
           throw new Error("缺少 Pexels 图片链接");
         }
@@ -9785,7 +9785,7 @@ function registerBuiltInLocalServices() {
     pluginKey: "pixabay",
     label: "Pixabay 免费图库",
     getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi();
+      const nativeApi = getNativeApi() as any;
       if (!nativeApi?.getPixabayStatus) {
         return {
           label: "Pixabay 免费图库",
@@ -9845,7 +9845,7 @@ function registerBuiltInLocalServices() {
 
       if (command.action === "download") {
         const { imageUrl, filename } = command.payload || {};
-        const nativeApi = getNativeApi();
+        const nativeApi = getNativeApi() as any;
         if (!imageUrl) {
           throw new Error("缺少 Pixabay 图片链接");
         }
@@ -9862,7 +9862,7 @@ function registerBuiltInLocalServices() {
 
       if (command.action === "sync") {
         const { imageUrl, metadata } = command.payload || {};
-        const nativeApi = getNativeApi();
+        const nativeApi = getNativeApi() as any;
         if (!imageUrl) {
           throw new Error("缺少 Pixabay 图片链接");
         }
@@ -9950,6 +9950,176 @@ function registerBuiltInLocalServices() {
       }
 
       throw new Error(`未实现的 Pixabay 命令: ${command.action}`);
+    },
+  });
+
+  registerLocalService({
+    key: "rawpixel",
+    pluginKey: "rawpixel",
+    label: "Rawpixel 艺术图库",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.getRawpixelStatus) {
+        return {
+          label: "Rawpixel 艺术图库",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 Rawpixel 能力",
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+
+      const status = await nativeApi.getRawpixelStatus();
+      const connected = true;
+      const available = true;
+
+      return {
+        label: "Rawpixel 艺术图库",
+        connected,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || "Rawpixel 可用",
+        endpoint: "https://www.rawpixel.com/",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: {
+          siteAvailable: true,
+          runtime: "desktop",
+        },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const { keyword, limit = 25, page = 1, sort = "curated" } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchRawpixel) {
+          throw new Error("当前环境未注入桌面端 Rawpixel 搜索能力");
+        }
+        const result = await nativeApi.searchRawpixel({ keyword, limit, page, sort });
+        return {
+          success: result?.success ?? false,
+          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          data: result,
+        };
+      }
+
+      if (command.action === "download") {
+        const { imageUrl, filename } = command.payload || {};
+        const nativeApi = getNativeApi() as any;
+        if (!imageUrl) {
+          throw new Error("缺少 Rawpixel 图片链接");
+        }
+        if (!nativeApi?.downloadRawpixelImage) {
+          throw new Error("当前环境未注入桌面端 Rawpixel 下载能力");
+        }
+        const data = await nativeApi.downloadRawpixelImage({ imageUrl, filename });
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          data,
+        };
+      }
+
+      if (command.action === "sync") {
+        const { imageUrl, metadata } = command.payload || {};
+        const nativeApi = getNativeApi() as any;
+        if (!imageUrl) {
+          throw new Error("缺少 Rawpixel 图片链接");
+        }
+        if (!nativeApi?.syncRawpixelToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Rawpixel 同步能力");
+        }
+        const data = await nativeApi.syncRawpixelToMaterialLibrary(imageUrl, metadata);
+        await syncServiceRuntime("rawpixel");
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const { keyword, maxCount = 10, sort = "curated", syncToMaterial = true } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchRawpixel || !nativeApi?.syncRawpixelToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Rawpixel 采集能力");
+        }
+
+        const searchResult = await nativeApi.searchRawpixel({ keyword, limit: maxCount, sort });
+        if (!searchResult?.success || !searchResult?.items?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, images: [] },
+          };
+        }
+
+        const items = searchResult.items;
+        const images: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of items) {
+          try {
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncRawpixelToMaterialLibrary(item.image, {
+                title: item.title,
+                url: item.url,
+                author: item.author,
+                width: item.width,
+                height: item.height,
+                id: item.id,
+              });
+              if (syncResult?.success) {
+                images.push({
+                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath,
+                  originUrl: item.image,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              const dl = await nativeApi.downloadRawpixelImage({ imageUrl: item.image });
+              if (dl?.ok) {
+                images.push({ url: dl.filePath, originUrl: item.image });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("rawpixel");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, images },
+        };
+      }
+
+      throw new Error(`未实现的 Rawpixel 命令: ${command.action}`);
     },
   });
 }
