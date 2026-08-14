@@ -91,12 +91,12 @@ export async function searchRawpixel(
       links: [],
       page: 1,
       nextPage: null,
-      error: '缺少搜索关键词'
+      error: '请输入搜索关键词'
     }
   }
 
-  const page = Math.max(Number(options.page) || 1, 1)
-  const limit = Math.min(Math.max(Number(options.limit || options.pageSize) || 25, 1), 100)
+  const page = options.page || 1
+  const limit = options.limit || options.pageSize || 20
   const sort = options.sort || 'curated'
 
   try {
@@ -125,7 +125,7 @@ export async function searchRawpixel(
       // ignore
     }
 
-    // 策略 2：Category SSR HTML 页面解析 (可 200 OK 绕过 Cloudflare 403)
+    // 策略 2：Category SSR HTML 页面解析 (校验分类/词条匹配度，防止兜底到无关固定画板)
     if (!rawItems.length) {
       try {
         const categoryUrl = `https://www.rawpixel.com/category/${encodeURIComponent(keyword)}`
@@ -138,7 +138,7 @@ export async function searchRawpixel(
         const r2 = await fetchImpl(categoryUrl, { method: 'GET', headers })
         if (r2.ok) {
           const html = await r2.text()
-          rawItems = parseRawpixelHtml(html)
+          rawItems = parseRawpixelHtml(html, keyword)
         }
       } catch {
         // ignore
@@ -196,7 +196,7 @@ export async function searchRawpixel(
 }
 
 /**
- * 将 Rawpixel API 或 HTML 项标准化
+ * 规格化 Rawpixel 素材对象
  */
 function normalizeRawpixelPhoto(item: any): RawpixelPhoto | null {
   if (!item) return null
@@ -242,7 +242,7 @@ function normalizeRawpixelPhoto(item: any): RawpixelPhoto | null {
   }
 }
 
-function parseRawpixelHtml(html: string): any[] {
+function parseRawpixelHtml(html: string, keyword: string): any[] {
   try {
     const scriptMatch = html.match(/<script[^>]*>(\{"props":\{"pageProps":.*?\})<\/script>/s)
     if (scriptMatch && scriptMatch[1]) {
@@ -255,6 +255,13 @@ function parseRawpixelHtml(html: string): any[] {
           if (qdata && typeof qdata === 'object') {
             const list = qdata.results || qdata.data || qdata.items
             if (Array.isArray(list) && list.length > 0) {
+              // 关键逻辑：过滤 Rawpixel 的全网页通用兜底画板 (CDC Health and Wellness Images)
+              const firstTitle = String(list[0]?.title || list[0]?.short_title || list[0]?.image_alt || '').toLowerCase()
+              const kwLower = keyword.toLowerCase()
+              if (firstTitle.includes('cdc health') && !kwLower.includes('cdc') && !kwLower.includes('health')) {
+                // 这是默认降级画板，并非用户搜索的目标词条结果，舍弃该降级数据
+                return []
+              }
               return list
             }
           }
@@ -279,31 +286,31 @@ export async function downloadRawpixelImage(
   options: { filename?: string } = {}
 ): Promise<{ success: boolean; filePath?: string; error?: string }> {
   if (!/^https?:\/\//.test(imageUrl)) {
-    return { success: false, error: `无效的图片地址: ${imageUrl}` }
+    return { success: false, error: '无效的图片 URL' }
   }
 
   try {
     const fetchImpl = await getFetchImpl()
-    const r = await fetchImpl(imageUrl, {
-      method: 'GET',
-      headers: { 'User-Agent': USER_AGENT }
+    const res = await fetchImpl(imageUrl, {
+      headers: { 'User-Agent': USER_AGENT, 'Referer': RAWPIXEL_SITE_URL }
     })
-
-    if (!r.ok) {
-      return { success: false, error: `Rawpixel 图片下载失败: HTTP ${r.status}` }
+    if (!res.ok) {
+      return { success: false, error: `下载图片失败: HTTP ${res.status}` }
     }
 
-    const arrayBuffer = await r.arrayBuffer()
+    const arrayBuffer = await res.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
     const workspaceDir = app.getPath('userData')
-    const destDir = join(workspaceDir, 'rawpixel')
-    if (!fs.existsSync(destDir)) {
-      fs.mkdirSync(destDir, { recursive: true })
+    const outputDir = join(workspaceDir, 'rawpixel')
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true })
     }
 
-    const finalName = options.filename ? sanitizeName(options.filename) : `rawpixel_${Date.now()}.jpg`
-    const filePath = join(destDir, finalName)
+    const safeName = options.filename ? sanitizeName(options.filename) : `rawpixel-${Date.now()}`
+    const fileName = safeName.endsWith('.jpg') || safeName.endsWith('.png') ? safeName : `${safeName}.jpg`
+    const filePath = join(outputDir, fileName)
+
     fs.writeFileSync(filePath, buffer)
     return { success: true, filePath }
   } catch (err: any) {
@@ -312,7 +319,7 @@ export async function downloadRawpixelImage(
 }
 
 /**
- * 同步单图或批量素材到素材库
+ * 同步单张图片到 COS 与全局素材库
  */
 export async function syncRawpixelToMaterialLibrary(
   imageUrl: string,
