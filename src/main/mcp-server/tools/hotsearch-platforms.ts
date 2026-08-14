@@ -54,11 +54,11 @@ export function getPlatformToolDefinitions() {
  */
 export async function executePlatformCollect(
   platformKey: string,
-  _reportToServer: boolean = true
+  _reportToServer: boolean = false
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     const { hotSearchService } = await import('../../hotsearch/hotsearch.service');
-    const result = await hotSearchService.fetchAndReport([platformKey]);
+    const result = await hotSearchService.fetchAll([platformKey]);
 
     const platformResult = result.platforms?.[0];
     return {
@@ -72,8 +72,8 @@ export async function executePlatformCollect(
           items: platformResult?.items?.slice(0, 10) ?? [],
           duration: platformResult?.duration,
           error: platformResult?.error,
-          fetchedAt: result.fetchedAt,
-          reportResult: result.reportResult,
+          fetchedAt: (result as any).fetchedAt,
+          reportResult: (result as any).reportResult,
         }, null, 2),
       }],
       isError: !platformResult?.success,
@@ -98,13 +98,13 @@ export async function executePlatformCollect(
  */
 export function executeAllPlatformCollect(
   platformKeys?: string[],
-  _reportToServer: boolean = true
+  _reportToServer: boolean = false
 ): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
   // 后台异步执行采集，不阻塞 MCP 响应
   (async () => {
     try {
       const { hotSearchService } = await import('../../hotsearch/hotsearch.service');
-      const result = await hotSearchService.fetchAndReport(platformKeys);
+      const result = await hotSearchService.fetchAll(platformKeys);
       const successCount = result.platforms?.filter((p: any) => p.success).length ?? 0;
       console.log(`[MCP] 全平台采集完成: 成功 ${successCount}/${result.platforms?.length ?? 0}`);
     } catch (error: any) {
@@ -118,9 +118,9 @@ export function executeAllPlatformCollect(
       type: 'text',
       text: JSON.stringify({
         success: true,
-        message: '全平台热搜采集已启动，正在后台执行。采集完成后数据会自动上报到服务端，可在 Admin 热搜页面查看结果。',
+        message: '全平台热搜采集已启动，正在后台执行。',
         platforms: platformKeys || Object.keys(PLATFORM_CONFIGS),
-        tip: '采集约需 1-2 分钟，请稍后在 Admin 页面刷新查看。',
+        tip: '采集约需 1-2 分钟',
       }, null, 2),
     }],
   };

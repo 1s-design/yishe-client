@@ -94,6 +94,8 @@ const api = {
   // Google Arts 高清图片
   getGoogleArtStatus: () => ipcRenderer.invoke('google-art:status'),
   getGoogleArtZooms: (url: string) => ipcRenderer.invoke('google-art:get-zooms', url),
+  searchGoogleArts: (payload: { keyword: string; page?: number; hl?: string; maxCount?: number; cursor?: string | null }) =>
+    ipcRenderer.invoke('google-art:search', payload),
   syncGoogleArtToMaterialLibrary: (payload: { url: string; zoomLevel: number }) =>
     ipcRenderer.invoke('google-art:sync', payload),
   uploadFileToCos: (payload: { filePath: string; key?: string }) =>

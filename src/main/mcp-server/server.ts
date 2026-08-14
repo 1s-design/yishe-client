@@ -16,8 +16,12 @@ import {
   executeAllPlatformCollect,
 } from './tools/hotsearch-platforms';
 import { getTokenValue } from '../server';
+import { writeClientLog } from '../clientLogger';
 import { listOperationDefinitions } from '../image-tool/legacy/operation-registry.js';
 import { browserTools } from './tools/browser-tools';
+import { googleArtSearchTool } from './tools/google-art-search';
+import { googleArtDownloadTool } from './tools/google-art-download';
+import { googleArtCollectTool } from './tools/google-art-collect';
 
 type ToolCapability = {
   key: string;
@@ -27,7 +31,7 @@ type ToolCapability = {
   aliases?: string[];
 };
 
-function zodToJsonSchema(schema: any): Record<string, any> {
+export function zodToJsonSchema(schema: any): Record<string, any> {
   let current = schema;
   let optional = false;
   while (current?._def?.typeName === 'ZodOptional' || current?._def?.typeName === 'ZodDefault') {
@@ -85,7 +89,7 @@ interface RegisteredTool {
 }
 
 export class McpServerManager {
-  private serverFactory: (() => McpServer) | null = null;
+  private serverFactory: (() => Promise<McpServer>) | null = null;
   private httpServer: HttpServer | null = null;
   private transport: SSEServerTransport | null = null;
   private app: express.Express | null = null;
@@ -100,8 +104,8 @@ export class McpServerManager {
   /**
    * 创建 McpServer 工厂函数，每次连接创建新实例
    */
-  private createServerFactory(): () => McpServer {
-    return () => {
+  private createServerFactory(): () => Promise<McpServer> {
+    return async () => {
       const server = new McpServer(
         { name: 'yishe-client-mcp', version: '1.0.0' },
         { capabilities: { tools: {} } }
@@ -387,9 +391,98 @@ export class McpServerManager {
             return tool.execute(args as any);
           },
         });
+
+
+
       }
 
+      // 注册 Google Art 采集工具
+      try {
+        const googleArtSearchSchema = {
+          keyword: z.string().describe('搜索关键词（英文效果更佳，如 "van gogh"、"impressionism"）。'),
+          page: z.number().optional().describe('页码，从 1 开始（每页约 60 条）。默认 1。'),
+          maxCount: z.number().optional().describe('最多返回多少条结果（在分页基础上截断）。默认不限制。'),
+          hl: z.string().optional().describe('语言代码，默认 "en"。'),
+        };
+
+        const googleArtDownloadSchema = {
+          url: z.string().describe('Google Arts 作品链接。'),
+          zoomLevel: z.number().optional().describe('分辨率级别。不传则自动选择最高分辨率。'),
+          autoMax: z.boolean().optional().describe('是否自动选择最高分辨率，默认 true。'),
+          syncToMaterial: z.boolean().optional().describe('是否自动保存并同步到素材库，默认 true。'),
+        };
+
+        const googleArtCollectSchema = {
+          keyword: z.string().describe('搜索关键词（英文效果更佳，如 "van gogh"、"impressionism"）。'),
+          maxCount: z.number().optional().describe('采集数量，默认 10，最大 50。'),
+          autoMax: z.boolean().optional().describe('是否自动选择最高分辨率，默认 true。'),
+          syncToMaterial: z.boolean().optional().describe('是否自动同步到素材库，默认 true。'),
+        };
+
+        const schemasMap: Record<string, any> = {
+          google_art_search: googleArtSearchSchema,
+          google_art_download: googleArtDownloadSchema,
+          google_art_collect: googleArtCollectSchema,
+        };
+
+        for (const toolDef of [googleArtSearchTool, googleArtDownloadTool, googleArtCollectTool]) {
+          const toolName = toolDef.definition.name;
+          const schema = schemasMap[toolName];
+
+          server.tool(
+            toolName,
+            toolDef.definition.description,
+            schema,
+            async (args) => toolDef.execute(args) as any
+          );
+          this.toolRegistry.set(toolName, {
+            name: toolName,
+            description: toolDef.definition.description,
+            inputSchema: toolDef.definition.inputSchema,
+            category: 'google_art',
+            handler: async (args) => toolDef.execute(args) as any,
+          });
+        }
+        writeClientLog({
+          level: 'INFO',
+          module: 'mcp-server',
+          message: '已注册 3 个 Google Art 工具',
+        });
+      } catch (e) {
+        writeClientLog({
+          level: 'ERROR',
+          module: 'mcp-server',
+          message: `Google Art 工具注册失败: ${(e as Error)?.message}`,
+          context: { error: String(e), stack: (e as Error)?.stack },
+        });
+      }
+
+
+      // 注册通用客户端能力工具
+      try {
+        const { getCapabilityMcpTools } = await import('../capabilities/bridge');
+        const capTools = getCapabilityMcpTools();
+        for (const capTool of capTools) {
+          server.tool(
+            capTool.name,
+            capTool.description,
+            capTool.inputSchema as any,
+            async (args) => capTool.handler(args) as any
+          );
+          this.toolRegistry.set(capTool.name, {
+            name: capTool.name,
+            description: capTool.description,
+            inputSchema: capTool.inputSchema,
+            category: capTool.category,
+            handler: capTool.handler,
+          });
+        }
+        console.log(`[MCP Server] 已注册 ${capTools.length} 个通用能力工具`);
+      } catch (e) {
+        console.warn('[MCP Server] 通用能力注册失败:', (e as Error)?.message);
+      }
       return server;
+
     };
   }
 
@@ -403,7 +496,7 @@ export class McpServerManager {
 
     // 启动时立即创建一个 server 实例，注册所有工具到 toolRegistry
     try {
-      this.serverFactory();
+      await this.serverFactory();
     } catch (e) {
       console.warn('[MCP Server] 预注册工具时忽略连接错误:', (e as Error)?.message);
     }
@@ -433,7 +526,7 @@ export class McpServerManager {
       }
 
       // 为每个连接创建新的 McpServer 实例
-      const server = this.serverFactory!();
+      const server = await this.serverFactory!();
       const transport = new SSEServerTransport('/messages', res);
       this.transport = transport;
 

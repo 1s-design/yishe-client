@@ -9086,6 +9086,23 @@ function registerBuiltInLocalServices() {
     label: "Google Art",
     getRuntime: getGoogleArtRuntime,
     execute: async (command) => {
+      if (command.action === "search") {
+        const { query, page = 1, hl = 'en', maxCount, cursor } = command.payload || {}
+        if (!query) {
+          throw new Error("缺少搜索关键词")
+        }
+        const nativeApi = getNativeApi() as any
+        if (!nativeApi?.searchGoogleArts) {
+          throw new Error("当前环境未注入桌面端 Google Art 搜索能力")
+        }
+        const result = await nativeApi.searchGoogleArts({ keyword: query, page, hl, maxCount, cursor })
+        return {
+          success: result?.success ?? false,
+          message: result?.success ? "搜索完成" : (result?.error || "搜索失败"),
+          data: result,
+        }
+      }
+
       if (command.action === "getZooms") {
         const url = command.payload?.url;
         const nativeApi = getNativeApi();
@@ -9133,6 +9150,75 @@ function registerBuiltInLocalServices() {
             ? "图片已同步到素材库"
             : data?.msg || "同步到素材库失败",
           data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const { keyword, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        if (!keyword) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchGoogleArts) {
+          throw new Error("当前环境未注入桌面端 Google Art 搜索能力");
+        }
+
+        // Step 1: 搜索链接
+        const searchResult = await nativeApi.searchGoogleArts({ keyword, page: 1, hl: 'en', maxCount });
+        if (!searchResult?.success || !searchResult?.links?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, images: [] },
+          };
+        }
+
+        const links = searchResult.links;
+        const images: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        // Step 2: 逐个下载
+        for (const link of links) {
+          try {
+            const zoomsResult = await nativeApi.getGoogleArtZooms(link);
+            if (!zoomsResult?.ok || !zoomsResult?.zooms?.length) {
+              failCount++;
+              continue;
+            }
+            const maxZoom = zoomsResult.zooms[zoomsResult.zooms.length - 1];
+
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncGoogleArtToMaterialLibrary({
+                url: link,
+                zoomLevel: maxZoom.idx,
+              });
+              if (syncResult?.ok) {
+                images.push({
+                  url: syncResult.filePath,
+                  width: maxZoom.width,
+                  height: maxZoom.height,
+                  fileSize: syncResult.fileSize,
+                  originUrl: link,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              images.push({ url: link, originUrl: link });
+              successCount++;
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("google-art");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, images },
         };
       }
 

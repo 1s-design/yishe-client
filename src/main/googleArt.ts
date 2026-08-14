@@ -1,9 +1,10 @@
 import { spawn } from 'child_process'
 import fs from 'fs'
-import { app } from 'electron'
+import { app, session } from 'electron'
 import { join, resolve } from 'path'
 import { uploadFileToCos, generateCosKey } from './cos'
 import https from 'https'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 import { URL } from 'url'
 import { checkSiteAvailability } from './siteAvailability'
 
@@ -183,7 +184,18 @@ async function uploadToMaterialLibrary(
   localPath: string,
   fileName: string,
   apiBase: string = 'https://1s.design:1520/api',
-  originUrl?: string
+  originUrl?: string,
+  metadata?: {
+    title?: string;
+    artist?: string;
+    date?: string;
+    institution?: string;
+    color?: string;        // 主色调 hex
+    thumbnail?: string;    // 缩略图 URL
+    aspectRatio?: number;  // 宽高比
+    hasPixels?: boolean;   // 是否有全景图
+    id?: string;           // Google Art 作品 ID
+  }
 ): Promise<{ ok: boolean; msg?: string }> {
   // 1. 先上传到 COS（使用新的分类路径）
   const cosKey = await generateCosKey({
@@ -206,20 +218,67 @@ async function uploadToMaterialLibrary(
     const { getTokenValue } = await getServerModule()
     const token = getTokenValue()
     
+    const title = metadata?.title || fileName.replace(/\.jpg$/, '')
+    const artist = metadata?.artist || ''
+    const date = metadata?.date || ''
+    const institution = metadata?.institution || ''
+    const color = metadata?.color || ''
+
+    // 中文名称内容
+    const nameCn = title  // 如果将来有中文翻译可修改 name
+    // 描述：作者 - 年代 (展馆)
+    const descriptionStr = [artist, date, institution].filter(Boolean).join(' · ')
+    // 英文描述
+    const descriptionEnStr = [
+      artist ? `Artist: ${artist}` : '',
+      date ? `Date: ${date}` : '',
+      institution ? `Collection: ${institution}` : '',
+    ].filter(Boolean).join(' | ')
+    // 关键词展开：名称 + 作者 + 展馆 + impressionism
+    const keywordsCn = [title, artist, institution].filter(Boolean).join(',')
+    const keywordsEn = [
+      title, artist, institution,
+      'google arts culture', 'fine art', 'painting',
+    ].filter(Boolean).join(',')
+    // 色板：把 API 返回的主色调存为 colorPalette
+    const colorPalette = color ? color : ''
+
     const postData = JSON.stringify({
-      // 贴纸基础字段
+      // 基础字段
       url: cosResult.url,
       key: cosResult.key,
-      name: fileName.replace(/\.jpg$/, ''),
-      description: '',
-      keywords: '',
       suffix: 'jpg',
       originUrl: originUrl || '',
-      source: 'google.artsandculture.com',
-      // 默认作为公开素材入库（后端会异步补充宽高、色系、AI 文案等）
+      source: institution ? `Google Arts & Culture - ${institution}` : 'artsandculture.google.com',
+      group: 'google-art',
       isPublic: true,
       isTexture: false,
-      isCustom: false
+      isCustom: false,
+      // 名称（中文写作品名，英文同样写进去）
+      name: nameCn,
+      nameEn: title,
+      // 描述
+      description: descriptionStr,
+      descriptionEn: descriptionEnStr,
+      // 关键词
+      keywords: keywordsCn,
+      keywordsEn: keywordsEn,
+      // 色板
+      colorPalette,
+      // 完整元数据 (JSON)
+      meta: {
+        title,
+        artist,
+        date,
+        institution,
+        color,
+        thumbnail: metadata?.thumbnail || null,
+        aspectRatio: metadata?.aspectRatio ?? null,
+        hasPixels: metadata?.hasPixels ?? null,
+        googleArtId: metadata?.id || null,
+        source: 'google_arts_culture',
+        collectedAt: new Date().toISOString(),
+      },
     })
 
     const options = {
@@ -279,8 +338,19 @@ export async function syncGoogleArtToMaterialLibrary(options: {
   url: string
   zoomLevel: number
   workspaceDir: string
+  metadata?: {
+    title?: string;
+    artist?: string;
+    date?: string;
+    institution?: string;
+    color?: string;
+    thumbnail?: string;
+    aspectRatio?: number;
+    hasPixels?: boolean;
+    id?: string;
+  }
 }): Promise<{ ok: boolean; msg?: string; filePath?: string; fileName?: string; fileSize?: number; materialLibraryOk?: boolean }> {
-  const { url, zoomLevel, workspaceDir } = options
+  const { url, zoomLevel, workspaceDir, metadata } = options
 
   if (!url || !/^https?:\/\/(www\.)?artsandculture\.google\.com\//.test(url)) {
     return { ok: false, msg: '请输入有效的 Google Arts 链接（以 artsandculture.google.com 开头）' }
@@ -321,7 +391,7 @@ export async function syncGoogleArtToMaterialLibrary(options: {
         size = stat.size
       } catch {}
 
-      const materialResult = await uploadToMaterialLibrary(outputPath, fileName, undefined, url)
+      const materialResult = await uploadToMaterialLibrary(outputPath, fileName, undefined, url, metadata)
       resolvePromise({
         ok: materialResult.ok,
         filePath: outputPath,
@@ -336,4 +406,227 @@ export async function syncGoogleArtToMaterialLibrary(options: {
       resolvePromise({ ok: false, msg: err.message })
     })
   })
+}
+
+
+// ─── Google Arts API 搜索（无需浏览器）───
+
+const GOOGLE_ART_API = 'https://artsandculture.google.com/api/search'
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+interface GoogleArtSearchItem {
+  id: string
+  title: string
+  artist: string | null
+  thumbnail: string | null
+  url: string
+  color: string | null
+  aspectRatio: number | null
+  hasPixels: boolean
+  institution: string | null
+}
+
+interface GoogleArtSearchResult {
+  success: boolean
+  query: string
+  page: number
+  total: number
+  count: number
+  items: GoogleArtSearchItem[]
+  links: string[]
+  nextCursor: string | null
+  error?: string
+}
+
+export async function searchGoogleArts(
+  payload:
+    | {
+        keyword?: string
+        page?: number
+        hl?: string
+        maxCount?: number
+        cursor?: string | null
+      }
+    | string,
+  pageParam = 1,
+  hlParam = 'en'
+): Promise<GoogleArtSearchResult> {
+  let keyword = ''
+  let page = pageParam
+  let hl = hlParam
+  let maxCount: number | undefined | null = undefined
+  let cursor: string | null = null
+
+  if (typeof payload === 'string') {
+    keyword = payload
+  } else if (payload && typeof payload === 'object') {
+    keyword = payload.keyword || ''
+    page = payload.page ?? pageParam
+    hl = payload.hl ?? hlParam
+    maxCount = payload.maxCount
+    cursor = payload.cursor ?? null
+  }
+
+  keyword = keyword.trim() || 'impressionism'
+
+  console.log(`[GoogleArts] 搜索请求: keyword="${keyword}", page=${page}, maxCount=${maxCount}`)
+
+  try {
+    // 如果传入了 cursor，直接使用
+    if (cursor && page > 1) {
+      return fetchPage(keyword, hl, cursor, page, maxCount)
+    }
+
+    // 否则按页码翻页
+    let currentCursor: string | null = null
+    for (let i = 0; i < page - 1; i++) {
+      const result = fetchPage(keyword, hl, currentCursor, i + 1, null)
+      currentCursor = (await result).nextCursor
+      if (!currentCursor) {
+        return { success: true, query: keyword, page, total: 0, count: 0, items: [], links: [], nextCursor: null }
+      }
+    }
+
+    return fetchPage(keyword, hl, currentCursor, page, maxCount)
+  } catch (error: any) {
+    console.error(`[GoogleArts] 搜索失败: ${error?.message || String(error)}`)
+    return { success: false, query: keyword, page, total: 0, count: 0, items: [], links: [], nextCursor: null, error: error?.message || String(error) }
+  }
+}
+
+/**
+ * 获取有效代理 URL（优先环境变量，其次 Electron 系统代理解析）
+ * 使用 session.defaultSession.resolveProxy() 可感知 macOS 系统代理/VPN/PAC 文件
+ */
+async function getEffectiveProxyUrl(targetUrl: string): Promise<string | null> {
+  // 1. 先查环境变量
+  const envProxy =
+    process.env.ALL_PROXY ||
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY ||
+    process.env.all_proxy ||
+    process.env.https_proxy ||
+    process.env.http_proxy ||
+    ''
+  if (envProxy.trim()) {
+    return envProxy.trim()
+  }
+
+  // 2. 使用 Electron session 解析系统代理（感知 macOS 系统设置 / VPN / PAC）
+  try {
+    const proxyInfo = await session.defaultSession.resolveProxy(targetUrl)
+    // proxyInfo 格式: "PROXY host:port" | "SOCKS5 host:port" | "DIRECT"
+    if (proxyInfo && !proxyInfo.startsWith('DIRECT')) {
+      const parts = proxyInfo.trim().split(/\s+/)
+      const scheme = parts[0]?.toUpperCase()
+      const hostPort = parts[1]
+      if (hostPort) {
+        const prefix = scheme === 'SOCKS5' ? 'socks5://' : scheme === 'SOCKS4' ? 'socks4://' : 'http://'
+        const resolved = `${prefix}${hostPort}`
+        console.log(`[GoogleArts] 使用系统代理: ${resolved} (来源: Electron resolveProxy)`)
+        return resolved
+      }
+    }
+  } catch (e) {
+    console.warn('[GoogleArts] resolveProxy 失败，将直连:', e)
+  }
+
+  return null
+}
+
+async function httpGetText(targetUrl: string, headers: Record<string, string>): Promise<string> {
+  const proxyUrl = await getEffectiveProxyUrl(targetUrl)
+  const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
+  if (proxyUrl) {
+    console.log(`[GoogleArts] HTTP 请求代理: ${proxyUrl} → ${targetUrl}`)
+  }
+
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(targetUrl)
+    const options: https.RequestOptions = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || 443,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'GET',
+      headers,
+      agent,
+    }
+
+    const req = https.request(options, (res) => {
+      if (res.statusCode && res.statusCode >= 400) {
+        return reject(new Error(`Google Arts API 返回 ${res.statusCode}: ${res.statusMessage}`))
+      }
+      let body = ''
+      res.on('data', (chunk) => (body += chunk))
+      res.on('end', () => resolve(body))
+    })
+
+    req.on('error', (err) => reject(err))
+    req.end()
+  })
+}
+
+async function fetchPage(
+  query: string,
+  hl: string,
+  cursor: string | null,
+  page = 1,
+  maxCount?: number | null,
+): Promise<GoogleArtSearchResult> {
+  const params = new URLSearchParams({ q: query, hl })
+  if (cursor) params.set('cursor', cursor)
+
+  const url = `${GOOGLE_ART_API}?${params.toString()}`
+
+  let raw = await httpGetText(url, {
+    'User-Agent': USER_AGENT,
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+    Referer: 'https://artsandculture.google.com/',
+  })
+
+  if (raw.startsWith(")]}'")) {
+    raw = raw.slice(4).replace(/^\s*\n/, '')
+  }
+
+  const data = JSON.parse(raw)
+  const inner = data[0]
+  const section = inner[3]
+  const assetsRaw = section[2]
+  const total = section[4]
+  const nextCursor = section[8]
+
+  const items: GoogleArtSearchItem[] = []
+  for (const asset of assetsRaw) {
+    const info = asset[10] && Array.isArray(asset[10]) ? asset[10] : []
+    items.push({
+      id: info[0] || '',
+      title: asset[1] || '',
+      artist: asset[2] || null,
+      thumbnail: asset[3] ? `https:${asset[3]}` : null,
+      url: asset[4] ? `https://artsandculture.google.com${asset[4]}` : '',
+      color: asset[8] || null,
+      aspectRatio: info[1] ?? null,
+      hasPixels: info[10] || false,
+      institution: info[12] || null,
+    })
+  }
+
+  // 按 maxCount 截断
+  let finalItems = items
+  if (maxCount && maxCount > 0 && maxCount < items.length) {
+    finalItems = items.slice(0, maxCount)
+  }
+
+  return {
+    success: true,
+    query,
+    page,
+    total,
+    count: finalItems.length,
+    items: finalItems,
+    links: finalItems.map((item) => item.url),
+    nextCursor: nextCursor || null,
+  }
 }

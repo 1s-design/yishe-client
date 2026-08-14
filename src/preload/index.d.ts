@@ -178,6 +178,27 @@ declare global {
         zooms?: Array<{ idx: number; label: string; width: number; height: number; tiles: number }>
         msg?: string
       }>
+      searchGoogleArts(payload: { keyword: string; page?: number; hl?: string; maxCount?: number; cursor?: string | null }): Promise<{
+        success: boolean
+        query: string
+        page: number
+        total: number
+        count: number
+        items: Array<{
+          id: string
+          title: string
+          artist: string | null
+          thumbnail: string | null
+          url: string
+          color: string | null
+          aspectRatio: number | null
+          hasPixels: boolean
+          institution: string | null
+        }>
+        links: string[]
+        nextCursor: string | null
+        error?: string
+      }>
       syncGoogleArtToMaterialLibrary(payload: { url: string; zoomLevel: number }): Promise<{
         ok: boolean
         msg?: string

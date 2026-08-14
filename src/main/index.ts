@@ -28,6 +28,7 @@ import {
   getGoogleArtZooms,
   syncGoogleArtToMaterialLibrary,
   getGoogleArtStatus,
+  searchGoogleArts,
 } from "./googleArt";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import { createHash, randomUUID } from "crypto";
@@ -45,7 +46,7 @@ app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
 const appLaunchStartedAt = Date.now();
 
-type ImageToolModule = typeof import("./image-tool");
+// type ImageToolModule = typeof import("./image-tool");
 type VideoTemplateModule = typeof import("./video-template");
 type AutoBrowserModule = typeof import("./auto-browser");
 type ServerModule = typeof import("./server");
@@ -53,7 +54,7 @@ type LocalDatabaseModule = typeof import("./localDatabase");
 type McpServerModule = typeof import("./mcp-server");
 type SharpFactory = typeof import("sharp");
 
-let imageToolModulePromise: Promise<ImageToolModule> | null = null;
+// let imageToolModulePromise: Promise<ImageToolModule> | null = null;
 let videoTemplateModulePromise: Promise<VideoTemplateModule> | null = null;
 let autoBrowserModulePromise: Promise<AutoBrowserModule> | null = null;
 let serverModulePromise: Promise<ServerModule> | null = null;
@@ -77,7 +78,7 @@ async function getCurrentLocalDatabaseInfo() {
 }
 
 function resetImageToolModule() {
-  imageToolModulePromise = null;
+  // imageToolModulePromise = null;
 }
 
 async function getImageToolModule() {
@@ -979,6 +980,14 @@ if (!gotTheLock) {
 app.whenReady().then(() => {
   // 初始化默认工作目录（在创建窗口之前）
   initializeDefaultWorkspaceDirectory();
+
+  // 注册通用客户端能力
+  import('./capabilities').then((m) => {
+    m.registerAllCapabilities();
+    console.log(`[App] 通用能力已注册: ${m.getCapabilityCount()} 个`);
+  }).catch((e) => {
+    console.warn('[App] 通用能力注册失败:', e?.message || e);
+  });
   void getCurrentLocalDatabaseInfo()
     .then((localDatabaseInfo) => {
       writeMainLog(
@@ -2459,6 +2468,11 @@ ipcMain.handle(
 
 ipcMain.handle("google-art:get-zooms", async (_event, url: string) => {
   const result = await getGoogleArtZooms(url);
+  return result;
+});
+
+ipcMain.handle("google-art:search", async (_event, payload: { keyword: string; page?: number; hl?: string; maxCount?: number; cursor?: string | null }) => {
+  const result = await searchGoogleArts(payload);
   return result;
 });
 

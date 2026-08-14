@@ -36,8 +36,8 @@ export const hotsearchCollectTool = {
         },
         reportToServer: {
           type: 'boolean' as const,
-          description: '是否自动上报到服务端，默认 true',
-          default: true,
+          description: '是否自动上报到服务端，默认 false（服务端数据表暂未启用）',
+          default: false,
         },
       },
     },
@@ -45,7 +45,7 @@ export const hotsearchCollectTool = {
 
   async execute(args: Record<string, unknown>): Promise<CallToolResult> {
     const platforms = args.platforms as string[] | undefined;
-    const reportToServer = (args.reportToServer as boolean) ?? true;
+    const reportToServer = (args.reportToServer as boolean) ?? false;
 
     try {
       const service = await getHotSearchService();

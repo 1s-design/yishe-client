@@ -172,7 +172,7 @@ function normalizeExtensionClientInfo(data: any): ExtensionClientInfoSnapshot {
   };
 }
 
-export function startServer(port: number = 1519): () => Promise<void> {
+export async function startServer(port: number = 1519): Promise<() => Promise<void>> {
   writeLocalServerLog("INFO", "请求启动本地服务", {
     port,
     alreadyRunning: !!stopServerFn,
@@ -181,18 +181,18 @@ export function startServer(port: number = 1519): () => Promise<void> {
   if (stopServerFn) {
     console.log("⚠️ 服务器已在运行，先停止旧实例");
     writeLocalServerLog("WARN", "本地服务已在运行，准备重启旧实例", { port });
-    return stopServerFn().then(() => {
+    return stopServerFn().then(async () => {
       console.log("✅ 旧服务器实例已停止");
       writeLocalServerLog("INFO", "旧本地服务实例已停止，准备重新启动", {
         port,
       });
-      const stopFn = _startServer(port);
+      const stopFn = await _startServer(port);
       stopServerFn = stopFn;
       return stopFn;
     }) as any;
   }
 
-  const stopFn = _startServer(port);
+  const stopFn = await _startServer(port);
   stopServerFn = stopFn;
   return stopFn;
 }
@@ -219,7 +219,7 @@ export function getExtensionConnections() {
   }));
 }
 
-function _startServer(port: number = 1519): () => Promise<void> {
+async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
   const app = express();
 
   // 配置 CORS 选项 — 仅允许本地来源
@@ -666,6 +666,15 @@ function _startServer(port: number = 1519): () => Promise<void> {
     });
   });
 
+
+  // 注册通用能力路由
+  try {
+    const { registerCapabilityRoutes } = await import('./capabilities/bridge');
+    registerCapabilityRoutes(app);
+    console.log('[Server] 通用能力路由已注册');
+  } catch (e) {
+    console.warn('[Server] 通用能力路由注册失败:', (e as Error)?.message);
+  }
   // 启动 HTTP 服务器（绑定到 127.0.0.1，仅本机可访问，杜绝局域网攻击面）
   httpServer
     .listen(port, "127.0.0.1", () => {
@@ -1724,6 +1733,7 @@ function _startServer(port: number = 1519): () => Promise<void> {
   hotSearchService.setClientDeviceId(deviceId);
 
   registerHotSearchRoutes(app, () => token);
+
 
   // 返回停止服务器的函数
   return () => {
