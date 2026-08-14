@@ -101,34 +101,67 @@ export async function searchRawpixel(
 
   try {
     const fetchImpl = await getFetchImpl()
-
-    // 优先构建 API 搜索 URL
-    const apiUrl = `https://www.rawpixel.com/api/v1/search?keys=${encodeURIComponent(keyword)}&page=${page}&sort=${encodeURIComponent(sort)}`
-    const headers = {
-      'User-Agent': USER_AGENT,
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': `https://www.rawpixel.com/search/${encodeURIComponent(keyword)}`,
-    }
-
-    const r = await fetchImpl(apiUrl, { method: 'GET', headers })
     let rawItems: any[] = []
 
-    if (r.ok) {
-      const contentType = r.headers?.get?.('content-type') || ''
-      if (contentType.includes('application/json')) {
-        const json = await r.json()
-        rawItems = json?.results || json?.data || json?.items || (Array.isArray(json) ? json : [])
+    // 策略 1：用户提供的完整真实 XHR API 接口
+    try {
+      const exactApiUrl = `https://www.rawpixel.com/api/v1/search?curated_tag=${encodeURIComponent(keyword)}&image_type=image%2Ctemplate%2Cvideo&keys=${encodeURIComponent(keyword)}&lang=en&page=${page}&published_status=published&safe_search=true&show_creative_brushes=true&sort=${encodeURIComponent(sort)}`
+      const headers = {
+        'User-Agent': USER_AGENT,
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': `https://www.rawpixel.com/all/${encodeURIComponent(keyword)}?page=${page}&sort=${encodeURIComponent(sort)}`,
+      }
+
+      const r1 = await fetchImpl(exactApiUrl, { method: 'GET', headers })
+      if (r1.ok) {
+        const contentType = r1.headers?.get?.('content-type') || ''
+        if (contentType.includes('application/json')) {
+          const json = await r1.json()
+          rawItems = json?.results || json?.data || json?.items || (Array.isArray(json) ? json : [])
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 策略 2：Category SSR HTML 页面解析 (可 200 OK 绕过 Cloudflare 403)
+    if (!rawItems.length) {
+      try {
+        const categoryUrl = `https://www.rawpixel.com/category/${encodeURIComponent(keyword)}`
+        const headers = {
+          'User-Agent': USER_AGENT,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        }
+
+        const r2 = await fetchImpl(categoryUrl, { method: 'GET', headers })
+        if (r2.ok) {
+          const html = await r2.text()
+          rawItems = parseRawpixelHtml(html)
+        }
+      } catch {
+        // ignore
       }
     }
 
-    // 如果 API 直接被拦或无结果，尝试解析网页结构
+    // 策略 3：标准 API 接口
     if (!rawItems.length) {
-      const pageUrl = `https://www.rawpixel.com/search/${encodeURIComponent(keyword)}?page=${page}&sort=${encodeURIComponent(sort)}`
-      const pageRes = await fetchImpl(pageUrl, { method: 'GET', headers })
-      if (pageRes.ok) {
-        const html = await pageRes.text()
-        rawItems = parseRawpixelHtml(html)
+      try {
+        const simpleApiUrl = `https://www.rawpixel.com/api/v1/search?keys=${encodeURIComponent(keyword)}&page=${page}&sort=${encodeURIComponent(sort)}`
+        const headers = {
+          'User-Agent': USER_AGENT,
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+        }
+
+        const r3 = await fetchImpl(simpleApiUrl, { method: 'GET', headers })
+        if (r3.ok) {
+          const json = await r3.json()
+          rawItems = json?.results || json?.data || json?.items || (Array.isArray(json) ? json : [])
+        }
+      } catch {
+        // ignore
       }
     }
 
@@ -167,27 +200,30 @@ export async function searchRawpixel(
  */
 function normalizeRawpixelPhoto(item: any): RawpixelPhoto | null {
   if (!item) return null
-  const id = String(item.id || item.imageId || item.contentId || Math.random().toString(36).slice(2, 10))
+  const id = String(item.entity_id || item.id || item.imageId || item.uid || Math.random().toString(36).slice(2, 10))
   
-  let image = item.image || item.imageUrl || item.url || item.src || ''
-  let thumbnail = item.thumbnail || item.thumb || item.preview || image
+  let image = item.image_cover_420 || item.image_cover_uri || item.image_opengraph || item.image || item.imageUrl || item.url || item.thumbnail || item.src || ''
+  let thumbnail = item.image_cover_uri || item.image_cover_420 || item.thumbnail || item.thumb || item.preview || image
 
-  if (image && image.startsWith('//')) {
+  if (typeof image === 'string' && image.startsWith('//')) {
     image = `https:${image}`
   }
-  if (thumbnail && thumbnail.startsWith('//')) {
+  if (typeof thumbnail === 'string' && thumbnail.startsWith('//')) {
     thumbnail = `https:${thumbnail}`
   }
 
   if (thumbnail && !image) {
-    image = thumbnail.replace(/image_\d+/, 'image_1300')
+    image = String(thumbnail).replace(/image_\d+/, 'image_1300')
   }
 
   if (!image) return null
 
-  const title = item.title || item.name || item.alt || `Rawpixel #${id}`
-  const description = item.description || item.caption || item.tags || ''
-  const link = item.link || item.pageUrl || `https://www.rawpixel.com/image/${id}`
+  const title = item.title || item.short_title || item.image_alt || item.name || item.alt || `Rawpixel #${id}`
+  const description = item.description || item.image_alt || item.caption || item.tags || ''
+  let link = item.url || item.url_relative || item.link || item.pageUrl || `https://www.rawpixel.com/image/${id}`
+  if (typeof link === 'string' && link.startsWith('/')) {
+    link = `https://www.rawpixel.com${link}`
+  }
 
   return {
     id,
@@ -208,12 +244,25 @@ function normalizeRawpixelPhoto(item: any): RawpixelPhoto | null {
 
 function parseRawpixelHtml(html: string): any[] {
   try {
-    const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s)
-    if (nextDataMatch && nextDataMatch[1]) {
-      const parsed = JSON.parse(nextDataMatch[1])
-      const feed = parsed?.props?.pageProps?.results || parsed?.props?.pageProps?.feed || parsed?.props?.pageProps?.initialData
-      if (Array.isArray(feed)) {
-        return feed
+    const scriptMatch = html.match(/<script[^>]*>(\{"props":\{"pageProps":.*?\})<\/script>/s)
+    if (scriptMatch && scriptMatch[1]) {
+      const parsed = JSON.parse(scriptMatch[1])
+      const pageProps = parsed?.props?.pageProps
+      if (pageProps) {
+        const queries = pageProps?.initialState?.dehydratedState?.queries || []
+        for (const q of queries) {
+          const qdata = q?.state?.data
+          if (qdata && typeof qdata === 'object') {
+            const list = qdata.results || qdata.data || qdata.items
+            if (Array.isArray(list) && list.length > 0) {
+              return list
+            }
+          }
+        }
+        const directList = pageProps.results || pageProps.feed || pageProps.initialData
+        if (Array.isArray(directList)) {
+          return directList
+        }
       }
     }
   } catch (e) {
