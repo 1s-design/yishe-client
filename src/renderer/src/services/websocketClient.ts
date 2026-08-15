@@ -10636,6 +10636,179 @@ function registerBuiltInLocalServices() {
       throw new Error(`未实现的 Kaboompics 命令: ${command.action}`);
     },
   });
+
+  registerLocalService({
+    key: "openclipart",
+    pluginKey: "openclipart",
+    label: "Openclipart 免费矢量插画",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.getOpenclipartStatus) {
+        return {
+          label: "Openclipart 免费矢量插画",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 Openclipart 能力",
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+
+      const status = await nativeApi.getOpenclipartStatus();
+      const connected = true;
+      const available = true;
+
+      return {
+        label: "Openclipart 免费矢量插画",
+        connected,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || "Openclipart 可用",
+        endpoint: "https://openclipart.org/",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: {
+          siteAvailable: true,
+          runtime: "desktop",
+        },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const { keyword, query, limit = 20, page = 1, formatPreference } = command.payload || {};
+        const q = query || keyword;
+        if (!q) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchOpenclipart) {
+          throw new Error("当前环境未注入桌面端 Openclipart 搜索能力");
+        }
+        const result = await nativeApi.searchOpenclipart({ query: q, limit, page, formatPreference });
+        return {
+          success: result?.success ?? false,
+          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          data: result,
+        };
+      }
+
+      if (command.action === "download") {
+        const { imageUrl, filename, format } = command.payload || {};
+        const nativeApi = getNativeApi() as any;
+        if (!imageUrl) {
+          throw new Error("缺少 Openclipart 图片链接");
+        }
+        if (!nativeApi?.downloadOpenclipartImage) {
+          throw new Error("当前环境未注入桌面端 Openclipart 下载能力");
+        }
+        const data = await nativeApi.downloadOpenclipartImage({ imageUrl, filename, format });
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          data,
+        };
+      }
+
+      if (command.action === "sync") {
+        const { imageUrl, metadata } = command.payload || {};
+        const nativeApi = getNativeApi() as any;
+        if (!imageUrl) {
+          throw new Error("缺少 Openclipart 图片链接");
+        }
+        if (!nativeApi?.syncOpenclipartToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Openclipart 同步能力");
+        }
+        const data = await nativeApi.syncOpenclipartToMaterialLibrary(imageUrl, metadata);
+        await syncServiceRuntime("openclipart");
+        return {
+          success: !!data?.ok || !!data?.success,
+          message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步到素材库失败")),
+          data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const { keyword, query, maxCount = 10, syncToMaterial = true, formatPreference = 'png' } = command.payload || {};
+        const q = query || keyword;
+        if (!q) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchOpenclipart || !nativeApi?.syncOpenclipartToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Openclipart 采集能力");
+        }
+
+        const searchResult = await nativeApi.searchOpenclipart({ query: q, limit: maxCount, formatPreference });
+        if (!searchResult?.success || !searchResult?.items?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, images: [] },
+          };
+        }
+
+        const items = searchResult.items;
+        const images: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of items) {
+          try {
+            const targetUrl = formatPreference === 'svg' ? item.svgUrl || item.image : item.pngUrl || item.image;
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncOpenclipartToMaterialLibrary(targetUrl, {
+                title: item.title,
+                url: item.url,
+                author: item.author,
+                width: item.width,
+                height: item.height,
+                id: item.id,
+              });
+              if (syncResult?.success || syncResult?.ok) {
+                images.push({
+                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath || syncResult.cosUrl,
+                  originUrl: targetUrl,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              const dl = await nativeApi.downloadOpenclipartImage({ imageUrl: targetUrl });
+              if (dl?.ok) {
+                images.push({ url: dl.filePath, originUrl: targetUrl });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("openclipart");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, images },
+        };
+      }
+
+      throw new Error(`未实现的 Openclipart 命令: ${command.action}`);
+    },
+  });
 }
 
 function emitClientInfo() {

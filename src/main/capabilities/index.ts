@@ -17,6 +17,7 @@ import { registerRawpixelCapabilities } from './rawpixel';
 import { registerStockSnapCapabilities } from './stocksnap';
 import { registerOpenverseCapabilities } from './openverse';
 import { registerKaboompicsCapabilities } from './kaboompics';
+import { registerOpenclipartCapabilities } from './openclipart';
 import { CapabilityRegistry } from './registry';
 import type { CapabilityResult, RegisteredCapability } from './types';
 
@@ -43,6 +44,7 @@ export function registerAllCapabilities(): void {
   registerStockSnapCapabilities();
   registerOpenverseCapabilities();
   registerKaboompicsCapabilities();
+  registerOpenclipartCapabilities();
 
   initialized = true;
   console.log(`[Capabilities] 全部注册完成，共 ${CapabilityRegistry.size} 个能力`);

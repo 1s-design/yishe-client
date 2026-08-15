@@ -212,6 +212,14 @@ const api = {
     ipcRenderer.invoke('kaboompics:download', payload),
   syncKaboompicsToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
     ipcRenderer.invoke('kaboompics:sync', { imageUrl, metadata }),
+  // Openclipart API 导出
+  searchOpenclipart: (payload: { query: string; limit?: number; page?: number; formatPreference?: 'svg' | 'png' }) =>
+    ipcRenderer.invoke('openclipart:search', payload),
+  getOpenclipartStatus: () => ipcRenderer.invoke('openclipart:status'),
+  downloadOpenclipartImage: (payload: { imageUrl: string; filename?: string; format?: 'svg' | 'png' }) =>
+    ipcRenderer.invoke('openclipart:download', payload),
+  syncOpenclipartToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('openclipart:sync', { imageUrl, metadata }),
   // 通用图片压缩：限制尺寸与大小（不裁剪不填充）
   processImageWithLimits: (payload: {
     sourcePath: string

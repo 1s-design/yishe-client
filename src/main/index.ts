@@ -78,6 +78,12 @@ import {
   syncKaboompicsToMaterialLibrary,
   downloadKaboompicsImage,
 } from "./kaboompics";
+import {
+  searchOpenclipart,
+  getOpenclipartStatus,
+  syncOpenclipartToMaterialLibrary,
+  downloadOpenclipartImage,
+} from "./openclipart";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
@@ -3003,6 +3009,66 @@ ipcMain.handle(
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await syncKaboompicsToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "openclipart:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      formatPreference?: 'svg' | 'png';
+    },
+  ) => {
+    const { query, page, limit, pageSize, formatPreference } = payload || {};
+    return searchOpenclipart(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      formatPreference,
+    });
+  },
+);
+
+ipcMain.handle("openclipart:status", async () => {
+  return getOpenclipartStatus();
+});
+
+ipcMain.handle(
+  "openclipart:download",
+  async (_event, payload: { imageUrl: string; filename?: string; format?: 'svg' | 'png' }) => {
+    try {
+      const { imageUrl, filename, format } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadOpenclipartImage(imageUrl, { filename, format });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "openclipart:sync",
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncOpenclipartToMaterialLibrary(clientId || "local", { imageUrl, metadata });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
