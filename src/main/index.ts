@@ -115,6 +115,12 @@ import {
   downloadEmojipediaItem,
 } from "./emojipedia";
 import {
+  searchSvgrepo,
+  getSvgrepoStatus,
+  syncSvgrepoToMaterialLibrary,
+  downloadSvgrepoImage,
+} from "./svgrepo";
+import {
   searchIconify,
   getIconifyStatus,
   syncIconifyToMaterialLibrary,
@@ -3508,6 +3514,60 @@ ipcMain.handle(
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await syncEmojipediaToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── SVGRepo 50万+开源矢量 ────────────────────────────────
+ipcMain.handle(
+  "svgrepo:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      style?: any;
+    },
+  ) => {
+    const { query, page, limit, pageSize, style } = payload || {};
+    return searchSvgrepo(query, {
+      page: page || 1,
+      limit: limit || pageSize || 24,
+      style,
+    });
+  },
+);
+
+ipcMain.handle("svgrepo:status", async () => {
+  return getSvgrepoStatus();
+});
+
+ipcMain.handle(
+  "svgrepo:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少矢量图链接" };
+      const res = await downloadSvgrepoImage(imageUrl, { filename });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "svgrepo:sync",
+  async (_event, payload: { clientId: string; imageUrl: string; metadata?: Record<string, any> }) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少矢量图链接" };
+      const res = await syncSvgrepoToMaterialLibrary(clientId || "local", { imageUrl, metadata });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };

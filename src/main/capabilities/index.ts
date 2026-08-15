@@ -22,6 +22,10 @@ import { registerUndrawCapabilities } from './undraw';
 import { registerVecteezyCapabilities } from './vecteezy';
 import { registerNounProjectCapabilities } from './nounproject';
 import { registerIconifyCapabilities } from './iconify';
+import { registerOpenMojiCapabilities } from './openmoji';
+import { registerGoogleIconsCapabilities } from './googleicons';
+import { registerEmojipediaCapabilities } from './emojipedia';
+import { registerSvgrepoCapabilities } from './svgrepo';
 import { CapabilityRegistry } from './registry';
 import type { CapabilityResult, RegisteredCapability } from './types';
 
@@ -53,6 +57,10 @@ export function registerAllCapabilities(): void {
   registerVecteezyCapabilities();
   registerNounProjectCapabilities();
   registerIconifyCapabilities();
+  registerOpenMojiCapabilities();
+  registerGoogleIconsCapabilities();
+  registerEmojipediaCapabilities();
+  registerSvgrepoCapabilities();
 
   initialized = true;
   console.log(`[Capabilities] 全部注册完成，共 ${CapabilityRegistry.size} 个能力`);
