@@ -220,7 +220,62 @@ const api = {
     ipcRenderer.invoke('openclipart:download', payload),
   syncOpenclipartToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
     ipcRenderer.invoke('openclipart:sync', { imageUrl, metadata }),
-  // 通用图片压缩：限制尺寸与大小（不裁剪不填充）
+  // undraw API 导出
+  searchUndraw: (payload: { query: string; limit?: number; page?: number; color?: string }) =>
+    ipcRenderer.invoke('undraw:search', payload),
+  getUndrawStatus: () => ipcRenderer.invoke('undraw:status'),
+  downloadUndrawImage: (payload: { imageUrl: string; filename?: string; color?: string }) =>
+    ipcRenderer.invoke('undraw:download', payload),
+  syncUndrawToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('undraw:sync', { imageUrl, metadata }),
+  // Vecteezy API 导出
+  searchVecteezy: (payload: { query: string; limit?: number; page?: number; mediaType?: 'photos' | 'png' | 'vector' }) =>
+    ipcRenderer.invoke('vecteezy:search', payload),
+  getVecteezyStatus: () => ipcRenderer.invoke('vecteezy:status'),
+  downloadVecteezyAsset: (payload: { imageUrl: string; filename?: string; format?: 'svg' | 'png' | 'jpg' }) =>
+    ipcRenderer.invoke('vecteezy:download', payload),
+  syncVecteezyToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('vecteezy:sync', { imageUrl, metadata }),
+  // OpenMoji API 导出
+  searchOpenMoji: (payload: { query: string; limit?: number; page?: number; style?: 'color' | 'black'; group?: string }) =>
+    ipcRenderer.invoke('openmoji:search', payload),
+  getOpenMojiStatus: () => ipcRenderer.invoke('openmoji:status'),
+  downloadOpenMojiEmoji: (payload: { imageUrl: string; filename?: string; style?: 'color' | 'black' }) =>
+    ipcRenderer.invoke('openmoji:download', payload),
+  syncOpenMojiToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('openmoji:sync', { imageUrl, metadata }),
+  // Google Icons API 导出
+  searchGoogleIcons: (payload: { query: string; limit?: number; page?: number; style?: 'outlined' | 'rounded' | 'sharp' | 'two-tone'; size?: number }) =>
+    ipcRenderer.invoke('googleicons:search', payload),
+  getGoogleIconsStatus: () => ipcRenderer.invoke('googleicons:status'),
+  downloadGoogleIcon: (payload: { imageUrl: string; filename?: string; style?: string }) =>
+    ipcRenderer.invoke('googleicons:download', payload),
+  syncGoogleIconsToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('googleicons:sync', { imageUrl, metadata }),
+  // Emojipedia API 导出
+  searchEmojipedia: (payload: { query: string; limit?: number; page?: number; category?: string; platform?: string }) =>
+    ipcRenderer.invoke('emojipedia:search', payload),
+  getEmojipediaStatus: () => ipcRenderer.invoke('emojipedia:status'),
+  downloadEmojipediaItem: (payload: { imageUrl: string; filename?: string; platform?: string }) =>
+    ipcRenderer.invoke('emojipedia:download', payload),
+  syncEmojipediaToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('emojipedia:sync', { imageUrl, metadata }),
+  // nounproject API 导出
+  searchNounProject: (payload: { query: string; limit?: number; page?: number; mediaType?: 'photos' | 'icons'; color?: string }) =>
+    ipcRenderer.invoke('nounproject:search', payload),
+  getNounProjectStatus: () => ipcRenderer.invoke('nounproject:status'),
+  downloadNounProjectAsset: (payload: { imageUrl: string; filename?: string; format?: 'svg' | 'png' | 'jpg' }) =>
+    ipcRenderer.invoke('nounproject:download', payload),
+  syncNounProjectToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('nounproject:sync', { imageUrl, metadata }),
+  // Iconify API 导出
+  searchIconify: (payload: { query: string; limit?: number; page?: number; prefix?: string; color?: string }) =>
+    ipcRenderer.invoke('iconify:search', payload),
+  getIconifyStatus: () => ipcRenderer.invoke('iconify:status'),
+  downloadIconifyIcon: (payload: { imageUrl: string; filename?: string; color?: string }) =>
+    ipcRenderer.invoke('iconify:download', payload),
+  syncIconifyToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('iconify:sync', { imageUrl, metadata }),
   processImageWithLimits: (payload: {
     sourcePath: string
     outputPath?: string
