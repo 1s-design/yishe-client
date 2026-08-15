@@ -4,7 +4,7 @@
  * 特点: 支持 Photos（摄影图）与 Icons（矢量图标）双模式搜索，
  *       Creative Commons 与 Royalty-free 多种授权，SVG/PNG/JPG 多格式
  */
-import fs from 'fs';
+import * as fs from 'fs';
 import { join } from 'path';
 import { app, net } from 'electron';
 import { uploadFileToCos, generateCosKey } from './cos';
@@ -262,42 +262,36 @@ function buildNounProjectAsset(
       .replace(/&quot;/g, '"')
       .replace(/^\s*-\s*Noun Project\s*$/i, '') || `Noun Project ${id}`;
 
-  // CDN URL 模式
   const isPhoto = mediaType === 'photos';
-  const svgUrl = `https://static.thenounproject.com/photo/${id}.svg`;
-  const pngUrl = `https://static.thenounproject.com/icon/${id}.png`;
-  const jpgUrl = `https://static.thenounproject.com/photo/${id}.jpg`;
+  const png200Url = `https://static.thenounproject.com/png/${id}-200.png`;
+  const pngUrl = `https://static.thenounproject.com/png/${id}-200.png`;
+  const svgUrl = `https://static.thenounproject.com/svg/${id}.svg`;
+  const photoUrl = `https://static.thenounproject.com/photo/${id}.jpg`;
 
-  // 缩略图处理
   const thumbnail = thumbSrc.startsWith('http')
     ? thumbSrc
     : thumbSrc.startsWith('/')
       ? `https://thenounproject.com${thumbSrc}`
-      : `https://static.thenounproject.com/photo/${id}.jpg`;
+      : isPhoto
+        ? photoUrl
+        : png200Url;
 
-  // 默认图片
-  const image = isPhoto ? jpgUrl : svgUrl;
-
-  // 详情页链接
-  const link = `https://thenounproject.com/${
-    isPhoto ? 'photo' : 'icon'
-  }/${id}/`;
-
-  // 下载链接
-  const downloadUrl = isPhoto ? jpgUrl : svgUrl;
+  const image = isPhoto ? (thumbnail || photoUrl) : png200Url;
+  const link = `https://thenounproject.com/${isPhoto ? 'photo' : 'icon'}/${id}/`;
+  const downloadUrl = isPhoto ? image : png200Url;
 
   return {
     id,
     name: sanitizeName(cleanTitle) || `nounproject_${id}`,
     title: cleanTitle,
     image,
-    svgUrl: isPhoto ? svgUrl : svgUrl,
-    pngUrl,
+    svgUrl: svgUrl,
+    pngUrl: pngUrl,
     thumbnail,
     downloadUrl,
     link,
     url: link,
-    format: isPhoto ? 'jpg' : 'svg',
+    format: isPhoto ? 'jpg' : 'png',
     author: 'Noun Project Community',
     license: 'Creative Commons / Royalty-free (varies by asset)',
     isFree: true,
@@ -391,12 +385,20 @@ function getNounProjectWorkspaceDir(): string {
     }
   } catch {}
 
-  const homeDir = app ? app.getPath('home') : process.env.HOME || '/tmp';
+  const homeDir = (typeof app !== 'undefined' && app?.getPath) ? app.getPath('home') : (process.env.HOME || '/tmp');
   const defaultDir = join(homeDir, 'yisheworkspace');
-  if (!fs.existsSync(defaultDir)) {
-    fs.mkdirSync(defaultDir, { recursive: true });
+  try {
+    if (!fs.existsSync(defaultDir)) {
+      fs.mkdirSync(defaultDir, { recursive: true });
+    }
+    return defaultDir;
+  } catch {
+    const tmpDir = join('/tmp', 'yisheworkspace');
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    return tmpDir;
   }
-  return defaultDir;
 }
 
 /**
@@ -426,19 +428,30 @@ export async function downloadNounProjectAsset(
     const buffer = Buffer.from(arrayBuffer);
 
     const workspaceDir = getNounProjectWorkspaceDir();
-    const saveDir = join(workspaceDir, 'nounproject-downloads');
-    if (!fs.existsSync(saveDir)) {
-      fs.mkdirSync(saveDir, { recursive: true });
+    let saveDir = join(workspaceDir, 'nounproject-downloads');
+    try {
+      if (!fs.existsSync(saveDir)) {
+        fs.mkdirSync(saveDir, { recursive: true });
+      }
+    } catch {
+      saveDir = join('/tmp', 'nounproject-downloads');
+      if (!fs.existsSync(saveDir)) {
+        fs.mkdirSync(saveDir, { recursive: true });
+      }
     }
 
-    // 判断文件格式
+    // 精确判断文件格式（优先魔数嗅探）
     const contentType = res.headers.get('content-type') || '';
     let ext = '.svg';
-    if (imageUrl.endsWith('.png') || contentType.includes('png')) {
+    const isPng = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+    const isJpg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    const isSvg = buffer.toString('utf-8', 0, 100).toLowerCase().includes('<svg');
+
+    if (isPng || contentType.includes('png') || imageUrl.includes('.png')) {
       ext = '.png';
-    } else if (imageUrl.endsWith('.jpg') || imageUrl.endsWith('.jpeg') || contentType.includes('jpeg') || contentType.includes('jpg')) {
+    } else if (isJpg || contentType.includes('jpeg') || contentType.includes('jpg') || imageUrl.includes('.jpg')) {
       ext = '.jpg';
-    } else if (imageUrl.endsWith('.svg') || contentType.includes('svg')) {
+    } else if (isSvg || contentType.includes('svg') || imageUrl.includes('.svg')) {
       ext = '.svg';
     } else if (options.format === 'png') {
       ext = '.png';
@@ -446,8 +459,9 @@ export async function downloadNounProjectAsset(
       ext = '.jpg';
     }
 
-    const filename = options.filename
-      ? `${sanitizeName(options.filename)}${options.filename.endsWith(ext) ? '' : ext}`
+    const cleanBaseName = sanitizeName(options.filename || '').replace(/\.(svg|png|jpe?g)$/i, '');
+    const filename = cleanBaseName
+      ? `${cleanBaseName}${ext}`
       : `nounproject_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
 
     const filePath = join(saveDir, filename);
