@@ -276,6 +276,14 @@ const api = {
     ipcRenderer.invoke('iconify:download', payload),
   syncIconifyToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
     ipcRenderer.invoke('iconify:sync', { imageUrl, metadata }),
+  // SVGRepo API 导出
+  searchSvgrepo: (payload: { query: string; limit?: number; page?: number; style?: string }) =>
+    ipcRenderer.invoke('svgrepo:search', payload),
+  getSvgrepoStatus: () => ipcRenderer.invoke('svgrepo:status'),
+  downloadSvgrepoImage: (payload: { imageUrl: string; filename?: string }) =>
+    ipcRenderer.invoke('svgrepo:download', payload),
+  syncSvgrepoToMaterialLibrary: (imageUrl: string, metadata?: Record<string, any>) =>
+    ipcRenderer.invoke('svgrepo:sync', { imageUrl, metadata }),
   processImageWithLimits: (payload: {
     sourcePath: string
     outputPath?: string

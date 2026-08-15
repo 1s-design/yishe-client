@@ -11751,6 +11751,88 @@ function registerBuiltInLocalServices() {
     },
   });
 
+  registerLocalService({
+    key: "svgrepo",
+    pluginKey: "svgrepo",
+    label: "SVGRepo 50万+开源矢量",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.getSvgrepoStatus) {
+        return {
+          label: "SVGRepo 50万+开源矢量",
+          connected: false, available: false, status: "disconnected", state: "offline",
+          busy: false, message: "当前为浏览器环境，未注入桌面端 SVGRepo 能力",
+          endpoint: "", lastCheckedAt: new Date().toISOString(), lastError: null,
+          supportedCommands: ["refreshRuntime", "health"], details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+      const status = await nativeApi.getSvgrepoStatus();
+      const available = true;
+      return {
+        label: "SVGRepo 50万+开源矢量", connected: true, available,
+        status: available ? "connected" : "error", state: available ? "idle" : "error",
+        busy: false, message: status?.message || "SVGRepo 可用",
+        endpoint: "https://www.svgrepo.com/", lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: { siteAvailable: true, runtime: "desktop" },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const { keyword, query, limit = 24, page = 1, style } = command.payload || {};
+        const q = query || keyword;
+        if (!q) throw new Error("缺少搜索关键词");
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchSvgrepo) throw new Error("当前环境未注入桌面端 SVGRepo 搜索能力");
+        const result = await nativeApi.searchSvgrepo({ query: q, limit, page, style });
+        return { success: result?.success ?? false, message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"), data: result };
+      }
+      if (command.action === "download") {
+        const { imageUrl, filename } = command.payload || {};
+        if (!imageUrl) throw new Error("缺少 SVG 矢量链接");
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.downloadSvgrepoImage) throw new Error("当前环境未注入桌面端 SVGRepo 下载能力");
+        const data = await nativeApi.downloadSvgrepoImage({ imageUrl, filename });
+        return { success: !!data?.ok, message: data?.ok ? "矢量下载完成" : (data?.msg || "下载失败"), data };
+      }
+      if (command.action === "sync") {
+        const { imageUrl, metadata } = command.payload || {};
+        if (!imageUrl) throw new Error("缺少 SVG 矢量链接");
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.syncSvgrepoToMaterialLibrary) throw new Error("当前环境未注入桌面端 SVGRepo 同步能力");
+        const data = await nativeApi.syncSvgrepoToMaterialLibrary(imageUrl, metadata);
+        await syncServiceRuntime("svgrepo");
+        return { success: !!data?.ok || !!data?.success, message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步失败")), data };
+      }
+      if (command.action === "collect") {
+        const { keyword, query, maxCount = 12, syncToMaterial = true, style } = command.payload || {};
+        const q = query || keyword;
+        if (!q) throw new Error("缺少搜索关键词");
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchSvgrepo || !nativeApi?.syncSvgrepoToMaterialLibrary) throw new Error("当前环境未注入桌面端 SVGRepo 采集能力");
+        const searchResult = await nativeApi.searchSvgrepo({ query: q, limit: maxCount, style });
+        if (!searchResult?.success || !searchResult?.items?.length) return { success: false, message: searchResult?.error || "搜索失败", data: { successCount: 0, failCount: 0, images: [] } };
+        const items = searchResult.items; const images: any[] = []; let successCount = 0; let failCount = 0;
+        for (const item of items) {
+          try {
+            const targetUrl = item.svgUrl || item.image;
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncSvgrepoToMaterialLibrary(targetUrl, { title: item.title, url: item.url, id: item.id, style: item.style });
+              if (syncResult?.success || syncResult?.ok) { images.push({ url: syncResult.data?.cosUrl || syncResult.cosUrl, originUrl: targetUrl }); successCount++; } else { failCount++; }
+            } else {
+              const dl = await nativeApi.downloadSvgrepoImage({ imageUrl: targetUrl });
+              if (dl?.ok) { images.push({ url: dl.filePath, originUrl: targetUrl }); successCount++; } else { failCount++; }
+            }
+          } catch { failCount++; }
+        }
+        await syncServiceRuntime("svgrepo");
+        return { success: true, message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`, data: { successCount, failCount, images } };
+      }
+      throw new Error(`未实现的 SVGRepo 命令: ${command.action}`);
+    },
+  });
+
 function emitClientInfo() {
   if (!socket || !socket.connected) return;
   const payload = buildClientInfoPayloadForWs();
