@@ -18,6 +18,10 @@ import { registerStockSnapCapabilities } from './stocksnap';
 import { registerOpenverseCapabilities } from './openverse';
 import { registerKaboompicsCapabilities } from './kaboompics';
 import { registerOpenclipartCapabilities } from './openclipart';
+import { registerUndrawCapabilities } from './undraw';
+import { registerVecteezyCapabilities } from './vecteezy';
+import { registerNounProjectCapabilities } from './nounproject';
+import { registerIconifyCapabilities } from './iconify';
 import { CapabilityRegistry } from './registry';
 import type { CapabilityResult, RegisteredCapability } from './types';
 
@@ -45,6 +49,10 @@ export function registerAllCapabilities(): void {
   registerOpenverseCapabilities();
   registerKaboompicsCapabilities();
   registerOpenclipartCapabilities();
+  registerUndrawCapabilities();
+  registerVecteezyCapabilities();
+  registerNounProjectCapabilities();
+  registerIconifyCapabilities();
 
   initialized = true;
   console.log(`[Capabilities] 全部注册完成，共 ${CapabilityRegistry.size} 个能力`);

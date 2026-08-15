@@ -84,6 +84,48 @@ import {
   syncOpenclipartToMaterialLibrary,
   downloadOpenclipartImage,
 } from "./openclipart";
+import {
+  searchUndraw,
+  getUndrawStatus,
+  syncUndrawToMaterialLibrary,
+  downloadUndrawImage,
+} from "./undraw";
+import {
+  searchVecteezy,
+  getVecteezyStatus,
+  syncVecteezyToMaterialLibrary,
+  downloadVecteezyAsset,
+} from "./vecteezy";
+import {
+  searchOpenMoji,
+  getOpenMojiStatus,
+  syncOpenMojiToMaterialLibrary,
+  downloadOpenMojiEmoji,
+} from "./openmoji";
+import {
+  searchGoogleIcons,
+  getGoogleIconsStatus,
+  syncGoogleIconsToMaterialLibrary,
+  downloadGoogleIcon,
+} from "./googleicons";
+import {
+  searchEmojipedia,
+  getEmojipediaStatus,
+  syncEmojipediaToMaterialLibrary,
+  downloadEmojipediaItem,
+} from "./emojipedia";
+import {
+  searchIconify,
+  getIconifyStatus,
+  syncIconifyToMaterialLibrary,
+  downloadIconifyIcon,
+} from "./iconify";
+import {
+  searchNounProject,
+  getNounProjectStatus,
+  syncNounProjectToMaterialLibrary,
+  downloadNounProjectAsset,
+} from "./nounproject";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
@@ -3069,6 +3111,403 @@ ipcMain.handle(
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await syncOpenclipartToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "undraw:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      color?: string;
+    },
+  ) => {
+    const { query, page, limit, pageSize, color } = payload || {};
+    return searchUndraw(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      color,
+    });
+  },
+);
+
+ipcMain.handle("undraw:status", async () => {
+  return getUndrawStatus();
+});
+
+ipcMain.handle(
+  "undraw:download",
+  async (_event, payload: { imageUrl: string; filename?: string; color?: string }) => {
+    try {
+      const { imageUrl, filename, color } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadUndrawImage(imageUrl, { filename, color });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "undraw:sync",
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncUndrawToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "vecteezy:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      mediaType?: 'photos' | 'png' | 'vector';
+    },
+  ) => {
+    const { query, page, limit, pageSize, mediaType } = payload || {};
+    return searchVecteezy(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      mediaType,
+    });
+  },
+);
+
+ipcMain.handle("vecteezy:status", async () => {
+  return getVecteezyStatus();
+});
+
+ipcMain.handle(
+  "vecteezy:download",
+  async (_event, payload: { imageUrl: string; filename?: string; format?: 'svg' | 'png' | 'jpg' }) => {
+    try {
+      const { imageUrl, filename, format } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadVecteezyAsset(imageUrl, { filename, format });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "vecteezy:sync",
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncVecteezyToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+ipcMain.handle(
+  "nounproject:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      mediaType?: "photos" | "icons";
+      color?: string;
+    },
+  ) => {
+    const { query, page, limit, pageSize, mediaType, color } = payload || {};
+    return searchNounProject(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      mediaType: mediaType || "icons",
+      color,
+    });
+  },
+);
+
+ipcMain.handle("nounproject:status", async () => {
+  return getNounProjectStatus();
+});
+
+ipcMain.handle(
+  "nounproject:download",
+  async (_event, payload: { imageUrl: string; filename?: string; format?: "svg" | "png" | "jpg" }) => {
+    try {
+      const { imageUrl, filename, format } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少素材链接" };
+      const res = await downloadNounProjectAsset(imageUrl, { filename, format });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "nounproject:sync",
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少素材链接" };
+      const res = await syncNounProjectToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+
+ipcMain.handle(
+  "iconify:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      prefix?: string;
+      color?: string;
+    },
+  ) => {
+    const { query, page, limit, pageSize, prefix, color } = payload || {};
+    return searchIconify(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      prefix,
+      color,
+    });
+  },
+);
+
+ipcMain.handle("iconify:status", async () => {
+  return getIconifyStatus();
+});
+
+ipcMain.handle(
+  "iconify:download",
+  async (_event, payload: { imageUrl: string; filename?: string; color?: string }) => {
+    try {
+      const { imageUrl, filename, color } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图标链接" };
+      const res = await downloadIconifyIcon(imageUrl, { filename, color });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "iconify:sync",
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图标链接" };
+      const res = await syncIconifyToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── OpenMoji 开源 Emoji ─────────────────────────────────
+ipcMain.handle(
+  "openmoji:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      style?: 'color' | 'black';
+      group?: string;
+    },
+  ) => {
+    const { query, page, limit, pageSize, style, group } = payload || {};
+    return searchOpenMoji(query, { page: page || 1, limit: limit || pageSize || 20, style, group });
+  },
+);
+
+ipcMain.handle("openmoji:status", async () => {
+  return getOpenMojiStatus();
+});
+
+ipcMain.handle(
+  "openmoji:download",
+  async (_event, payload: { imageUrl: string; filename?: string; style?: 'color' | 'black' }) => {
+    try {
+      const { imageUrl, filename, style } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadOpenMojiEmoji(imageUrl, { filename, style });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "openmoji:sync",
+  async (_event, payload: { clientId: string; imageUrl: string; metadata?: Record<string, any> }) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncOpenMojiToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Google Material Icons ───────────────────────────────
+ipcMain.handle(
+  "googleicons:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      style?: 'outlined' | 'rounded' | 'sharp' | 'two-tone';
+      size?: number;
+    },
+  ) => {
+    const { query, page, limit, pageSize, style, size } = payload || {};
+    return searchGoogleIcons(query, { page: page || 1, limit: limit || pageSize || 20, style, size });
+  },
+);
+
+ipcMain.handle("googleicons:status", async () => {
+  return getGoogleIconsStatus();
+});
+
+ipcMain.handle(
+  "googleicons:download",
+  async (_event, payload: { imageUrl: string; filename?: string; style?: string }) => {
+    try {
+      const { imageUrl, filename, style } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadGoogleIcon(imageUrl, { filename, style });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "googleicons:sync",
+  async (_event, payload: { clientId: string; imageUrl: string; metadata?: Record<string, any> }) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncGoogleIconsToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Emojipedia Emoji/Sticker ────────────────────────────
+ipcMain.handle(
+  "emojipedia:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      category?: string;
+      platform?: string;
+    },
+  ) => {
+    const { query, page, limit, pageSize, category, platform } = payload || {};
+    return searchEmojipedia(query, { page: page || 1, limit: limit || pageSize || 20, category, platform });
+  },
+);
+
+ipcMain.handle("emojipedia:status", async () => {
+  return getEmojipediaStatus();
+});
+
+ipcMain.handle(
+  "emojipedia:download",
+  async (_event, payload: { imageUrl: string; filename?: string; platform?: string }) => {
+    try {
+      const { imageUrl, filename, platform } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadEmojipediaItem(imageUrl, { filename, platform });
+      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "emojipedia:sync",
+  async (_event, payload: { clientId: string; imageUrl: string; metadata?: Record<string, any> }) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncEmojipediaToMaterialLibrary(clientId || "local", { imageUrl, metadata });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
