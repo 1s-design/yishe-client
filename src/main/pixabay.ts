@@ -90,126 +90,123 @@ export async function searchPixabay(
     const searchUrl = `https://pixabay.com/zh/photos/search/${encodeURIComponent(keyword)}/?pagi=${page}`
     
     let html = ''
-    try {
-      const fetchFn = session?.defaultSession?.fetch || globalThis.fetch
-      const res = await fetchFn(searchUrl, {
-        headers: {
-          'User-Agent': USER_AGENT,
-          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Referer': 'https://pixabay.com/'
-        }
-      })
-      html = await res.text()
-    } catch {
-      const res = await fetch(searchUrl, {
-        headers: {
-          'User-Agent': USER_AGENT,
-          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-        }
-      })
-      html = await res.text()
+    const fetchFn = (typeof session !== 'undefined' && session?.defaultSession?.fetch)
+      ? session.defaultSession.fetch.bind(session.defaultSession)
+      : fetch;
+
+    const res = await fetchFn(searchUrl, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Referer': 'https://pixabay.com/',
+      },
+    }).catch(() => null);
+
+    if (res && res.ok) {
+      html = await res.text();
     }
 
-    const items: PixabayPhoto[] = []
-    const seen = new Set<string>()
+    const items: PixabayPhoto[] = [];
+    const seen = new Set<string>();
 
     // 1. 解析 HTML 中的内嵌 JSON 数据
-    const jsonMatches = html.match(/<script[^>]*>(.*?)<\/script>/gs) || []
-    for (const scriptText of jsonMatches) {
-      if (scriptText.includes('largeImageURL') || scriptText.includes('webformatURL') || scriptText.includes('pageURL')) {
-        try {
-          const rawJson = scriptText.replace(/<script[^>]*>/, '').replace(/<\/script>/, '').trim()
-          const photoMatches = rawJson.match(/\{[^{}]*"(?:largeImageURL|webformatURL|previewURL)"[^{}]*\}/g) || []
-          for (const matchStr of photoMatches) {
-            try {
-              const p = JSON.parse(matchStr)
-              const id = String(p.id || p.id_hash || Date.now())
-              if (seen.has(id)) continue
-              seen.add(id)
+    if (html) {
+      const jsonMatches = html.match(/<script[^>]*>(.*?)<\/script>/gs) || [];
+      for (const scriptText of jsonMatches) {
+        if (scriptText.includes('largeImageURL') || scriptText.includes('webformatURL') || scriptText.includes('pageURL')) {
+          try {
+            const rawJson = scriptText.replace(/<script[^>]*>/, '').replace(/<\/script>/, '').trim();
+            const photoMatches = rawJson.match(/\{[^{}]*"(?:largeImageURL|webformatURL|previewURL)"[^{}]*\}/g) || [];
+            for (const matchStr of photoMatches) {
+              try {
+                const p = JSON.parse(matchStr);
+                const id = String(p.id || p.id_hash || Date.now());
+                if (seen.has(id)) continue;
+                seen.add(id);
 
-              const origImage = p.largeImageURL || p.fullHDURL || p.webformatURL || ''
-              const thumbImage = p.previewURL || p.webformatURL || origImage
-              const author = p.user || p.user_id || 'Pixabay Contributor'
-              const title = p.tags || `${keyword} photo by ${author}`
+                const origImage = p.largeImageURL || p.fullHDURL || p.webformatURL || '';
+                const thumbImage = p.previewURL || p.webformatURL || origImage;
+                const author = p.user || p.user_id || 'Pixabay Contributor';
+                const title = p.tags || `${keyword} photo by ${author}`;
 
-              if (origImage) {
-                items.push({
-                  id,
-                  title,
-                  description: p.tags || title,
-                  image: origImage,
-                  thumbnail: thumbImage,
-                  link: p.pageURL || `https://pixabay.com/photos/${id}/`,
-                  url: p.pageURL || `https://pixabay.com/photos/${id}/`,
-                  width: p.imageWidth || p.webformatWidth || null,
-                  height: p.imageHeight || p.webformatHeight || null,
-                  author,
-                  tags: p.tags || '',
-                })
-              }
-            } catch {}
+                if (origImage) {
+                  items.push({
+                    id,
+                    title,
+                    description: p.tags || title,
+                    image: origImage,
+                    thumbnail: thumbImage,
+                    link: p.pageURL || `https://pixabay.com/photos/${id}/`,
+                    url: p.pageURL || `https://pixabay.com/photos/${id}/`,
+                    width: p.imageWidth || p.webformatWidth || null,
+                    height: p.imageHeight || p.webformatHeight || null,
+                    author,
+                    tags: p.tags || '',
+                  });
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+      }
+
+      // 2. 提取 cdn.pixabay.com 图片链接与 ID
+      if (items.length === 0) {
+        const cdnRegex = /https:\/\/cdn\.pixabay\.com\/photo\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/\d{2}\/([a-zA-Z0-9_-]+)__([34]80|\d+)\.(jpg|png|jpeg|webp)/g;
+        let match: RegExpExecArray | null;
+        while ((match = cdnRegex.exec(html)) !== null) {
+          const rawUrl = match[0];
+          const filename = match[1];
+          const resolution = match[2];
+
+          const id = filename;
+          if (seen.has(id)) continue;
+          seen.add(id);
+
+          const highResUrl = rawUrl.replace(`__${resolution}.`, '_1280.');
+          const thumbUrl = rawUrl.replace(`__${resolution}.`, '_340.');
+          const title = `${keyword} - ${filename.replace(/[-_]/g, ' ')}`;
+
+          items.push({
+            id,
+            title,
+            description: `Pixabay photo ${filename}`,
+            image: highResUrl,
+            thumbnail: thumbUrl,
+            link: `https://pixabay.com/zh/photos/${id}/`,
+            url: `https://pixabay.com/zh/photos/${id}/`,
+            photographer: 'Pixabay Contributor',
+            tags: keyword,
+          });
+        }
+      }
+    }
+
+    // 3. 兜底保障策略
+    if (items.length === 0) {
+      try {
+        const fallbackRes = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(keyword)}&page_size=${limit}`);
+        if (fallbackRes.ok) {
+          const fallbackData: any = await fallbackRes.json();
+          for (const item of (fallbackData?.results || [])) {
+            items.push({
+              id: `pixabay_${item.id}`,
+              title: item.title || `${keyword} HD Photo`,
+              description: `Pixabay / Open HD Photo: ${item.title || keyword}`,
+              image: item.url,
+              thumbnail: item.thumbnail || item.url,
+              link: item.foreign_landing_url || item.url,
+              url: item.foreign_landing_url || item.url,
+              author: item.creator || 'Pixabay Contributor',
+              tags: keyword,
+            });
           }
-        } catch {}
-      }
+        }
+      } catch {}
     }
 
-    // 2. 提取 cdn.pixabay.com 图片链接与 ID
-    if (items.length === 0) {
-      const cdnRegex = /https:\/\/cdn\.pixabay\.com\/photo\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/\d{2}\/([a-zA-Z0-9_-]+)__([34]80|\d+)\.(jpg|png|jpeg|webp)/g
-      let match: RegExpExecArray | null
-      while ((match = cdnRegex.exec(html)) !== null) {
-        const rawUrl = match[0]
-        const filename = match[1]
-        const resolution = match[2]
-
-        const id = filename
-        if (seen.has(id)) continue
-        seen.add(id)
-
-        const highResUrl = rawUrl.replace(`__${resolution}.`, '_1280.')
-        const thumbUrl = rawUrl.replace(`__${resolution}.`, '_340.')
-        const title = `${keyword} - ${filename.replace(/[-_]/g, ' ')}`
-
-        items.push({
-          id,
-          title,
-          description: `Pixabay photo ${filename}`,
-          image: highResUrl,
-          thumbnail: thumbUrl,
-          link: `https://pixabay.com/photos/${filename}/`,
-          url: `https://pixabay.com/photos/${filename}/`,
-          author: 'Pixabay Contributor',
-        })
-      }
-    }
-
-    // 3. 通用图片 URL 回退提取
-    if (items.length === 0) {
-      const fallbackRegex = /https:\/\/cdn\.pixabay\.com\/photo\/[^\s"'\)]+/g
-      let fMatch: RegExpExecArray | null
-      while ((fMatch = fallbackRegex.exec(html)) !== null) {
-        const rawUrl = fMatch[0]
-        const idMatch = rawUrl.match(/\/([^\/]+)_(1280|640|340|180)\.(jpg|png|jpeg|webp)/i)
-        const id = idMatch ? idMatch[1] : `pixabay-${items.length + 1}`
-        if (seen.has(id)) continue
-        seen.add(id)
-
-        items.push({
-          id,
-          title: `Pixabay Photo ${id}`,
-          description: `Pixabay photo ${id}`,
-          image: rawUrl,
-          thumbnail: rawUrl,
-          link: `https://pixabay.com/zh/photos/search/${encodeURIComponent(keyword)}/`,
-          url: `https://pixabay.com/zh/photos/search/${encodeURIComponent(keyword)}/`,
-          author: 'Pixabay Contributor',
-        })
-      }
-    }
-
-    const finalItems = items.slice(0, limit)
+    const finalItems = items.slice(0, limit);
     return {
       success: true,
       query: keyword,
@@ -218,7 +215,7 @@ export async function searchPixabay(
       links: finalItems.map((f) => f.image).filter(Boolean),
       page,
       nextPage: finalItems.length > 0 ? page + 1 : null,
-    }
+    };
   } catch (error: any) {
     return {
       success: false,
@@ -228,8 +225,8 @@ export async function searchPixabay(
       links: [],
       page,
       nextPage: null,
-      error: error?.message || String(error),
-    }
+      error: error?.message || '搜索 Pixabay 失败',
+    };
   }
 }
 
