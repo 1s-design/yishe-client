@@ -303,7 +303,7 @@ export async function downloadKaboompicsImage(
 export async function syncKaboompicsToMaterialLibrary(
   _clientId: string,
   data: { imageUrl: string; metadata?: Record<string, any> },
-): Promise<{ success: boolean; localFilePath?: string; cosUrl?: string; error?: string }> {
+): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; data?: any; error?: string }> {
   const { imageUrl, metadata } = data;
   if (!imageUrl) {
     return { success: false, error: '缺少原图 URL' };
@@ -320,25 +320,30 @@ export async function syncKaboompicsToMaterialLibrary(
 
   const localFilePath = dlResult.filePath;
 
-  // 2. 上传原图到 COS 存储
+  // 2. 强制上传原图到用户个人的 COS 存储
   try {
     const fileName = localFilePath.split('/').pop() || `kaboompics_${Date.now()}.jpg`;
     const cosKey = await generateCosKey({ category: 'kaboompics', filename: fileName });
     const cosResult = await uploadFileToCos(localFilePath, cosKey);
 
-    const cosUrl = cosResult && (cosResult as any).url ? (cosResult as any).url : localFilePath;
+    if (!cosResult.ok || !cosResult.url) {
+      return { success: false, error: 'msg' in cosResult ? (cosResult as any).msg : 'COS 上传失败' };
+    }
 
     return {
       success: true,
+      message: '已成功下载原图并上传至个人 COS 存储',
       localFilePath,
-      cosUrl,
+      cosUrl: cosResult.url,
+      data: {
+        cosUrl: cosResult.url,
+        localFilePath,
+      },
     };
   } catch (cosError: any) {
     return {
-      success: true,
-      localFilePath,
-      cosUrl: localFilePath,
-      error: `COS 上传提示: ${cosError?.message || '使用本地缓存路径'}`,
+      success: false,
+      error: cosError?.message || '上传个人 COS 时发生错误',
     };
   }
 }
