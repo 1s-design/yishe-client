@@ -221,10 +221,10 @@ function parseUndrawHtml(html: string, color?: string): { items: UndrawPhoto[]; 
  * 根据 slug 构建 UndrawPhoto 对象
  */
 function buildUndrawPhoto(slug: string, title: string, thumbSrc: string, color: string): UndrawPhoto {
-  // undraw 下载直链: https://undraw.co/svg/illustrations/{slug}.svg
-  const svgUrl = `https://undraw.co/svg/illustrations/${slug}.svg`;
-  // 带颜色参数的 SVG（undraw 支持 ?color=hex 动态着色）
-  const coloredSvgUrl = `${svgUrl}?color=${encodeURIComponent(color)}`;
+  // undraw SVG 官方 CDN 直链: https://cdn.undraw.co/illustration/{slug}.svg
+  const svgUrl = `https://cdn.undraw.co/illustration/${slug}.svg`;
+  // 带颜色参数的 SVG
+  const coloredSvgUrl = color ? `${svgUrl}?color=${encodeURIComponent(color)}` : svgUrl;
   const detailUrl = `https://undraw.co/illustrations/${slug}`;
 
   return {

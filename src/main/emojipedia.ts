@@ -194,12 +194,16 @@ function parseEmojipediaHtml(html: string, platformFilter: string): EmojipediaIt
         if (!slug || usedIds.has(slug)) continue;
         usedIds.add(slug);
 
+        const imageSrc = code
+          ? `https://em-content.zobj.net/source/apple/391/${slug}_${code.toLowerCase()}.png`
+          : `https://em-content.zobj.net/source/apple/391/${slug}.png`;
+
         items.push(buildEmojipediaItem(slug, {
           id,
           code,
           title,
           slug,
-          image: `https://em-content.zobj.net/source/apple/391/${slug}.png`,
+          image: imageSrc,
         }, platformFilter));
       }
     }

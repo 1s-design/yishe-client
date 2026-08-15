@@ -167,10 +167,10 @@ export async function searchOpenMoji(
       const emojiChar = item.emoji || '';
       
       // URL 模式
-      const svgColorUrl = `https://openmoji.org/data/color/${hexcode}.svg`;
-      const svgBlackUrl = `https://openmoji.org/data/black/${hexcode}.svg`;
-      const pngColorUrl = `https://openmoji.org/data/color/${hexcode}.png?size=64`;
-      const pngBlackUrl = `https://openmoji.org/data/black/${hexcode}.png?size=64`;
+      const svgColorUrl = `https://openmoji.org/data/color/svg/${hexcode}.svg`;
+      const svgBlackUrl = `https://openmoji.org/data/black/svg/${hexcode}.svg`;
+      const pngColorUrl = `https://openmoji.org/data/color/png/128x128/${hexcode}.png`;
+      const pngBlackUrl = `https://openmoji.org/data/black/png/128x128/${hexcode}.png`;
       const defaultSvg = style === 'black' ? svgBlackUrl : svgColorUrl;
       const defaultPng = style === 'black' ? pngBlackUrl : pngColorUrl;
       const detailUrl = `https://openmoji.org/library/#emoji=${hexcode}&search=${encodeURIComponent(keyword)}`;
