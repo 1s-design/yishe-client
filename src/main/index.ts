@@ -72,6 +72,12 @@ import {
   syncOpenverseToMaterialLibrary,
   downloadOpenverseImage,
 } from "./openverse";
+import {
+  searchKaboompics,
+  getKaboompicsStatus,
+  syncKaboompicsToMaterialLibrary,
+  downloadKaboompicsImage,
+} from "./kaboompics";
 import { generateCosKey, uploadFileToCos } from "./cos";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
@@ -2940,6 +2946,64 @@ ipcMain.handle(
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await syncOpenverseToMaterialLibrary(imageUrl, metadata);
       return { ok: res.success, msg: res.message, data: res.data };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "kaboompics:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+    },
+  ) => {
+    const { query, page, limit, pageSize } = payload || {};
+    return searchKaboompics(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+    });
+  },
+);
+
+ipcMain.handle("kaboompics:status", async () => {
+  return getKaboompicsStatus();
+});
+
+ipcMain.handle(
+  "kaboompics:download",
+  async (_event, payload: { imageUrl: string; filename?: string }) => {
+    try {
+      const { imageUrl, filename } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await downloadKaboompicsImage(imageUrl, { filename });
+      return { ok: res.success, filePath: res.filePath, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "kaboompics:sync",
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { clientId, imageUrl, metadata } = payload || {};
+      if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
+      const res = await syncKaboompicsToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
