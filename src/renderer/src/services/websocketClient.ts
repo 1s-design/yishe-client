@@ -10464,6 +10464,178 @@ function registerBuiltInLocalServices() {
       throw new Error(`未实现的 Openverse 命令: ${command.action}`);
     },
   });
+
+  registerLocalService({
+    key: "kaboompics",
+    pluginKey: "kaboompics",
+    label: "Kaboompics 免费高清图库",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.getKaboompicsStatus) {
+        return {
+          label: "Kaboompics 免费高清图库",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 Kaboompics 能力",
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+
+      const status = await nativeApi.getKaboompicsStatus();
+      const connected = true;
+      const available = true;
+
+      return {
+        label: "Kaboompics 免费高清图库",
+        connected,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || "Kaboompics 可用",
+        endpoint: "https://kaboompics.com/",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: {
+          siteAvailable: true,
+          runtime: "desktop",
+        },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const { keyword, query, limit = 20, page = 1 } = command.payload || {};
+        const q = query || keyword;
+        if (!q) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchKaboompics) {
+          throw new Error("当前环境未注入桌面端 Kaboompics 搜索能力");
+        }
+        const result = await nativeApi.searchKaboompics({ query: q, limit, page });
+        return {
+          success: result?.success ?? false,
+          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          data: result,
+        };
+      }
+
+      if (command.action === "download") {
+        const { imageUrl, filename } = command.payload || {};
+        const nativeApi = getNativeApi() as any;
+        if (!imageUrl) {
+          throw new Error("缺少 Kaboompics 图片链接");
+        }
+        if (!nativeApi?.downloadKaboompicsImage) {
+          throw new Error("当前环境未注入桌面端 Kaboompics 下载能力");
+        }
+        const data = await nativeApi.downloadKaboompicsImage({ imageUrl, filename });
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          data,
+        };
+      }
+
+      if (command.action === "sync") {
+        const { imageUrl, metadata } = command.payload || {};
+        const nativeApi = getNativeApi() as any;
+        if (!imageUrl) {
+          throw new Error("缺少 Kaboompics 图片链接");
+        }
+        if (!nativeApi?.syncKaboompicsToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Kaboompics 同步能力");
+        }
+        const data = await nativeApi.syncKaboompicsToMaterialLibrary(imageUrl, metadata);
+        await syncServiceRuntime("kaboompics");
+        return {
+          success: !!data?.ok || !!data?.success,
+          message: data?.message || (data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败")),
+          data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const { keyword, query, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        const q = query || keyword;
+        if (!q) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchKaboompics || !nativeApi?.syncKaboompicsToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Kaboompics 采集能力");
+        }
+
+        const searchResult = await nativeApi.searchKaboompics({ query: q, limit: maxCount });
+        if (!searchResult?.success || !searchResult?.items?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, images: [] },
+          };
+        }
+
+        const items = searchResult.items;
+        const images: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of items) {
+          try {
+            if (syncToMaterial) {
+              const syncResult = await nativeApi.syncKaboompicsToMaterialLibrary(item.image, {
+                title: item.title,
+                url: item.url,
+                author: item.author,
+                width: item.width,
+                height: item.height,
+                id: item.id,
+              });
+              if (syncResult?.success || syncResult?.ok) {
+                images.push({
+                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath || syncResult.cosUrl,
+                  originUrl: item.image,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              const dl = await nativeApi.downloadKaboompicsImage({ imageUrl: item.image });
+              if (dl?.ok) {
+                images.push({ url: dl.filePath, originUrl: item.image });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("kaboompics");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, images },
+        };
+      }
+
+      throw new Error(`未实现的 Kaboompics 命令: ${command.action}`);
+    },
+  });
 }
 
 function emitClientInfo() {
