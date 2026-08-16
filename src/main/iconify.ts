@@ -37,6 +37,10 @@ export interface IconifyIcon {
   license?: string;
   isFree?: boolean;
   description?: string;
+  iconName?: string;
+  category?: string;
+  format?: string;
+  color?: string;
 }
 
 export interface IconifySearchResult {
@@ -139,7 +143,7 @@ function parseIconifySearchResponse(
   try {
     const rawIcons = data.icons || [];
     const collections = data.collections || {};
-    const total = data.total || (Array.isArray(rawIcons) ? rawIcons.length : Object.keys(rawIcons).length);
+    const _total = data.total || (Array.isArray(rawIcons) ? rawIcons.length : Object.keys(rawIcons).length);
 
     if (Array.isArray(rawIcons)) {
       for (const item of rawIcons) {

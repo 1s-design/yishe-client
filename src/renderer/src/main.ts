@@ -1,3 +1,4 @@
+import "./assets/base.css";
 import "./assets/main.less";
 import "./assets/element-theme.css";
 

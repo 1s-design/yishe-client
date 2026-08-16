@@ -4,6 +4,8 @@
   "compilerOptions": {
     "composite": true,
     "strict": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx",

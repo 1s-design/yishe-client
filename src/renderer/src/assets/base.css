@@ -1,2 +1,160 @@
-@import 'tailwindcss';
+@import "tailwindcss";
 
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+}
+
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #0d0d0d;
+  --card: #ffffff;
+  --card-foreground: #0d0d0d;
+  --popover: #ffffff;
+  --popover-foreground: #0d0d0d;
+  --primary: #0d0d0d;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f4;
+  --secondary-foreground: #0d0d0d;
+  --muted: #f4f4f4;
+  --muted-foreground: #676767;
+  --accent: #f4f4f4;
+  --accent-foreground: #0d0d0d;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: #0d0d0d;
+  --sidebar: #f9f9f9;
+  --sidebar-foreground: #374151;
+  --sidebar-border: #e5e5e5;
+  --radius: 0.75rem;
+}
+
+.dark,
+[data-theme="dark"],
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0d0d0d;
+  --foreground: #ececec;
+  --card: #181818;
+  --card-foreground: #ececec;
+  --popover: #181818;
+  --popover-foreground: #ececec;
+  --primary: #ececec;
+  --primary-foreground: #0d0d0d;
+  --secondary: #212121;
+  --secondary-foreground: #ececec;
+  --muted: #212121;
+  --muted-foreground: #a3a3a3;
+  --accent: #212121;
+  --accent-foreground: #ececec;
+  --destructive: #7f1d1d;
+  --destructive-foreground: #ffffff;
+  --border: #2a2a2a;
+  --input: #2a2a2a;
+  --ring: #ececec;
+  --sidebar: #121212;
+  --sidebar-foreground: #d1d5db;
+  --sidebar-border: #262626;
+}
+
+/* Compact desktop notifications */
+.el-notification.client-toast {
+  width: min(300px, calc(100vw - 32px));
+  min-height: 0;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 1px solid #2c2c2c;
+  border-left: 3px solid var(--toast-accent);
+  border-radius: 9px;
+  background: #121212;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease;
+}
+.el-notification.client-toast:hover {
+  transform: translateX(-2px);
+  background: #181818;
+}
+.el-notification.client-toast--success {
+  --toast-accent: #51c77d;
+}
+.el-notification.client-toast--info {
+  --toast-accent: #6399e8;
+}
+.el-notification.client-toast--warning {
+  --toast-accent: #d7aa4f;
+}
+.el-notification.client-toast--error {
+  --toast-accent: #da6a6a;
+}
+.el-notification.client-toast .el-notification__group {
+  width: 100%;
+  margin: 0;
+}
+.el-notification.client-toast .el-notification__content {
+  margin: 0;
+}
+.el-notification.client-toast .el-notification__closeBtn {
+  top: 9px;
+  right: 9px;
+  color: #777;
+  font-size: 13px;
+}
+.el-notification.client-toast .el-notification__closeBtn:hover {
+  color: #eee;
+}
+.client-toast__content {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 28px 8px 10px;
+}
+.client-toast__icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--toast-accent);
+  font-size: 15px;
+}
+.client-toast__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.client-toast__message {
+  margin: 0;
+  color: #e6e6e6;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}

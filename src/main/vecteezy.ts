@@ -208,7 +208,7 @@ function parseVecteezyHtml(html: string, mediaType: string): { items: VecteezyAs
  */
 function buildVecteezyAsset(id: string, title: string, thumbSrc: string, mediaType: string, raw?: any): VecteezyAsset {
   const detailUrl = `https://www.vecteezy.com/free-${mediaType}/${id}`;
-  const ext = mediaType === 'vector' ? '.svg' : mediaType === 'png' ? '.png' : '.jpg';
+  const _ext = mediaType === 'vector' ? '.svg' : mediaType === 'png' ? '.png' : '.jpg';
 
   return {
     id,

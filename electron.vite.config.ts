@@ -190,8 +190,10 @@ export default defineConfig({
     publicDir: resolve('public'), // 指定 public 目录位置
     resolve: {
       alias: {
+        '@': resolve('src/renderer/src'),
         '@renderer': resolve('src/renderer/src')
-      }
+      },
+      extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue']
     },
     plugins: [vue()],
     server: {

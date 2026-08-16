@@ -68,18 +68,21 @@ export function isClientAuthorized() {
   return nativeApi.isTokenExist();
 }
 
-export function logoutToken(): Promise<boolean> {
-  return fetch(`${LOCAL_API_BASE}/logoutToken`, {
+export async function logoutToken(): Promise<boolean> {
+  const nativeApi = getNativeApi();
+  // Electron 主进程持有 token 与本地服务密钥；直接走 IPC 可避免 1519 服务已停止
+  // 或 HTTP 请求缺少 X-Local-Secret 时导致的“界面已退出、token 仍存在”问题。
+  if (nativeApi?.clearToken) {
+    return nativeApi.clearToken();
+  }
+
+  const response = await fetch(`${LOCAL_API_BASE}/logoutToken`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  })
-    .then((res) => res.json())
-    .then((data) => {
-      if (data.success) return true;
-      return Promise.reject(new Error(data.message || "退出授权失败"));
-    });
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await response.json();
+  if (data.success) return true;
+  throw new Error(data.message || "退出授权失败");
 }
 
 export interface UserPlatformSessionsQuery {
@@ -124,14 +127,13 @@ function unwrapApiData<T>(response: any, fallback: T): T {
 
 // 获取用户设置
 export function getUserSetting(key?: string | { key?: string }) {
-  const payload =
-    typeof key === "string" ? { key } : key || {};
+  const payload = typeof key === "string" ? { key } : key || {};
 
   return request
     .post<Record<string, any>>({
-    url: "/user/getSetting",
-    data: payload,
-  })
+      url: "/user/getSetting",
+      data: payload,
+    })
     .then((response) => unwrapApiData<Record<string, any>>(response, {}));
 }
 
@@ -139,9 +141,9 @@ export function getUserSetting(key?: string | { key?: string }) {
 export function getAiSetting() {
   return request
     .post<Record<string, any>>({
-    url: "/user/getAiSetting",
-    data: {},
-  })
+      url: "/user/getAiSetting",
+      data: {},
+    })
     .then((response) => unwrapApiData<Record<string, any>>(response, {}));
 }
 

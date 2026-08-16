@@ -24,6 +24,8 @@ import { join as pathJoin } from "path";
 import fs from "fs";
 import http from "http";
 import { URL } from "url";
+import { setupAgentIpc } from "./agent/agent-ipc";
+import { clearActiveAgentConfig } from "./agent/agent-config";
 import {
   getGoogleArtZooms,
   syncGoogleArtToMaterialLibrary,
@@ -114,6 +116,66 @@ import {
   syncEmojipediaToMaterialLibrary,
   downloadEmojipediaItem,
 } from "./emojipedia";
+import { searchHN, getHNStatus, syncHNToLibrary } from "./hackernews";
+import { searchArxiv, getArxivStatus, syncArxivToLibrary } from "./arxiv";
+import {
+  searchGithubRepos,
+  getGithubStatus,
+  syncGithubToLibrary,
+} from "./github";
+import { searchGdeltNews, getGdeltStatus, syncGdeltToLibrary } from "./gdelt";
+import {
+  searchGoogleNews,
+  getGoogleNewsStatus,
+  syncGoogleNewsToLibrary,
+} from "./googlenews";
+import { searchReddit, getRedditStatus, syncRedditToLibrary } from "./reddit";
+import { searchPH, getPHStatus, syncPHToLibrary } from "./producthunt";
+import {
+  searchGuardian,
+  getGuardianStatus,
+  syncGuardianToLibrary,
+} from "./theguardian";
+import { fetchBBC, getBBCStatus, syncBBCToLibrary } from "./bbcnews";
+import { fetchNPR, getNPRStatus, syncNPRToLibrary } from "./npr";
+import { fetchTC, getTCStatus, syncTCToLibrary } from "./techcrunch";
+import { fetchVerge, getVergeStatus, syncVergeToLibrary } from "./theverge";
+import { fetchArs, getArsStatus, syncArsToLibrary } from "./arstechnica";
+import { fetchMIT, getMITStatus, syncMITToLibrary } from "./mittechreview";
+import {
+  fetchReuters,
+  getReutersStatus,
+  syncReutersToLibrary,
+} from "./reuters";
+import {
+  fetchChinaDaily,
+  getChinaDailyStatus,
+  syncChinaDailyToLibrary,
+} from "./chinadaily";
+import { fetchGovCN, getGovCNStatus, syncGovCNToLibrary } from "./govcn";
+import { fetchXH, getXHStatus, syncXHToLibrary } from "./xinhuanet";
+import {
+  fetchThePaper,
+  getThePaperStatus,
+  syncThePaperToLibrary,
+} from "./thepaper";
+import { fetch36Kr, get36KrStatus, sync36KrToLibrary } from "./36kr";
+import { fetchHuxiu, getHuxiuStatus, syncHuxiuToLibrary } from "./huxiu";
+import { searchOpenMeteo, getOpenMeteoStatus } from "./openmeteo";
+import { searchWttr, getWttrStatus } from "./wttr";
+import { searchCoinGecko, getCoinGeckoStatus } from "./coingecko";
+import { searchFrankfurter, getFrankfurterStatus } from "./frankfurter";
+import { searchDictionary, getDictionaryStatus } from "./dictionary";
+import { searchJoke, getJokeStatus } from "./joke";
+import { searchIpify, getIpifyStatus } from "./ipify";
+import { searchSunrise, getSunriseStatus } from "./sunrisesunset";
+import { searchTimeApi, getTimeApiStatus } from "./timeapi";
+import { searchZippopotam, getZippopotamStatus } from "./zippopotam";
+import { searchCountryIs, getCountryIsStatus } from "./countryis";
+import { searchErApi, getErApiStatus } from "./erapi";
+import { searchFawazahmed, getFawazahmedStatus } from "./fawazahmed";
+import { searchColorApi, getColorApiStatus } from "./colorapi";
+
 import {
   searchSvgrepo,
   getSvgrepoStatus,
@@ -491,20 +553,21 @@ function createWindow(): void {
     });
   };
 
-  // Create the browser window.
   mainWindow = new BrowserWindow({
-    width: 820,
-    height: 580,
-    minWidth: 700,
-    minHeight: 520,
-    resizable: false,
-    maximizable: false,
+    width: 1200,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    resizable: true,
+    maximizable: true,
     show: false,
     fullscreen: false,
-    fullscreenable: false,
+    fullscreenable: true,
     simpleFullscreen: false,
-    autoHideMenuBar: !isMac,
-    title: "衣设程序",
+    autoHideMenuBar: true,
+    titleBarStyle: isMac ? "hiddenInset" : "hidden",
+    trafficLightPosition: { x: 14, y: 14 },
+    title: "衣设客户端",
     ...(process.platform === "linux" ? { icon } : { icon }),
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
@@ -541,7 +604,9 @@ function createWindow(): void {
       displayPowerSaveBlockerId === null ||
       !powerSaveBlocker.isStarted(displayPowerSaveBlockerId)
     ) {
-      displayPowerSaveBlockerId = powerSaveBlocker.start("prevent-display-sleep");
+      displayPowerSaveBlockerId = powerSaveBlocker.start(
+        "prevent-display-sleep",
+      );
     }
   };
 
@@ -1084,12 +1149,14 @@ app.whenReady().then(() => {
   initializeDefaultWorkspaceDirectory();
 
   // 注册通用客户端能力
-  import('./capabilities').then((m) => {
-    m.registerAllCapabilities();
-    console.log(`[App] 通用能力已注册: ${m.getCapabilityCount()} 个`);
-  }).catch((e) => {
-    console.warn('[App] 通用能力注册失败:', e?.message || e);
-  });
+  import("./capabilities")
+    .then((m) => {
+      m.registerAllCapabilities();
+      console.log(`[App] 通用能力已注册: ${m.getCapabilityCount()} 个`);
+    })
+    .catch((e) => {
+      console.warn("[App] 通用能力注册失败:", e?.message || e);
+    });
   void getCurrentLocalDatabaseInfo()
     .then((localDatabaseInfo) => {
       writeMainLog(
@@ -1163,8 +1230,7 @@ app.whenReady().then(() => {
   // 注意：server.ts 中也有 save-token 处理器，但它在服务启动后才注册
   // 这里我们在服务启动前拦截，先启动服务并保存 token
   ipcMain.handle("save-token", async (_event, newToken) => {
-    const { saveToken, isServerRunning, startServer } =
-      await getServerModule();
+    const { saveToken, isServerRunning, startServer } = await getServerModule();
     // 先保存 token（无论服务是否启动）
     saveToken(newToken);
     writeMainLog("INFO", "保存登录 token，检查本地服务状态", {
@@ -1193,6 +1259,14 @@ app.whenReady().then(() => {
     await ensureLocalServiceStartedForCachedToken("is-token-exist");
     const { isTokenExist } = await getServerModule();
     return isTokenExist();
+  });
+
+  // Renderer 通过受限 IPC 清除登录态；不依赖 1519 HTTP 路由，因此不会受本地密钥或服务停止时机影响。
+  ipcMain.handle("clear-token", async () => {
+    const { clearToken } = await getServerModule();
+    clearToken();
+    clearActiveAgentConfig();
+    return true;
   });
 
   ipcMain.handle("get-device-key", async () => {
@@ -1226,21 +1300,27 @@ app.whenReady().then(() => {
     enabled: boolean;
   } = { keyId: null, model: "", baseUrl: "", apiKey: "", enabled: false };
 
-  ipcMain.handle("agent-config:set", async (_event, config: typeof storedAgentConfig) => {
-    storedAgentConfig = { ...storedAgentConfig, ...config };
-    // 同时存到全局变量，供 MCP 工具读取
-    (global as any).__agentConfig = storedAgentConfig;
-    writeMainLog("INFO", "Agent 配置已更新", {
-      enabled: storedAgentConfig.enabled,
-      model: storedAgentConfig.model,
-      keyId: storedAgentConfig.keyId,
-    });
-    return true;
-  });
+  ipcMain.handle(
+    "agent-config:set",
+    async (_event, config: typeof storedAgentConfig) => {
+      storedAgentConfig = { ...storedAgentConfig, ...config };
+      // 同时存到全局变量，供 MCP 工具读取
+      (global as any).__agentConfig = storedAgentConfig;
+      writeMainLog("INFO", "Agent 配置已更新", {
+        enabled: storedAgentConfig.enabled,
+        model: storedAgentConfig.model,
+        keyId: storedAgentConfig.keyId,
+      });
+      return true;
+    },
+  );
 
   ipcMain.handle("agent-config:get", async () => {
     return storedAgentConfig;
   });
+
+  // 注册客户端自研 LangGraph Agent 核心 IPC 通道
+  setupAgentIpc();
 
   ipcMain.handle("start-external-process", async (_event, id: string) => {
     writeMainLog("INFO", "收到启动外部进程 IPC", { processId: id });
@@ -1366,7 +1446,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle("check-local-service-status", async () => {
     try {
-      await ensureLocalServiceStartedForCachedToken("check-local-service-status");
+      await ensureLocalServiceStartedForCachedToken(
+        "check-local-service-status",
+      );
       const { isServerRunning } = await getServerModule();
       const running = isServerRunning();
       // 尝试访问健康检查接口来确认服务是否真正可用
@@ -1433,7 +1515,10 @@ app.whenReady().then(() => {
             ? { message: error.message, stack: error.stack }
             : error,
       });
-      return { success: false, message: error?.message || "启动 MCP Server 失败" };
+      return {
+        success: false,
+        message: error?.message || "启动 MCP Server 失败",
+      };
     }
   });
 
@@ -1458,7 +1543,10 @@ app.whenReady().then(() => {
             ? { message: error.message, stack: error.stack }
             : error,
       });
-      return { success: false, message: error?.message || "停止 MCP Server 失败" };
+      return {
+        success: false,
+        message: error?.message || "停止 MCP Server 失败",
+      };
     }
   });
 
@@ -1495,7 +1583,9 @@ app.whenReady().then(() => {
           error: error?.message,
         });
         return {
-          content: [{ type: "text", text: error?.message || "MCP 工具执行异常" }],
+          content: [
+            { type: "text", text: error?.message || "MCP 工具执行异常" },
+          ],
           isError: true,
         };
       }
@@ -2629,10 +2719,22 @@ ipcMain.handle("google-art:get-zooms", async (_event, url: string) => {
   return result;
 });
 
-ipcMain.handle("google-art:search", async (_event, payload: { keyword: string; page?: number; hl?: string; maxCount?: number; cursor?: string | null }) => {
-  const result = await searchGoogleArts(payload);
-  return result;
-});
+ipcMain.handle(
+  "google-art:search",
+  async (
+    _event,
+    payload: {
+      keyword: string;
+      page?: number;
+      hl?: string;
+      maxCount?: number;
+      cursor?: string | null;
+    },
+  ) => {
+    const result = await searchGoogleArts(payload);
+    return result;
+  },
+);
 
 ipcMain.handle("google-art:status", async () => {
   return getGoogleArtStatus();
@@ -2687,7 +2789,9 @@ ipcMain.handle(
       const { imageUrl, filename } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const client = new PinterestClient();
-      const destDir = join(process.env.PINTEREST_TMP_DIR || join(app.getPath("temp"), "pinterest"));
+      const destDir = join(
+        process.env.PINTEREST_TMP_DIR || join(app.getPath("temp"), "pinterest"),
+      );
       const filePath = await client.downloadImage(imageUrl, destDir, filename);
       return { ok: true, filePath };
     } catch (error: any) {
@@ -2747,8 +2851,14 @@ ipcMain.handle(
     try {
       const { imageUrl, filename } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const destDir = join(process.env.WIKIMEDIA_TMP_DIR || join(app.getPath("temp"), "wikimedia"));
-      const filePath = await downloadWikimediaImage(imageUrl, destDir, filename);
+      const destDir = join(
+        process.env.WIKIMEDIA_TMP_DIR || join(app.getPath("temp"), "wikimedia"),
+      );
+      const filePath = await downloadWikimediaImage(
+        imageUrl,
+        destDir,
+        filename,
+      );
       return { ok: true, filePath };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3056,7 +3166,10 @@ ipcMain.handle(
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await syncKaboompicsToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncKaboompicsToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3073,7 +3186,7 @@ ipcMain.handle(
       page?: number;
       limit?: number;
       pageSize?: number;
-      formatPreference?: 'svg' | 'png';
+      formatPreference?: "svg" | "png";
     },
   ) => {
     const { query, page, limit, pageSize, formatPreference } = payload || {};
@@ -3091,12 +3204,23 @@ ipcMain.handle("openclipart:status", async () => {
 
 ipcMain.handle(
   "openclipart:download",
-  async (_event, payload: { imageUrl: string; filename?: string; format?: 'svg' | 'png' }) => {
+  async (
+    _event,
+    payload: { imageUrl: string; filename?: string; format?: "svg" | "png" },
+  ) => {
     try {
       const { imageUrl, filename, format } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await downloadOpenclipartImage(imageUrl, { filename, format });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      const res = await downloadOpenclipartImage(imageUrl, {
+        filename,
+        format,
+      });
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3116,7 +3240,10 @@ ipcMain.handle(
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await syncOpenclipartToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncOpenclipartToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3151,12 +3278,20 @@ ipcMain.handle("undraw:status", async () => {
 
 ipcMain.handle(
   "undraw:download",
-  async (_event, payload: { imageUrl: string; filename?: string; color?: string }) => {
+  async (
+    _event,
+    payload: { imageUrl: string; filename?: string; color?: string },
+  ) => {
     try {
       const { imageUrl, filename, color } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await downloadUndrawImage(imageUrl, { filename, color });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3176,7 +3311,10 @@ ipcMain.handle(
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await syncUndrawToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncUndrawToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3193,7 +3331,7 @@ ipcMain.handle(
       page?: number;
       limit?: number;
       pageSize?: number;
-      mediaType?: 'photos' | 'png' | 'vector';
+      mediaType?: "photos" | "png" | "vector";
     },
   ) => {
     const { query, page, limit, pageSize, mediaType } = payload || {};
@@ -3211,12 +3349,24 @@ ipcMain.handle("vecteezy:status", async () => {
 
 ipcMain.handle(
   "vecteezy:download",
-  async (_event, payload: { imageUrl: string; filename?: string; format?: 'svg' | 'png' | 'jpg' }) => {
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      filename?: string;
+      format?: "svg" | "png" | "jpg";
+    },
+  ) => {
     try {
       const { imageUrl, filename, format } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await downloadVecteezyAsset(imageUrl, { filename, format });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3236,7 +3386,10 @@ ipcMain.handle(
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await syncVecteezyToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncVecteezyToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3272,12 +3425,27 @@ ipcMain.handle("nounproject:status", async () => {
 
 ipcMain.handle(
   "nounproject:download",
-  async (_event, payload: { imageUrl: string; filename?: string; format?: "svg" | "png" | "jpg" }) => {
+  async (
+    _event,
+    payload: {
+      imageUrl: string;
+      filename?: string;
+      format?: "svg" | "png" | "jpg";
+    },
+  ) => {
     try {
       const { imageUrl, filename, format } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少素材链接" };
-      const res = await downloadNounProjectAsset(imageUrl, { filename, format });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      const res = await downloadNounProjectAsset(imageUrl, {
+        filename,
+        format,
+      });
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3297,14 +3465,16 @@ ipcMain.handle(
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少素材链接" };
-      const res = await syncNounProjectToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncNounProjectToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
   },
 );
-
 
 ipcMain.handle(
   "iconify:search",
@@ -3335,12 +3505,20 @@ ipcMain.handle("iconify:status", async () => {
 
 ipcMain.handle(
   "iconify:download",
-  async (_event, payload: { imageUrl: string; filename?: string; color?: string }) => {
+  async (
+    _event,
+    payload: { imageUrl: string; filename?: string; color?: string },
+  ) => {
     try {
       const { imageUrl, filename, color } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图标链接" };
       const res = await downloadIconifyIcon(imageUrl, { filename, color });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3360,7 +3538,10 @@ ipcMain.handle(
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图标链接" };
-      const res = await syncIconifyToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncIconifyToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3378,12 +3559,17 @@ ipcMain.handle(
       page?: number;
       limit?: number;
       pageSize?: number;
-      style?: 'color' | 'black';
+      style?: "color" | "black";
       group?: string;
     },
   ) => {
     const { query, page, limit, pageSize, style, group } = payload || {};
-    return searchOpenMoji(query, { page: page || 1, limit: limit || pageSize || 20, style, group });
+    return searchOpenMoji(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      style,
+      group,
+    });
   },
 );
 
@@ -3393,12 +3579,20 @@ ipcMain.handle("openmoji:status", async () => {
 
 ipcMain.handle(
   "openmoji:download",
-  async (_event, payload: { imageUrl: string; filename?: string; style?: 'color' | 'black' }) => {
+  async (
+    _event,
+    payload: { imageUrl: string; filename?: string; style?: "color" | "black" },
+  ) => {
     try {
       const { imageUrl, filename, style } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await downloadOpenMojiEmoji(imageUrl, { filename, style });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3407,11 +3601,21 @@ ipcMain.handle(
 
 ipcMain.handle(
   "openmoji:sync",
-  async (_event, payload: { clientId: string; imageUrl: string; metadata?: Record<string, any> }) => {
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await syncOpenMojiToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncOpenMojiToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3429,12 +3633,17 @@ ipcMain.handle(
       page?: number;
       limit?: number;
       pageSize?: number;
-      style?: 'outlined' | 'rounded' | 'sharp' | 'two-tone';
+      style?: "outlined" | "rounded" | "sharp" | "two-tone";
       size?: number;
     },
   ) => {
     const { query, page, limit, pageSize, style, size } = payload || {};
-    return searchGoogleIcons(query, { page: page || 1, limit: limit || pageSize || 20, style, size });
+    return searchGoogleIcons(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      style,
+      size,
+    });
   },
 );
 
@@ -3444,12 +3653,20 @@ ipcMain.handle("googleicons:status", async () => {
 
 ipcMain.handle(
   "googleicons:download",
-  async (_event, payload: { imageUrl: string; filename?: string; style?: string }) => {
+  async (
+    _event,
+    payload: { imageUrl: string; filename?: string; style?: string },
+  ) => {
     try {
       const { imageUrl, filename, style } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await downloadGoogleIcon(imageUrl, { filename, style });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3458,11 +3675,21 @@ ipcMain.handle(
 
 ipcMain.handle(
   "googleicons:sync",
-  async (_event, payload: { clientId: string; imageUrl: string; metadata?: Record<string, any> }) => {
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await syncGoogleIconsToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncGoogleIconsToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3485,7 +3712,12 @@ ipcMain.handle(
     },
   ) => {
     const { query, page, limit, pageSize, category, platform } = payload || {};
-    return searchEmojipedia(query, { page: page || 1, limit: limit || pageSize || 20, category, platform });
+    return searchEmojipedia(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      category,
+      platform,
+    });
   },
 );
 
@@ -3495,12 +3727,23 @@ ipcMain.handle("emojipedia:status", async () => {
 
 ipcMain.handle(
   "emojipedia:download",
-  async (_event, payload: { imageUrl: string; filename?: string; platform?: string }) => {
+  async (
+    _event,
+    payload: { imageUrl: string; filename?: string; platform?: string },
+  ) => {
     try {
       const { imageUrl, filename, platform } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await downloadEmojipediaItem(imageUrl, { filename, platform });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      const res = await downloadEmojipediaItem(imageUrl, {
+        filename,
+        platform,
+      });
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3509,12 +3752,696 @@ ipcMain.handle(
 
 ipcMain.handle(
   "emojipedia:sync",
-  async (_event, payload: { clientId: string; imageUrl: string; metadata?: Record<string, any> }) => {
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
-      const res = await syncEmojipediaToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncEmojipediaToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ══════════════════════════════════════════════════════
+// 新闻数据平台 IPC Handlers (18 platforms)
+// ══════════════════════════════════════════════════════
+
+// ─── HN ─────────────────────────────────────
+ipcMain.handle("hackernews:search", async (_event, payload: any) => {
+  try {
+    const result = await searchHN(
+      payload["type"] || payload.query || "ai",
+      payload.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("hackernews:status", async () => {
+  return getHNStatus();
+});
+
+ipcMain.handle(
+  "hackernews:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncHNToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── ArXiv ─────────────────────────────────────
+ipcMain.handle(
+  "arxiv:search",
+  async (_event, payload: { query?: string; options?: any }) => {
+    try {
+      const result = await searchArxiv(
+        payload["query"] || payload.query || "ai",
+        payload.options || {},
+      );
+      return { ok: true, data: result };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle("arxiv:status", async () => {
+  return getArxivStatus();
+});
+
+ipcMain.handle(
+  "arxiv:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncArxivToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── GitHub ─────────────────────────────────────
+ipcMain.handle(
+  "github:search",
+  async (_event, payload: { query?: string; options?: any }) => {
+    try {
+      const result = await searchGithubRepos(
+        payload["query"] || payload.query || "ai",
+        payload.options || {},
+      );
+      return { ok: true, data: result };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle("github:status", async () => {
+  return getGithubStatus();
+});
+
+ipcMain.handle(
+  "github:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncGithubToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── GDELT ─────────────────────────────────────
+ipcMain.handle(
+  "gdelt:search",
+  async (_event, payload: { query?: string; options?: any }) => {
+    try {
+      const result = await searchGdeltNews(
+        payload["query"] || payload.query || "ai",
+        payload.options || {},
+      );
+      return { ok: true, data: result };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle("gdelt:status", async () => {
+  return getGdeltStatus();
+});
+
+ipcMain.handle(
+  "gdelt:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncGdeltToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Google News ─────────────────────────────────────
+ipcMain.handle(
+  "googlenews:search",
+  async (_event, payload: { query?: string; options?: any }) => {
+    try {
+      const result = await searchGoogleNews(
+        payload["query"] || payload.query || "ai",
+        payload.options || {},
+      );
+      return { ok: true, data: result };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle("googlenews:status", async () => {
+  return getGoogleNewsStatus();
+});
+
+ipcMain.handle(
+  "googlenews:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncGoogleNewsToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Reddit ─────────────────────────────────────
+ipcMain.handle(
+  "reddit:search",
+  async (_event, payload: { query?: string; options?: any }) => {
+    try {
+      const result = await searchReddit(
+        payload["query"] || payload.query || "ai",
+        payload.options || {},
+      );
+      return { ok: true, data: result };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle("reddit:status", async () => {
+  return getRedditStatus();
+});
+
+ipcMain.handle(
+  "reddit:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncRedditToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Product Hunt ─────────────────────────────────────
+ipcMain.handle("producthunt:search", async (_event, payload: any) => {
+  try {
+    const result = await searchPH(
+      payload["accessToken"] || payload.query || "ai",
+      payload.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("producthunt:status", async () => {
+  return getPHStatus();
+});
+
+ipcMain.handle(
+  "producthunt:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncPHToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Guardian ─────────────────────────────────────
+ipcMain.handle("theguardian:search", async (_event, payload: any) => {
+  try {
+    const result = await searchGuardian(
+      payload["apiKey"] || payload.query || "ai",
+      payload.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("theguardian:status", async () => {
+  return getGuardianStatus();
+});
+
+ipcMain.handle(
+  "theguardian:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncGuardianToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── BBC ─────────────────────────────────────
+ipcMain.handle("bbcnews:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchBBC(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("bbcnews:status", async () => {
+  return getBBCStatus();
+});
+
+ipcMain.handle(
+  "bbcnews:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncBBCToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── NPR ─────────────────────────────────────
+ipcMain.handle("npr:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchNPR(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("npr:status", async () => {
+  return getNPRStatus();
+});
+
+ipcMain.handle(
+  "npr:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncNPRToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── TechCrunch ─────────────────────────────────────
+ipcMain.handle("techcrunch:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchTC(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("techcrunch:status", async () => {
+  return getTCStatus();
+});
+
+ipcMain.handle(
+  "techcrunch:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncTCToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Verge ─────────────────────────────────────
+ipcMain.handle("theverge:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchVerge(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("theverge:status", async () => {
+  return getVergeStatus();
+});
+
+ipcMain.handle(
+  "theverge:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncVergeToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Ars Technica ─────────────────────────────────────
+ipcMain.handle("arstechnica:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchArs(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("arstechnica:status", async () => {
+  return getArsStatus();
+});
+
+ipcMain.handle(
+  "arstechnica:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncArsToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── MIT Tech Review ─────────────────────────────────────
+ipcMain.handle("mittechreview:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchMIT(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("mittechreview:status", async () => {
+  return getMITStatus();
+});
+
+ipcMain.handle(
+  "mittechreview:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncMITToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Reuters ─────────────────────────────────────
+ipcMain.handle("reuters:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchReuters(
+      payload["category"] || payload.query || "technology",
+      payload.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("reuters:status", async () => {
+  return getReutersStatus();
+});
+
+ipcMain.handle(
+  "reuters:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncReutersToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── China Daily ─────────────────────────────────────
+ipcMain.handle("chinadaily:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchChinaDaily(
+      payload["category"] || payload.query || "technology",
+      payload.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("chinadaily:status", async () => {
+  return getChinaDailyStatus();
+});
+
+ipcMain.handle(
+  "chinadaily:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncChinaDailyToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── GovCN ─────────────────────────────────────
+ipcMain.handle("govcn:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchGovCN(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("govcn:status", async () => {
+  return getGovCNStatus();
+});
+
+ipcMain.handle(
+  "govcn:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncGovCNToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── XinhuaNet ─────────────────────────────────────
+ipcMain.handle("xinhuanet:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchXH(
+      payload["category"] || payload.query || "technology",
+      payload.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("xinhuanet:status", async () => {
+  return getXHStatus();
+});
+
+ipcMain.handle(
+  "xinhuanet:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncXHToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── The Paper 澎湃新闻 ─────────────────────────────────────
+ipcMain.handle("thepaper:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchThePaper(
+      payload["category"] || payload.query || "all",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("thepaper:status", async () => {
+  return getThePaperStatus();
+});
+
+ipcMain.handle(
+  "thepaper:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncThePaperToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 36Kr ─────────────────────────────────────
+ipcMain.handle(
+  "36kr:search",
+  async (
+    _event,
+    payload: { category?: string; query?: string; options?: any },
+  ) => {
+    try {
+      const result = await fetch36Kr(payload["category"] || "all", {
+        query: payload.query,
+        limit: payload.options?.limit || payload.options?.maxCount,
+      });
+      return { ok: true, data: result };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle("36kr:status", async () => {
+  return get36KrStatus();
+});
+
+ipcMain.handle(
+  "36kr:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await sync36KrToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Huxiu 虎嗅 ─────────────────────────────────────
+ipcMain.handle(
+  "huxiu:search",
+  async (
+    _event,
+    payload: { category?: string; query?: string; options?: any },
+  ) => {
+    try {
+      const result = await fetchHuxiu(payload["category"] || "all", {
+        query: payload.query,
+        limit: payload.options?.limit || payload.options?.maxCount,
+      });
+      return { ok: true, data: result };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle("huxiu:status", async () => {
+  return getHuxiuStatus();
+});
+
+ipcMain.handle(
+  "huxiu:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncHuxiuToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3554,7 +4481,12 @@ ipcMain.handle(
       const { imageUrl, filename } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少矢量图链接" };
       const res = await downloadSvgrepoImage(imageUrl, { filename });
-      return { ok: res.success, filePath: res.filePath, filename: res.filename, msg: res.error };
+      return {
+        ok: res.success,
+        filePath: res.filePath,
+        filename: res.filename,
+        msg: res.error,
+      };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
@@ -3563,17 +4495,179 @@ ipcMain.handle(
 
 ipcMain.handle(
   "svgrepo:sync",
-  async (_event, payload: { clientId: string; imageUrl: string; metadata?: Record<string, any> }) => {
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
     try {
       const { clientId, imageUrl, metadata } = payload || {};
       if (!imageUrl) return { ok: false, msg: "缺少矢量图链接" };
-      const res = await syncSvgrepoToMaterialLibrary(clientId || "local", { imageUrl, metadata });
+      const res = await syncSvgrepoToMaterialLibrary(clientId || "local", {
+        imageUrl,
+        metadata,
+      });
       return { ok: res.success, msg: res.error, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
     }
   },
 );
+
+// ══════════════════════════════════════════════════════
+// 工具类 IPC Handlers (8 utilities)
+// ══════════════════════════════════════════════════════
+
+// Open-Meteo
+ipcMain.handle("openmeteo:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchOpenMeteo(p) };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("openmeteo:status", async () => getOpenMeteoStatus());
+
+// wttr.in
+ipcMain.handle("wttr:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchWttr(p.city || "Beijing") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("wttr:status", async () => getWttrStatus());
+
+// CoinGecko
+ipcMain.handle("coingecko:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchCoinGecko(p) };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("coingecko:status", async () => getCoinGeckoStatus());
+
+// Frankfurter
+ipcMain.handle("frankfurter:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchFrankfurter(p) };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("frankfurter:status", async () => getFrankfurterStatus());
+
+// Dictionary
+ipcMain.handle("dictionary:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchDictionary(p.word || "hello") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("dictionary:status", async () => getDictionaryStatus());
+
+// Joke
+ipcMain.handle("joke:search", async () => {
+  try {
+    return { ok: true, data: await searchJoke() };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("joke:status", async () => getJokeStatus());
+
+// ipify
+ipcMain.handle("ipify:search", async () => {
+  try {
+    return { ok: true, data: await searchIpify() };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("ipify:status", async () => getIpifyStatus());
+
+// ══════════════════════════════════════════════════════
+// 新工具类 IPC Handlers (4 utilities)
+// ══════════════════════════════════════════════════════
+
+// Sunrise-Sunset
+ipcMain.handle("sunrisesunset:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchSunrise(p) };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("sunrisesunset:status", async () => getSunriseStatus());
+
+// timeapi.io
+ipcMain.handle("timeapi:search", async (_e, p) => {
+  try {
+    return {
+      ok: true,
+      data: await searchTimeApi(p.timezone || "Asia/Shanghai"),
+    };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("timeapi:status", async () => getTimeApiStatus());
+
+// Zippopotam
+ipcMain.handle("zippopotam:search", async (_e, p) => {
+  try {
+    return {
+      ok: true,
+      data: await searchZippopotam(p.countryCode || "us", p.zipCode || "90210"),
+    };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("zippopotam:status", async () => getZippopotamStatus());
+
+// country.is
+ipcMain.handle("countryis:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchCountryIs(p.ip || "8.8.8.8") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("countryis:status", async () => getCountryIsStatus());
+
+// 新工具类 IPC Handlers (3 utilities)
+ipcMain.handle("erapi:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchErApi(p.base || "USD") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("erapi:status", async () => getErApiStatus());
+
+ipcMain.handle("fawazahmed:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchFawazahmed(p.base || "usd") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("fawazahmed:status", async () => getFawazahmedStatus());
+
+ipcMain.handle("colorapi:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchColorApi(p.hex || "24B1E0") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("colorapi:status", async () => getColorApiStatus());
 
 ipcMain.handle(
   "cos:upload-file",

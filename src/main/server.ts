@@ -63,7 +63,7 @@ export function setTokenPersistenceHandlers(
   }
 }
 
-function clearToken(): void {
+export function clearToken(): void {
   token = null;
   tokenPersistenceHandlers?.clearToken?.();
 }
@@ -172,7 +172,9 @@ function normalizeExtensionClientInfo(data: any): ExtensionClientInfoSnapshot {
   };
 }
 
-export async function startServer(port: number = 1519): Promise<() => Promise<void>> {
+export async function startServer(
+  port: number = 1519,
+): Promise<() => Promise<void>> {
   writeLocalServerLog("INFO", "请求启动本地服务", {
     port,
     alreadyRunning: !!stopServerFn,
@@ -388,7 +390,10 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       { name: "hotsearch_nytimes", description: "采集纽约时报" },
       { name: "hotsearch_aljazeera", description: "采集半岛电视台" },
       { name: "hotsearch_ebay_trending", description: "采集eBay热门商品" },
-      { name: "hotsearch_shopify_trending", description: "采集Shopify热门商品" },
+      {
+        name: "hotsearch_shopify_trending",
+        description: "采集Shopify热门商品",
+      },
       { name: "hotsearch_collect_all", description: "采集所有平台" },
       { name: "browser_invoke", description: "浏览器自动化" },
       { name: "service_status", description: "查询服务状态" },
@@ -666,14 +671,13 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
     });
   });
 
-
   // 注册通用能力路由
   try {
-    const { registerCapabilityRoutes } = await import('./capabilities/bridge');
+    const { registerCapabilityRoutes } = await import("./capabilities/bridge");
     registerCapabilityRoutes(app);
-    console.log('[Server] 通用能力路由已注册');
+    console.log("[Server] 通用能力路由已注册");
   } catch (e) {
-    console.warn('[Server] 通用能力路由注册失败:', (e as Error)?.message);
+    console.warn("[Server] 通用能力路由注册失败:", (e as Error)?.message);
   }
   // 启动 HTTP 服务器（绑定到 127.0.0.1，仅本机可访问，杜绝局域网攻击面）
   httpServer
@@ -754,23 +758,30 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
    *       500:
    *         description: 启动失败
    */
-  app.post("/api/crawler/schedule/start", requireLocalAuth, async (req, res) => {
-    try {
-      const { site, ...config } = req.body || {};
-      if (!site) {
-        res.status(400).json({ success: false, message: "site 不能为空" });
-        return;
+  app.post(
+    "/api/crawler/schedule/start",
+    requireLocalAuth,
+    async (req, res) => {
+      try {
+        const { site, ...config } = req.body || {};
+        if (!site) {
+          res.status(400).json({ success: false, message: "site 不能为空" });
+          return;
+        }
+        const result = await crawlerCollectorService.startSchedule(
+          site,
+          config,
+        );
+        res.json(result);
+      } catch (error: any) {
+        console.error("启动爬虫定时器失败:", error);
+        res.status(500).json({
+          success: false,
+          message: error?.message || "启动失败",
+        });
       }
-      const result = await crawlerCollectorService.startSchedule(site, config);
-      res.json(result);
-    } catch (error: any) {
-      console.error("启动爬虫定时器失败:", error);
-      res.status(500).json({
-        success: false,
-        message: error?.message || "启动失败",
-      });
-    }
-  });
+    },
+  );
 
   /**
    * @swagger
@@ -972,29 +983,33 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
    *       500:
    *         description: 采集失败
    */
-  app.post("/api/crawler/manual-collect", requireLocalAuth, async (req, res) => {
-    try {
-      const { site, maxImages } = req.body || {};
-      if (!site) {
-        res.status(400).json({ success: false, message: "site 不能为空" });
-        return;
+  app.post(
+    "/api/crawler/manual-collect",
+    requireLocalAuth,
+    async (req, res) => {
+      try {
+        const { site, maxImages } = req.body || {};
+        if (!site) {
+          res.status(400).json({ success: false, message: "site 不能为空" });
+          return;
+        }
+        const result = await crawlerCollectorService.manualCollect(
+          site,
+          maxImages,
+        );
+        res.json(result);
+      } catch (error: any) {
+        console.error("手动采集失败:", error);
+        res.status(500).json({
+          success: false,
+          message: error?.message || "采集失败",
+          collected: 0,
+          failed: 0,
+          results: [],
+        });
       }
-      const result = await crawlerCollectorService.manualCollect(
-        site,
-        maxImages,
-      );
-      res.json(result);
-    } catch (error: any) {
-      console.error("手动采集失败:", error);
-      res.status(500).json({
-        success: false,
-        message: error?.message || "采集失败",
-        collected: 0,
-        failed: 0,
-        results: [],
-      });
-    }
-  });
+    },
+  );
 
   /**
    * @swagger
@@ -1719,9 +1734,13 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
   // 兼容旧接口：
   // 历史上这个接口名虽然带 crawler，但现在统一转给通用上传逻辑。
   // 未显式传 target 时默认仍落图片库；若 body.target='crawler-material'，仍会按爬图库处理。
-  app.post("/api/crawler-material-upload", requireLocalAuth, async (req, res) => {
-    await handleMaterialUpload(req, res, "sticker");
-  });
+  app.post(
+    "/api/crawler-material-upload",
+    requireLocalAuth,
+    async (req, res) => {
+      await handleMaterialUpload(req, res, "sticker");
+    },
+  );
 
   // 注册热搜采集路由
   hotSearchService.setTokenGetter(() => token);
@@ -1733,7 +1752,6 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
   hotSearchService.setClientDeviceId(deviceId);
 
   registerHotSearchRoutes(app, () => token);
-
 
   // 返回停止服务器的函数
   return () => {

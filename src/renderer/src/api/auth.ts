@@ -7,8 +7,7 @@
  * @Description: 登录相关API
  */
 import request from "./request";
-import { saveTokenToClient, getTokenFromClient } from "./user";
-import { LOCAL_API_BASE } from "../config/api";
+import { saveTokenToClient, getTokenFromClient, logoutToken } from "./user";
 
 export interface LoginParams {
   username: string; // 后端 LocalStrategy 期望的字段名是 username
@@ -64,12 +63,17 @@ const validateToken = async (): Promise<boolean> => {
     return true;
   } catch (error: any) {
     if (error?.response?.status === 401) {
-      const msg = String(error?.response?.data?.message || error?.response?.data?.error || '');
+      const msg = String(
+        error?.response?.data?.message || error?.response?.data?.error || "",
+      );
       if (/token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(msg)) {
         console.log("Token 验证失败：token 已过期");
         return false;
       }
-      console.warn("Token 验证返回 401 但无明确过期信息，保留 token:", msg || '(空消息)');
+      console.warn(
+        "Token 验证返回 401 但无明确过期信息，保留 token:",
+        msg || "(空消息)",
+      );
       throw error;
     }
     // 网络、数据库、Redis 等服务端临时异常不能当成 token 无效，否则会误清登录态。
@@ -115,14 +119,9 @@ export const login = async (params: LoginParams): Promise<LoginResponse> => {
     }
 
     try {
-      await fetch(`${LOCAL_API_BASE}/logoutToken`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }).catch(() => {});
-    } catch (e) {
-      // 静默处理
+      await logoutToken();
+    } catch {
+      // 本地旧状态清理失败不应阻断重新登录。
     }
   }
 
@@ -227,14 +226,8 @@ export const logout = async (): Promise<void> => {
     // 无论后端登出是否成功，都清除本地 token
     const currentToken = await getTokenFromClient();
     if (currentToken) {
-      // 通过本地服务清除 token
       try {
-        await fetch(`${LOCAL_API_BASE}/logoutToken`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        });
+        await logoutToken();
         console.log("本地 token 已清除");
       } catch (error) {
         console.error("清除本地 token 失败:", error);

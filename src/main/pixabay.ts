@@ -176,7 +176,7 @@ export async function searchPixabay(
             thumbnail: thumbUrl,
             link: `https://pixabay.com/zh/photos/${id}/`,
             url: `https://pixabay.com/zh/photos/${id}/`,
-            photographer: 'Pixabay Contributor',
+            author: 'Pixabay Contributor',
             tags: keyword,
           });
         }

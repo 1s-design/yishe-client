@@ -1,7 +1,12 @@
 import { io, type Socket } from "socket.io-client";
 import { reactive } from "vue";
 import mitt from "mitt";
-import { getTokenFromClient, logoutToken, getUserSetting, getAiSetting } from "../api/user";
+import {
+  getTokenFromClient,
+  logoutToken,
+  getUserSetting,
+  getAiSetting,
+} from "../api/user";
 import { stickerPsdSetApi } from "../api/stickerPsdSet";
 import photoshopApi from "../api/photoshop";
 import {
@@ -4425,7 +4430,10 @@ export async function mirrorSourceImageToCos(
   try {
     const fileName =
       String(originalFilename || "").trim() ||
-      downloadedPath.split(/[/\\\\]/).filter(Boolean).pop() ||
+      downloadedPath
+        .split(/[/\\\\]/)
+        .filter(Boolean)
+        .pop() ||
       `source_${Date.now()}.jpg`;
 
     const keyResult = await apiBridge.generateCosKey({
@@ -5386,7 +5394,10 @@ function bindSocketEvents(currentSocket: Socket) {
   // MCP 工具调用：服务端请求客户端执行本地 MCP 工具
   currentSocket.on(
     "mcp-call",
-    async (data: { requestId: string; payload: { toolName: string; toolArgs?: Record<string, any> } }) => {
+    async (data: {
+      requestId: string;
+      payload: { toolName: string; toolArgs?: Record<string, any> };
+    }) => {
       const { requestId, payload } = data || {};
       const toolName = payload?.toolName || "";
       const toolArgs = payload?.toolArgs || {};
@@ -5400,7 +5411,16 @@ function bindSocketEvents(currentSocket: Socket) {
         socket?.emit("mcp-result", {
           requestId,
           result: {
-            content: [{ type: "text", text: JSON.stringify({ success: true, message: "热搜采集中，请稍候...", async: true }) }],
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  message: "热搜采集中，请稍候...",
+                  async: true,
+                }),
+              },
+            ],
           },
         });
         // 后台异步执行
@@ -9087,20 +9107,32 @@ function registerBuiltInLocalServices() {
     getRuntime: getGoogleArtRuntime,
     execute: async (command) => {
       if (command.action === "search") {
-        const { query, page = 1, hl = 'en', maxCount, cursor } = command.payload || {}
+        const {
+          query,
+          page = 1,
+          hl = "en",
+          maxCount,
+          cursor,
+        } = command.payload || {};
         if (!query) {
-          throw new Error("缺少搜索关键词")
+          throw new Error("缺少搜索关键词");
         }
-        const nativeApi = getNativeApi() as any
+        const nativeApi = getNativeApi() as any;
         if (!nativeApi?.searchGoogleArts) {
-          throw new Error("当前环境未注入桌面端 Google Art 搜索能力")
+          throw new Error("当前环境未注入桌面端 Google Art 搜索能力");
         }
-        const result = await nativeApi.searchGoogleArts({ keyword: query, page, hl, maxCount, cursor })
+        const result = await nativeApi.searchGoogleArts({
+          keyword: query,
+          page,
+          hl,
+          maxCount,
+          cursor,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? "搜索完成" : (result?.error || "搜索失败"),
+          message: result?.success ? "搜索完成" : result?.error || "搜索失败",
           data: result,
-        }
+        };
       }
 
       if (command.action === "getZooms") {
@@ -9154,7 +9186,12 @@ function registerBuiltInLocalServices() {
       }
 
       if (command.action === "collect") {
-        const { keyword, maxCount = 10, syncToMaterial = true, qualityPreference = 'min' } = command.payload || {};
+        const {
+          keyword,
+          maxCount = 10,
+          syncToMaterial = true,
+          qualityPreference = "min",
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
@@ -9164,7 +9201,12 @@ function registerBuiltInLocalServices() {
         }
 
         // Step 1: 搜索链接
-        const searchResult = await nativeApi.searchGoogleArts({ keyword, page: 1, hl: 'en', maxCount });
+        const searchResult = await nativeApi.searchGoogleArts({
+          keyword,
+          page: 1,
+          hl: "en",
+          maxCount,
+        });
         if (!searchResult?.success || !searchResult?.links?.length) {
           return {
             success: false,
@@ -9189,25 +9231,32 @@ function registerBuiltInLocalServices() {
               failCount++;
               continue;
             }
-            const sortedZooms = [...zoomsResult.zooms].sort((a: any, b: any) => (a.width * a.height) - (b.width * b.height));
-            const selectedZoom = qualityPreference === 'max' ? sortedZooms[sortedZooms.length - 1] : sortedZooms[0];
+            const sortedZooms = [...zoomsResult.zooms].sort(
+              (a: any, b: any) => a.width * a.height - b.width * b.height,
+            );
+            const selectedZoom =
+              qualityPreference === "max"
+                ? sortedZooms[sortedZooms.length - 1]
+                : sortedZooms[0];
 
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncGoogleArtToMaterialLibrary({
-                url: link,
-                zoomLevel: selectedZoom.idx,
-                qualityPreference,
-                metadata: {
-                  title: itemMeta.title,
-                  artist: itemMeta.artist,
-                  institution: itemMeta.institution,
-                  color: itemMeta.color,
-                  thumbnail: itemMeta.thumbnail,
-                  aspectRatio: itemMeta.aspectRatio,
-                  hasPixels: itemMeta.hasPixels,
-                  id: itemMeta.id,
+              const syncResult = await nativeApi.syncGoogleArtToMaterialLibrary(
+                {
+                  url: link,
+                  zoomLevel: selectedZoom.idx,
+                  qualityPreference,
+                  metadata: {
+                    title: itemMeta.title,
+                    artist: itemMeta.artist,
+                    institution: itemMeta.institution,
+                    color: itemMeta.color,
+                    thumbnail: itemMeta.thumbnail,
+                    aspectRatio: itemMeta.aspectRatio,
+                    hasPixels: itemMeta.hasPixels,
+                    id: itemMeta.id,
+                  },
                 },
-              });
+              );
               if (syncResult?.ok) {
                 images.push({
                   url: syncResult.filePath,
@@ -9276,11 +9325,20 @@ function registerBuiltInLocalServices() {
         status: available ? "connected" : "error",
         state: available ? "idle" : "error",
         busy: false,
-        message: status?.message || (available ? "Pinterest 可用" : "Pinterest 不可用"),
+        message:
+          status?.message ||
+          (available ? "Pinterest 可用" : "Pinterest 不可用"),
         endpoint: status?.siteUrl || "",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable,
           siteStatus: status?.siteStatus ?? null,
@@ -9291,7 +9349,13 @@ function registerBuiltInLocalServices() {
     },
     execute: async (command) => {
       if (command.action === "search") {
-        const { keyword, scope = 'pins', limit = 25, imageOnly = true, bookmark } = command.payload || {};
+        const {
+          keyword,
+          scope = "pins",
+          limit = 25,
+          imageOnly = true,
+          bookmark,
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
@@ -9299,10 +9363,18 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchPinterest) {
           throw new Error("当前环境未注入桌面端 Pinterest 搜索能力");
         }
-        const result = await nativeApi.searchPinterest({ keyword, scope, limit, imageOnly, bookmark });
+        const result = await nativeApi.searchPinterest({
+          keyword,
+          scope,
+          limit,
+          imageOnly,
+          bookmark,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -9316,10 +9388,13 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadPinterestImage) {
           throw new Error("当前环境未注入桌面端 Pinterest 下载能力");
         }
-        const data = await nativeApi.downloadPinterestImage({ imageUrl, filename });
+        const data = await nativeApi.downloadPinterestImage({
+          imageUrl,
+          filename,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -9333,26 +9408,44 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncPinterestToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Pinterest 同步能力");
         }
-        const data = await nativeApi.syncPinterestToMaterialLibrary({ imageUrl, metadata });
+        const data = await nativeApi.syncPinterestToMaterialLibrary({
+          imageUrl,
+          metadata,
+        });
         await syncServiceRuntime("pinterest");
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          message: data?.ok
+            ? "图片已同步到素材库"
+            : data?.msg || "同步到素材库失败",
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, maxCount = 5, imageOnly = true, syncToMaterial = true } = command.payload || {};
+        const {
+          keyword,
+          maxCount = 5,
+          imageOnly = true,
+          syncToMaterial = true,
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchPinterest || !nativeApi?.syncPinterestToMaterialLibrary) {
+        if (
+          !nativeApi?.searchPinterest ||
+          !nativeApi?.syncPinterestToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Pinterest 采集能力");
         }
 
-        const searchResult = await nativeApi.searchPinterest({ keyword, scope: 'pins', limit: maxCount, imageOnly });
+        const searchResult = await nativeApi.searchPinterest({
+          keyword,
+          scope: "pins",
+          limit: maxCount,
+          imageOnly,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -9369,26 +9462,30 @@ function registerBuiltInLocalServices() {
         for (const item of items) {
           try {
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncPinterestToMaterialLibrary({
-                imageUrl: item.image,
-                metadata: {
-                  title: item.title,
-                  description: item.description,
-                  link: item.link,
-                  boardName: item.boardName,
-                  pinner: item.pinner,
-                  image: item.image,
-                  width: item.width,
-                  height: item.height,
-                  id: item.id,
-                  isVideo: item.isVideo,
+              const syncResult = await nativeApi.syncPinterestToMaterialLibrary(
+                {
+                  imageUrl: item.image,
+                  metadata: {
+                    title: item.title,
+                    description: item.description,
+                    link: item.link,
+                    boardName: item.boardName,
+                    pinner: item.pinner,
+                    image: item.image,
+                    width: item.width,
+                    height: item.height,
+                    id: item.id,
+                    isVideo: item.isVideo,
+                  },
                 },
-              });
+              );
               if (syncResult?.ok) {
                 images.push({
                   url: syncResult.filePath,
                   fileSize: syncResult.fileSize,
-                  materialId: syncResult.materialLibraryOk ? syncResult.fileName : "",
+                  materialId: syncResult.materialLibraryOk
+                    ? syncResult.fileName
+                    : "",
                   originUrl: item.image,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -9398,7 +9495,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadPinterestImage({ imageUrl: item.image });
+              const dl = await nativeApi.downloadPinterestImage({
+                imageUrl: item.image,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: item.image });
                 successCount++;
@@ -9458,11 +9557,20 @@ function registerBuiltInLocalServices() {
         status: available ? "connected" : "error",
         state: available ? "idle" : "error",
         busy: false,
-        message: status?.message || (available ? "Wikimedia Commons 可用" : "Wikimedia Commons 不可用"),
+        message:
+          status?.message ||
+          (available ? "Wikimedia Commons 可用" : "Wikimedia Commons 不可用"),
         endpoint: status?.siteUrl || "",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable,
           siteStatus: status?.siteStatus ?? null,
@@ -9473,7 +9581,12 @@ function registerBuiltInLocalServices() {
     },
     execute: async (command) => {
       if (command.action === "search") {
-        const { keyword, limit = 25, imageOnly = true, offset } = command.payload || {};
+        const {
+          keyword,
+          limit = 25,
+          imageOnly = true,
+          offset,
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
@@ -9481,10 +9594,17 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchWikimedia) {
           throw new Error("当前环境未注入桌面端 Wikimedia 搜索能力");
         }
-        const result = await nativeApi.searchWikimedia({ keyword, limit, imageOnly, offset });
+        const result = await nativeApi.searchWikimedia({
+          keyword,
+          limit,
+          imageOnly,
+          offset,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -9498,10 +9618,13 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadWikimediaImage) {
           throw new Error("当前环境未注入桌面端 Wikimedia 下载能力");
         }
-        const data = await nativeApi.downloadWikimediaImage({ imageUrl, filename });
+        const data = await nativeApi.downloadWikimediaImage({
+          imageUrl,
+          filename,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -9515,26 +9638,43 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncWikimediaToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Wikimedia 同步能力");
         }
-        const data = await nativeApi.syncWikimediaToMaterialLibrary({ imageUrl, metadata });
+        const data = await nativeApi.syncWikimediaToMaterialLibrary({
+          imageUrl,
+          metadata,
+        });
         await syncServiceRuntime("wikimedia");
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          message: data?.ok
+            ? "图片已同步到素材库"
+            : data?.msg || "同步到素材库失败",
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, maxCount = 5, imageOnly = true, syncToMaterial = true } = command.payload || {};
+        const {
+          keyword,
+          maxCount = 5,
+          imageOnly = true,
+          syncToMaterial = true,
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchWikimedia || !nativeApi?.syncWikimediaToMaterialLibrary) {
+        if (
+          !nativeApi?.searchWikimedia ||
+          !nativeApi?.syncWikimediaToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Wikimedia 采集能力");
         }
 
-        const searchResult = await nativeApi.searchWikimedia({ keyword, limit: maxCount, imageOnly });
+        const searchResult = await nativeApi.searchWikimedia({
+          keyword,
+          limit: maxCount,
+          imageOnly,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -9551,27 +9691,31 @@ function registerBuiltInLocalServices() {
         for (const item of items) {
           try {
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncWikimediaToMaterialLibrary({
-                imageUrl: item.image,
-                metadata: {
-                  title: item.title,
-                  description: item.description,
-                  link: item.link,
-                  author: item.author,
-                  license: item.license,
-                  date: item.date,
-                  image: item.image,
-                  width: item.width,
-                  height: item.height,
-                  mime: item.mime,
-                  id: item.id,
+              const syncResult = await nativeApi.syncWikimediaToMaterialLibrary(
+                {
+                  imageUrl: item.image,
+                  metadata: {
+                    title: item.title,
+                    description: item.description,
+                    link: item.link,
+                    author: item.author,
+                    license: item.license,
+                    date: item.date,
+                    image: item.image,
+                    width: item.width,
+                    height: item.height,
+                    mime: item.mime,
+                    id: item.id,
+                  },
                 },
-              });
+              );
               if (syncResult?.ok) {
                 images.push({
                   url: syncResult.filePath,
                   fileSize: syncResult.fileSize,
-                  materialId: syncResult.materialLibraryOk ? syncResult.fileName : "",
+                  materialId: syncResult.materialLibraryOk
+                    ? syncResult.fileName
+                    : "",
                   originUrl: item.image,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -9581,7 +9725,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadWikimediaImage({ imageUrl: item.image });
+              const dl = await nativeApi.downloadWikimediaImage({
+                imageUrl: item.image,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: item.image });
                 successCount++;
@@ -9644,7 +9790,14 @@ function registerBuiltInLocalServices() {
         endpoint: status?.siteUrl || "https://www.pexels.com/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -9664,7 +9817,9 @@ function registerBuiltInLocalServices() {
         const result = await nativeApi.searchPexels({ keyword, limit, page });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -9678,10 +9833,13 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadPexelsImage) {
           throw new Error("当前环境未注入桌面端 Pexels 下载能力");
         }
-        const data = await nativeApi.downloadPexelsImage({ imageUrl, filename });
+        const data = await nativeApi.downloadPexelsImage({
+          imageUrl,
+          filename,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -9695,26 +9853,41 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncPexelsToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Pexels 同步能力");
         }
-        const data = await nativeApi.syncPexelsToMaterialLibrary({ imageUrl, metadata });
+        const data = await nativeApi.syncPexelsToMaterialLibrary({
+          imageUrl,
+          metadata,
+        });
         await syncServiceRuntime("pexels");
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          message: data?.ok
+            ? "图片已同步到素材库"
+            : data?.msg || "同步到素材库失败",
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        const {
+          keyword,
+          maxCount = 10,
+          syncToMaterial = true,
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchPexels || !nativeApi?.syncPexelsToMaterialLibrary) {
+        if (
+          !nativeApi?.searchPexels ||
+          !nativeApi?.syncPexelsToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Pexels 采集能力");
         }
 
-        const searchResult = await nativeApi.searchPexels({ keyword, limit: maxCount });
+        const searchResult = await nativeApi.searchPexels({
+          keyword,
+          limit: maxCount,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -9755,7 +9928,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadPexelsImage({ imageUrl: item.image });
+              const dl = await nativeApi.downloadPexelsImage({
+                imageUrl: item.image,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: item.image });
                 successCount++;
@@ -9818,7 +9993,14 @@ function registerBuiltInLocalServices() {
         endpoint: status?.siteUrl || "https://pixabay.com/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -9838,7 +10020,9 @@ function registerBuiltInLocalServices() {
         const result = await nativeApi.searchPixabay({ keyword, limit, page });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -9852,10 +10036,13 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadPixabayImage) {
           throw new Error("当前环境未注入桌面端 Pixabay 下载能力");
         }
-        const data = await nativeApi.downloadPixabayImage({ imageUrl, filename });
+        const data = await nativeApi.downloadPixabayImage({
+          imageUrl,
+          filename,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -9869,26 +10056,41 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncPixabayToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Pixabay 同步能力");
         }
-        const data = await nativeApi.syncPixabayToMaterialLibrary({ imageUrl, metadata });
+        const data = await nativeApi.syncPixabayToMaterialLibrary({
+          imageUrl,
+          metadata,
+        });
         await syncServiceRuntime("pixabay");
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          message: data?.ok
+            ? "图片已同步到素材库"
+            : data?.msg || "同步到素材库失败",
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        const {
+          keyword,
+          maxCount = 10,
+          syncToMaterial = true,
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchPixabay || !nativeApi?.syncPixabayToMaterialLibrary) {
+        if (
+          !nativeApi?.searchPixabay ||
+          !nativeApi?.syncPixabayToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Pixabay 采集能力");
         }
 
-        const searchResult = await nativeApi.searchPixabay({ keyword, limit: maxCount });
+        const searchResult = await nativeApi.searchPixabay({
+          keyword,
+          limit: maxCount,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -9928,7 +10130,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadPixabayImage({ imageUrl: item.image });
+              const dl = await nativeApi.downloadPixabayImage({
+                imageUrl: item.image,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: item.image });
                 successCount++;
@@ -9991,7 +10195,14 @@ function registerBuiltInLocalServices() {
         endpoint: "https://www.rawpixel.com/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -10000,7 +10211,12 @@ function registerBuiltInLocalServices() {
     },
     execute: async (command) => {
       if (command.action === "search") {
-        const { keyword, limit = 25, page = 1, sort = "curated" } = command.payload || {};
+        const {
+          keyword,
+          limit = 25,
+          page = 1,
+          sort = "curated",
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
@@ -10008,10 +10224,17 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchRawpixel) {
           throw new Error("当前环境未注入桌面端 Rawpixel 搜索能力");
         }
-        const result = await nativeApi.searchRawpixel({ keyword, limit, page, sort });
+        const result = await nativeApi.searchRawpixel({
+          keyword,
+          limit,
+          page,
+          sort,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -10025,10 +10248,13 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadRawpixelImage) {
           throw new Error("当前环境未注入桌面端 Rawpixel 下载能力");
         }
-        const data = await nativeApi.downloadRawpixelImage({ imageUrl, filename });
+        const data = await nativeApi.downloadRawpixelImage({
+          imageUrl,
+          filename,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -10042,26 +10268,43 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncRawpixelToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Rawpixel 同步能力");
         }
-        const data = await nativeApi.syncRawpixelToMaterialLibrary(imageUrl, metadata);
+        const data = await nativeApi.syncRawpixelToMaterialLibrary(
+          imageUrl,
+          metadata,
+        );
         await syncServiceRuntime("rawpixel");
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          message: data?.ok
+            ? "图片已同步到素材库"
+            : data?.msg || "同步到素材库失败",
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, maxCount = 10, sort = "curated", syncToMaterial = true } = command.payload || {};
+        const {
+          keyword,
+          maxCount = 10,
+          sort = "curated",
+          syncToMaterial = true,
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchRawpixel || !nativeApi?.syncRawpixelToMaterialLibrary) {
+        if (
+          !nativeApi?.searchRawpixel ||
+          !nativeApi?.syncRawpixelToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Rawpixel 采集能力");
         }
 
-        const searchResult = await nativeApi.searchRawpixel({ keyword, limit: maxCount, sort });
+        const searchResult = await nativeApi.searchRawpixel({
+          keyword,
+          limit: maxCount,
+          sort,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -10078,17 +10321,21 @@ function registerBuiltInLocalServices() {
         for (const item of items) {
           try {
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncRawpixelToMaterialLibrary(item.image, {
-                title: item.title,
-                url: item.url,
-                author: item.author,
-                width: item.width,
-                height: item.height,
-                id: item.id,
-              });
+              const syncResult = await nativeApi.syncRawpixelToMaterialLibrary(
+                item.image,
+                {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                },
+              );
               if (syncResult?.success) {
                 images.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath,
+                  url:
+                    syncResult.data?.cosUrl || syncResult.data?.localFilePath,
                   originUrl: item.image,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -10098,7 +10345,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadRawpixelImage({ imageUrl: item.image });
+              const dl = await nativeApi.downloadRawpixelImage({
+                imageUrl: item.image,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: item.image });
                 successCount++;
@@ -10161,7 +10410,14 @@ function registerBuiltInLocalServices() {
         endpoint: "https://stocksnap.io/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -10170,7 +10426,12 @@ function registerBuiltInLocalServices() {
     },
     execute: async (command) => {
       if (command.action === "search") {
-        const { keyword, limit = 20, page = 1, sort = "date" } = command.payload || {};
+        const {
+          keyword,
+          limit = 20,
+          page = 1,
+          sort = "date",
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
@@ -10178,10 +10439,17 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchStockSnap) {
           throw new Error("当前环境未注入桌面端 StockSnap 搜索能力");
         }
-        const result = await nativeApi.searchStockSnap({ keyword, limit, page, sort });
+        const result = await nativeApi.searchStockSnap({
+          keyword,
+          limit,
+          page,
+          sort,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -10195,10 +10463,13 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadStockSnapImage) {
           throw new Error("当前环境未注入桌面端 StockSnap 下载能力");
         }
-        const data = await nativeApi.downloadStockSnapImage({ imageUrl, filename });
+        const data = await nativeApi.downloadStockSnapImage({
+          imageUrl,
+          filename,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -10212,26 +10483,43 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncStockSnapToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 StockSnap 同步能力");
         }
-        const data = await nativeApi.syncStockSnapToMaterialLibrary(imageUrl, metadata);
+        const data = await nativeApi.syncStockSnapToMaterialLibrary(
+          imageUrl,
+          metadata,
+        );
         await syncServiceRuntime("stocksnap");
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          message: data?.ok
+            ? "图片已同步到素材库"
+            : data?.msg || "同步到素材库失败",
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, maxCount = 10, sort = "date", syncToMaterial = true } = command.payload || {};
+        const {
+          keyword,
+          maxCount = 10,
+          sort = "date",
+          syncToMaterial = true,
+        } = command.payload || {};
         if (!keyword) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchStockSnap || !nativeApi?.syncStockSnapToMaterialLibrary) {
+        if (
+          !nativeApi?.searchStockSnap ||
+          !nativeApi?.syncStockSnapToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 StockSnap 采集能力");
         }
 
-        const searchResult = await nativeApi.searchStockSnap({ keyword, limit: maxCount, sort });
+        const searchResult = await nativeApi.searchStockSnap({
+          keyword,
+          limit: maxCount,
+          sort,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -10248,17 +10536,21 @@ function registerBuiltInLocalServices() {
         for (const item of items) {
           try {
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncStockSnapToMaterialLibrary(item.image, {
-                title: item.title,
-                url: item.url,
-                author: item.author,
-                width: item.width,
-                height: item.height,
-                id: item.id,
-              });
+              const syncResult = await nativeApi.syncStockSnapToMaterialLibrary(
+                item.image,
+                {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                },
+              );
               if (syncResult?.success) {
                 images.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath,
+                  url:
+                    syncResult.data?.cosUrl || syncResult.data?.localFilePath,
                   originUrl: item.image,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -10268,7 +10560,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadStockSnapImage({ imageUrl: item.image });
+              const dl = await nativeApi.downloadStockSnapImage({
+                imageUrl: item.image,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: item.image });
                 successCount++;
@@ -10331,7 +10625,14 @@ function registerBuiltInLocalServices() {
         endpoint: "https://openverse.org/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -10349,10 +10650,16 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchOpenverse) {
           throw new Error("当前环境未注入桌面端 Openverse 搜索能力");
         }
-        const result = await nativeApi.searchOpenverse({ query: q, limit, page });
+        const result = await nativeApi.searchOpenverse({
+          query: q,
+          limit,
+          page,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -10366,10 +10673,13 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadOpenverseImage) {
           throw new Error("当前环境未注入桌面端 Openverse 下载能力");
         }
-        const data = await nativeApi.downloadOpenverseImage({ imageUrl, filename });
+        const data = await nativeApi.downloadOpenverseImage({
+          imageUrl,
+          filename,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -10383,27 +10693,43 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncOpenverseToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Openverse 同步能力");
         }
-        const data = await nativeApi.syncOpenverseToMaterialLibrary(imageUrl, metadata);
+        const data = await nativeApi.syncOpenverseToMaterialLibrary(
+          imageUrl,
+          metadata,
+        );
         await syncServiceRuntime("openverse");
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败"),
+          message: data?.ok
+            ? "图片已同步到素材库"
+            : data?.msg || "同步到素材库失败",
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        const {
+          keyword,
+          query,
+          maxCount = 10,
+          syncToMaterial = true,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchOpenverse || !nativeApi?.syncOpenverseToMaterialLibrary) {
+        if (
+          !nativeApi?.searchOpenverse ||
+          !nativeApi?.syncOpenverseToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Openverse 采集能力");
         }
 
-        const searchResult = await nativeApi.searchOpenverse({ query: q, limit: maxCount });
+        const searchResult = await nativeApi.searchOpenverse({
+          query: q,
+          limit: maxCount,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -10420,17 +10746,21 @@ function registerBuiltInLocalServices() {
         for (const item of items) {
           try {
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncOpenverseToMaterialLibrary(item.image, {
-                title: item.title,
-                url: item.url,
-                author: item.author,
-                width: item.width,
-                height: item.height,
-                id: item.id,
-              });
+              const syncResult = await nativeApi.syncOpenverseToMaterialLibrary(
+                item.image,
+                {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                },
+              );
               if (syncResult?.success) {
                 images.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath,
+                  url:
+                    syncResult.data?.cosUrl || syncResult.data?.localFilePath,
                   originUrl: item.image,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -10440,7 +10770,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadOpenverseImage({ imageUrl: item.image });
+              const dl = await nativeApi.downloadOpenverseImage({
+                imageUrl: item.image,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: item.image });
                 successCount++;
@@ -10503,7 +10835,14 @@ function registerBuiltInLocalServices() {
         endpoint: "https://kaboompics.com/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -10521,10 +10860,16 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchKaboompics) {
           throw new Error("当前环境未注入桌面端 Kaboompics 搜索能力");
         }
-        const result = await nativeApi.searchKaboompics({ query: q, limit, page });
+        const result = await nativeApi.searchKaboompics({
+          query: q,
+          limit,
+          page,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -10538,10 +10883,13 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadKaboompicsImage) {
           throw new Error("当前环境未注入桌面端 Kaboompics 下载能力");
         }
-        const data = await nativeApi.downloadKaboompicsImage({ imageUrl, filename });
+        const data = await nativeApi.downloadKaboompicsImage({
+          imageUrl,
+          filename,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -10555,27 +10903,43 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncKaboompicsToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Kaboompics 同步能力");
         }
-        const data = await nativeApi.syncKaboompicsToMaterialLibrary(imageUrl, metadata);
+        const data = await nativeApi.syncKaboompicsToMaterialLibrary(
+          imageUrl,
+          metadata,
+        );
         await syncServiceRuntime("kaboompics");
         return {
           success: !!data?.ok || !!data?.success,
-          message: data?.message || (data?.ok ? "图片已同步到素材库" : (data?.msg || "同步到素材库失败")),
+          message:
+            data?.message ||
+            (data?.ok ? "图片已同步到素材库" : data?.msg || "同步到素材库失败"),
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true } = command.payload || {};
+        const {
+          keyword,
+          query,
+          maxCount = 10,
+          syncToMaterial = true,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchKaboompics || !nativeApi?.syncKaboompicsToMaterialLibrary) {
+        if (
+          !nativeApi?.searchKaboompics ||
+          !nativeApi?.syncKaboompicsToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Kaboompics 采集能力");
         }
 
-        const searchResult = await nativeApi.searchKaboompics({ query: q, limit: maxCount });
+        const searchResult = await nativeApi.searchKaboompics({
+          query: q,
+          limit: maxCount,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -10592,17 +10956,21 @@ function registerBuiltInLocalServices() {
         for (const item of items) {
           try {
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncKaboompicsToMaterialLibrary(item.image, {
-                title: item.title,
-                url: item.url,
-                author: item.author,
-                width: item.width,
-                height: item.height,
-                id: item.id,
-              });
+              const syncResult =
+                await nativeApi.syncKaboompicsToMaterialLibrary(item.image, {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                });
               if (syncResult?.success || syncResult?.ok) {
                 images.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath || syncResult.cosUrl,
+                  url:
+                    syncResult.data?.cosUrl ||
+                    syncResult.data?.localFilePath ||
+                    syncResult.cosUrl,
                   originUrl: item.image,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -10612,7 +10980,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadKaboompicsImage({ imageUrl: item.image });
+              const dl = await nativeApi.downloadKaboompicsImage({
+                imageUrl: item.image,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: item.image });
                 successCount++;
@@ -10675,7 +11045,14 @@ function registerBuiltInLocalServices() {
         endpoint: "https://openclipart.org/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -10684,7 +11061,13 @@ function registerBuiltInLocalServices() {
     },
     execute: async (command) => {
       if (command.action === "search") {
-        const { keyword, query, limit = 20, page = 1, formatPreference } = command.payload || {};
+        const {
+          keyword,
+          query,
+          limit = 20,
+          page = 1,
+          formatPreference,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
@@ -10693,10 +11076,17 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchOpenclipart) {
           throw new Error("当前环境未注入桌面端 Openclipart 搜索能力");
         }
-        const result = await nativeApi.searchOpenclipart({ query: q, limit, page, formatPreference });
+        const result = await nativeApi.searchOpenclipart({
+          query: q,
+          limit,
+          page,
+          formatPreference,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -10710,10 +11100,14 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadOpenclipartImage) {
           throw new Error("当前环境未注入桌面端 Openclipart 下载能力");
         }
-        const data = await nativeApi.downloadOpenclipartImage({ imageUrl, filename, format });
+        const data = await nativeApi.downloadOpenclipartImage({
+          imageUrl,
+          filename,
+          format,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -10727,27 +11121,45 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncOpenclipartToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Openclipart 同步能力");
         }
-        const data = await nativeApi.syncOpenclipartToMaterialLibrary(imageUrl, metadata);
+        const data = await nativeApi.syncOpenclipartToMaterialLibrary(
+          imageUrl,
+          metadata,
+        );
         await syncServiceRuntime("openclipart");
         return {
           success: !!data?.ok || !!data?.success,
-          message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步到素材库失败")),
+          message:
+            data?.message ||
+            (data?.ok ? "素材已同步到素材库" : data?.msg || "同步到素材库失败"),
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true, formatPreference = 'png' } = command.payload || {};
+        const {
+          keyword,
+          query,
+          maxCount = 10,
+          syncToMaterial = true,
+          formatPreference = "png",
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchOpenclipart || !nativeApi?.syncOpenclipartToMaterialLibrary) {
+        if (
+          !nativeApi?.searchOpenclipart ||
+          !nativeApi?.syncOpenclipartToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Openclipart 采集能力");
         }
 
-        const searchResult = await nativeApi.searchOpenclipart({ query: q, limit: maxCount, formatPreference });
+        const searchResult = await nativeApi.searchOpenclipart({
+          query: q,
+          limit: maxCount,
+          formatPreference,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -10763,19 +11175,26 @@ function registerBuiltInLocalServices() {
 
         for (const item of items) {
           try {
-            const targetUrl = formatPreference === 'svg' ? item.svgUrl || item.image : item.pngUrl || item.image;
+            const targetUrl =
+              formatPreference === "svg"
+                ? item.svgUrl || item.image
+                : item.pngUrl || item.image;
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncOpenclipartToMaterialLibrary(targetUrl, {
-                title: item.title,
-                url: item.url,
-                author: item.author,
-                width: item.width,
-                height: item.height,
-                id: item.id,
-              });
+              const syncResult =
+                await nativeApi.syncOpenclipartToMaterialLibrary(targetUrl, {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                });
               if (syncResult?.success || syncResult?.ok) {
                 images.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath || syncResult.cosUrl,
+                  url:
+                    syncResult.data?.cosUrl ||
+                    syncResult.data?.localFilePath ||
+                    syncResult.cosUrl,
                   originUrl: targetUrl,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -10785,7 +11204,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadOpenclipartImage({ imageUrl: targetUrl });
+              const dl = await nativeApi.downloadOpenclipartImage({
+                imageUrl: targetUrl,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: targetUrl });
                 successCount++;
@@ -10848,7 +11269,14 @@ function registerBuiltInLocalServices() {
         endpoint: "https://undraw.co/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -10858,7 +11286,13 @@ function registerBuiltInLocalServices() {
     execute: async (command) => {
       const action = command.action || (command as any).name;
       if (action === "search") {
-        const { keyword, query, limit = 20, page = 1, color } = command.payload || {};
+        const {
+          keyword,
+          query,
+          limit = 20,
+          page = 1,
+          color,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
@@ -10867,10 +11301,17 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchUndraw) {
           throw new Error("当前环境未注入桌面端 undraw 搜索能力");
         }
-        const result = await nativeApi.searchUndraw({ query: q, limit, page, color });
+        const result = await nativeApi.searchUndraw({
+          query: q,
+          limit,
+          page,
+          color,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -10884,10 +11325,14 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadUndrawImage) {
           throw new Error("当前环境未注入桌面端 undraw 下载能力");
         }
-        const data = await nativeApi.downloadUndrawImage({ imageUrl, filename, color });
+        const data = await nativeApi.downloadUndrawImage({
+          imageUrl,
+          filename,
+          color,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -10901,27 +11346,45 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncUndrawToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 undraw 同步能力");
         }
-        const data = await nativeApi.syncUndrawToMaterialLibrary(imageUrl, metadata);
+        const data = await nativeApi.syncUndrawToMaterialLibrary(
+          imageUrl,
+          metadata,
+        );
         await syncServiceRuntime("undraw");
         return {
           success: !!data?.ok || !!data?.success,
-          message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步到素材库失败")),
+          message:
+            data?.message ||
+            (data?.ok ? "素材已同步到素材库" : data?.msg || "同步到素材库失败"),
           data,
         };
       }
 
       if (action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true, color } = command.payload || {};
+        const {
+          keyword,
+          query,
+          maxCount = 10,
+          syncToMaterial = true,
+          color,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchUndraw || !nativeApi?.syncUndrawToMaterialLibrary) {
+        if (
+          !nativeApi?.searchUndraw ||
+          !nativeApi?.syncUndrawToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 undraw 采集能力");
         }
 
-        const searchResult = await nativeApi.searchUndraw({ query: q, limit: maxCount, color });
+        const searchResult = await nativeApi.searchUndraw({
+          query: q,
+          limit: maxCount,
+          color,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -10939,18 +11402,24 @@ function registerBuiltInLocalServices() {
           try {
             const targetUrl = item.svgUrl || item.image;
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncUndrawToMaterialLibrary(targetUrl, {
-                title: item.title,
-                url: item.url,
-                author: item.author,
-                width: item.width,
-                height: item.height,
-                id: item.id,
-                color: item.color,
-              });
+              const syncResult = await nativeApi.syncUndrawToMaterialLibrary(
+                targetUrl,
+                {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                  color: item.color,
+                },
+              );
               if (syncResult?.success || syncResult?.ok) {
                 images.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath || syncResult.cosUrl,
+                  url:
+                    syncResult.data?.cosUrl ||
+                    syncResult.data?.localFilePath ||
+                    syncResult.cosUrl,
                   originUrl: targetUrl,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -10960,7 +11429,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadUndrawImage({ imageUrl: targetUrl });
+              const dl = await nativeApi.downloadUndrawImage({
+                imageUrl: targetUrl,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: targetUrl });
                 successCount++;
@@ -11023,7 +11494,14 @@ function registerBuiltInLocalServices() {
         endpoint: "https://thenounproject.com/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -11032,7 +11510,14 @@ function registerBuiltInLocalServices() {
     },
     execute: async (command) => {
       if (command.action === "search") {
-        const { keyword, query, limit = 20, page = 1, mediaType, color } = command.payload || {};
+        const {
+          keyword,
+          query,
+          limit = 20,
+          page = 1,
+          mediaType,
+          color,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
@@ -11041,10 +11526,18 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchNounProject) {
           throw new Error("当前环境未注入桌面端 Noun Project 搜索能力");
         }
-        const result = await nativeApi.searchNounProject({ query: q, limit, page, mediaType, color });
+        const result = await nativeApi.searchNounProject({
+          query: q,
+          limit,
+          page,
+          mediaType,
+          color,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -11058,10 +11551,14 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadNounProjectAsset) {
           throw new Error("当前环境未注入桌面端 Noun Project 下载能力");
         }
-        const data = await nativeApi.downloadNounProjectAsset({ imageUrl, filename, format });
+        const data = await nativeApi.downloadNounProjectAsset({
+          imageUrl,
+          filename,
+          format,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "素材下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "素材下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -11075,27 +11572,47 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncNounProjectToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Noun Project 同步能力");
         }
-        const data = await nativeApi.syncNounProjectToMaterialLibrary(imageUrl, metadata);
+        const data = await nativeApi.syncNounProjectToMaterialLibrary(
+          imageUrl,
+          metadata,
+        );
         await syncServiceRuntime("nounproject");
         return {
           success: !!data?.ok || !!data?.success,
-          message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步到素材库失败")),
+          message:
+            data?.message ||
+            (data?.ok ? "素材已同步到素材库" : data?.msg || "同步到素材库失败"),
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true, mediaType = 'icons', color } = command.payload || {};
+        const {
+          keyword,
+          query,
+          maxCount = 10,
+          syncToMaterial = true,
+          mediaType = "icons",
+          color,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchNounProject || !nativeApi?.syncNounProjectToMaterialLibrary) {
+        if (
+          !nativeApi?.searchNounProject ||
+          !nativeApi?.syncNounProjectToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Noun Project 采集能力");
         }
 
-        const searchResult = await nativeApi.searchNounProject({ query: q, limit: maxCount, mediaType, color });
+        const searchResult = await nativeApi.searchNounProject({
+          query: q,
+          limit: maxCount,
+          mediaType,
+          color,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -11113,16 +11630,20 @@ function registerBuiltInLocalServices() {
           try {
             const targetUrl = item.svgUrl || item.pngUrl || item.image;
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncNounProjectToMaterialLibrary(targetUrl, {
-                title: item.title,
-                url: item.url,
-                author: item.author,
-                id: item.id,
-                format: item.format,
-              });
+              const syncResult =
+                await nativeApi.syncNounProjectToMaterialLibrary(targetUrl, {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  id: item.id,
+                  format: item.format,
+                });
               if (syncResult?.success || syncResult?.ok) {
                 images.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath || syncResult.cosUrl,
+                  url:
+                    syncResult.data?.cosUrl ||
+                    syncResult.data?.localFilePath ||
+                    syncResult.cosUrl,
                   originUrl: targetUrl,
                 });
                 successCount++;
@@ -11130,7 +11651,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadNounProjectAsset({ imageUrl: targetUrl });
+              const dl = await nativeApi.downloadNounProjectAsset({
+                imageUrl: targetUrl,
+              });
               if (dl?.ok) {
                 images.push({ url: dl.filePath, originUrl: targetUrl });
                 successCount++;
@@ -11192,7 +11715,14 @@ function registerBuiltInLocalServices() {
         endpoint: "https://icon-sets.iconify.design/",
         lastCheckedAt: new Date().toISOString(),
         lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
         details: {
           siteAvailable: true,
           runtime: "desktop",
@@ -11201,7 +11731,14 @@ function registerBuiltInLocalServices() {
     },
     execute: async (command) => {
       if (command.action === "search") {
-        const { keyword, query, limit = 20, page = 1, prefix, color } = command.payload || {};
+        const {
+          keyword,
+          query,
+          limit = 20,
+          page = 1,
+          prefix,
+          color,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
@@ -11210,10 +11747,18 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.searchIconify) {
           throw new Error("当前环境未注入桌面端 Iconify 搜索能力");
         }
-        const result = await nativeApi.searchIconify({ query: q, limit, page, prefix, color });
+        const result = await nativeApi.searchIconify({
+          query: q,
+          limit,
+          page,
+          prefix,
+          color,
+        });
         return {
           success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
           data: result,
         };
       }
@@ -11227,10 +11772,14 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.downloadIconifyIcon) {
           throw new Error("当前环境未注入桌面端 Iconify 下载能力");
         }
-        const data = await nativeApi.downloadIconifyIcon({ imageUrl, filename, color });
+        const data = await nativeApi.downloadIconifyIcon({
+          imageUrl,
+          filename,
+          color,
+        });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "图标下载完成" : (data?.msg || "下载失败"),
+          message: data?.ok ? "图标下载完成" : data?.msg || "下载失败",
           data,
         };
       }
@@ -11244,27 +11793,47 @@ function registerBuiltInLocalServices() {
         if (!nativeApi?.syncIconifyToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Iconify 同步能力");
         }
-        const data = await nativeApi.syncIconifyToMaterialLibrary(imageUrl, metadata);
+        const data = await nativeApi.syncIconifyToMaterialLibrary(
+          imageUrl,
+          metadata,
+        );
         await syncServiceRuntime("iconify");
         return {
           success: !!data?.ok || !!data?.success,
-          message: data?.message || (data?.ok ? "图标已同步到素材库" : (data?.msg || "同步到素材库失败")),
+          message:
+            data?.message ||
+            (data?.ok ? "图标已同步到素材库" : data?.msg || "同步到素材库失败"),
           data,
         };
       }
 
       if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true, prefix, color } = command.payload || {};
+        const {
+          keyword,
+          query,
+          maxCount = 10,
+          syncToMaterial = true,
+          prefix,
+          color,
+        } = command.payload || {};
         const q = query || keyword;
         if (!q) {
           throw new Error("缺少搜索关键词");
         }
         const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchIconify || !nativeApi?.syncIconifyToMaterialLibrary) {
+        if (
+          !nativeApi?.searchIconify ||
+          !nativeApi?.syncIconifyToMaterialLibrary
+        ) {
           throw new Error("当前环境未注入桌面端 Iconify 采集能力");
         }
 
-        const searchResult = await nativeApi.searchIconify({ query: q, limit: maxCount, prefix, color });
+        const searchResult = await nativeApi.searchIconify({
+          query: q,
+          limit: maxCount,
+          prefix,
+          color,
+        });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
@@ -11282,19 +11851,25 @@ function registerBuiltInLocalServices() {
           try {
             const targetUrl = item.svgUrl || item.image;
             if (syncToMaterial) {
-              const syncResult = await nativeApi.syncIconifyToMaterialLibrary(targetUrl, {
-                title: item.title,
-                url: item.url,
-                author: item.author,
-                width: item.width,
-                height: item.height,
-                id: item.id,
-                prefix: item.prefix,
-                color,
-              });
+              const syncResult = await nativeApi.syncIconifyToMaterialLibrary(
+                targetUrl,
+                {
+                  title: item.title,
+                  url: item.url,
+                  author: item.author,
+                  width: item.width,
+                  height: item.height,
+                  id: item.id,
+                  prefix: item.prefix,
+                  color,
+                },
+              );
               if (syncResult?.success || syncResult?.ok) {
                 icons.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath || syncResult.cosUrl,
+                  url:
+                    syncResult.data?.cosUrl ||
+                    syncResult.data?.localFilePath ||
+                    syncResult.cosUrl,
                   originUrl: targetUrl,
                   width: item.width ?? null,
                   height: item.height ?? null,
@@ -11304,7 +11879,9 @@ function registerBuiltInLocalServices() {
                 failCount++;
               }
             } else {
-              const dl = await nativeApi.downloadIconifyIcon({ imageUrl: targetUrl });
+              const dl = await nativeApi.downloadIconifyIcon({
+                imageUrl: targetUrl,
+              });
               if (dl?.ok) {
                 icons.push({ url: dl.filePath, originUrl: targetUrl });
                 successCount++;
@@ -11330,135 +11907,180 @@ function registerBuiltInLocalServices() {
   });
 }
 
-  registerLocalService({
-    key: "vecteezy",
-    pluginKey: "vecteezy",
-    label: "Vecteezy 免版税素材",
-    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi() as any;
-      if (!nativeApi?.getVecteezyStatus) {
-        return {
-          label: "Vecteezy 免版税素材",
-          connected: false,
-          available: false,
-          status: "disconnected",
-          state: "offline",
-          busy: false,
-          message: "当前为浏览器环境，未注入桌面端 Vecteezy 能力",
-          endpoint: "",
-          lastCheckedAt: new Date().toISOString(),
-          lastError: null,
-          supportedCommands: ["refreshRuntime", "health"],
-          details: { runtime: "browser" },
-        } as Partial<ClientServiceStatus>;
-      }
-
-      const status = await nativeApi.getVecteezyStatus();
-      const connected = true;
-      const available = true;
-
+registerLocalService({
+  key: "vecteezy",
+  pluginKey: "vecteezy",
+  label: "Vecteezy 免版税素材",
+  getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+    const nativeApi = getNativeApi() as any;
+    if (!nativeApi?.getVecteezyStatus) {
       return {
         label: "Vecteezy 免版税素材",
-        connected,
-        available,
-        status: available ? "connected" : "error",
-        state: available ? "idle" : "error",
+        connected: false,
+        available: false,
+        status: "disconnected",
+        state: "offline",
         busy: false,
-        message: status?.message || "Vecteezy 可用",
-        endpoint: "https://www.vecteezy.com/",
+        message: "当前为浏览器环境，未注入桌面端 Vecteezy 能力",
+        endpoint: "",
         lastCheckedAt: new Date().toISOString(),
-        lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
-        details: {
-          siteAvailable: true,
-          runtime: "desktop",
-        },
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health"],
+        details: { runtime: "browser" },
       } as Partial<ClientServiceStatus>;
-    },
-    execute: async (command) => {
-      if (command.action === "search") {
-        const { keyword, query, limit = 20, page = 1, mediaType = 'photos' } = command.payload || {};
-        const q = query || keyword;
-        if (!q) {
-          throw new Error("缺少搜索关键词");
-        }
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchVecteezy) {
-          throw new Error("当前环境未注入桌面端 Vecteezy 搜索能力");
-        }
-        const result = await nativeApi.searchVecteezy({ query: q, limit, page, mediaType });
+    }
+
+    const status = await nativeApi.getVecteezyStatus();
+    const connected = true;
+    const available = true;
+
+    return {
+      label: "Vecteezy 免版税素材",
+      connected,
+      available,
+      status: available ? "connected" : "error",
+      state: available ? "idle" : "error",
+      busy: false,
+      message: status?.message || "Vecteezy 可用",
+      endpoint: "https://www.vecteezy.com/",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: available ? null : status?.message || null,
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "search",
+        "download",
+        "sync",
+        "collect",
+      ],
+      details: {
+        siteAvailable: true,
+        runtime: "desktop",
+      },
+    } as Partial<ClientServiceStatus>;
+  },
+  execute: async (command) => {
+    if (command.action === "search") {
+      const {
+        keyword,
+        query,
+        limit = 20,
+        page = 1,
+        mediaType = "photos",
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) {
+        throw new Error("缺少搜索关键词");
+      }
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.searchVecteezy) {
+        throw new Error("当前环境未注入桌面端 Vecteezy 搜索能力");
+      }
+      const result = await nativeApi.searchVecteezy({
+        query: q,
+        limit,
+        page,
+        mediaType,
+      });
+      return {
+        success: result?.success ?? false,
+        message: result?.success
+          ? `搜索完成: ${result?.count || 0} 条`
+          : result?.error || "搜索失败",
+        data: result,
+      };
+    }
+
+    if (command.action === "download") {
+      const { imageUrl, filename, format } = command.payload || {};
+      const nativeApi = getNativeApi() as any;
+      if (!imageUrl) {
+        throw new Error("缺少 Vecteezy 素材链接");
+      }
+      if (!nativeApi?.downloadVecteezyAsset) {
+        throw new Error("当前环境未注入桌面端 Vecteezy 下载能力");
+      }
+      const data = await nativeApi.downloadVecteezyAsset({
+        imageUrl,
+        filename,
+        format,
+      });
+      return {
+        success: !!data?.ok,
+        message: data?.ok ? "素材下载完成" : data?.msg || "下载失败",
+        data,
+      };
+    }
+
+    if (command.action === "sync") {
+      const { imageUrl, metadata } = command.payload || {};
+      const nativeApi = getNativeApi() as any;
+      if (!imageUrl) {
+        throw new Error("缺少 Vecteezy 素材链接");
+      }
+      if (!nativeApi?.syncVecteezyToMaterialLibrary) {
+        throw new Error("当前环境未注入桌面端 Vecteezy 同步能力");
+      }
+      const data = await nativeApi.syncVecteezyToMaterialLibrary(
+        imageUrl,
+        metadata,
+      );
+      await syncServiceRuntime("vecteezy");
+      return {
+        success: !!data?.ok || !!data?.success,
+        message:
+          data?.message ||
+          (data?.ok ? "素材已同步到素材库" : data?.msg || "同步到素材库失败"),
+        data,
+      };
+    }
+
+    if (command.action === "collect") {
+      const {
+        keyword,
+        query,
+        maxCount = 10,
+        syncToMaterial = true,
+        mediaType = "photos",
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) {
+        throw new Error("缺少搜索关键词");
+      }
+      const nativeApi = getNativeApi() as any;
+      if (
+        !nativeApi?.searchVecteezy ||
+        !nativeApi?.syncVecteezyToMaterialLibrary
+      ) {
+        throw new Error("当前环境未注入桌面端 Vecteezy 采集能力");
+      }
+
+      const searchResult = await nativeApi.searchVecteezy({
+        query: q,
+        limit: maxCount,
+        mediaType,
+      });
+      if (!searchResult?.success || !searchResult?.items?.length) {
         return {
-          success: result?.success ?? false,
-          message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"),
-          data: result,
+          success: false,
+          message: searchResult?.error || "搜索失败",
+          data: { successCount: 0, failCount: 0, images: [] },
         };
       }
 
-      if (command.action === "download") {
-        const { imageUrl, filename, format } = command.payload || {};
-        const nativeApi = getNativeApi() as any;
-        if (!imageUrl) {
-          throw new Error("缺少 Vecteezy 素材链接");
-        }
-        if (!nativeApi?.downloadVecteezyAsset) {
-          throw new Error("当前环境未注入桌面端 Vecteezy 下载能力");
-        }
-        const data = await nativeApi.downloadVecteezyAsset({ imageUrl, filename, format });
-        return {
-          success: !!data?.ok,
-          message: data?.ok ? "素材下载完成" : (data?.msg || "下载失败"),
-          data,
-        };
-      }
+      const items = searchResult.items;
+      const images: any[] = [];
+      let successCount = 0;
+      let failCount = 0;
 
-      if (command.action === "sync") {
-        const { imageUrl, metadata } = command.payload || {};
-        const nativeApi = getNativeApi() as any;
-        if (!imageUrl) {
-          throw new Error("缺少 Vecteezy 素材链接");
-        }
-        if (!nativeApi?.syncVecteezyToMaterialLibrary) {
-          throw new Error("当前环境未注入桌面端 Vecteezy 同步能力");
-        }
-        const data = await nativeApi.syncVecteezyToMaterialLibrary(imageUrl, metadata);
-        await syncServiceRuntime("vecteezy");
-        return {
-          success: !!data?.ok || !!data?.success,
-          message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步到素材库失败")),
-          data,
-        };
-      }
-
-      if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true, mediaType = 'photos' } = command.payload || {};
-        const q = query || keyword;
-        if (!q) {
-          throw new Error("缺少搜索关键词");
-        }
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchVecteezy || !nativeApi?.syncVecteezyToMaterialLibrary) {
-          throw new Error("当前环境未注入桌面端 Vecteezy 采集能力");
-        }
-
-        const searchResult = await nativeApi.searchVecteezy({ query: q, limit: maxCount, mediaType });
-        if (!searchResult?.success || !searchResult?.items?.length) {
-          return {
-            success: false,
-            message: searchResult?.error || "搜索失败",
-            data: { successCount: 0, failCount: 0, images: [] },
-          };
-        }
-
-        const items = searchResult.items;
-        const images: any[] = [];
-        let successCount = 0;
-        let failCount = 0;
-
-        for (const item of items) {
-          try {
-            const targetUrl = item.svgUrl || item.pngUrl || item.jpgUrl || item.image;
-            if (syncToMaterial) {
-              const syncResult = await nativeApi.syncVecteezyToMaterialLibrary(targetUrl, {
+      for (const item of items) {
+        try {
+          const targetUrl =
+            item.svgUrl || item.pngUrl || item.jpgUrl || item.image;
+          if (syncToMaterial) {
+            const syncResult = await nativeApi.syncVecteezyToMaterialLibrary(
+              targetUrl,
+              {
                 title: item.title,
                 url: item.url,
                 author: item.author,
@@ -11467,371 +12089,1124 @@ function registerBuiltInLocalServices() {
                 id: item.id,
                 format: item.format,
                 mediaType: item.mediaType,
+              },
+            );
+            if (syncResult?.success || syncResult?.ok) {
+              images.push({
+                url:
+                  syncResult.data?.cosUrl ||
+                  syncResult.data?.localFilePath ||
+                  syncResult.cosUrl,
+                originUrl: targetUrl,
+                width: item.width ?? null,
+                height: item.height ?? null,
               });
-              if (syncResult?.success || syncResult?.ok) {
-                images.push({
-                  url: syncResult.data?.cosUrl || syncResult.data?.localFilePath || syncResult.cosUrl,
-                  originUrl: targetUrl,
-                  width: item.width ?? null,
-                  height: item.height ?? null,
-                });
-                successCount++;
-              } else {
-                failCount++;
-              }
+              successCount++;
             } else {
-              const dl = await nativeApi.downloadVecteezyAsset({ imageUrl: targetUrl, format: item.format });
-              if (dl?.ok) {
-                images.push({ url: dl.filePath, originUrl: targetUrl });
-                successCount++;
-              } else {
-                failCount++;
-              }
+              failCount++;
             }
-          } catch {
-            failCount++;
+          } else {
+            const dl = await nativeApi.downloadVecteezyAsset({
+              imageUrl: targetUrl,
+              format: item.format,
+            });
+            if (dl?.ok) {
+              images.push({ url: dl.filePath, originUrl: targetUrl });
+              successCount++;
+            } else {
+              failCount++;
+            }
           }
+        } catch {
+          failCount++;
         }
+      }
 
-        await syncServiceRuntime("vecteezy");
+      await syncServiceRuntime("vecteezy");
+      return {
+        success: true,
+        message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+        data: { successCount, failCount, images },
+      };
+    }
+
+    throw new Error(`未实现的 Vecteezy 命令: ${command.action}`);
+  },
+});
+
+registerLocalService({
+  key: "openmoji",
+  pluginKey: "openmoji",
+  label: "OpenMoji 开源 Emoji",
+  getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+    const nativeApi = getNativeApi() as any;
+    if (!nativeApi?.getOpenMojiStatus) {
+      return {
+        label: "OpenMoji 开源 Emoji",
+        connected: false,
+        available: false,
+        status: "disconnected",
+        state: "offline",
+        busy: false,
+        message: "当前为浏览器环境，未注入桌面端 OpenMoji 能力",
+        endpoint: "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health"],
+        details: { runtime: "browser" },
+      } as Partial<ClientServiceStatus>;
+    }
+    const status = await nativeApi.getOpenMojiStatus();
+    const available = true;
+    return {
+      label: "OpenMoji 开源 Emoji",
+      connected: true,
+      available,
+      status: available ? "connected" : "error",
+      state: available ? "idle" : "error",
+      busy: false,
+      message: status?.message || "OpenMoji 可用",
+      endpoint: "https://openmoji.org/",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: available ? null : status?.message || null,
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "search",
+        "download",
+        "sync",
+        "collect",
+      ],
+      details: { siteAvailable: true, runtime: "desktop" },
+    } as Partial<ClientServiceStatus>;
+  },
+  execute: async (command) => {
+    if (command.action === "search") {
+      const {
+        keyword,
+        query,
+        limit = 20,
+        page = 1,
+        style,
+        group,
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) throw new Error("缺少搜索关键词");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.searchOpenMoji)
+        throw new Error("当前环境未注入桌面端 OpenMoji 搜索能力");
+      const result = await nativeApi.searchOpenMoji({
+        query: q,
+        limit,
+        page,
+        style,
+        group,
+      });
+      return {
+        success: result?.success ?? false,
+        message: result?.success
+          ? `搜索完成: ${result?.count || 0} 条`
+          : result?.error || "搜索失败",
+        data: result,
+      };
+    }
+    if (command.action === "download") {
+      const { imageUrl, filename, style } = command.payload || {};
+      if (!imageUrl) throw new Error("缺少 OpenMoji 图片链接");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.downloadOpenMojiEmoji)
+        throw new Error("当前环境未注入桌面端 OpenMoji 下载能力");
+      const data = await nativeApi.downloadOpenMojiEmoji({
+        imageUrl,
+        filename,
+        style,
+      });
+      return {
+        success: !!data?.ok,
+        message: data?.ok ? "下载完成" : data?.msg || "下载失败",
+        data,
+      };
+    }
+    if (command.action === "sync") {
+      const { imageUrl, metadata } = command.payload || {};
+      if (!imageUrl) throw new Error("缺少 OpenMoji 图片链接");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.syncOpenMojiToMaterialLibrary)
+        throw new Error("当前环境未注入桌面端 OpenMoji 同步能力");
+      const data = await nativeApi.syncOpenMojiToMaterialLibrary(
+        imageUrl,
+        metadata,
+      );
+      await syncServiceRuntime("openmoji");
+      return {
+        success: !!data?.ok || !!data?.success,
+        message:
+          data?.message ||
+          (data?.ok ? "素材已同步到素材库" : data?.msg || "同步失败"),
+        data,
+      };
+    }
+    if (command.action === "collect") {
+      const {
+        keyword,
+        query,
+        maxCount = 10,
+        syncToMaterial = true,
+        style,
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) throw new Error("缺少搜索关键词");
+      const nativeApi = getNativeApi() as any;
+      if (
+        !nativeApi?.searchOpenMoji ||
+        !nativeApi?.syncOpenMojiToMaterialLibrary
+      )
+        throw new Error("当前环境未注入桌面端 OpenMoji 采集能力");
+      const searchResult = await nativeApi.searchOpenMoji({
+        query: q,
+        limit: maxCount,
+        style,
+      });
+      if (!searchResult?.success || !searchResult?.items?.length)
         return {
-          success: true,
-          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
-          data: { successCount, failCount, images },
+          success: false,
+          message: searchResult?.error || "搜索失败",
+          data: { successCount: 0, failCount: 0, images: [] },
+        };
+      const items = searchResult.items;
+      const images: any[] = [];
+      let successCount = 0;
+      let failCount = 0;
+      for (const item of items) {
+        try {
+          const targetUrl = item.svgUrl || item.image;
+          if (syncToMaterial) {
+            const syncResult = await nativeApi.syncOpenMojiToMaterialLibrary(
+              targetUrl,
+              {
+                title: item.title,
+                url: item.url,
+                hexcode: item.hexcode,
+                id: item.id,
+              },
+            );
+            if (syncResult?.success || syncResult?.ok) {
+              images.push({
+                url: syncResult.data?.cosUrl || syncResult.cosUrl,
+                originUrl: targetUrl,
+              });
+              successCount++;
+            } else {
+              failCount++;
+            }
+          } else {
+            const dl = await nativeApi.downloadOpenMojiEmoji({
+              imageUrl: targetUrl,
+            });
+            if (dl?.ok) {
+              images.push({ url: dl.filePath, originUrl: targetUrl });
+              successCount++;
+            } else {
+              failCount++;
+            }
+          }
+        } catch {
+          failCount++;
+        }
+      }
+      await syncServiceRuntime("openmoji");
+      return {
+        success: true,
+        message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+        data: { successCount, failCount, images },
+      };
+    }
+    throw new Error(`未实现的 OpenMoji 命令: ${command.action}`);
+  },
+});
+
+registerLocalService({
+  key: "google-icons",
+  pluginKey: "google-icons",
+  label: "Google Material Icons",
+  getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+    const nativeApi = getNativeApi() as any;
+    if (!nativeApi?.getGoogleIconsStatus) {
+      return {
+        label: "Google Material Icons",
+        connected: false,
+        available: false,
+        status: "disconnected",
+        state: "offline",
+        busy: false,
+        message: "当前为浏览器环境，未注入桌面端 Google Icons 能力",
+        endpoint: "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health"],
+        details: { runtime: "browser" },
+      } as Partial<ClientServiceStatus>;
+    }
+    const status = await nativeApi.getGoogleIconsStatus();
+    const available = true;
+    return {
+      label: "Google Material Icons",
+      connected: true,
+      available,
+      status: available ? "connected" : "error",
+      state: available ? "idle" : "error",
+      busy: false,
+      message: status?.message || "Google Icons 可用",
+      endpoint: "https://fonts.google.com/icons",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: available ? null : status?.message || null,
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "search",
+        "download",
+        "sync",
+        "collect",
+      ],
+      details: { siteAvailable: true, runtime: "desktop" },
+    } as Partial<ClientServiceStatus>;
+  },
+  execute: async (command) => {
+    if (command.action === "search") {
+      const {
+        keyword,
+        query,
+        limit = 20,
+        page = 1,
+        style,
+        size,
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) throw new Error("缺少搜索关键词");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.searchGoogleIcons)
+        throw new Error("当前环境未注入桌面端 Google Icons 搜索能力");
+      const result = await nativeApi.searchGoogleIcons({
+        query: q,
+        limit,
+        page,
+        style,
+        size,
+      });
+      return {
+        success: result?.success ?? false,
+        message: result?.success
+          ? `搜索完成: ${result?.count || 0} 条`
+          : result?.error || "搜索失败",
+        data: result,
+      };
+    }
+    if (command.action === "download") {
+      const { imageUrl, filename, style } = command.payload || {};
+      if (!imageUrl) throw new Error("缺少 Google Icon 链接");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.downloadGoogleIcon)
+        throw new Error("当前环境未注入桌面端 Google Icons 下载能力");
+      const data = await nativeApi.downloadGoogleIcon({
+        imageUrl,
+        filename,
+        style,
+      });
+      return {
+        success: !!data?.ok,
+        message: data?.ok ? "图标下载完成" : data?.msg || "下载失败",
+        data,
+      };
+    }
+    if (command.action === "sync") {
+      const { imageUrl, metadata } = command.payload || {};
+      if (!imageUrl) throw new Error("缺少 Google Icon 链接");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.syncGoogleIconsToMaterialLibrary)
+        throw new Error("当前环境未注入桌面端 Google Icons 同步能力");
+      const data = await nativeApi.syncGoogleIconsToMaterialLibrary(
+        imageUrl,
+        metadata,
+      );
+      await syncServiceRuntime("google-icons");
+      return {
+        success: !!data?.ok || !!data?.success,
+        message:
+          data?.message ||
+          (data?.ok ? "素材已同步到素材库" : data?.msg || "同步失败"),
+        data,
+      };
+    }
+    if (command.action === "collect") {
+      const {
+        keyword,
+        query,
+        maxCount = 10,
+        syncToMaterial = true,
+        style,
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) throw new Error("缺少搜索关键词");
+      const nativeApi = getNativeApi() as any;
+      if (
+        !nativeApi?.searchGoogleIcons ||
+        !nativeApi?.syncGoogleIconsToMaterialLibrary
+      )
+        throw new Error("当前环境未注入桌面端 Google Icons 采集能力");
+      const searchResult = await nativeApi.searchGoogleIcons({
+        query: q,
+        limit: maxCount,
+        style,
+      });
+      if (!searchResult?.success || !searchResult?.items?.length)
+        return {
+          success: false,
+          message: searchResult?.error || "搜索失败",
+          data: { successCount: 0, failCount: 0, images: [] },
+        };
+      const items = searchResult.items;
+      const images: any[] = [];
+      let successCount = 0;
+      let failCount = 0;
+      for (const item of items) {
+        try {
+          const targetUrl = item.svgUrl || item.image;
+          if (syncToMaterial) {
+            const syncResult = await nativeApi.syncGoogleIconsToMaterialLibrary(
+              targetUrl,
+              { title: item.title, url: item.url, id: item.id },
+            );
+            if (syncResult?.success || syncResult?.ok) {
+              images.push({
+                url: syncResult.data?.cosUrl || syncResult.cosUrl,
+                originUrl: targetUrl,
+              });
+              successCount++;
+            } else {
+              failCount++;
+            }
+          } else {
+            const dl = await nativeApi.downloadGoogleIcon({
+              imageUrl: targetUrl,
+            });
+            if (dl?.ok) {
+              images.push({ url: dl.filePath, originUrl: targetUrl });
+              successCount++;
+            } else {
+              failCount++;
+            }
+          }
+        } catch {
+          failCount++;
+        }
+      }
+      await syncServiceRuntime("google-icons");
+      return {
+        success: true,
+        message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+        data: { successCount, failCount, images },
+      };
+    }
+    throw new Error(`未实现的 Google Icons 命令: ${command.action}`);
+  },
+});
+
+registerLocalService({
+  key: "emojipedia",
+  pluginKey: "emojipedia",
+  label: "Emojipedia Emoji/Sticker",
+  getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+    const nativeApi = getNativeApi() as any;
+    if (!nativeApi?.getEmojipediaStatus) {
+      return {
+        label: "Emojipedia Emoji/Sticker",
+        connected: false,
+        available: false,
+        status: "disconnected",
+        state: "offline",
+        busy: false,
+        message: "当前为浏览器环境，未注入桌面端 Emojipedia 能力",
+        endpoint: "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health"],
+        details: { runtime: "browser" },
+      } as Partial<ClientServiceStatus>;
+    }
+    const status = await nativeApi.getEmojipediaStatus();
+    const available = true;
+    return {
+      label: "Emojipedia Emoji/Sticker",
+      connected: true,
+      available,
+      status: available ? "connected" : "error",
+      state: available ? "idle" : "error",
+      busy: false,
+      message: status?.message || "Emojipedia 可用",
+      endpoint: "https://emojipedia.org/",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: available ? null : status?.message || null,
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "search",
+        "download",
+        "sync",
+        "collect",
+      ],
+      details: { siteAvailable: true, runtime: "desktop" },
+    } as Partial<ClientServiceStatus>;
+  },
+  execute: async (command) => {
+    if (command.action === "search") {
+      const {
+        keyword,
+        query,
+        limit = 20,
+        page = 1,
+        category,
+        platform,
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) throw new Error("缺少搜索关键词");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.searchEmojipedia)
+        throw new Error("当前环境未注入桌面端 Emojipedia 搜索能力");
+      const result = await nativeApi.searchEmojipedia({
+        query: q,
+        limit,
+        page,
+        category,
+        platform,
+      });
+      return {
+        success: result?.success ?? false,
+        message: result?.success
+          ? `搜索完成: ${result?.count || 0} 条`
+          : result?.error || "搜索失败",
+        data: result,
+      };
+    }
+    if (command.action === "download") {
+      const { imageUrl, filename, platform } = command.payload || {};
+      if (!imageUrl) throw new Error("缺少 Emojipedia 图片链接");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.downloadEmojipediaItem)
+        throw new Error("当前环境未注入桌面端 Emojipedia 下载能力");
+      const data = await nativeApi.downloadEmojipediaItem({
+        imageUrl,
+        filename,
+        platform,
+      });
+      return {
+        success: !!data?.ok,
+        message: data?.ok ? "图片下载完成" : data?.msg || "下载失败",
+        data,
+      };
+    }
+    if (command.action === "sync") {
+      const { imageUrl, metadata } = command.payload || {};
+      if (!imageUrl) throw new Error("缺少 Emojipedia 图片链接");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.syncEmojipediaToMaterialLibrary)
+        throw new Error("当前环境未注入桌面端 Emojipedia 同步能力");
+      const data = await nativeApi.syncEmojipediaToMaterialLibrary(
+        imageUrl,
+        metadata,
+      );
+      await syncServiceRuntime("emojipedia");
+      return {
+        success: !!data?.ok || !!data?.success,
+        message:
+          data?.message ||
+          (data?.ok ? "素材已同步到素材库" : data?.msg || "同步失败"),
+        data,
+      };
+    }
+    if (command.action === "collect") {
+      const {
+        keyword,
+        query,
+        maxCount = 10,
+        syncToMaterial = true,
+        category,
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) throw new Error("缺少搜索关键词");
+      const nativeApi = getNativeApi() as any;
+      if (
+        !nativeApi?.searchEmojipedia ||
+        !nativeApi?.syncEmojipediaToMaterialLibrary
+      )
+        throw new Error("当前环境未注入桌面端 Emojipedia 采集能力");
+      const searchResult = await nativeApi.searchEmojipedia({
+        query: q,
+        limit: maxCount,
+        category,
+      });
+      if (!searchResult?.success || !searchResult?.items?.length)
+        return {
+          success: false,
+          message: searchResult?.error || "搜索失败",
+          data: { successCount: 0, failCount: 0, images: [] },
+        };
+      const items = searchResult.items;
+      const images: any[] = [];
+      let successCount = 0;
+      let failCount = 0;
+      for (const item of items) {
+        try {
+          const targetUrl = item.image;
+          if (syncToMaterial) {
+            const syncResult = await nativeApi.syncEmojipediaToMaterialLibrary(
+              targetUrl,
+              {
+                title: item.title,
+                url: item.url,
+                id: item.id,
+                platform: item.platform,
+              },
+            );
+            if (syncResult?.success || syncResult?.ok) {
+              images.push({
+                url: syncResult.data?.cosUrl || syncResult.cosUrl,
+                originUrl: targetUrl,
+              });
+              successCount++;
+            } else {
+              failCount++;
+            }
+          } else {
+            const dl = await nativeApi.downloadEmojipediaItem({
+              imageUrl: targetUrl,
+            });
+            if (dl?.ok) {
+              images.push({ url: dl.filePath, originUrl: targetUrl });
+              successCount++;
+            } else {
+              failCount++;
+            }
+          }
+        } catch {
+          failCount++;
+        }
+      }
+      await syncServiceRuntime("emojipedia");
+      return {
+        success: true,
+        message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+        data: { successCount, failCount, images },
+      };
+    }
+    throw new Error(`未实现的 Emojipedia 命令: ${command.action}`);
+  },
+});
+
+registerLocalService({
+  key: "svgrepo",
+  pluginKey: "svgrepo",
+  label: "SVGRepo 50万+开源矢量",
+  getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+    const nativeApi = getNativeApi() as any;
+    if (!nativeApi?.getSvgrepoStatus) {
+      return {
+        label: "SVGRepo 50万+开源矢量",
+        connected: false,
+        available: false,
+        status: "disconnected",
+        state: "offline",
+        busy: false,
+        message: "当前为浏览器环境，未注入桌面端 SVGRepo 能力",
+        endpoint: "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health"],
+        details: { runtime: "browser" },
+      } as Partial<ClientServiceStatus>;
+    }
+    const status = await nativeApi.getSvgrepoStatus();
+    const available = true;
+    return {
+      label: "SVGRepo 50万+开源矢量",
+      connected: true,
+      available,
+      status: available ? "connected" : "error",
+      state: available ? "idle" : "error",
+      busy: false,
+      message: status?.message || "SVGRepo 可用",
+      endpoint: "https://www.svgrepo.com/",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: available ? null : status?.message || null,
+      supportedCommands: [
+        "refreshRuntime",
+        "health",
+        "search",
+        "download",
+        "sync",
+        "collect",
+      ],
+      details: { siteAvailable: true, runtime: "desktop" },
+    } as Partial<ClientServiceStatus>;
+  },
+  execute: async (command) => {
+    if (command.action === "search") {
+      const {
+        keyword,
+        query,
+        limit = 24,
+        page = 1,
+        style,
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) throw new Error("缺少搜索关键词");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.searchSvgrepo)
+        throw new Error("当前环境未注入桌面端 SVGRepo 搜索能力");
+      const result = await nativeApi.searchSvgrepo({
+        query: q,
+        limit,
+        page,
+        style,
+      });
+      return {
+        success: result?.success ?? false,
+        message: result?.success
+          ? `搜索完成: ${result?.count || 0} 条`
+          : result?.error || "搜索失败",
+        data: result,
+      };
+    }
+    if (command.action === "download") {
+      const { imageUrl, filename } = command.payload || {};
+      if (!imageUrl) throw new Error("缺少 SVG 矢量链接");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.downloadSvgrepoImage)
+        throw new Error("当前环境未注入桌面端 SVGRepo 下载能力");
+      const data = await nativeApi.downloadSvgrepoImage({ imageUrl, filename });
+      return {
+        success: !!data?.ok,
+        message: data?.ok ? "矢量下载完成" : data?.msg || "下载失败",
+        data,
+      };
+    }
+    if (command.action === "sync") {
+      const { imageUrl, metadata } = command.payload || {};
+      if (!imageUrl) throw new Error("缺少 SVG 矢量链接");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.syncSvgrepoToMaterialLibrary)
+        throw new Error("当前环境未注入桌面端 SVGRepo 同步能力");
+      const data = await nativeApi.syncSvgrepoToMaterialLibrary(
+        imageUrl,
+        metadata,
+      );
+      await syncServiceRuntime("svgrepo");
+      return {
+        success: !!data?.ok || !!data?.success,
+        message:
+          data?.message ||
+          (data?.ok ? "素材已同步到素材库" : data?.msg || "同步失败"),
+        data,
+      };
+    }
+    if (command.action === "collect") {
+      const {
+        keyword,
+        query,
+        maxCount = 12,
+        syncToMaterial = true,
+        style,
+      } = command.payload || {};
+      const q = query || keyword;
+      if (!q) throw new Error("缺少搜索关键词");
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.searchSvgrepo || !nativeApi?.syncSvgrepoToMaterialLibrary)
+        throw new Error("当前环境未注入桌面端 SVGRepo 采集能力");
+      const searchResult = await nativeApi.searchSvgrepo({
+        query: q,
+        limit: maxCount,
+        style,
+      });
+      if (!searchResult?.success || !searchResult?.items?.length)
+        return {
+          success: false,
+          message: searchResult?.error || "搜索失败",
+          data: { successCount: 0, failCount: 0, images: [] },
+        };
+      const items = searchResult.items;
+      const images: any[] = [];
+      let successCount = 0;
+      let failCount = 0;
+      for (const item of items) {
+        try {
+          const targetUrl = item.svgUrl || item.image;
+          if (syncToMaterial) {
+            const syncResult = await nativeApi.syncSvgrepoToMaterialLibrary(
+              targetUrl,
+              {
+                title: item.title,
+                url: item.url,
+                id: item.id,
+                style: item.style,
+              },
+            );
+            if (syncResult?.success || syncResult?.ok) {
+              images.push({
+                url: syncResult.data?.cosUrl || syncResult.cosUrl,
+                originUrl: targetUrl,
+              });
+              successCount++;
+            } else {
+              failCount++;
+            }
+          } else {
+            const dl = await nativeApi.downloadSvgrepoImage({
+              imageUrl: targetUrl,
+            });
+            if (dl?.ok) {
+              images.push({ url: dl.filePath, originUrl: targetUrl });
+              successCount++;
+            } else {
+              failCount++;
+            }
+          }
+        } catch {
+          failCount++;
+        }
+      }
+      await syncServiceRuntime("svgrepo");
+      return {
+        success: true,
+        message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+        data: { successCount, failCount, images },
+      };
+    }
+    throw new Error(`未实现的 SVGRepo 命令: ${command.action}`);
+  },
+});
+
+// ══════════════════════════════════════════════════════════════
+// 新闻数据类服务注册 (22平台)
+// ══════════════════════════════════════════════════════════════
+
+const newsServicesConfig = [
+  {
+    key: "hackernews",
+    label: "Hacker News 热帖",
+    searchFn: (api: any, p: any) =>
+      api.searchHN({
+        type: p.type || p.keyword || p.query || "ai",
+        options: { maxCount: p.maxCount || 10, minScore: p.minScore },
+      }),
+    statusFn: (api: any) => api.getHNStatus(),
+  },
+  {
+    key: "arxiv",
+    label: "arXiv 学术论文",
+    searchFn: (api: any, p: any) =>
+      api.searchArxiv({
+        query: p.keyword || p.query || "ai",
+        options: {
+          maxCount: p.maxCount || 10,
+          category: p.category,
+          sortBy: p.sortBy,
+        },
+      }),
+    statusFn: (api: any) => api.getArxivStatus(),
+  },
+  {
+    key: "github",
+    label: "GitHub 趋势仓库",
+    searchFn: (api: any, p: any) =>
+      api.searchGithub({
+        query: p.keyword || p.query || "ai",
+        options: {
+          maxCount: p.maxCount || 10,
+          language: p.language,
+          sort: p.sort,
+        },
+      }),
+    statusFn: (api: any) => api.getGithubStatus(),
+  },
+  {
+    key: "producthunt",
+    label: "Product Hunt 产品",
+    searchFn: (api: any, p: any) =>
+      api.searchPH({
+        accessToken: p.accessToken || "",
+        options: {
+          query: p.keyword || p.query,
+          maxCount: p.maxCount || 10,
+          order: p.order,
+          topics: p.topics,
+        },
+      }),
+    statusFn: (api: any) => api.getPHStatus(),
+  },
+  {
+    key: "gdelt",
+    label: "GDELT 全球事件",
+    searchFn: (api: any, p: any) =>
+      api.searchGdelt({
+        query: p.keyword || p.query || "ai",
+        options: {
+          maxrecords: p.maxCount || p.maxrecords || 10,
+          mode: p.mode,
+          timespan: p.timespan,
+          sourceLang: p.sourceLang,
+          sourceCountry: p.sourceCountry,
+        },
+      }),
+    statusFn: (api: any) => api.getGdeltStatus(),
+  },
+  {
+    key: "googlenews",
+    label: "Google News",
+    searchFn: (api: any, p: any) =>
+      api.searchGoogleNews({
+        query: p.keyword || p.query || "ai",
+        options: {
+          maxCount: p.maxCount || 10,
+          hl: p.hl,
+          gl: p.gl,
+          topic: p.topic,
+        },
+      }),
+    statusFn: (api: any) => api.getGoogleNewsStatus(),
+  },
+  {
+    key: "reddit",
+    label: "Reddit 社区热帖",
+    searchFn: (api: any, p: any) =>
+      api.searchReddit({
+        query: p.keyword || p.query || "ai",
+        options: {
+          subreddit: p.subreddit,
+          sort: p.sort,
+          t: p.t,
+          maxCount: p.maxCount || 10,
+        },
+      }),
+    statusFn: (api: any) => api.getRedditStatus(),
+  },
+  {
+    key: "theguardian",
+    label: "The Guardian",
+    searchFn: (api: any, p: any) =>
+      api.searchGuardian({
+        apiKey: p.apiKey || "",
+        options: {
+          query: p.keyword || p.query || "ai",
+          maxCount: p.maxCount || 10,
+          section: p.section,
+          "from-date": p.fromDate,
+          "to-date": p.toDate,
+        },
+      }),
+    statusFn: (api: any) => api.getGuardianStatus(),
+  },
+  {
+    key: "bbcnews",
+    label: "BBC News",
+    searchFn: (api: any, p: any) =>
+      api.fetchBBC({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getBBCStatus(),
+  },
+  {
+    key: "npr",
+    label: "NPR 新闻",
+    searchFn: (api: any, p: any) =>
+      api.fetchNPR({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getNPRStatus(),
+  },
+  {
+    key: "reuters",
+    label: "Reuters 路透社",
+    searchFn: (api: any, p: any) =>
+      api.fetchReuters({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getReutersStatus(),
+  },
+  {
+    key: "techcrunch",
+    label: "TechCrunch",
+    searchFn: (api: any, p: any) =>
+      api.fetchTC({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getTCStatus(),
+  },
+  {
+    key: "theverge",
+    label: "The Verge",
+    searchFn: (api: any, p: any) =>
+      api.fetchVerge({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getVergeStatus(),
+  },
+  {
+    key: "arstechnica",
+    label: "Ars Technica",
+    searchFn: (api: any, p: any) =>
+      api.fetchArs({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getArsStatus(),
+  },
+  {
+    key: "mittechreview",
+    label: "MIT Technology Review",
+    searchFn: (api: any, p: any) =>
+      api.fetchMIT({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getMITStatus(),
+  },
+  {
+    key: "chinadaily",
+    label: "中国日报",
+    searchFn: (api: any, p: any) =>
+      api.fetchChinaDaily({
+        category: p.category || p.keyword || p.query || "china",
+      }),
+    statusFn: (api: any) => api.getChinaDailyStatus(),
+  },
+  {
+    key: "govcn",
+    label: "中国政府网",
+    searchFn: (api: any, p: any) =>
+      api.fetchGovCN({
+        category: p.category || p.keyword || p.query || "policy",
+      }),
+    statusFn: (api: any) => api.getGovCNStatus(),
+  },
+  {
+    key: "xinhuanet",
+    label: "新华网",
+    searchFn: (api: any, p: any) =>
+      api.fetchXH({ category: p.category || p.keyword || p.query || "tech" }),
+    statusFn: (api: any) => api.getXHStatus(),
+  },
+  {
+    key: "thepaper",
+    label: "澎湃新闻",
+    searchFn: (api: any, p: any) =>
+      api.fetchThePaper({
+        category: p.category || "all",
+        query: p.keyword || p.query,
+      }),
+    statusFn: (api: any) => api.getThePaperStatus(),
+  },
+  {
+    key: "36kr",
+    label: "36氪",
+    searchFn: (api: any, p: any) =>
+      api.search36Kr({
+        category: p.category || "all",
+        query: p.keyword || p.query,
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.get36KrStatus(),
+  },
+  {
+    key: "huxiu",
+    label: "虎嗅",
+    searchFn: (api: any, p: any) =>
+      api.searchHuxiu({
+        category: p.category || "all",
+        query: p.keyword || p.query,
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getHuxiuStatus(),
+  },
+];
+
+for (const cfg of newsServicesConfig) {
+  registerLocalService({
+    key: cfg.key,
+    pluginKey: cfg.key,
+    label: cfg.label,
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi) {
+        return {
+          label: cfg.label,
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: `未注入桌面端 ${cfg.label} 能力`,
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+      let status: any = { ok: true, available: true };
+      try {
+        if (cfg.statusFn) status = await cfg.statusFn(nativeApi);
+      } catch (e: any) {
+        status = { ok: false, available: false, message: e?.message };
+      }
+      const available = status?.ok !== false && status?.available !== false;
+      return {
+        label: cfg.label,
+        connected: true,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || `${cfg.label} 可用`,
+        endpoint: "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "collect",
+          "fetch",
+        ],
+        details: { siteAvailable: true, runtime: "desktop" },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi) throw new Error(`当前环境未注入桌面端 ${cfg.label} 能力`);
+      const payload = command.payload || {};
+      try {
+        const res = await cfg.searchFn(nativeApi, payload);
+        const rawData = res?.data ?? res;
+        const items = rawData?.items ?? (Array.isArray(rawData) ? rawData : []);
+        const count = rawData?.count ?? items.length;
+        return {
+          success: res?.ok !== false && res?.success !== false,
+          message: `${cfg.label} 检索完成: 共 ${count} 条`,
+          data: {
+            successCount: count,
+            failCount: 0,
+            items,
+            count,
+            raw: rawData,
+          },
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err?.message || `${cfg.label} 执行失败`,
+          data: { successCount: 0, failCount: 1, items: [] },
         };
       }
-
-      throw new Error(`未实现的 Vecteezy 命令: ${command.action}`);
     },
   });
-
-  registerLocalService({
-    key: "openmoji",
-    pluginKey: "openmoji",
-    label: "OpenMoji 开源 Emoji",
-    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi() as any;
-      if (!nativeApi?.getOpenMojiStatus) {
-        return {
-          label: "OpenMoji 开源 Emoji",
-          connected: false, available: false, status: "disconnected", state: "offline",
-          busy: false, message: "当前为浏览器环境，未注入桌面端 OpenMoji 能力",
-          endpoint: "", lastCheckedAt: new Date().toISOString(), lastError: null,
-          supportedCommands: ["refreshRuntime", "health"], details: { runtime: "browser" },
-        } as Partial<ClientServiceStatus>;
-      }
-      const status = await nativeApi.getOpenMojiStatus();
-      const available = true;
-      return {
-        label: "OpenMoji 开源 Emoji", connected: true, available,
-        status: available ? "connected" : "error", state: available ? "idle" : "error",
-        busy: false, message: status?.message || "OpenMoji 可用",
-        endpoint: "https://openmoji.org/", lastCheckedAt: new Date().toISOString(),
-        lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
-        details: { siteAvailable: true, runtime: "desktop" },
-      } as Partial<ClientServiceStatus>;
-    },
-    execute: async (command) => {
-      if (command.action === "search") {
-        const { keyword, query, limit = 20, page = 1, style, group } = command.payload || {};
-        const q = query || keyword;
-        if (!q) throw new Error("缺少搜索关键词");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchOpenMoji) throw new Error("当前环境未注入桌面端 OpenMoji 搜索能力");
-        const result = await nativeApi.searchOpenMoji({ query: q, limit, page, style, group });
-        return { success: result?.success ?? false, message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"), data: result };
-      }
-      if (command.action === "download") {
-        const { imageUrl, filename, style } = command.payload || {};
-        if (!imageUrl) throw new Error("缺少 OpenMoji 图片链接");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.downloadOpenMojiEmoji) throw new Error("当前环境未注入桌面端 OpenMoji 下载能力");
-        const data = await nativeApi.downloadOpenMojiEmoji({ imageUrl, filename, style });
-        return { success: !!data?.ok, message: data?.ok ? "下载完成" : (data?.msg || "下载失败"), data };
-      }
-      if (command.action === "sync") {
-        const { imageUrl, metadata } = command.payload || {};
-        if (!imageUrl) throw new Error("缺少 OpenMoji 图片链接");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.syncOpenMojiToMaterialLibrary) throw new Error("当前环境未注入桌面端 OpenMoji 同步能力");
-        const data = await nativeApi.syncOpenMojiToMaterialLibrary(imageUrl, metadata);
-        await syncServiceRuntime("openmoji");
-        return { success: !!data?.ok || !!data?.success, message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步失败")), data };
-      }
-      if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true, style } = command.payload || {};
-        const q = query || keyword;
-        if (!q) throw new Error("缺少搜索关键词");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchOpenMoji || !nativeApi?.syncOpenMojiToMaterialLibrary) throw new Error("当前环境未注入桌面端 OpenMoji 采集能力");
-        const searchResult = await nativeApi.searchOpenMoji({ query: q, limit: maxCount, style });
-        if (!searchResult?.success || !searchResult?.items?.length) return { success: false, message: searchResult?.error || "搜索失败", data: { successCount: 0, failCount: 0, images: [] } };
-        const items = searchResult.items; const images: any[] = []; let successCount = 0; let failCount = 0;
-        for (const item of items) {
-          try {
-            const targetUrl = item.svgUrl || item.image;
-            if (syncToMaterial) {
-              const syncResult = await nativeApi.syncOpenMojiToMaterialLibrary(targetUrl, { title: item.title, url: item.url, hexcode: item.hexcode, id: item.id });
-              if (syncResult?.success || syncResult?.ok) { images.push({ url: syncResult.data?.cosUrl || syncResult.cosUrl, originUrl: targetUrl }); successCount++; } else { failCount++; }
-            } else {
-              const dl = await nativeApi.downloadOpenMojiEmoji({ imageUrl: targetUrl });
-              if (dl?.ok) { images.push({ url: dl.filePath, originUrl: targetUrl }); successCount++; } else { failCount++; }
-            }
-          } catch { failCount++; }
-        }
-        await syncServiceRuntime("openmoji");
-        return { success: true, message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`, data: { successCount, failCount, images } };
-      }
-      throw new Error(`未实现的 OpenMoji 命令: ${command.action}`);
-    },
-  });
-
-  registerLocalService({
-    key: "google-icons",
-    pluginKey: "google-icons",
-    label: "Google Material Icons",
-    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi() as any;
-      if (!nativeApi?.getGoogleIconsStatus) {
-        return {
-          label: "Google Material Icons",
-          connected: false, available: false, status: "disconnected", state: "offline",
-          busy: false, message: "当前为浏览器环境，未注入桌面端 Google Icons 能力",
-          endpoint: "", lastCheckedAt: new Date().toISOString(), lastError: null,
-          supportedCommands: ["refreshRuntime", "health"], details: { runtime: "browser" },
-        } as Partial<ClientServiceStatus>;
-      }
-      const status = await nativeApi.getGoogleIconsStatus();
-      const available = true;
-      return {
-        label: "Google Material Icons", connected: true, available,
-        status: available ? "connected" : "error", state: available ? "idle" : "error",
-        busy: false, message: status?.message || "Google Icons 可用",
-        endpoint: "https://fonts.google.com/icons", lastCheckedAt: new Date().toISOString(),
-        lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
-        details: { siteAvailable: true, runtime: "desktop" },
-      } as Partial<ClientServiceStatus>;
-    },
-    execute: async (command) => {
-      if (command.action === "search") {
-        const { keyword, query, limit = 20, page = 1, style, size } = command.payload || {};
-        const q = query || keyword;
-        if (!q) throw new Error("缺少搜索关键词");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchGoogleIcons) throw new Error("当前环境未注入桌面端 Google Icons 搜索能力");
-        const result = await nativeApi.searchGoogleIcons({ query: q, limit, page, style, size });
-        return { success: result?.success ?? false, message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"), data: result };
-      }
-      if (command.action === "download") {
-        const { imageUrl, filename, style } = command.payload || {};
-        if (!imageUrl) throw new Error("缺少 Google Icon 链接");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.downloadGoogleIcon) throw new Error("当前环境未注入桌面端 Google Icons 下载能力");
-        const data = await nativeApi.downloadGoogleIcon({ imageUrl, filename, style });
-        return { success: !!data?.ok, message: data?.ok ? "图标下载完成" : (data?.msg || "下载失败"), data };
-      }
-      if (command.action === "sync") {
-        const { imageUrl, metadata } = command.payload || {};
-        if (!imageUrl) throw new Error("缺少 Google Icon 链接");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.syncGoogleIconsToMaterialLibrary) throw new Error("当前环境未注入桌面端 Google Icons 同步能力");
-        const data = await nativeApi.syncGoogleIconsToMaterialLibrary(imageUrl, metadata);
-        await syncServiceRuntime("google-icons");
-        return { success: !!data?.ok || !!data?.success, message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步失败")), data };
-      }
-      if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true, style } = command.payload || {};
-        const q = query || keyword;
-        if (!q) throw new Error("缺少搜索关键词");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchGoogleIcons || !nativeApi?.syncGoogleIconsToMaterialLibrary) throw new Error("当前环境未注入桌面端 Google Icons 采集能力");
-        const searchResult = await nativeApi.searchGoogleIcons({ query: q, limit: maxCount, style });
-        if (!searchResult?.success || !searchResult?.items?.length) return { success: false, message: searchResult?.error || "搜索失败", data: { successCount: 0, failCount: 0, images: [] } };
-        const items = searchResult.items; const images: any[] = []; let successCount = 0; let failCount = 0;
-        for (const item of items) {
-          try {
-            const targetUrl = item.svgUrl || item.image;
-            if (syncToMaterial) {
-              const syncResult = await nativeApi.syncGoogleIconsToMaterialLibrary(targetUrl, { title: item.title, url: item.url, id: item.id });
-              if (syncResult?.success || syncResult?.ok) { images.push({ url: syncResult.data?.cosUrl || syncResult.cosUrl, originUrl: targetUrl }); successCount++; } else { failCount++; }
-            } else {
-              const dl = await nativeApi.downloadGoogleIcon({ imageUrl: targetUrl });
-              if (dl?.ok) { images.push({ url: dl.filePath, originUrl: targetUrl }); successCount++; } else { failCount++; }
-            }
-          } catch { failCount++; }
-        }
-        await syncServiceRuntime("google-icons");
-        return { success: true, message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`, data: { successCount, failCount, images } };
-      }
-      throw new Error(`未实现的 Google Icons 命令: ${command.action}`);
-    },
-  });
-
-  registerLocalService({
-    key: "emojipedia",
-    pluginKey: "emojipedia",
-    label: "Emojipedia Emoji/Sticker",
-    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi() as any;
-      if (!nativeApi?.getEmojipediaStatus) {
-        return {
-          label: "Emojipedia Emoji/Sticker",
-          connected: false, available: false, status: "disconnected", state: "offline",
-          busy: false, message: "当前为浏览器环境，未注入桌面端 Emojipedia 能力",
-          endpoint: "", lastCheckedAt: new Date().toISOString(), lastError: null,
-          supportedCommands: ["refreshRuntime", "health"], details: { runtime: "browser" },
-        } as Partial<ClientServiceStatus>;
-      }
-      const status = await nativeApi.getEmojipediaStatus();
-      const available = true;
-      return {
-        label: "Emojipedia Emoji/Sticker", connected: true, available,
-        status: available ? "connected" : "error", state: available ? "idle" : "error",
-        busy: false, message: status?.message || "Emojipedia 可用",
-        endpoint: "https://emojipedia.org/", lastCheckedAt: new Date().toISOString(),
-        lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
-        details: { siteAvailable: true, runtime: "desktop" },
-      } as Partial<ClientServiceStatus>;
-    },
-    execute: async (command) => {
-      if (command.action === "search") {
-        const { keyword, query, limit = 20, page = 1, category, platform } = command.payload || {};
-        const q = query || keyword;
-        if (!q) throw new Error("缺少搜索关键词");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchEmojipedia) throw new Error("当前环境未注入桌面端 Emojipedia 搜索能力");
-        const result = await nativeApi.searchEmojipedia({ query: q, limit, page, category, platform });
-        return { success: result?.success ?? false, message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"), data: result };
-      }
-      if (command.action === "download") {
-        const { imageUrl, filename, platform } = command.payload || {};
-        if (!imageUrl) throw new Error("缺少 Emojipedia 图片链接");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.downloadEmojipediaItem) throw new Error("当前环境未注入桌面端 Emojipedia 下载能力");
-        const data = await nativeApi.downloadEmojipediaItem({ imageUrl, filename, platform });
-        return { success: !!data?.ok, message: data?.ok ? "图片下载完成" : (data?.msg || "下载失败"), data };
-      }
-      if (command.action === "sync") {
-        const { imageUrl, metadata } = command.payload || {};
-        if (!imageUrl) throw new Error("缺少 Emojipedia 图片链接");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.syncEmojipediaToMaterialLibrary) throw new Error("当前环境未注入桌面端 Emojipedia 同步能力");
-        const data = await nativeApi.syncEmojipediaToMaterialLibrary(imageUrl, metadata);
-        await syncServiceRuntime("emojipedia");
-        return { success: !!data?.ok || !!data?.success, message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步失败")), data };
-      }
-      if (command.action === "collect") {
-        const { keyword, query, maxCount = 10, syncToMaterial = true, category } = command.payload || {};
-        const q = query || keyword;
-        if (!q) throw new Error("缺少搜索关键词");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchEmojipedia || !nativeApi?.syncEmojipediaToMaterialLibrary) throw new Error("当前环境未注入桌面端 Emojipedia 采集能力");
-        const searchResult = await nativeApi.searchEmojipedia({ query: q, limit: maxCount, category });
-        if (!searchResult?.success || !searchResult?.items?.length) return { success: false, message: searchResult?.error || "搜索失败", data: { successCount: 0, failCount: 0, images: [] } };
-        const items = searchResult.items; const images: any[] = []; let successCount = 0; let failCount = 0;
-        for (const item of items) {
-          try {
-            const targetUrl = item.image;
-            if (syncToMaterial) {
-              const syncResult = await nativeApi.syncEmojipediaToMaterialLibrary(targetUrl, { title: item.title, url: item.url, id: item.id, platform: item.platform });
-              if (syncResult?.success || syncResult?.ok) { images.push({ url: syncResult.data?.cosUrl || syncResult.cosUrl, originUrl: targetUrl }); successCount++; } else { failCount++; }
-            } else {
-              const dl = await nativeApi.downloadEmojipediaItem({ imageUrl: targetUrl });
-              if (dl?.ok) { images.push({ url: dl.filePath, originUrl: targetUrl }); successCount++; } else { failCount++; }
-            }
-          } catch { failCount++; }
-        }
-        await syncServiceRuntime("emojipedia");
-        return { success: true, message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`, data: { successCount, failCount, images } };
-      }
-      throw new Error(`未实现的 Emojipedia 命令: ${command.action}`);
-    },
-  });
-
-  registerLocalService({
-    key: "svgrepo",
-    pluginKey: "svgrepo",
-    label: "SVGRepo 50万+开源矢量",
-    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
-      const nativeApi = getNativeApi() as any;
-      if (!nativeApi?.getSvgrepoStatus) {
-        return {
-          label: "SVGRepo 50万+开源矢量",
-          connected: false, available: false, status: "disconnected", state: "offline",
-          busy: false, message: "当前为浏览器环境，未注入桌面端 SVGRepo 能力",
-          endpoint: "", lastCheckedAt: new Date().toISOString(), lastError: null,
-          supportedCommands: ["refreshRuntime", "health"], details: { runtime: "browser" },
-        } as Partial<ClientServiceStatus>;
-      }
-      const status = await nativeApi.getSvgrepoStatus();
-      const available = true;
-      return {
-        label: "SVGRepo 50万+开源矢量", connected: true, available,
-        status: available ? "connected" : "error", state: available ? "idle" : "error",
-        busy: false, message: status?.message || "SVGRepo 可用",
-        endpoint: "https://www.svgrepo.com/", lastCheckedAt: new Date().toISOString(),
-        lastError: available ? null : status?.message || null,
-        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
-        details: { siteAvailable: true, runtime: "desktop" },
-      } as Partial<ClientServiceStatus>;
-    },
-    execute: async (command) => {
-      if (command.action === "search") {
-        const { keyword, query, limit = 24, page = 1, style } = command.payload || {};
-        const q = query || keyword;
-        if (!q) throw new Error("缺少搜索关键词");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchSvgrepo) throw new Error("当前环境未注入桌面端 SVGRepo 搜索能力");
-        const result = await nativeApi.searchSvgrepo({ query: q, limit, page, style });
-        return { success: result?.success ?? false, message: result?.success ? `搜索完成: ${result?.count || 0} 条` : (result?.error || "搜索失败"), data: result };
-      }
-      if (command.action === "download") {
-        const { imageUrl, filename } = command.payload || {};
-        if (!imageUrl) throw new Error("缺少 SVG 矢量链接");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.downloadSvgrepoImage) throw new Error("当前环境未注入桌面端 SVGRepo 下载能力");
-        const data = await nativeApi.downloadSvgrepoImage({ imageUrl, filename });
-        return { success: !!data?.ok, message: data?.ok ? "矢量下载完成" : (data?.msg || "下载失败"), data };
-      }
-      if (command.action === "sync") {
-        const { imageUrl, metadata } = command.payload || {};
-        if (!imageUrl) throw new Error("缺少 SVG 矢量链接");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.syncSvgrepoToMaterialLibrary) throw new Error("当前环境未注入桌面端 SVGRepo 同步能力");
-        const data = await nativeApi.syncSvgrepoToMaterialLibrary(imageUrl, metadata);
-        await syncServiceRuntime("svgrepo");
-        return { success: !!data?.ok || !!data?.success, message: data?.message || (data?.ok ? "素材已同步到素材库" : (data?.msg || "同步失败")), data };
-      }
-      if (command.action === "collect") {
-        const { keyword, query, maxCount = 12, syncToMaterial = true, style } = command.payload || {};
-        const q = query || keyword;
-        if (!q) throw new Error("缺少搜索关键词");
-        const nativeApi = getNativeApi() as any;
-        if (!nativeApi?.searchSvgrepo || !nativeApi?.syncSvgrepoToMaterialLibrary) throw new Error("当前环境未注入桌面端 SVGRepo 采集能力");
-        const searchResult = await nativeApi.searchSvgrepo({ query: q, limit: maxCount, style });
-        if (!searchResult?.success || !searchResult?.items?.length) return { success: false, message: searchResult?.error || "搜索失败", data: { successCount: 0, failCount: 0, images: [] } };
-        const items = searchResult.items; const images: any[] = []; let successCount = 0; let failCount = 0;
-        for (const item of items) {
-          try {
-            const targetUrl = item.svgUrl || item.image;
-            if (syncToMaterial) {
-              const syncResult = await nativeApi.syncSvgrepoToMaterialLibrary(targetUrl, { title: item.title, url: item.url, id: item.id, style: item.style });
-              if (syncResult?.success || syncResult?.ok) { images.push({ url: syncResult.data?.cosUrl || syncResult.cosUrl, originUrl: targetUrl }); successCount++; } else { failCount++; }
-            } else {
-              const dl = await nativeApi.downloadSvgrepoImage({ imageUrl: targetUrl });
-              if (dl?.ok) { images.push({ url: dl.filePath, originUrl: targetUrl }); successCount++; } else { failCount++; }
-            }
-          } catch { failCount++; }
-        }
-        await syncServiceRuntime("svgrepo");
-        return { success: true, message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`, data: { successCount, failCount, images } };
-      }
-      throw new Error(`未实现的 SVGRepo 命令: ${command.action}`);
-    },
-  });
+}
 
 function emitClientInfo() {
   if (!socket || !socket.connected) return;
@@ -12476,6 +13851,29 @@ function startPsConfigSync() {
   }, PS_CONFIG_SYNC_INTERVAL_MS);
 }
 
+// 将服务端「已绑定 · 客户端 Agent」配置交给主进程。API Key 始终只保留在主进程内存中。
+async function syncBoundClientAgentConfig() {
+  const nativeApi = getNativeApi() as any;
+  const syncCloudConfig = nativeApi?.agent?.syncCloudConfig;
+  if (typeof syncCloudConfig !== "function") return;
+
+  const token = await getTokenFromClient();
+  if (!token) return;
+
+  const config = await syncCloudConfig({
+    serverBase: getRemoteApiBase(),
+    token,
+  });
+
+  if (config && typeof config === "object") {
+    clientAgentConfig.keyId = config.keyId || null;
+    clientAgentConfig.model = config.model || "";
+    clientAgentConfig.baseUrl = config.baseUrl || "";
+    clientAgentConfig.enabled = !!config.enabled;
+    clientAgentConfig.loaded = true;
+  }
+}
+
 // 获取客户端 Agent 配置
 async function fetchClientAgentConfig() {
   try {
@@ -12496,7 +13894,7 @@ async function fetchClientAgentConfig() {
         return;
       }
     }
-    
+
     // 兼容旧的用户设置方式
     const setting = await getUserSetting();
     if (setting && typeof setting === "object") {
@@ -12538,9 +13936,18 @@ async function fetchClientAgentConfig() {
       level: "warn",
       message: `[agent] 获取配置失败: ${error instanceof Error ? error.message : String(error)}`,
     });
+  } finally {
+    try {
+      await syncBoundClientAgentConfig();
+    } catch (error) {
+      emitter.emit("log", {
+        level: "warn",
+        message: `[agent] 服务端绑定配置同步失败: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   }
 
-  // 同步配置到 main 进程（供 MCP 工具使用）
+  // 兼容旧 MCP 配置读取；Agent 实际运行配置由上面的主进程同步结果提供。
   try {
     const nativeApi = getNativeApi() as any;
     if (nativeApi?.setAgentConfig) {

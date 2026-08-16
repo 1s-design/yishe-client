@@ -148,7 +148,7 @@ export async function searchGoogleIcons(
 
     const items: GoogleIcon[] = matchedRaw.map((ic: any) => {
       const name = ic.name;
-      const version = ic.version || 1;
+      const _version = ic._version || 1;
       return buildGoogleIcon(name, ic, style, size);
     });
 
@@ -180,7 +180,7 @@ export async function searchGoogleIcons(
 /**
  * 解析 Google Icons 搜索结果 HTML
  */
-function parseGoogleIconsHtml(html: string, style: string, size: number): GoogleIcon[] {
+function _parseGoogleIconsHtml(html: string, style: string, size: number): GoogleIcon[] {
   const items: GoogleIcon[] = [];
   const usedNames = new Set<string>();
 

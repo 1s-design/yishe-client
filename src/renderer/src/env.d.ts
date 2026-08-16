@@ -11,387 +11,492 @@
 interface Window {
   electron: {
     process: {
-      versions: Record<string, string>
-    }
+      versions: Record<string, string>;
+    };
     ipcRenderer: {
-      send(channel: string, ...args: any[]): void
-      on(channel: string, func: (...args: any[]) => void): void
-      once(channel: string, func: (...args: any[]) => void): void
-    }
-  }
+      send(channel: string, ...args: any[]): void;
+      on(channel: string, func: (...args: any[]) => void): void;
+      once(channel: string, func: (...args: any[]) => void): void;
+    };
+  };
   api: {
-    showTrayNotification(options: { title: string; body: string }): Promise<void>
-    updateTrayTooltip(tooltip: string): Promise<void>
-    hideMainWindow(): Promise<void>
-    showMainWindow(): Promise<void>
-    confirmExit(): Promise<'tray' | 'quit' | 'cancel'>
-    getAppVersion(): Promise<string>
-    saveToken(token: string): Promise<boolean>
-    getToken(): Promise<string | undefined>
-    isTokenExist(): Promise<boolean>
-    getDeviceKey(): Promise<string>
+    showTrayNotification(options: {
+      title: string;
+      body: string;
+    }): Promise<void>;
+    updateTrayTooltip(tooltip: string): Promise<void>;
+    hideMainWindow(): Promise<void>;
+    showMainWindow(): Promise<void>;
+    confirmExit(): Promise<"tray" | "quit" | "cancel">;
+    getAppVersion(): Promise<string>;
+    saveToken(token: string): Promise<boolean>;
+    getToken(): Promise<string | undefined>;
+    isTokenExist(): Promise<boolean>;
+    clearToken(): Promise<boolean>;
+    getDeviceKey(): Promise<string>;
     getLocalDatabaseInfo(): Promise<{
-      connected: boolean
-      engine: 'SQLite'
-      databasePath: string
-      databaseUri: string
-      directory: string
-      sizeBytes: number
-      sqliteVersion: string
-      schemaVersion: number
-      journalMode: string
-      error?: string
-    }>
-    onAppRuntimeEvent(callback: (event: any) => void): void
-    onExtensionConnectionStatus(callback: (status: any) => void): void
-    openExternal(url: string): Promise<void>
-    toggleDevTools(): Promise<{ opened: boolean }>
+      connected: boolean;
+      engine: "SQLite";
+      databasePath: string;
+      databaseUri: string;
+      directory: string;
+      sizeBytes: number;
+      sqliteVersion: string;
+      schemaVersion: number;
+      journalMode: string;
+      error?: string;
+    }>;
+    onAppRuntimeEvent(callback: (event: any) => void): void;
+    onExtensionConnectionStatus(callback: (status: any) => void): void;
+    openExternal(url: string): Promise<void>;
+    toggleDevTools(): Promise<{ opened: boolean }>;
     writeClientLog(payload: {
-      level?: string
-      module?: string
-      message?: string
-      context?: Record<string, any>
-    }): Promise<{ success: boolean; filePath?: string; message?: string }>
-    queryClientLog(action: string, payload?: Record<string, any>): Promise<any>
+      level?: string;
+      module?: string;
+      message?: string;
+      context?: Record<string, any>;
+    }): Promise<{ success: boolean; filePath?: string; message?: string }>;
+    queryClientLog(action: string, payload?: Record<string, any>): Promise<any>;
     // 工作目录
-    selectWorkspaceDirectory(): Promise<string | null>
-    getWorkspaceDirectory(): Promise<string>
-    setWorkspaceDirectory(path: string): Promise<boolean>
-    getImageToolStatus(): Promise<any>
-    startImageToolService(): Promise<any>
-    stopImageToolService(): Promise<any>
-    getImageToolDirectories(): Promise<any>
-    getImageToolCatalog(): Promise<any>
-    getImageToolOperations(): Promise<any>
-    getImageToolOperationSchemas(): Promise<any>
-    getImageToolOperationDetail(type: string): Promise<any>
-    getImageToolExamples(): Promise<any>
-    getImageToolExampleDetail(id: string): Promise<any>
-    getImageToolVariationsConfig(): Promise<any>
-    saveImageToolInput(payload: { sourcePath: string; fileName?: string }): Promise<any>
+    selectWorkspaceDirectory(): Promise<string | null>;
+    getWorkspaceDirectory(): Promise<string>;
+    setWorkspaceDirectory(path: string): Promise<boolean>;
+    getImageToolStatus(): Promise<any>;
+    startImageToolService(): Promise<any>;
+    stopImageToolService(): Promise<any>;
+    getImageToolDirectories(): Promise<any>;
+    getImageToolCatalog(): Promise<any>;
+    getImageToolOperations(): Promise<any>;
+    getImageToolOperationSchemas(): Promise<any>;
+    getImageToolOperationDetail(type: string): Promise<any>;
+    getImageToolExamples(): Promise<any>;
+    getImageToolExampleDetail(id: string): Promise<any>;
+    getImageToolVariationsConfig(): Promise<any>;
+    saveImageToolInput(payload: {
+      sourcePath: string;
+      fileName?: string;
+    }): Promise<any>;
     getImageToolInfo(payload: {
-      sourcePath?: string
-      imageUrl?: string
-      image?: string
-      filename?: string
-      engine?: string
-    }): Promise<any>
+      sourcePath?: string;
+      imageUrl?: string;
+      image?: string;
+      filename?: string;
+      engine?: string;
+    }): Promise<any>;
     processImageTool(payload: {
-      sourcePath?: string
-      imageUrl?: string
-      image?: string
-      filename?: string
-      operations: Array<any>
-      outputPrefix?: string
-      engine?: string
-    }): Promise<any>
+      sourcePath?: string;
+      imageUrl?: string;
+      image?: string;
+      filename?: string;
+      operations: Array<any>;
+      outputPrefix?: string;
+      engine?: string;
+    }): Promise<any>;
     processImageToolWithPrompt(payload: {
-      prompt: string
-      sourcePath?: string
-      imageUrl?: string
-      image?: string
-      filename?: string
-      outputPrefix?: string
-      engine?: string
-    }): Promise<any>
+      prompt: string;
+      sourcePath?: string;
+      imageUrl?: string;
+      image?: string;
+      filename?: string;
+      outputPrefix?: string;
+      engine?: string;
+    }): Promise<any>;
     generateImageToolVariations(payload: {
-      sourcePath?: string
-      imageUrl?: string
-      image?: string
-      filename?: string
-      engine?: string
-    }): Promise<any>
+      sourcePath?: string;
+      imageUrl?: string;
+      image?: string;
+      filename?: string;
+      engine?: string;
+    }): Promise<any>;
     listImageToolFiles(payload: {
-      directory?: 'uploads' | 'output' | 'template' | 'temp'
-    }): Promise<any>
+      directory?: "uploads" | "output" | "template" | "temp";
+    }): Promise<any>;
     deleteImageToolFile(payload: {
-      directory?: 'uploads' | 'output' | 'template' | 'temp'
-      fileName: string
-    }): Promise<any>
+      directory?: "uploads" | "output" | "template" | "temp";
+      fileName: string;
+    }): Promise<any>;
     clearImageToolFiles(payload: {
-      directory?: 'uploads' | 'output' | 'template' | 'temp'
-    }): Promise<any>
-    getVideoTemplateStatus(): Promise<any>
-    startVideoTemplateService(): Promise<any>
-    stopVideoTemplateService(): Promise<any>
-    getVideoTemplateCatalog(): Promise<any>
-    listVideoTemplateRenders(): Promise<any>
-    getVideoTemplateRender(jobId: string): Promise<any>
+      directory?: "uploads" | "output" | "template" | "temp";
+    }): Promise<any>;
+    getVideoTemplateStatus(): Promise<any>;
+    startVideoTemplateService(): Promise<any>;
+    stopVideoTemplateService(): Promise<any>;
+    getVideoTemplateCatalog(): Promise<any>;
+    listVideoTemplateRenders(): Promise<any>;
+    getVideoTemplateRender(jobId: string): Promise<any>;
     enqueueVideoTemplateRender(payload: {
-      templateId: string
-      inputProps?: Record<string, any>
-    }): Promise<any>
-    cancelVideoTemplateRender(jobId: string): Promise<any>
-    openPath(path: string): Promise<void>
+      templateId: string;
+      inputProps?: Record<string, any>;
+    }): Promise<any>;
+    cancelVideoTemplateRender(jobId: string): Promise<any>;
+    openPath(path: string): Promise<void>;
     // 文件下载
     downloadFile(url: string): Promise<{
-      success: boolean
-      message: string
-      filePath?: string
-      skipped?: boolean
-      fileSize?: number
-      cacheKey?: string
-      downloadedBytes?: number
-      error?: string
-      statusCode?: number
-    }>
+      success: boolean;
+      message: string;
+      filePath?: string;
+      skipped?: boolean;
+      fileSize?: number;
+      cacheKey?: string;
+      downloadedBytes?: number;
+      error?: string;
+      statusCode?: number;
+    }>;
     checkFileDownloaded(url: string): Promise<{
-      found: boolean
-      filePath?: string | null
-      fileSize?: number
-      cacheKey?: string
-      message: string
-      error?: string
-    }>
+      found: boolean;
+      filePath?: string | null;
+      fileSize?: number;
+      cacheKey?: string;
+      message: string;
+      error?: string;
+    }>;
     checkLocalFileExists(filePath: string): Promise<{
-      exists: boolean
-      isFile: boolean
-      isDirectory: boolean
-      fileSize?: number
-      message: string
-    }>
+      exists: boolean;
+      isFile: boolean;
+      isDirectory: boolean;
+      fileSize?: number;
+      message: string;
+    }>;
     // 外部进程
-    listExternalProcesses(): Promise<Array<{
-      id: string
-      name: string
-      executable: string
-      platforms?: NodeJS.Platform[]
-      autoRestart?: boolean
-      status: string
-    }>>
-    startExternalProcess(id: string): Promise<boolean>
-    stopExternalProcess(id: string, force?: boolean): Promise<boolean>
+    listExternalProcesses(): Promise<
+      Array<{
+        id: string;
+        name: string;
+        executable: string;
+        platforms?: NodeJS.Platform[];
+        autoRestart?: boolean;
+        status: string;
+      }>
+    >;
+    startExternalProcess(id: string): Promise<boolean>;
+    stopExternalProcess(id: string, force?: boolean): Promise<boolean>;
     invokeAutoBrowser(request: {
-      method?: string
-      path: string
-      query?: Record<string, any>
-      body?: any
+      method?: string;
+      path: string;
+      query?: Record<string, any>;
+      body?: any;
     }): Promise<{
-      ok?: boolean
-      status?: number
-      body?: any
-      headers?: Record<string, string>
-    }>
-    startLocalService(): Promise<{ success: boolean; message: string }>
-    stopLocalService(): Promise<{ success: boolean; message: string }>
+      ok?: boolean;
+      status?: number;
+      body?: any;
+      headers?: Record<string, string>;
+    }>;
+    startLocalService(): Promise<{ success: boolean; message: string }>;
+    stopLocalService(): Promise<{ success: boolean; message: string }>;
     checkLocalServiceStatus(): Promise<{
-      running: boolean
-      available: boolean
-      port: number
-      error?: string
-    }>
+      running: boolean;
+      available: boolean;
+      port: number;
+      error?: string;
+    }>;
     // MCP Server 管理
-    startMcpServer(): Promise<{ success: boolean; message: string }>
-    stopMcpServer(): Promise<{ success: boolean; message: string }>
+    startMcpServer(): Promise<{ success: boolean; message: string }>;
+    stopMcpServer(): Promise<{ success: boolean; message: string }>;
     checkMcpServerStatus(): Promise<{
-      running: boolean
-      port: number
-      toolCount: number
-      error?: string
-    }>
+      running: boolean;
+      port: number;
+      toolCount: number;
+      error?: string;
+    }>;
     // Google Arts 高清图片
     getGoogleArtStatus(): Promise<{
-      ok: boolean
-      platform: string
-      platformName: string
-      supported: boolean
-      binaryExists: boolean
-      binaryPath?: string | null
-      siteUrl: string
-      siteAvailable: boolean
-      siteStatus?: number | null
-      siteLatencyMs?: number | null
-      siteCheckedAt: string
-      siteError?: string | null
-      message: string
-    }>
+      ok: boolean;
+      platform: string;
+      platformName: string;
+      supported: boolean;
+      binaryExists: boolean;
+      binaryPath?: string | null;
+      siteUrl: string;
+      siteAvailable: boolean;
+      siteStatus?: number | null;
+      siteLatencyMs?: number | null;
+      siteCheckedAt: string;
+      siteError?: string | null;
+      message: string;
+    }>;
     getGoogleArtZooms(url: string): Promise<{
-      ok: boolean
-      zooms?: Array<{ idx: number; label: string; width: number; height: number; tiles: number }>
-      msg?: string
-    }>
-    syncGoogleArtToMaterialLibrary(payload: { url: string; zoomLevel: number }): Promise<{
-      ok: boolean
-      msg?: string
-      filePath?: string
-      fileName?: string
-      fileSize?: number
-      materialLibraryOk?: boolean
-    }>
+      ok: boolean;
+      zooms?: Array<{
+        idx: number;
+        label: string;
+        width: number;
+        height: number;
+        tiles: number;
+      }>;
+      msg?: string;
+    }>;
+    syncGoogleArtToMaterialLibrary(payload: {
+      url: string;
+      zoomLevel: number;
+    }): Promise<{
+      ok: boolean;
+      msg?: string;
+      filePath?: string;
+      fileName?: string;
+      fileSize?: number;
+      materialLibraryOk?: boolean;
+    }>;
     // Pinterest 图搜与下载
-    searchPinterest(payload: { keyword: string; scope?: string; limit?: number; imageOnly?: boolean; bookmark?: string | null }): Promise<{
-      success: boolean
-      query: string
-      count: number
+    searchPinterest(payload: {
+      keyword: string;
+      scope?: string;
+      limit?: number;
+      imageOnly?: boolean;
+      bookmark?: string | null;
+    }): Promise<{
+      success: boolean;
+      query: string;
+      count: number;
       items: Array<{
-        id: string
-        title: string
-        description: string
-        image: string
-        thumbnail: string
-        link: string
-        url: string
-        boardName: string
-        pinner: string
-        width?: number
-        height?: number
-        isVideo: boolean
-      }>
-      links: string[]
-      bookmark: string | null
-      error?: string
-    }>
+        id: string;
+        title: string;
+        description: string;
+        image: string;
+        thumbnail: string;
+        link: string;
+        url: string;
+        boardName: string;
+        pinner: string;
+        width?: number;
+        height?: number;
+        isVideo: boolean;
+      }>;
+      links: string[];
+      bookmark: string | null;
+      error?: string;
+    }>;
     getPinterestStatus(): Promise<{
-      ok: boolean
-      siteUrl: string
-      siteAvailable: boolean
-      siteStatus?: number | null
-      siteLatencyMs?: number | null
-      siteCheckedAt: string
-      siteError?: string | null
-      message: string
-    }>
-    downloadPinterestImage(payload: { imageUrl: string; filename?: string }): Promise<{
-      ok: boolean
-      msg?: string
-      filePath?: string
-    }>
-    syncPinterestToMaterialLibrary(payload: { imageUrl: string; metadata?: Record<string, any> }): Promise<{
-      ok: boolean
-      msg?: string
-      filePath?: string
-      fileName?: string
-      fileSize?: number
-      materialLibraryOk?: boolean
-    }>
+      ok: boolean;
+      siteUrl: string;
+      siteAvailable: boolean;
+      siteStatus?: number | null;
+      siteLatencyMs?: number | null;
+      siteCheckedAt: string;
+      siteError?: string | null;
+      message: string;
+    }>;
+    downloadPinterestImage(payload: {
+      imageUrl: string;
+      filename?: string;
+    }): Promise<{
+      ok: boolean;
+      msg?: string;
+      filePath?: string;
+    }>;
+    syncPinterestToMaterialLibrary(payload: {
+      imageUrl: string;
+      metadata?: Record<string, any>;
+    }): Promise<{
+      ok: boolean;
+      msg?: string;
+      filePath?: string;
+      fileName?: string;
+      fileSize?: number;
+      materialLibraryOk?: boolean;
+    }>;
     uploadFileToCos(payload: { filePath: string; key?: string }): Promise<{
-      ok: boolean
-      msg?: string
-      url?: string
-      key?: string
-    }>
+      ok: boolean;
+      msg?: string;
+      url?: string;
+      key?: string;
+    }>;
     generateCosKey(payload: {
-      category: string
-      filename: string
-      account?: string
-      userId?: string | number
-      entityId?: string | number
-      subDirectory?: string
-      isThumbnail?: boolean
-      timestamp?: number
+      category: string;
+      filename: string;
+      account?: string;
+      userId?: string | number;
+      entityId?: string | number;
+      subDirectory?: string;
+      isThumbnail?: boolean;
+      timestamp?: number;
     }): Promise<{
-      ok: boolean
-      msg?: string
-      key?: string
-    }>
+      ok: boolean;
+      msg?: string;
+      key?: string;
+    }>;
     downloadImageAndUploadMaterial(payload: {
-      url: string
-      name?: string
-      description?: string
-      keywords?: string
-      target?: 'sticker' | 'crawler-material'
+      url: string;
+      name?: string;
+      description?: string;
+      keywords?: string;
+      target?: "sticker" | "crawler-material";
     }): Promise<{
-      ok: boolean
-      message?: string
+      ok: boolean;
+      message?: string;
       data?: {
-        cosUrl: string
-        material: any
-      }
-    }>
+        cosUrl: string;
+        material: any;
+      };
+    }>;
     downloadImageAndUploadToCrawler(payload: {
-      url: string
-      name?: string
-      description?: string
-      keywords?: string
-      target?: 'sticker' | 'crawler-material'
+      url: string;
+      name?: string;
+      description?: string;
+      keywords?: string;
+      target?: "sticker" | "crawler-material";
     }): Promise<{
-      ok: boolean
-      message?: string
+      ok: boolean;
+      message?: string;
       data?: {
-        cosUrl: string
-        material: any
-      }
-    }>
+        cosUrl: string;
+        material: any;
+      };
+    }>;
     processImageWithLimits(payload: {
-      sourcePath: string
-      outputPath?: string
-      workspaceDir?: string
-      maxWidth?: number
-      maxHeight?: number
-      maxBytes?: number
-      format?: 'jpeg' | 'png' | 'webp'
-      quality?: number
-      minQuality?: number
-      fit?: 'inside' | 'cover' | 'contain' | 'fill'
-      position?: string
-      background?: string
-      cacheKey?: string
-      cacheFolder?: string
+      sourcePath: string;
+      outputPath?: string;
+      workspaceDir?: string;
+      maxWidth?: number;
+      maxHeight?: number;
+      maxBytes?: number;
+      format?: "jpeg" | "png" | "webp";
+      quality?: number;
+      minQuality?: number;
+      fit?: "inside" | "cover" | "contain" | "fill";
+      position?: string;
+      background?: string;
+      cacheKey?: string;
+      cacheFolder?: string;
     }): Promise<{
-      success: boolean
-      filePath?: string
-      format?: string
-      width?: number
-      height?: number
-      fileSize?: number
-      limitReached?: boolean
-      maxBytes?: number | null
-      underLimit?: boolean
-      cached?: boolean
-      error?: string
-    }>
+      success: boolean;
+      filePath?: string;
+      format?: string;
+      width?: number;
+      height?: number;
+      fileSize?: number;
+      limitReached?: boolean;
+      maxBytes?: number | null;
+      underLimit?: boolean;
+      cached?: boolean;
+      error?: string;
+    }>;
     processImageForPreview(payload: {
-      sourcePath: string
-      outputPath?: string
-      workspaceDir?: string
-      maxWidth?: number
-      maxHeight?: number
-      maxBytes?: number
-      format?: 'jpeg' | 'png' | 'webp'
-      quality?: number
-      minQuality?: number
-      fit?: 'inside' | 'cover' | 'contain' | 'fill'
-      position?: string
-      background?: string
-      cacheKey?: string
-      cacheFolder?: string
+      sourcePath: string;
+      outputPath?: string;
+      workspaceDir?: string;
+      maxWidth?: number;
+      maxHeight?: number;
+      maxBytes?: number;
+      format?: "jpeg" | "png" | "webp";
+      quality?: number;
+      minQuality?: number;
+      fit?: "inside" | "cover" | "contain" | "fill";
+      position?: string;
+      background?: string;
+      cacheKey?: string;
+      cacheFolder?: string;
     }): Promise<{
-      success: boolean
-      filePath?: string
-      format?: string
-      width?: number
-      height?: number
-      fileSize?: number
-      limitReached?: boolean
-      maxBytes?: number | null
-      underLimit?: boolean
-      cached?: boolean
-      previewDataUrl?: string
-      error?: string
-    }>
+      success: boolean;
+      filePath?: string;
+      format?: string;
+      width?: number;
+      height?: number;
+      fileSize?: number;
+      limitReached?: boolean;
+      maxBytes?: number | null;
+      underLimit?: boolean;
+      cached?: boolean;
+      previewDataUrl?: string;
+      error?: string;
+    }>;
     processImagesWithLimits(payload: {
       files: Array<{
-        sourcePath: string
-        outputPath?: string
-        workspaceDir?: string
-        maxWidth?: number
-        maxHeight?: number
-        maxBytes?: number
-        format?: 'jpeg' | 'png' | 'webp'
-        quality?: number
-        minQuality?: number
-        fit?: 'inside' | 'cover' | 'contain' | 'fill'
-        position?: string
-        background?: string
-        cacheKey?: string
-        cacheFolder?: string
-      }>
+        sourcePath: string;
+        outputPath?: string;
+        workspaceDir?: string;
+        maxWidth?: number;
+        maxHeight?: number;
+        maxBytes?: number;
+        format?: "jpeg" | "png" | "webp";
+        quality?: number;
+        minQuality?: number;
+        fit?: "inside" | "cover" | "contain" | "fill";
+        position?: string;
+        background?: string;
+        cacheKey?: string;
+        cacheFolder?: string;
+      }>;
     }): Promise<{
-      success: boolean
-      total?: number
-      successCount?: number
-      results?: Array<any>
-      error?: string
-    }>
+      success: boolean;
+      total?: number;
+      successCount?: number;
+      results?: Array<any>;
+      error?: string;
+    }>;
+    agent?: {
+      sendMessage(payload: { messages: any[]; config?: any }): void;
+      stop(): Promise<{ success: boolean }>;
+      getConfig(): Promise<any>;
+      saveConfig(config: any): Promise<any>;
+      syncCloudConfig(payload: {
+        serverBase: string;
+        token: string;
+      }): Promise<any>;
+      onReasoning(callback: (data: { delta: string }) => void): () => void;
+      onContent(callback: (data: { delta: string }) => void): () => void;
+      onToolStart(callback: (data: any) => void): () => void;
+      removeAllListeners(): void;
+    };
+  };
+}
+
+declare module "@lucide/vue" {
+  import { Component } from "vue";
+  export const ArrowDown: Component;
+  export const ArrowUp: Component;
+  export const Brain: Component;
+  export const Check: Component;
+  export const ChevronDown: Component;
+  export const ChevronLeft: Component;
+  export const ChevronRight: Component;
+  export const Copy: Component;
+  export const CornerDownLeft: Component;
+  export const Globe: Component;
+  export const Loader2: Component;
+  export const Mic: Component;
+  export const Paperclip: Component;
+  export const Plus: Component;
+  export const RefreshCw: Component;
+  export const Sparkles: Component;
+  export const Square: Component;
+  export const ThumbsDown: Component;
+  export const ThumbsUp: Component;
+  export const Volume2: Component;
+  export const Wrench: Component;
+  export const X: Component;
+  export const CheckCircle: Component;
+  export const Clock: Component;
+  export const AlertCircle: Component;
+  const icon: Component;
+  export default icon;
+}
+
+declare module "ai" {
+  export type ToolUIPromise = any;
+  export type ToolInvocation = any;
+  export interface ToolInvocationUIPromise {
+    [key: string]: any;
   }
+}
+
+declare module "clsx" {
+  export type ClassValue = any;
+  export function clsx(...inputs: any[]): string;
+  export default clsx;
+}
+
+declare module "tailwind-merge" {
+  export function twMerge(...classLists: any[]): string;
+}
+
+declare module "vue-stream-markdown" {
+  import { Component } from "vue";
+  export const StreamMarkdown: Component;
+  export default StreamMarkdown;
+}
+
+declare module "vue-stick-to-bottom" {
+  import { Component } from "vue";
+  export const StickToBottom: Component;
+  export default StickToBottom;
 }

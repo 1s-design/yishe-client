@@ -108,7 +108,7 @@ export async function searchEmojipedia(
 
   const page = Math.max(Number(options.page) || 1, 1);
   const limit = Math.min(Math.max(Number(options.limit || options.pageSize) || 20, 1), 100);
-  const category = options.category || 'stickers';
+  const _category = options.category || 'stickers';
   const platform = options.platform || '';
 
   try {

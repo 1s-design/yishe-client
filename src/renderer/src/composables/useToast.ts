@@ -1,26 +1,48 @@
-import { ElNotification, type NotificationProps } from 'element-plus'
+import { h } from "vue";
+import { ElNotification } from "element-plus";
+
+type ToastTone = "success" | "warning" | "info" | "error";
 
 export function useToast() {
-  const mapType = (color: string): NotificationProps['type'] => {
-    if (color === 'success' || color === 'warning' || color === 'info' || color === 'error') return color
-    return 'info'
-  }
+  const mapType = (color: string): ToastTone =>
+    color === "success" ||
+    color === "warning" ||
+    color === "info" ||
+    color === "error"
+      ? color
+      : "info";
 
-  const showToast = (options: { color: string; icon?: string; message: string; duration?: number }) => {
-    // 默认关闭上一条，保持单例体验
-    ElNotification.closeAll()
+  const showToast = (options: {
+    color: string;
+    icon?: string;
+    message: string;
+    duration?: number;
+  }) => {
+    const tone = mapType(options.color);
+    ElNotification.closeAll();
 
     ElNotification({
-      message: options.message,
+      message: h("div", { class: "client-toast__content", role: "alert" }, [
+        h(
+          "span",
+          { class: ["client-toast__icon", options.icon ? "has-icon" : ""] },
+          options.icon
+            ? [h("i", { class: ["mdi", options.icon], "aria-hidden": "true" })]
+            : [
+                h("span", {
+                  class: "client-toast__dot",
+                  "aria-hidden": "true",
+                }),
+              ],
+        ),
+        h("p", { class: "client-toast__message" }, options.message),
+      ]),
       duration: options.duration ?? 3000,
-      type: mapType(options.color),
-      position: 'top-right',
-      showClose: true
-    })
-  }
+      position: "top-right",
+      showClose: true,
+      customClass: `client-toast client-toast--${tone}`,
+    });
+  };
 
-  return {
-    showToast
-  }
+  return { showToast };
 }
-
