@@ -77,11 +77,15 @@ jobs:
             prepare_plugins_cmd: npm run prepare:plugins:mac
             csc_identity_auto_discovery: "true"
             artifact_path: release/yishe-client.dmg
+            cos_platform: mac
+            cos_filename: latest.dmg
           - os: windows-latest
             build_args: --win portable --config electron-builder.yml
             prepare_plugins_cmd: npm run prepare:plugins:win
             csc_identity_auto_discovery: ""
             artifact_path: release/yishe-client.exe
+            cos_platform: windows
+            cos_filename: latest.exe
 
     steps:
       - name: Check out Git repository
@@ -147,6 +151,22 @@ jobs:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
+      # 在各自原生 Runner 上构建后，统一使用固定文件名暂存产物。
+      # 后续 COS job 仅在 macOS + Windows 均构建成功时才覆盖 latest 文件，避免半发布状态。
+      - name: Stage fixed COS artifact
+        shell: bash
+        run: |
+          mkdir -p "cos-upload/${{ matrix.cos_platform }}"
+          cp "${{ matrix.artifact_path }}" "cos-upload/${{ matrix.cos_platform }}/${{ matrix.cos_filename }}"
+
+      - name: Upload COS staging artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cos-${{ matrix.cos_platform }}
+          path: cos-upload/${{ matrix.cos_platform }}/${{ matrix.cos_filename }}
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
@@ -158,6 +178,51 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.github_token }}
+
+  # COS 只保存两个稳定下载路径。构建产物通过 Actions Artifact 汇总，
+  # 确保 macOS 与 Windows 均构建成功后才覆盖最新版，避免只更新其中一个平台。
+  publish-cos:
+    needs: [check-version, build]
+    if: success() && needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS package
+        uses: actions/download-artifact@v4
+        with:
+          name: cos-mac
+          path: cos-upload/mac
+
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: cos-windows
+          path: cos-upload/windows
+
+      - name: Verify COS packages
+        shell: bash
+        run: |
+          test -s cos-upload/mac/latest.dmg
+          test -s cos-upload/windows/latest.exe
+
+      - name: Upload macOS latest package to Tencent COS
+        uses: TencentCloud/cos-action@v1
+        with:
+          secret_id: ${{ secrets.TENCENT_SECRET_ID }}
+          secret_key: ${{ secrets.TENCENT_SECRET_KEY }}
+          cos_bucket: ${{ secrets.TENCENT_COS_BUCKET }}
+          cos_region: ${{ secrets.TENCENT_COS_REGION }}
+          local_path: cos-upload/mac
+          remote_path: yishe-client/mac
+
+      - name: Upload Windows latest package to Tencent COS
+        uses: TencentCloud/cos-action@v1
+        with:
+          secret_id: ${{ secrets.TENCENT_SECRET_ID }}
+          secret_key: ${{ secrets.TENCENT_SECRET_KEY }}
+          cos_bucket: ${{ secrets.TENCENT_COS_BUCKET }}
+          cos_region: ${{ secrets.TENCENT_COS_REGION }}
+          local_path: cos-upload/windows
+          remote_path: yishe-client/windows
 
   # electron-builder 仍会附带 latest*.yml、blockmap 等；仅保留固定文件名的两枚安装包，便于 https://github.com/.../releases/latest/download/ 稳定直链
   prune-release-assets:

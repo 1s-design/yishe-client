@@ -1543,23 +1543,43 @@ onBeforeUnmount(() => {
 
       <el-dialog
         v-model="showDashboardModal"
-        width="960px"
+        fullscreen
         append-to-body
         destroy-on-close
+        :show-close="false"
         class="dashboard-modal"
       >
         <template #header>
-          <div class="dashboard-dialog-header">服务控制台</div>
+          <header class="dashboard-dialog-header">
+            <div class="dashboard-dialog-header__title">服务控制台</div>
+            <button
+              type="button"
+              class="dashboard-dialog-header__close"
+              aria-label="关闭服务控制台"
+              title="关闭"
+              @click="showDashboardModal = false"
+            >
+              <span class="mdi mdi-close" aria-hidden="true" />
+            </button>
+          </header>
         </template>
 
         <div class="dashboard-modal__body">
-          <Dashboard
-            :status-cards="dashboardStatusCards"
-            @card-action="handleDashboardCardAction"
-          />
+          <section class="dashboard-runtime" aria-labelledby="runtime-title">
+            <div class="dashboard-section-header">
+              <h2 id="runtime-title">服务状态</h2>
+              <span>{{ dashboardStatusCards.length }} 项</span>
+            </div>
+            <Dashboard
+              :status-cards="dashboardStatusCards"
+              @card-action="handleDashboardCardAction"
+            />
+          </section>
 
-          <section class="dashboard-settings">
-            <div class="dashboard-settings__title">设置</div>
+          <section class="dashboard-settings" aria-labelledby="settings-title">
+            <div class="dashboard-section-header">
+              <h2 id="settings-title">客户端设置</h2>
+            </div>
             <div class="dashboard-settings__content">
               <Settings />
             </div>
@@ -1846,106 +1866,222 @@ onBeforeUnmount(() => {
 }
 
 .dashboard-modal__body {
-  display: flex;
-  max-height: min(74vh, 760px);
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  min-height: 0;
+  height: calc(100vh - 63px);
   gap: 8px;
+  padding: 8px;
+  background: #060606;
+  overflow: hidden;
+}
+
+.dashboard-runtime,
+.dashboard-settings {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid #252525;
+  border-radius: 8px;
+  background: #0c0c0c;
+  overflow: hidden;
+}
+
+.dashboard-section-header {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid #252525;
+}
+
+.dashboard-section-header h2 {
+  margin: 0;
+  color: #ededed;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.dashboard-section-header span {
+  color: #6f6f6f;
+  font-size: 10px;
+}
+
+.dashboard-runtime :deep(.dash-cards) {
+  align-content: start;
+  padding: 7px;
+  overflow-y: auto;
+}
+
+.dashboard-settings {
+  color: #a0a0a0;
+}
+
+.dashboard-settings__content {
+  min-height: 0;
+  padding: 7px;
   overflow-y: auto;
 }
 
 .dashboard-dialog-header {
-  padding-right: 24px;
+  display: flex;
+  min-height: 62px;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 8px 12px 16px;
   color: #f2f2f2;
-  font-size: 14px;
+}
+
+.dashboard-dialog-header__title {
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
-.dashboard-settings {
-  border-top: 1px solid #292929;
-  color: #a0a0a0;
-  padding-top: 12px;
-}
-
-.dashboard-settings summary {
+.dashboard-dialog-header__close {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9a9a9a;
   cursor: pointer;
-  font-size: 12px;
-  list-style: none;
+  font-size: 15px;
 }
 
-.dashboard-settings summary::-webkit-details-marker {
-  display: none;
-}
-.dashboard-settings summary::after {
-  content: "+";
-  float: right;
-  color: #777;
-}
-.dashboard-settings[open] summary::after {
-  content: "−";
-}
-.dashboard-settings__title {
-  color: #a0a0a0;
-  font-size: 12px;
-  font-weight: 500;
+.dashboard-dialog-header__close:hover {
+  background: #1d1d1d;
+  color: #fff;
 }
 
-.dashboard-settings__content {
-  padding-top: 10px;
+:global(.el-overlay:has(.dashboard-modal)) {
+  height: 100vh;
+  min-height: 100dvh;
+  background: #000;
+}
+
+:global(.el-overlay:has(.dashboard-modal) .el-overlay-dialog) {
+  display: flex;
+  height: 100%;
+  min-height: 100dvh;
+  flex-direction: column;
 }
 
 :global(.dashboard-modal.el-dialog) {
-  width: min(960px, calc(100vw - 48px)) !important;
-  overflow: hidden;
-  border: 1px solid #292929;
-  border-radius: 14px;
-  background: #0d0d0d;
+  display: flex;
+  width: 100vw !important;
+  min-width: 100vw;
+  height: 100vh;
+  min-height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0 !important;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  background: #060606;
   box-shadow: none;
+  overflow: hidden;
 }
 
 :global(.dashboard-modal .el-dialog__header) {
   margin: 0;
-  border-bottom: 1px solid #292929;
-  padding: 12px 14px;
+  padding: 0;
+  border-bottom: 1px solid #252525;
+  flex: 0 0 auto;
 }
 
 :global(.dashboard-modal .el-dialog__body) {
-  padding: 12px 14px 14px;
+  min-height: 0;
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
 }
-:global(.dashboard-modal .el-dialog__headerbtn) {
-  top: 12px;
-  right: 12px;
-}
-:global(.dashboard-modal .el-dialog__close) {
-  color: #8b8b8b;
-}
-:global(.dashboard-modal .el-dialog__close:hover) {
-  color: #f2f2f2;
+
+:deep(.dashboard-settings .settings-compact) {
+  gap: 5px;
 }
 
 :deep(.dashboard-settings .settings-row) {
-  border-color: #292929;
-  background: #121212;
+  gap: 7px;
+  padding: 7px 8px;
+  border-color: #282828;
+  border-radius: 7px;
+  background: #111;
 }
+
 :deep(.dashboard-settings .settings-row__label),
 :deep(.dashboard-settings .settings-addr-row__value) {
   color: #ededed;
 }
+
 :deep(.dashboard-settings .settings-row__hint),
 :deep(.dashboard-settings .settings-row__meta),
 :deep(.dashboard-settings .settings-addr-row__label) {
-  color: #888;
+  color: #818181;
 }
+
+:deep(.dashboard-settings .settings-row__content) {
+  gap: 4px;
+}
+
+:deep(.dashboard-settings .settings-row__btns) {
+  gap: 4px;
+}
+
+:deep(.dashboard-settings .settings-row__btns .el-button) {
+  min-height: 23px;
+  border-radius: 5px;
+  font-size: 10px;
+}
+
 :deep(.dashboard-settings .settings-input .el-input__wrapper),
 :deep(.dashboard-settings .settings-addr-row) {
+  min-height: 25px;
   border-color: #303030;
+  border-radius: 5px;
   background: #171717;
 }
+
 :deep(.dashboard-settings .settings-input .el-input__inner) {
   color: #e6e6e6;
 }
 
+:deep(.dashboard-settings .seg .el-radio-button__inner) {
+  min-height: 22px;
+  border-radius: 5px !important;
+}
+
+@media (max-width: 900px) {
+  .dashboard-modal__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(245px, 0.85fr) minmax(300px, 1.15fr);
+  }
+}
+
 @media (max-width: 600px) {
+  .dashboard-modal__body {
+    gap: 5px;
+    padding: 5px;
+  }
+
+  .dashboard-section-header {
+    min-height: 31px;
+    padding: 0 8px;
+  }
+
+  .dashboard-runtime :deep(.dash-cards),
+  .dashboard-settings__content {
+    padding: 5px;
+  }
+
   .app-topbar__center {
     display: none;
   }

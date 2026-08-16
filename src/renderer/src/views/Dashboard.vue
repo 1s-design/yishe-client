@@ -65,23 +65,23 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
 <style scoped>
 .dash-cards {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .dash-card {
   min-width: 0;
-  min-height: 76px;
-  padding: 10px 11px;
-  border: 1px solid #292929;
-  border-radius: 9px;
-  background: #111;
+  min-height: 68px;
+  padding: 8px 9px;
+  border: 1px solid #262626;
+  border-radius: 7px;
+  background: #101010;
 }
 
 .dash-card__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .dash-card__status {
@@ -101,7 +101,7 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
   flex: 1;
   overflow: hidden;
   color: #aaa;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -110,16 +110,16 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
 .dash-card__value {
   flex: 0 0 auto;
   color: #f2f2f2;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .dash-card__description {
-  margin: 7px 0 0;
+  margin: 5px 0 0;
   overflow: hidden;
   color: #858585;
   font-size: 10px;
-  line-height: 1.4;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -127,18 +127,18 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
 .dash-card__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 4px;
+  margin-top: 6px;
 }
 
 .dash-card__actions button {
-  min-height: 24px;
+  min-height: 22px;
   border: 1px solid #343434;
-  border-radius: 7px;
+  border-radius: 5px;
   background: transparent;
   color: #d7d7d7;
   cursor: pointer;
-  padding: 0 8px;
+  padding: 0 7px;
   font: inherit;
   font-size: 11px;
 }
@@ -153,7 +153,13 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
   opacity: 0.45;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 1080px) {
+  .dash-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
   .dash-cards {
     grid-template-columns: 1fr;
   }

@@ -662,6 +662,7 @@ function handlePaste(event: ClipboardEvent) {
 
 .agent-composer {
   margin: 0 !important;
+  padding: 0 !important;
   border: 1px solid var(--agent-border-soft) !important;
   border-radius: 16px !important;
   background: #121212 !important;
@@ -689,9 +690,21 @@ function handlePaste(event: ClipboardEvent) {
   padding: 7px 8px;
 }
 
+.agent-composer__row > .agent-composer__button,
+.agent-composer__row > .agent-composer__submit {
+  flex: 0 0 28px;
+  align-self: center;
+  margin: 0;
+  line-height: 1;
+}
+
 .agent-composer :deep(textarea) {
-  min-height: 36px !important;
-  padding: 7px 3px !important;
+  width: auto !important;
+  min-height: 38px !important;
+  flex: 1 1 0 !important;
+  align-self: center !important;
+  margin: 0 !important;
+  padding: 8px 3px !important;
   color: var(--agent-text) !important;
   font-size: 14px !important;
   line-height: 1.5 !important;
@@ -711,6 +724,7 @@ function handlePaste(event: ClipboardEvent) {
   display: inline-flex;
   width: 28px;
   height: 28px;
+  align-self: center;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -746,8 +760,15 @@ function handlePaste(event: ClipboardEvent) {
 }
 
 .agent-composer__submit {
+  display: inline-flex !important;
   width: 28px !important;
   height: 28px !important;
+  flex: 0 0 28px !important;
+  align-self: center !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  line-height: 1 !important;
   border-radius: 7px !important;
   background: var(--agent-text) !important;
   color: var(--agent-main-bg) !important;
