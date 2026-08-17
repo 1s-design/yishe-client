@@ -20,7 +20,7 @@ async function getHotSearchService() {
 // const REMOTE_API_BASE =
 //   process.env.NODE_ENV === 'development'
 //     ? 'http://localhost:1520/api'
-//     : 'https://1s.design:1520/api';
+//     : 'https://api.1s.design/api';
 
 export const hotsearchCollectTool = {
   definition: {

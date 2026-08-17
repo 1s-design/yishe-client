@@ -320,7 +320,7 @@ export async function syncWikimediaToMaterialLibrary(options: {
 async function uploadToMaterialLibrary(
   localPath: string,
   fileName: string,
-  apiBase: string = 'https://1s.design:1520/api',
+  apiBase: string = 'https://api.1s.design/api',
   metadata?: {
     title?: string
     description?: string

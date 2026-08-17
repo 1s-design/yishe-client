@@ -41,11 +41,8 @@ let localConfigLoaded = false;
 
 const expiredCertificateAgent = new HttpsAgent({ rejectUnauthorized: false });
 
-/**
- * 正常情况下始终校验证书。当前生产配置域名的证书过期时，才对该固定域名作一次
- * 有范围的回退，保证已登录客户端仍能读取服务端绑定；证书续期后会自动回到严格校验。
- */
-async function requestServerConfig<T>(
+/** 服务端请求统一入口（含证书过期回退），供 Agent 配置与能力目录共用。 */
+export async function requestDesignServer<T>(
   method: "GET" | "POST",
   url: string,
   token: string,
@@ -65,7 +62,7 @@ async function requestServerConfig<T>(
     return await request();
   } catch (error: any) {
     const hostname = new URL(url).hostname;
-    if (error?.code === "CERT_HAS_EXPIRED" && hostname === "1s.design") {
+    if (error?.code === "CERT_HAS_EXPIRED" && hostname === "api.1s.design") {
       console.warn(
         "[AgentConfig] 服务端 TLS 证书已过期，临时回退读取客户端 Agent 绑定配置",
       );
@@ -132,7 +129,7 @@ export async function syncCloudAgentConfig(
     const apiBase = serverBase.replace(/\/+$/, "");
     // 1. 读取当前用户的 featureBindings。usage-options 在新版服务端返回的是可用 Key 列表，
     // 并不包含功能 code，因此不能用于定位 ai.client-agent.execute。
-    const settingRes = await requestServerConfig<any>(
+    const settingRes = await requestDesignServer<any>(
       "POST",
       `${apiBase}/user/getAiSetting`,
       token,
@@ -150,7 +147,7 @@ export async function syncCloudAgentConfig(
     }
 
     // 2. 获取具体 Key 的明细（BaseURL、ApiKey、Model）。该请求仅发生在主进程，密钥不会暴露给 Renderer。
-    const keyRes = await requestServerConfig<any>(
+    const keyRes = await requestDesignServer<any>(
       "GET",
       `${apiBase}/system/ai-api-key/${clientAgentItem.keyId}`,
       token,

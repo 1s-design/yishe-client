@@ -54,13 +54,13 @@ export function setServiceMode(mode: ServiceMode): void {
 export function getApiBaseByMode(mode: ServiceMode): string {
   return mode === 'local'
     ? 'http://localhost:1520/api'
-    : 'https://1s.design:1520/api'
+    : 'https://api.1s.design/api'
 }
 
 export function getWsEndpointByMode(mode: ServiceMode): string {
   return mode === 'local'
     ? 'http://localhost:1520/ws'
-    : 'https://1s.design:1520/ws'
+    : 'wss://api.1s.design/ws'
 }
 
 // 动态获取远程API地址

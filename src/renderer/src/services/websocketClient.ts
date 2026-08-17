@@ -95,7 +95,7 @@ const REMOTION_TEMPLATE_CACHE_TTL_MS = 60_000;
 const REMOTION_RECORD_PROGRESS_PERSIST_STEP = 10;
 const REMOTION_RECORD_PROGRESS_PERSIST_INTERVAL_MS = 15_000;
 const REMOTION_LOCAL_BASE = "electron://video-template";
-const PROD_WS_ENDPOINT = "https://1s.design:1520/ws";
+const PROD_WS_ENDPOINT = "wss://api.1s.design/ws";
 const DEV_WS_ENDPOINT = "http://localhost:1520/ws";
 const FALLBACK_ENDPOINT = import.meta.env.PROD
   ? PROD_WS_ENDPOINT

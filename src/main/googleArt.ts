@@ -183,7 +183,7 @@ export async function getGoogleArtZooms(
 async function uploadToMaterialLibrary(
   localPath: string,
   fileName: string,
-  apiBase: string = 'https://1s.design:1520/api',
+  apiBase: string = 'https://api.1s.design/api',
   originUrl?: string,
   metadata?: {
     title?: string;
@@ -430,6 +430,7 @@ export async function syncGoogleArtToMaterialLibrary(options: {
 // ─── Google Arts API 搜索（无需浏览器）───
 
 const GOOGLE_ART_API = 'https://artsandculture.google.com/api/search'
+const GOOGLE_ART_IMAGES_API = 'https://artsandculture.google.com/api/assets/images'
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
@@ -488,25 +489,31 @@ export async function searchGoogleArts(
 
   keyword = keyword.trim() || 'impressionism'
 
-  console.log(`[GoogleArts] 搜索请求: keyword="${keyword}", page=${page}, maxCount=${maxCount}`)
+  console.log(`[GoogleArts] 搜索请求: keyword="${keyword}", page=${page}, maxCount=${maxCount}, cursor=${cursor ? 'yes' : 'no'}`)
 
   try {
-    // 如果传入了 cursor，直接使用
+    // 传入 cursor 且目标页 > 1：直接请求 /api/assets/images 拿指定游标对应的批次
     if (cursor && page > 1) {
-      return fetchPage(keyword, hl, cursor, page, maxCount)
+      return fetchImagesPage(keyword, hl, cursor, page, maxCount)
     }
 
-    // 否则按页码翻页
+    // 否则从第一页开始逐页前进（第一页用 /api/search 获取初始 cursor）
     let currentCursor: string | null = null
     for (let i = 0; i < page - 1; i++) {
-      const result = fetchPage(keyword, hl, currentCursor, i + 1, null)
-      currentCursor = (await result).nextCursor
+      const result =
+        i === 0
+          ? await fetchSearchPage(keyword, hl, i + 1, null)
+          : await fetchImagesPage(keyword, hl, currentCursor, i + 1, maxCount ?? 24)
+      currentCursor = result.nextCursor
       if (!currentCursor) {
         return { success: true, query: keyword, page, total: 0, count: 0, items: [], links: [], nextCursor: null }
       }
     }
 
-    return fetchPage(keyword, hl, currentCursor, page, maxCount)
+    // 目标页：第一页走 /api/search，后续页走 /api/assets/images
+    return page === 1
+      ? fetchSearchPage(keyword, hl, page, maxCount)
+      : fetchImagesPage(keyword, hl, currentCursor, page, maxCount)
   } catch (error: any) {
     console.error(`[GoogleArts] 搜索失败: ${error?.message || String(error)}`)
     return { success: false, query: keyword, page, total: 0, count: 0, items: [], links: [], nextCursor: null, error: error?.message || String(error) }
@@ -585,16 +592,13 @@ async function httpGetText(targetUrl: string, headers: Record<string, string>): 
   })
 }
 
-async function fetchPage(
+async function fetchSearchPage(
   query: string,
   hl: string,
-  cursor: string | null,
   page = 1,
   maxCount?: number | null,
 ): Promise<GoogleArtSearchResult> {
   const params = new URLSearchParams({ q: query, hl })
-  if (cursor) params.set('cursor', cursor)
-
   const url = `${GOOGLE_ART_API}?${params.toString()}`
 
   let raw = await httpGetText(url, {
@@ -612,6 +616,83 @@ async function fetchPage(
   const inner = data[0]
   const section = inner[3]
   const assetsRaw = section[2]
+  const total = section[4]
+  const nextCursor = section[8]
+
+  const items: GoogleArtSearchItem[] = []
+  for (const asset of assetsRaw) {
+    const info = asset[10] && Array.isArray(asset[10]) ? asset[10] : []
+    items.push({
+      id: info[0] || '',
+      title: asset[1] || '',
+      artist: asset[2] || null,
+      thumbnail: asset[3] ? `https:${asset[3]}` : null,
+      url: asset[4] ? `https://artsandculture.google.com${asset[4]}` : '',
+      color: asset[8] || null,
+      aspectRatio: info[1] ?? null,
+      hasPixels: info[10] || false,
+      institution: info[12] || null,
+    })
+  }
+
+  // 按 maxCount 截断
+  let finalItems = items
+  if (maxCount && maxCount > 0 && maxCount < items.length) {
+    finalItems = items.slice(0, maxCount)
+  }
+
+  return {
+    success: true,
+    query,
+    page,
+    total,
+    count: finalItems.length,
+    items: finalItems,
+    links: finalItems.map((item) => item.url),
+    nextCursor: nextCursor || null,
+  }
+}
+
+/**
+ * /api/assets/images 分页请求（真实游标翻页）
+ * 响应结构: data[0][0] → sec[2]=资产数组, sec[4]=总数, sec[8]=下一批游标
+ * pt 为必填参数；s 为每批条数（上限约 64，实测 96 会 500）
+ */
+async function fetchImagesPage(
+  query: string,
+  hl: string,
+  pt: string | null,
+  page = 1,
+  maxCount?: number | null,
+): Promise<GoogleArtSearchResult> {
+  const size = Math.min(Math.max(maxCount ?? 24, 1), 64)
+
+  const params = new URLSearchParams({
+    q: query,
+    s: String(size),
+    hl,
+    _reqid: String(Math.floor(Math.random() * 9999999)),
+    rt: 'j',
+  })
+  if (pt) params.set('pt', pt)
+
+  const url = `${GOOGLE_ART_IMAGES_API}?${params.toString()}`
+
+  let raw = await httpGetText(url, {
+    'User-Agent': USER_AGENT,
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+    Referer: 'https://artsandculture.google.com/search/asset?q=' + encodeURIComponent(query),
+    'X-Requested-With': 'XMLHttpRequest',
+  })
+
+  if (raw.startsWith(")]}'")) {
+    raw = raw.slice(4).replace(/^\s*\n/, '')
+  }
+
+  const data = JSON.parse(raw)
+  const section = data[0][0]
+  const assetsRaw = section[2] || []
   const total = section[4]
   const nextCursor = section[8]
 

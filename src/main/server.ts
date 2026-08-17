@@ -1108,7 +1108,7 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       const isDev = process.env.NODE_ENV === "development";
       const REMOTE_API_BASE = isDev
         ? "http://localhost:1520/api"
-        : "https://1s.design:1520/api";
+        : "https://api.1s.design/api";
 
       // 构建查询参数
       const queryParams = new URLSearchParams();
@@ -1263,7 +1263,7 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       const isDev = process.env.NODE_ENV === "development";
       const REMOTE_API_BASE = isDev
         ? "http://localhost:1520/api"
-        : "https://1s.design:1520/api";
+        : "https://api.1s.design/api";
 
       // 调用远程API
       const response = await fetch(`${REMOTE_API_BASE}/queue/message/status`, {

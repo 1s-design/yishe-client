@@ -21,7 +21,7 @@ type CosConfig = {
 const SERVICE_MODE_STORAGE_KEY = 'yishe.serviceMode'
 const BASIC_CONFIG_SECRET = '1s'
 const DEV_REMOTE_API_BASE = process.env.YISHE_LOCAL_API_BASE || 'http://localhost:1520/api'
-const PROD_REMOTE_API_BASE = process.env.YISHE_REMOTE_API_BASE || 'https://1s.design:1520/api'
+const PROD_REMOTE_API_BASE = process.env.YISHE_REMOTE_API_BASE || 'https://api.1s.design/api'
 
 let cachedCosConfig: CosConfig | null = null
 let cachedCosConfigSource: string | null = null

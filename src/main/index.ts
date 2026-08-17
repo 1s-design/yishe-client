@@ -566,7 +566,16 @@ function createWindow(): void {
     simpleFullscreen: false,
     autoHideMenuBar: true,
     titleBarStyle: isMac ? "hiddenInset" : "hidden",
-    trafficLightPosition: { x: 14, y: 14 },
+    ...(isMac ? { trafficLightPosition: { x: 14, y: 14 } } : {}),
+    ...(process.platform === "win32"
+      ? {
+          titleBarOverlay: {
+            color: "#ffffff",
+            symbolColor: "#000000",
+            height: 40,
+          },
+        }
+      : {}),
     title: "衣设客户端",
     ...(process.platform === "linux" ? { icon } : { icon }),
     webPreferences: {
@@ -954,7 +963,7 @@ function createTray(): void {
           label: "检查远程服务",
           click: async () => {
             try {
-              const response = await fetch("https://1s.design:1520/api/test");
+              const response = await fetch("https://api.1s.design/api/test");
               if (response.ok) {
                 console.log("远程服务连接正常");
               }
@@ -1266,6 +1275,8 @@ app.whenReady().then(() => {
     const { clearToken } = await getServerModule();
     clearToken();
     clearActiveAgentConfig();
+    const { clearServerEndpoint } = await import("./agent/server-capabilities");
+    clearServerEndpoint();
     return true;
   });
 

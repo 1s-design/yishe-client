@@ -48,7 +48,7 @@ console.log(`[HotSearch] 系统代理: ${SYSTEM_PROXY ? `${SYSTEM_PROXY.host}:${
 const REMOTE_API_BASE =
   process.env.NODE_ENV === "development"
     ? "http://localhost:1520/api"
-    : "https://1s.design:1520/api";
+    : "https://api.1s.design/api";
 
 // 客户端设备标识（从 server.ts 注入）
 let clientDeviceId: string | null = null;
