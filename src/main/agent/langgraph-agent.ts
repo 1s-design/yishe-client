@@ -12,6 +12,17 @@ import OpenAI from "openai";
 import { CapabilityRegistry } from "../capabilities/registry";
 import { zodToJsonSchema } from "../mcp-server/server";
 import { getActiveAgentConfig, type ClientAgentConfig } from "./agent-config";
+import {
+  fetchServerCapabilities,
+  executeServerCapability,
+  isServerToolName,
+  toOriginalToolName,
+  serverCapabilitiesToOpenAiTools,
+  buildServerToolIndex,
+  SERVER_TOOL_KEYWORDS,
+  type ServerCapabilityCatalog,
+  type ServerCapabilityTool,
+} from "./server-capabilities";
 
 export interface AgentAttachment {
   id?: string;
@@ -90,6 +101,7 @@ export function getCapabilityOpenAiTools(
 export function selectRelevantTools(
   prompt: string,
   allTools: OpenAI.Chat.Completions.ChatCompletionTool[],
+  serverToolIndex?: Map<string, ServerCapabilityTool> | null,
 ) {
   const text = prompt.toLowerCase();
   const namespaces: Record<string, string[]> = {
@@ -126,9 +138,44 @@ export function selectRelevantTools(
   ["openmeteo", "svgrepo", "hackernews", "github"].forEach((name) =>
     selected.add(name),
   );
-  const relevant = allTools.filter((tool) =>
-    selected.has(String((tool as any).function?.name || "").split("_")[0]),
+  // 服务端能力：按目录里的 category 字段匹配关键词（客户端不复制工具实现）。
+  // browser / mcp 是客户端最常用且数量有限的云端能力，始终挂载，
+  // 避免「打开游览器」等拼写变体因关键词不命中而被排除。
+  const ALWAYS_SERVER_CATEGORIES = ["browser", "mcp"];
+  const selectedServerCategories = new Set(
+    Object.entries(SERVER_TOOL_KEYWORDS)
+      .filter(([, words]) => words.some((word) => text.includes(word)))
+      .map(([category]) => category),
   );
+  const relevant = allTools.filter((tool) => {
+    const name = String((tool as any).function?.name || "");
+    if (isServerToolName(name)) {
+      const serverTool = serverToolIndex?.get(name);
+      const category =
+        serverTool?.category || name.split("_")[1] || "";
+      return (
+        selectedServerCategories.has(category) ||
+        ALWAYS_SERVER_CATEGORIES.includes(category)
+      );
+    }
+    return selected.has(name.split("_")[0]);
+  });
+  // 服务端工具排在末尾，slice(0,32) 时可能被本地工具挤掉；确保命中的服务端工具优先。
+  if (relevant.some((tool) => isServerToolName(String((tool as any).function?.name || "")))) {
+    const ordered = allTools.filter(
+      (tool) =>
+        !isServerToolName(String((tool as any).function?.name || "")),
+    );
+    const matchedServer = relevant.filter((tool) =>
+      isServerToolName(String((tool as any).function?.name || "")),
+    );
+    const restServer = allTools.filter(
+      (tool) =>
+        isServerToolName(String((tool as any).function?.name || "")) &&
+        !matchedServer.includes(tool),
+    );
+    return [...matchedServer, ...ordered, ...restServer].slice(0, 32);
+  }
   return (relevant.length >= 3 ? relevant : allTools).slice(0, 32);
 }
 
@@ -370,6 +417,121 @@ export class ClientLangGraphAgent {
     });
   }
 
+  /**
+   * 执行服务端能力工具。需要确认的 read/write 之外工具先弹确认卡，
+   * 用户批准后带 confirmed=true 重发；服务端仍返回 requires_confirmation
+   * 时（目录与运行时策略不一致）以服务端返回为准，二次确认。
+   */
+  private async runServerTool(
+    call: { id: string; name: string; arguments: string },
+    args: Record<string, unknown>,
+    current: GraphState,
+    events: AgentStreamEvents,
+    signal: AbortSignal,
+    serverToolIndex: Map<string, ServerCapabilityTool> | null,
+  ): Promise<void> {
+    const catalogTool = serverToolIndex?.get(call.name) || null;
+    const toolName = catalogTool
+      ? catalogTool.name
+      : toOriginalToolName(call.name);
+    const needsApproval =
+      catalogTool?.confirmRequired === true ||
+      catalogTool?.riskLevel === "high";
+
+    if (needsApproval) {
+      events.onToolApproval?.({
+        id: call.id,
+        name: call.name,
+        args,
+        riskLevel: catalogTool?.riskLevel === "high" ? "system" : "write",
+        description: catalogTool?.description || `执行云端能力 ${toolName}`,
+      });
+      const approved = await this.waitForToolApproval(call.id, signal);
+      if (!approved) {
+        const result = {
+          success: false,
+          error: "用户取消了本次工具执行",
+          cancelled: true,
+        };
+        events.onToolEnd?.({
+          id: call.id,
+          name: call.name,
+          result,
+          durationMs: 0,
+          error: result.error,
+        });
+        current.messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          name: call.name,
+          content: serializeToolResultForModel(result),
+        });
+        return;
+      }
+    }
+
+    events.onToolStart?.({ id: call.id, name: call.name, args });
+    const startedAt = Date.now();
+    let result: unknown;
+    let error: string | undefined;
+    try {
+      result = await withTimeout(
+        executeServerCapability(toolName, args, needsApproval),
+        TOOL_CALL_TIMEOUT_MS,
+        `云端能力 ${call.name}`,
+      );
+      // 服务端仍要求确认（目录与运行时策略不一致），以服务端 question 二次弹卡。
+      if (
+        result &&
+        typeof result === "object" &&
+        (result as any).status === "requires_confirmation"
+      ) {
+        const pending = result as {
+          tool: string;
+          label: string;
+          question: string;
+        };
+        events.onToolApproval?.({
+          id: call.id,
+          name: call.name,
+          args,
+          riskLevel: "write",
+          description: pending.question || `执行云端能力 ${pending.label}`,
+        });
+        const approved = await this.waitForToolApproval(call.id, signal);
+        if (!approved) {
+          result = {
+            success: false,
+            error: "用户取消了本次工具执行",
+            cancelled: true,
+          };
+        } else {
+          result = await withTimeout(
+            executeServerCapability(toolName, args, true),
+            TOOL_CALL_TIMEOUT_MS,
+            `云端能力 ${call.name}`,
+          );
+        }
+      }
+    } catch (cause: any) {
+      error = cause?.message || "云端能力执行发生异常";
+      result = { success: false, error };
+    }
+    events.onToolEnd?.({
+      id: call.id,
+      name: call.name,
+      result,
+      durationMs: Date.now() - startedAt,
+      error,
+    });
+    current.messages.push({
+      role: "tool",
+      tool_call_id: call.id,
+      name: call.name,
+      content: serializeToolResultForModel(result),
+    });
+  }
+
   async run(
     historyMessages: AgentChatMessage[],
     events: AgentStreamEvents,
@@ -400,6 +562,21 @@ export class ClientLangGraphAgent {
       maxRetries: 1,
     });
     const allTools = getCapabilityOpenAiTools();
+    // 合并服务端能力目录（只读消费，不复制实现）。目录拉取失败时降级为仅本地能力。
+    let serverCatalog: ServerCapabilityCatalog | null = null;
+    let serverToolIndex: Map<string, ServerCapabilityTool> | null = null;
+    try {
+      serverCatalog = await fetchServerCapabilities();
+      if (serverCatalog?.tools?.length) {
+        allTools.push(...serverCapabilitiesToOpenAiTools(serverCatalog));
+        serverToolIndex = buildServerToolIndex(serverCatalog);
+      }
+    } catch (error: any) {
+      console.warn(
+        "[Agent] 拉取服务端能力目录失败，本次仅使用本地能力:",
+        error?.message || error,
+      );
+    }
     const lastUser = [...historyMessages]
       .reverse()
       .find((message) => message.role === "user");
@@ -411,6 +588,7 @@ export class ClientLangGraphAgent {
       tools: selectRelevantTools(
         typeof lastUser?.content === "string" ? lastUser.content : "",
         allTools,
+        serverToolIndex,
       ),
       iteration: 0,
       finalText: "",
@@ -493,6 +671,19 @@ export class ClientLangGraphAgent {
           } catch {
             /* model can emit partial JSON */
           }
+
+          if (isServerToolName(call.name)) {
+            await this.runServerTool(
+              call,
+              args,
+              current,
+              events,
+              signal,
+              serverToolIndex,
+            );
+            continue;
+          }
+
           const separator = call.name.indexOf("_");
           const namespace = separator > 0 ? call.name.slice(0, separator) : "";
           const capabilityName =

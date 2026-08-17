@@ -8,6 +8,11 @@ import {
   syncCloudAgentConfig,
   type ClientAgentConfig,
 } from "./agent-config";
+import {
+  setServerEndpoint,
+  clearServerEndpoint,
+  invalidateServerCatalog,
+} from "./server-capabilities";
 
 interface AgentRequest {
   runId: string;
@@ -44,9 +49,18 @@ export function setupAgentIpc(): void {
         payload.serverBase,
         payload.token,
       );
+      // 复用同一套登录态拉取服务端能力目录；用户切换账号后目录自动失效重建。
+      setServerEndpoint(payload.serverBase, payload.token);
+      if (!config.enabled) {
+        invalidateServerCatalog();
+      }
       return publicConfig(config);
     },
   );
+  ipcMain.handle("agent:clear-endpoint", () => {
+    clearServerEndpoint();
+    return { success: true };
+  });
   ipcMain.handle("agent:stop", () => {
     clientLangGraphAgent.abort();
     return { success: true };

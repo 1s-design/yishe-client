@@ -476,7 +476,7 @@ function handlePaste(event: ClipboardEvent) {
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  background: var(--agent-main-bg);
+  background: color-mix(in srgb, var(--agent-main-bg) 86%, transparent);
   color: var(--agent-text);
 }
 

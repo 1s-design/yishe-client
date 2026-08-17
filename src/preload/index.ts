@@ -613,6 +613,7 @@ const api = {
       ipcRenderer.invoke("agent:save-config", config),
     syncCloudConfig: (payload: { serverBase: string; token: string }) =>
       ipcRenderer.invoke("agent:sync-cloud-config", payload),
+    clearEndpoint: () => ipcRenderer.invoke("agent:clear-endpoint"),
     onReasoning: (callback: (data: { delta: string }) => void) => {
       const listener = (_event: any, data: any) => callback(data);
       ipcRenderer.on("agent:stream:reasoning", listener);

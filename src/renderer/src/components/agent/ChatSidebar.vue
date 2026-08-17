@@ -233,7 +233,7 @@ const accountInitial = computed(() =>
   flex-direction: column;
   overflow: hidden;
   border-right: 1px solid var(--menu-border);
-  background: var(--menu-bg);
+  background: color-mix(in srgb, var(--menu-bg) 82%, transparent);
   color: var(--menu-text);
   transition:
     width 180ms ease,

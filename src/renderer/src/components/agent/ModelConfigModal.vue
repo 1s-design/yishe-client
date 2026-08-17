@@ -60,6 +60,7 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
 import type { AgentConfig } from '../../types/agent'
+import { getRemoteApiBase } from '../../config/api'
 import { Button } from '../ui/button'
 import { InputGroup, InputGroupInput } from '../ui/input-group'
 
@@ -99,7 +100,7 @@ async function handleSyncCloud() {
   try {
     const token = await (window as any).api?.getToken?.()
     if (!token) throw new Error('未登录，无法同步云端配置')
-    const result = await (window as any).api?.agent?.syncCloudConfig?.({ serverBase: localStorage.getItem('yishe-server-base') || '', token })
+    const result = await (window as any).api?.agent?.syncCloudConfig?.({ serverBase: getRemoteApiBase(), token })
     if (!result?.model) throw new Error('云端未配置 Agent Key')
     Object.assign(config, { model: result.model, baseUrl: result.baseUrl || config.baseUrl, apiKey: result.apiKey || '' })
     isCustom.value = false

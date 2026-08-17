@@ -492,9 +492,14 @@ export async function searchGoogleArts(
   console.log(`[GoogleArts] 搜索请求: keyword="${keyword}", page=${page}, maxCount=${maxCount}, cursor=${cursor ? 'yes' : 'no'}`)
 
   try {
-    // 传入 cursor 且目标页 > 1：直接请求 /api/assets/images 拿指定游标对应的批次
+    // 传入 cursor 且目标页 > 1：优先用 /api/assets/images 拿指定游标对应的批次（真分页）
     if (cursor && page > 1) {
-      return fetchImagesPage(keyword, hl, cursor, page, maxCount)
+      try {
+        return await fetchImagesPage(keyword, hl, cursor, page, maxCount)
+      } catch (newErr) {
+        console.warn(`[GoogleArts] assets/images 翻页失败，回退旧方式: ${newErr?.message || String(newErr)}`)
+        return fetchPage(keyword, hl, cursor, page, maxCount)
+      }
     }
 
     // 否则从第一页开始逐页前进（第一页用 /api/search 获取初始 cursor）
@@ -502,18 +507,31 @@ export async function searchGoogleArts(
     for (let i = 0; i < page - 1; i++) {
       const result =
         i === 0
-          ? await fetchSearchPage(keyword, hl, i + 1, null)
-          : await fetchImagesPage(keyword, hl, currentCursor, i + 1, maxCount ?? 24)
+          ? await fetchPage(keyword, hl, null, i + 1, null)
+          : await (async () => {
+              try {
+                return await fetchImagesPage(keyword, hl, currentCursor, i + 1, maxCount ?? 24)
+              } catch (newErr) {
+                console.warn(`[GoogleArts] assets/images 翻页失败，回退旧方式: ${newErr?.message || String(newErr)}`)
+                return fetchPage(keyword, hl, currentCursor, i + 1, null)
+              }
+            })()
       currentCursor = result.nextCursor
       if (!currentCursor) {
         return { success: true, query: keyword, page, total: 0, count: 0, items: [], links: [], nextCursor: null }
       }
     }
 
-    // 目标页：第一页走 /api/search，后续页走 /api/assets/images
-    return page === 1
-      ? fetchSearchPage(keyword, hl, page, maxCount)
-      : fetchImagesPage(keyword, hl, currentCursor, page, maxCount)
+    // 目标页：第一页走 /api/search，后续页优先 /api/assets/images
+    if (page === 1) {
+      return fetchPage(keyword, hl, null, page, maxCount)
+    }
+    try {
+      return await fetchImagesPage(keyword, hl, currentCursor, page, maxCount)
+    } catch (newErr) {
+      console.warn(`[GoogleArts] assets/images 翻页失败，回退旧方式: ${newErr?.message || String(newErr)}`)
+      return fetchPage(keyword, hl, currentCursor, page, maxCount)
+    }
   } catch (error: any) {
     console.error(`[GoogleArts] 搜索失败: ${error?.message || String(error)}`)
     return { success: false, query: keyword, page, total: 0, count: 0, items: [], links: [], nextCursor: null, error: error?.message || String(error) }
@@ -592,13 +610,16 @@ async function httpGetText(targetUrl: string, headers: Record<string, string>): 
   })
 }
 
-async function fetchSearchPage(
+async function fetchPage(
   query: string,
   hl: string,
+  cursor: string | null,
   page = 1,
   maxCount?: number | null,
 ): Promise<GoogleArtSearchResult> {
   const params = new URLSearchParams({ q: query, hl })
+  if (cursor) params.set('cursor', cursor)
+
   const url = `${GOOGLE_ART_API}?${params.toString()}`
 
   let raw = await httpGetText(url, {

@@ -432,6 +432,7 @@ interface Window {
         serverBase: string;
         token: string;
       }): Promise<any>;
+      clearEndpoint(): Promise<{ success: boolean }>;
       onReasoning(callback: (data: { delta: string }) => void): () => void;
       onContent(callback: (data: { delta: string }) => void): () => void;
       onToolStart(callback: (data: any) => void): () => void;

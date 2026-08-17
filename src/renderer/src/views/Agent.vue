@@ -2,6 +2,7 @@
   <div
     class="agent-shell flex h-screen w-screen overflow-hidden bg-background text-[13px] text-foreground"
   >
+    <Starfield />
     <ChatSidebar
       :sessions="sessions"
       :active-session-id="activeSessionId"
@@ -32,6 +33,7 @@ import { getRemoteApiBase } from "../config/api";
 import { useAgent } from "../composables/useAgent";
 import ChatSidebar from "../components/agent/ChatSidebar.vue";
 import ChatView from "../components/agent/ChatView.vue";
+import Starfield from "../components/agent/Starfield.vue";
 
 const emit = defineEmits<{
   (e: "open-dashboard"): void;

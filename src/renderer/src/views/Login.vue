@@ -318,10 +318,9 @@ async function handleLogin() {
   position: relative;
   min-width: 0;
   z-index: 1;
-  margin: 0 0 0 8px;
   overflow: hidden;
-  border-top-right-radius: clamp(26px, 3.3vw, 52px);
-  border-bottom-right-radius: clamp(26px, 3.3vw, 52px);
+  border-top-right-radius: clamp(10px, 1.2vw, 16px);
+  border-bottom-right-radius: clamp(10px, 1.2vw, 16px);
   background: var(--theme-surface);
   box-shadow: var(--theme-shadow-md);
 }
