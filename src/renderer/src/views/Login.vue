@@ -1,11 +1,11 @@
 <template>
   <main class="login-page">
     <aside class="login-art-panel" aria-label="品牌插画区域">
-      <!-- 后续替换为提供的插画图片；容器比例与留白已按参考图预留。 -->
-      <div class="login-artwork-placeholder" aria-hidden="true">
-        <div class="login-artwork-placeholder__glow" />
-        <div class="login-artwork-placeholder__frame" />
-      </div>
+      <img
+        :src="loginIllustration"
+        class="login-art-image"
+        alt="红、蓝、黄构成"
+      />
       <div class="login-art-slogan" aria-label="创意、自由、开放">
         <span>创意</span>
         <i aria-hidden="true" />
@@ -86,6 +86,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { login } from "../api/auth";
 import { getApiBaseByMode, getServiceMode } from "../config/api";
 import { updateApiBaseUrl } from "../api/request";
+import loginIllustration from "../assets/login/mondrian-composition.jpg";
 
 const emit = defineEmits<{ (e: "login-success"): void }>();
 
@@ -324,18 +325,40 @@ async function handleLogin() {
   mask-image: linear-gradient(to bottom, black, transparent 85%);
 }
 
+.login-art-image {
+  position: absolute;
+  z-index: 0;
+  inset: clamp(18px, 3vw, 44px);
+  width: calc(100% - clamp(36px, 6vw, 88px));
+  height: calc(100% - clamp(36px, 6vw, 88px));
+  object-fit: contain;
+  filter: saturate(0.96) contrast(1.02);
+}
+
+.login-art-panel::before {
+  z-index: 1;
+  background-image: linear-gradient(
+    to top,
+    color-mix(in srgb, #000 34%, transparent),
+    transparent 31%
+  );
+  mask-image: none;
+  pointer-events: none;
+}
+
 .login-art-slogan {
   position: absolute;
-  z-index: 1;
+  z-index: 2;
   bottom: clamp(24px, 4vh, 48px);
   left: clamp(24px, 4vw, 54px);
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  color: var(--theme-text);
+  color: #fff;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.12em;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.38);
 }
 
 .login-art-slogan i {
@@ -343,44 +366,7 @@ async function handleLogin() {
   height: 3px;
   border-radius: 50%;
   background: currentColor;
-  opacity: 0.38;
-}
-
-.login-artwork-placeholder {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: min(34vw, 410px);
-  aspect-ratio: 1;
-  transform: translate(-50%, -42%);
-}
-
-.login-artwork-placeholder__glow {
-  position: absolute;
-  inset: 20%;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, var(--theme-text) 18%, transparent),
-    transparent 68%
-  );
-  filter: blur(24px);
-}
-
-.login-artwork-placeholder__frame {
-  position: absolute;
-  inset: 17%;
-  border: 1px solid color-mix(in srgb, var(--theme-text) 18%, transparent);
-  border-radius: 28px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--theme-text) 10%, transparent),
-    color-mix(in srgb, var(--theme-text) 1.5%, transparent)
-  );
-  box-shadow:
-    inset 0 1px color-mix(in srgb, var(--theme-text) 7%, transparent),
-    var(--theme-shadow-md);
-  transform: rotate(-8deg);
+  opacity: 0.56;
 }
 
 @media (max-width: 860px) {
