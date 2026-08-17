@@ -51,6 +51,15 @@ export function setupAgentIpc(): void {
     clientLangGraphAgent.abort();
     return { success: true };
   });
+  ipcMain.handle(
+    "agent:resolve-tool-approval",
+    (_event, payload: { callId?: string; approved?: boolean }) => ({
+      success: clientLangGraphAgent.resolveToolApproval(
+        String(payload?.callId || ""),
+        payload?.approved === true,
+      ),
+    }),
+  );
 
   ipcMain.on(
     "agent:send-message",
@@ -67,6 +76,8 @@ export function setupAgentIpc(): void {
           {
             onReasoning: (delta) => send("agent:stream:reasoning", { delta }),
             onContent: (delta) => send("agent:stream:content", { delta }),
+            onToolApproval: (toolCall) =>
+              send("agent:stream:tool_approval", toolCall),
             onToolStart: (toolCall) =>
               send("agent:stream:tool_start", toolCall),
             onToolEnd: (toolResult) =>

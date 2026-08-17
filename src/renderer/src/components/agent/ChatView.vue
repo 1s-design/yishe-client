@@ -86,6 +86,69 @@
                   <ReasoningContent>{{ message.reasoning }}</ReasoningContent>
                 </Reasoning>
 
+                <section
+                  v-if="message.interaction"
+                  class="agent-approval"
+                  :class="`is-${message.interaction.status}`"
+                >
+                  <div class="agent-approval__header">
+                    <span class="agent-approval__dot" aria-hidden="true" />
+                    <span>{{
+                      message.interaction.riskLevel === "system"
+                        ? "需要系统权限"
+                        : "需要你的确认"
+                    }}</span>
+                  </div>
+                  <p>
+                    {{
+                      message.interaction.description ||
+                      `准备执行 ${message.interaction.toolName}`
+                    }}
+                  </p>
+                  <div class="agent-approval__tool">
+                    <span class="mdi mdi-wrench" aria-hidden="true" />
+                    <span>{{ message.interaction.toolName }}</span>
+                  </div>
+                  <pre
+                    v-if="Object.keys(message.interaction.args || {}).length"
+                    >{{ formatJson(message.interaction.args) }}</pre
+                  >
+                  <div
+                    v-if="message.interaction.status === 'pending'"
+                    class="agent-approval__actions"
+                  >
+                    <button
+                      type="button"
+                      class="agent-approval__cancel"
+                      @click="
+                        emit('resolveToolApproval', {
+                          callId: message.interaction.id,
+                          approved: false,
+                        })
+                      "
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      class="agent-approval__confirm"
+                      @click="
+                        emit('resolveToolApproval', {
+                          callId: message.interaction.id,
+                          approved: true,
+                        })
+                      "
+                    >
+                      执行
+                    </button>
+                  </div>
+                  <span v-else class="agent-approval__state">{{
+                    message.interaction.status === "approved"
+                      ? "已确认，正在执行"
+                      : "已取消"
+                  }}</span>
+                </section>
+
                 <div v-if="message.toolCalls?.length" class="agent-tools">
                   <Tool
                     v-for="tool in message.toolCalls"
@@ -292,6 +355,7 @@ withDefaults(
 const emit = defineEmits<{
   send: [text: string, attachments?: AttachmentData[]];
   stop: [];
+  resolveToolApproval: [payload: { callId: string; approved: boolean }];
 }>();
 const inputText = ref("");
 const attachedFiles = ref<AttachmentData[]>([]);
@@ -597,15 +661,113 @@ function handlePaste(event: ClipboardEvent) {
   animation: agent-spin 700ms linear infinite;
 }
 
+.agent-approval {
+  width: min(100%, 520px);
+  margin: 0 0 15px;
+  padding: 11px 12px;
+  border: 1px solid var(--agent-border-soft);
+  border-radius: 10px;
+  background: var(--agent-surface);
+}
+
+.agent-approval__header,
+.agent-approval__tool {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--agent-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.agent-approval__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #dba94a;
+}
+
+.agent-approval p {
+  margin: 8px 0;
+  color: var(--agent-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-approval__tool .mdi {
+  color: var(--agent-muted);
+  font-size: 13px;
+}
+
+.agent-approval pre {
+  max-height: 100px;
+  margin: 9px 0 0;
+  padding: 7px 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--agent-main-bg);
+  color: var(--agent-muted);
+  font-family: "SF Mono", "Fira Code", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-approval__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.agent-approval__actions button {
+  min-height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 11px;
+}
+
+.agent-approval__cancel {
+  border: 1px solid var(--agent-border);
+  background: transparent;
+  color: var(--agent-muted);
+}
+
+.agent-approval__confirm {
+  border: 1px solid var(--agent-text);
+  background: var(--agent-text);
+  color: var(--agent-main-bg);
+}
+
+.agent-approval__state {
+  display: block;
+  margin-top: 9px;
+  color: var(--agent-muted);
+  font-size: 10px;
+}
+
+.agent-approval.is-rejected .agent-approval__dot {
+  background: #d35d5d;
+}
+
+.agent-approval.is-approved .agent-approval__dot {
+  background: #54b978;
+}
+
 .agent-tools {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 15px;
+  gap: 10px;
+  margin: 0 0 18px;
 }
 
 .agent-tool {
-  margin-bottom: 0 !important;
+  width: calc(100% - 16px);
+  margin: 0 8px !important;
+  padding: 7px 8px 8px;
   overflow: hidden;
   border: 1px solid var(--agent-border-soft) !important;
   border-radius: 11px !important;
@@ -613,14 +775,15 @@ function handlePaste(event: ClipboardEvent) {
 }
 
 .agent-tool :deep([data-slot="collapsible-trigger"]) {
-  min-height: 39px;
-  padding: 0 12px;
+  min-height: 45px;
+  box-sizing: border-box;
+  padding: 0 20px !important;
 }
 
 .agent-tool__name {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   color: var(--agent-text);
   font-family: inherit;
   font-size: 12px;
@@ -631,9 +794,9 @@ function handlePaste(event: ClipboardEvent) {
 }
 
 .agent-tool__section {
-  margin-top: 0 !important;
+  margin-top: 8px !important;
   border-top: 1px solid var(--agent-border-soft);
-  padding: 11px 12px !important;
+  padding: 16px 20px !important;
 }
 
 .agent-tool__section pre {

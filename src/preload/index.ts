@@ -606,6 +606,8 @@ const api = {
       config?: any;
     }) => ipcRenderer.send("agent:send-message", payload),
     stop: () => ipcRenderer.invoke("agent:stop"),
+    resolveToolApproval: (payload: { callId: string; approved: boolean }) =>
+      ipcRenderer.invoke("agent:resolve-tool-approval", payload),
     getConfig: () => ipcRenderer.invoke("agent:get-config"),
     saveConfig: (config: any) =>
       ipcRenderer.invoke("agent:save-config", config),
@@ -621,6 +623,12 @@ const api = {
       const listener = (_event: any, data: any) => callback(data);
       ipcRenderer.on("agent:stream:content", listener);
       return () => ipcRenderer.removeListener("agent:stream:content", listener);
+    },
+    onToolApproval: (callback: (data: any) => void) => {
+      const listener = (_event: any, data: any) => callback(data);
+      ipcRenderer.on("agent:stream:tool_approval", listener);
+      return () =>
+        ipcRenderer.removeListener("agent:stream:tool_approval", listener);
     },
     onToolStart: (callback: (data: any) => void) => {
       const listener = (_event: any, data: any) => callback(data);
@@ -650,6 +658,7 @@ const api = {
     removeAllListeners: () => {
       ipcRenderer.removeAllListeners("agent:stream:reasoning");
       ipcRenderer.removeAllListeners("agent:stream:content");
+      ipcRenderer.removeAllListeners("agent:stream:tool_approval");
       ipcRenderer.removeAllListeners("agent:stream:tool_start");
       ipcRenderer.removeAllListeners("agent:stream:tool_end");
       ipcRenderer.removeAllListeners("agent:stream:complete");

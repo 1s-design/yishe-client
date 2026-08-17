@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ChatSession,
   ToolCallItem,
+  ToolApprovalInteraction,
 } from "../types/agent";
 
 interface AgentApi {
@@ -15,6 +16,10 @@ interface AgentApi {
     config?: Partial<AgentConfig>;
   }): void;
   stop(): Promise<{ success: boolean }>;
+  resolveToolApproval(payload: {
+    callId: string;
+    approved: boolean;
+  }): Promise<{ success: boolean }>;
   getConfig(): Promise<AgentConfig>;
   saveConfig(config: Partial<AgentConfig>): Promise<AgentConfig>;
   syncCloudConfig(payload: {
@@ -26,6 +31,17 @@ interface AgentApi {
   ): () => void;
   onContent(
     callback: (data: StreamPayload & { delta: string }) => void,
+  ): () => void;
+  onToolApproval(
+    callback: (
+      data: StreamPayload & {
+        id: string;
+        name: string;
+        args: Record<string, unknown>;
+        riskLevel: ToolApprovalInteraction["riskLevel"];
+        description?: string;
+      },
+    ) => void,
   ): () => void;
   onToolStart(
     callback: (data: StreamPayload & ToolCallItem) => void,
@@ -121,6 +137,21 @@ function ensureListeners() {
     streamingContent.value += event.delta;
     const message = currentMessage();
     if (message) message.content = streamingContent.value;
+  });
+  agent.onToolApproval((event) => {
+    if (!acceptsEvent(event)) return;
+    const message = currentMessage();
+    if (!message) return;
+    message.interaction = {
+      id: event.id,
+      type: "tool_approval",
+      toolName: event.name,
+      args: event.args || {},
+      riskLevel: event.riskLevel,
+      description: event.description,
+      status: "pending",
+    };
+    persist();
   });
   agent.onToolStart((event) => {
     if (!acceptsEvent(event)) return;
@@ -288,6 +319,15 @@ async function sendMessage(
   });
 }
 
+async function resolveToolApproval(callId: string, approved: boolean) {
+  const message = currentMessage();
+  if (message?.interaction?.id === callId) {
+    message.interaction.status = approved ? "approved" : "rejected";
+    persist();
+  }
+  return api()?.resolveToolApproval({ callId, approved }) ?? { success: false };
+}
+
 async function stopGeneration() {
   if (!isStreaming.value) return;
   await api()?.stop();
@@ -316,6 +356,7 @@ export function useAgent() {
     deleteSession,
     sendMessage,
     stopGeneration,
+    resolveToolApproval,
     getConfig: () => api()?.getConfig() ?? Promise.resolve(null),
     saveConfig: (config: Partial<AgentConfig>) =>
       api()?.saveConfig(config) ?? Promise.resolve(config as AgentConfig),

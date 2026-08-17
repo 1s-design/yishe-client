@@ -40,6 +40,13 @@ export interface AgentChatMessage {
 export interface AgentStreamEvents {
   onReasoning?: (delta: string) => void;
   onContent?: (delta: string) => void;
+  onToolApproval?: (toolCall: {
+    id: string;
+    name: string;
+    args: any;
+    riskLevel: "write" | "system";
+    description?: string;
+  }) => void;
   onToolStart?: (toolCall: { id: string; name: string; args: any }) => void;
   onToolEnd?: (toolResult: {
     id: string;
@@ -329,11 +336,38 @@ function serializeToolResultForModel(result: unknown) {
 
 export class ClientLangGraphAgent {
   private abortController: AbortController | null = null;
+  private readonly pendingApprovals = new Map<
+    string,
+    (approved: boolean) => void
+  >();
   private readonly maxIterations = 8;
 
   abort() {
     this.abortController?.abort();
     this.abortController = null;
+    for (const resolve of this.pendingApprovals.values()) resolve(false);
+    this.pendingApprovals.clear();
+  }
+
+  resolveToolApproval(callId: string, approved: boolean) {
+    const resolve = this.pendingApprovals.get(callId);
+    if (!resolve) return false;
+    this.pendingApprovals.delete(callId);
+    resolve(approved);
+    return true;
+  }
+
+  private waitForToolApproval(callId: string, signal: AbortSignal) {
+    return new Promise<boolean>((resolve) => {
+      const finish = (approved: boolean) => {
+        signal.removeEventListener("abort", onAbort);
+        this.pendingApprovals.delete(callId);
+        resolve(approved);
+      };
+      const onAbort = () => finish(false);
+      this.pendingApprovals.set(callId, finish);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
   async run(
@@ -459,20 +493,58 @@ export class ClientLangGraphAgent {
           } catch {
             /* model can emit partial JSON */
           }
+          const separator = call.name.indexOf("_");
+          const namespace = separator > 0 ? call.name.slice(0, separator) : "";
+          const capabilityName =
+            separator > 0 ? call.name.slice(separator + 1) : "";
+          const definition = namespace
+            ? CapabilityRegistry.getDefinition(namespace, capabilityName)
+            : undefined;
+          if (
+            definition &&
+            (definition.riskLevel === "write" ||
+              definition.riskLevel === "system")
+          ) {
+            events.onToolApproval?.({
+              id: call.id,
+              name: call.name,
+              args,
+              riskLevel: definition.riskLevel,
+              description: definition.description,
+            });
+            const approved = await this.waitForToolApproval(call.id, signal);
+            if (!approved) {
+              const result = {
+                success: false,
+                error: "用户取消了本次工具执行",
+                cancelled: true,
+              };
+              events.onToolEnd?.({
+                id: call.id,
+                name: call.name,
+                result,
+                durationMs: 0,
+                error: result.error,
+              });
+              current.messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                name: call.name,
+                content: serializeToolResultForModel(result),
+              });
+              continue;
+            }
+          }
+
           events.onToolStart?.({ id: call.id, name: call.name, args });
           const startedAt = Date.now();
           let result: unknown;
           let error: string | undefined;
           try {
-            const separator = call.name.indexOf("_");
             if (separator < 1)
               throw new Error(`未知工具名称格式: ${call.name}`);
             result = await withTimeout(
-              CapabilityRegistry.call(
-                call.name.slice(0, separator),
-                call.name.slice(separator + 1),
-                args,
-              ),
+              CapabilityRegistry.call(namespace, capabilityName, args),
               TOOL_CALL_TIMEOUT_MS,
               `工具 ${call.name}`,
             );

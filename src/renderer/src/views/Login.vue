@@ -2,9 +2,15 @@
   <main class="login-page">
     <aside class="login-art-panel" aria-label="品牌插画区域">
       <img
-        :src="loginIllustration"
-        class="login-art-image"
-        alt="红、蓝、黄构成"
+        v-for="(illustration, index) in loginIllustrations"
+        :key="illustration"
+        :src="illustration"
+        :class="[
+          'login-art-image',
+          { 'is-active': index === activeIllustration },
+        ]"
+        alt=""
+        aria-hidden="true"
       />
       <div class="login-art-slogan" aria-label="创意、自由、开放">
         <span>创意</span>
@@ -82,17 +88,28 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { login } from "../api/auth";
 import { getApiBaseByMode, getServiceMode } from "../config/api";
 import { updateApiBaseUrl } from "../api/request";
 import loginIllustration from "../assets/login/mondrian-composition.jpg";
+import loginIllustrationNoII from "../assets/login/mondrian-composition-no-ii.jpg";
+import girlWithAPearlEarring from "../assets/login/girl-with-a-pearl-earring.jpg";
+import solitaryTree from "../assets/login/solitary-tree.jpg";
 
 const emit = defineEmits<{ (e: "login-success"): void }>();
 
 const loading = ref(false);
 const errorMessage = ref("");
 const appIconSrc = new URL("../assets/icon.png", import.meta.url).href;
+const loginIllustrations = [
+  loginIllustration,
+  loginIllustrationNoII,
+  girlWithAPearlEarring,
+  solitaryTree,
+];
+const activeIllustration = ref(0);
+let illustrationTimer: number | null = null;
 const form = reactive({ account: "", password: "" });
 const formValid = computed(
   () => form.account.trim().length >= 3 && form.password.length >= 6,
@@ -100,6 +117,17 @@ const formValid = computed(
 
 onMounted(() => {
   updateApiBaseUrl(getApiBaseByMode(getServiceMode()));
+  illustrationTimer = window.setInterval(() => {
+    activeIllustration.value =
+      (activeIllustration.value + 1) % loginIllustrations.length;
+  }, 8000);
+});
+
+onBeforeUnmount(() => {
+  if (illustrationTimer !== null) {
+    window.clearInterval(illustrationTimer);
+    illustrationTimer = null;
+  }
 });
 
 async function handleLogin() {
@@ -148,6 +176,7 @@ async function handleLogin() {
   display: flex;
   min-width: 0;
   min-height: 100vh;
+  align-items: center;
   flex-direction: column;
   justify-content: space-between;
   padding: clamp(28px, 7vh, 64px) clamp(26px, 4vw, 60px) 24px;
@@ -277,6 +306,7 @@ async function handleLogin() {
 }
 
 .login-footer {
+  width: min(100%, 372px);
   color: var(--theme-text-soft);
   font-size: 9px;
   font-weight: 550;
@@ -298,10 +328,22 @@ async function handleLogin() {
 
 .login-art-image {
   position: absolute;
-  inset: clamp(18px, 3vw, 44px);
-  width: calc(100% - clamp(36px, 6vw, 88px));
-  height: calc(100% - clamp(36px, 6vw, 88px));
-  object-fit: contain;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 1.1s ease-in-out;
+}
+
+.login-art-image.is-active {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-art-image {
+    transition: none;
+  }
 }
 
 .login-art-slogan {

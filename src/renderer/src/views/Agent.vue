@@ -21,6 +21,7 @@
       :is-config-loaded="agentConfig.loaded"
       @send="handleSend"
       @stop="handleStop"
+      @resolve-tool-approval="handleResolveToolApproval"
     />
   </div>
 </template>
@@ -57,6 +58,7 @@ const {
   deleteSession,
   sendMessage,
   stopGeneration,
+  resolveToolApproval,
   syncCloudConfig,
 } = useAgent();
 
@@ -117,6 +119,13 @@ async function handleSend(text: string, attachments?: any[]) {
 
 async function handleStop() {
   await stopGeneration();
+}
+
+async function handleResolveToolApproval(payload: {
+  callId: string;
+  approved: boolean;
+}) {
+  await resolveToolApproval(payload.callId, payload.approved);
 }
 
 function handleKeydown(e: KeyboardEvent) {
