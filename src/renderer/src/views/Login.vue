@@ -292,63 +292,20 @@ async function handleLogin() {
   overflow: hidden;
   border-top-right-radius: clamp(26px, 3.3vw, 52px);
   border-bottom-right-radius: clamp(26px, 3.3vw, 52px);
+  background: var(--theme-surface);
   box-shadow: var(--theme-shadow-md);
-  background:
-    radial-gradient(
-      circle at 50% 65%,
-      color-mix(in srgb, var(--theme-text) 10%, transparent),
-      transparent 30%
-    ),
-    linear-gradient(
-      145deg,
-      var(--theme-surface-strong) 0%,
-      var(--theme-surface-muted) 55%,
-      var(--theme-surface) 100%
-    );
-}
-
-.login-art-panel::before {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(
-      color-mix(in srgb, var(--theme-text) 3%, transparent) 1px,
-      transparent 1px
-    ),
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--theme-text) 3%, transparent) 1px,
-      transparent 1px
-    );
-  background-size: 42px 42px;
-  content: "";
-  mask-image: linear-gradient(to bottom, black, transparent 85%);
 }
 
 .login-art-image {
   position: absolute;
-  z-index: 0;
   inset: clamp(18px, 3vw, 44px);
   width: calc(100% - clamp(36px, 6vw, 88px));
   height: calc(100% - clamp(36px, 6vw, 88px));
   object-fit: contain;
-  filter: saturate(0.96) contrast(1.02);
-}
-
-.login-art-panel::before {
-  z-index: 1;
-  background-image: linear-gradient(
-    to top,
-    color-mix(in srgb, #000 34%, transparent),
-    transparent 31%
-  );
-  mask-image: none;
-  pointer-events: none;
 }
 
 .login-art-slogan {
   position: absolute;
-  z-index: 2;
   bottom: clamp(24px, 4vh, 48px);
   left: clamp(24px, 4vw, 54px);
   display: inline-flex;
@@ -358,7 +315,6 @@ async function handleLogin() {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.12em;
-  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.38);
 }
 
 .login-art-slogan i {

@@ -1,6 +1,7 @@
 /** Agent 专用 IPC。所有流式事件都带 runId/sessionId，避免旧请求污染当前会话。 */
 import { ipcMain, type IpcMainEvent } from "electron";
 import { clientLangGraphAgent, type AgentChatMessage } from "./langgraph-agent";
+import { writeClientLog } from "../clientLogger";
 import {
   getActiveAgentConfig,
   saveLocalAgentConfig,
@@ -72,14 +73,27 @@ export function setupAgentIpc(): void {
               send("agent:stream:tool_end", toolResult),
             onComplete: (fullText, fullReasoning) =>
               send("agent:stream:complete", { fullText, fullReasoning }),
-            onError: (error) => send("agent:stream:error", { error }),
+            onError: (error) => {
+              writeClientLog({
+                level: "ERROR",
+                module: "client-agent",
+                message: "Agent 流式执行失败",
+                context: { runId, sessionId, error },
+              });
+              send("agent:stream:error", { error });
+            },
           },
           request.config,
         );
       } catch (error: any) {
-        send("agent:stream:error", {
-          error: error?.message || "Agent 执行发生异常",
+        const message = error?.message || "Agent 执行发生异常";
+        writeClientLog({
+          level: "ERROR",
+          module: "client-agent",
+          message: "Agent IPC 执行异常",
+          context: { runId, sessionId, error: message },
         });
+        send("agent:stream:error", { error: message });
       }
     },
   );

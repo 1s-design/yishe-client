@@ -96,9 +96,19 @@ export function selectRelevantTools(
     github: ["github", "开源", "仓库"],
     hackernews: ["hackernews", "科技新闻", "热帖"],
     svgrepo: ["svg", "矢量图", "图标", "icon"],
-    pexels: ["图片", "高清图", "壁纸", "摄影", "photo"],
+    pexels: ["pexels", "摄影", "摄影图", "摄影照片", "photo"],
     pixabay: ["pixabay", "素材", "免费图片"],
-    openverse: ["openverse", "开源素材"],
+    wikimedia: [
+      "wikimedia",
+      "维基",
+      "梵高",
+      "名画",
+      "画作",
+      "绘画",
+      "艺术作品",
+      "公共领域",
+    ],
+    openverse: ["openverse", "开源素材", "艺术", "艺术品", "画作", "名画"],
     googleicons: ["材料图标", "material icon"],
   };
   const selected = new Set(
@@ -106,7 +116,7 @@ export function selectRelevantTools(
       .filter(([, words]) => words.some((word) => text.includes(word)))
       .map(([name]) => name),
   );
-  ["openmeteo", "svgrepo", "pexels", "hackernews", "github"].forEach((name) =>
+  ["openmeteo", "svgrepo", "hackernews", "github"].forEach((name) =>
     selected.add(name),
   );
   const relevant = allTools.filter((tool) =>
@@ -254,13 +264,67 @@ function openAiContent(message: AgentChatMessage) {
 }
 
 function openAiMessages(messages: AgentChatMessage[]) {
-  return messages.map((message) => ({
-    role: message.role,
-    content: openAiContent(message),
-    name: message.name,
-    tool_call_id: message.tool_call_id,
-    tool_calls: message.tool_calls,
-  })) as any;
+  return messages.map((message) => {
+    const normalized: Record<string, unknown> = {
+      role: message.role,
+      content: openAiContent(message),
+      name: message.name,
+      tool_call_id: message.tool_call_id,
+      tool_calls: message.tool_calls,
+    };
+
+    // DeepSeek / Qwen 等带思考过程的兼容模型在工具调用后要求把
+    // reasoning_content 原样带回。漏传会让下一轮工具结果请求变成笼统的
+    // “Unknown error”。普通模型没有该字段时不会额外发送。
+    if (message.role === "assistant" && message.reasoning_content) {
+      normalized.reasoning_content = message.reasoning_content;
+    }
+
+    return normalized;
+  }) as any;
+}
+
+/**
+ * UI 保留完整工具结果；发回模型时仅保留下载/下一步所需的前几项，
+ * 避免图片搜索工具的大量 URL、描述和元数据撑爆下一轮上下文。
+ */
+function serializeToolResultForModel(result: unknown) {
+  const value = result as any;
+  if (!value || typeof value !== "object") return JSON.stringify(result);
+
+  const data = value.data;
+  if (!data || typeof data !== "object") return JSON.stringify(value);
+
+  const compact = { ...data } as Record<string, unknown>;
+  if (Array.isArray(compact.items)) {
+    compact.items = compact.items.slice(0, 8).map((item: any) => ({
+      id: item?.id,
+      title: item?.title,
+      image: item?.image || item?.downloadUrl,
+      thumbnail: item?.thumbnail,
+      url: item?.url || item?.link,
+      author: item?.author || item?.photographer,
+      license: item?.license,
+    }));
+  }
+  if (Array.isArray(compact.links)) compact.links = compact.links.slice(0, 8);
+  if (Array.isArray(compact.images))
+    compact.images = compact.images.slice(0, 8);
+
+  const payload = { ...value, data: compact };
+  const serialized = JSON.stringify(payload);
+  if (serialized.length <= 16_000) return serialized;
+
+  return JSON.stringify({
+    success: value.success !== false,
+    error: value.error,
+    data: {
+      query: compact.query,
+      count: compact.count,
+      items: Array.isArray(compact.items) ? compact.items.slice(0, 4) : [],
+    },
+    truncated: true,
+  });
 }
 
 export class ClientLangGraphAgent {
@@ -427,7 +491,7 @@ export class ClientLangGraphAgent {
             role: "tool",
             tool_call_id: call.id,
             name: call.name,
-            content: JSON.stringify(result),
+            content: serializeToolResultForModel(result),
           });
         }
       })
