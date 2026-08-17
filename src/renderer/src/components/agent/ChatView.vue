@@ -394,14 +394,18 @@ function handlePaste(event: ClipboardEvent) {
 
 <style scoped>
 .agent-main {
-  --agent-main-bg: #080808;
-  --agent-surface: #171717;
-  --agent-surface-soft: #222222;
-  --agent-border: rgba(255, 255, 255, 0.14);
-  --agent-border-soft: rgba(255, 255, 255, 0.09);
-  --agent-text: #f2f2f2;
-  --agent-muted: #8f8f8f;
-  --agent-user-bubble: #272727;
+  --agent-main-bg: var(--theme-bg);
+  --agent-surface: var(--theme-surface);
+  --agent-surface-soft: var(--theme-surface-muted);
+  --agent-border: var(--theme-border-strong);
+  --agent-border-soft: var(--theme-border);
+  --agent-text: var(--theme-text);
+  --agent-muted: var(--theme-text-muted);
+  --agent-user-bubble: color-mix(
+    in srgb,
+    var(--theme-surface-muted) 88%,
+    var(--theme-bg)
+  );
   position: relative;
   display: flex;
   min-width: 0;
@@ -665,7 +669,7 @@ function handlePaste(event: ClipboardEvent) {
   padding: 0 !important;
   border: 1px solid var(--agent-border-soft) !important;
   border-radius: 16px !important;
-  background: #121212 !important;
+  background: var(--agent-surface) !important;
   box-shadow: none !important;
   transition:
     border-color 150ms ease,

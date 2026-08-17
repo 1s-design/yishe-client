@@ -92,6 +92,19 @@
         <button
           type="button"
           class="sidebar-item sidebar-item--secondary"
+          :title="`切换至${nextThemeLabel}`"
+          @click="toggleTheme"
+        >
+          <span
+            :class="['mdi', themeToggleIcon, 'sidebar-item__theme-icon']"
+            aria-hidden="true"
+          />
+          <span class="sidebar-item__label">{{ nextThemeLabel }}</span>
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-item sidebar-item--secondary"
           title="服务控制台"
           @click="$emit('openDashboard')"
         >
@@ -149,6 +162,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import brandLogo from "../../assets/icon.png";
+import { useThemeMode } from "../../composables/useThemeMode";
 import type { ChatSession } from "../../types/agent";
 
 type SidebarUser = {
@@ -177,6 +191,7 @@ defineEmits<{
 
 const hoveredId = ref<string | null>(null);
 const isCollapsed = ref(false);
+const { themeToggleIcon, nextThemeLabel, toggleTheme } = useThemeMode();
 
 const isAuthenticated = computed(() =>
   Boolean(props.userInfo?.username || props.userInfo?.account),
@@ -201,14 +216,14 @@ const accountInitial = computed(() =>
 
 <style scoped>
 .chat-sidebar {
-  --menu-bg: #090909;
-  --menu-border: rgba(255, 255, 255, 0.1);
-  --menu-text: #f4f4f4;
-  --menu-muted: #999999;
-  --menu-soft: rgba(255, 255, 255, 0.045);
-  --menu-hover: rgba(255, 255, 255, 0.075);
-  --menu-active: #1d1d1d;
-  --menu-avatar: #292929;
+  --menu-bg: var(--theme-sidebar);
+  --menu-border: var(--theme-border);
+  --menu-text: var(--theme-text);
+  --menu-muted: var(--theme-text-muted);
+  --menu-soft: color-mix(in srgb, var(--theme-text) 5%, transparent);
+  --menu-hover: color-mix(in srgb, var(--theme-text) 8%, transparent);
+  --menu-active: var(--theme-surface-muted);
+  --menu-avatar: var(--theme-surface-strong);
   position: relative;
   display: flex;
   width: 288px;
@@ -358,6 +373,15 @@ const accountInitial = computed(() =>
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
+}
+
+.sidebar-item__theme-icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  font-size: 17px;
+  line-height: 17px;
+  text-align: center;
 }
 
 .sidebar-item__label {

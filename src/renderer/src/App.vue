@@ -1522,6 +1522,7 @@ onBeforeUnmount(() => {
       title="正在退出登录"
       message="正在结束当前会话"
       icon="mdi-logout"
+      dark
     />
 
     <div
@@ -1868,12 +1869,14 @@ onBeforeUnmount(() => {
 .dashboard-modal__body {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
-  height: calc(100vh - 63px);
+  height: calc(100dvh - 63px);
   gap: 8px;
   padding: 8px;
-  background: #060606;
-  overflow: hidden;
+  background: var(--theme-bg);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .dashboard-runtime,
@@ -1882,9 +1885,9 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  border: 1px solid #252525;
+  border: 1px solid var(--theme-border);
   border-radius: 8px;
-  background: #0c0c0c;
+  background: var(--theme-surface);
   overflow: hidden;
 }
 
@@ -1895,36 +1898,41 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 8px;
   padding: 0 10px;
-  border-bottom: 1px solid #252525;
+  border-bottom: 1px solid var(--theme-border);
 }
 
 .dashboard-section-header h2 {
   margin: 0;
-  color: #ededed;
+  color: var(--theme-text);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
 
 .dashboard-section-header span {
-  color: #6f6f6f;
+  color: var(--theme-text-soft);
   font-size: 10px;
 }
 
 .dashboard-runtime :deep(.dash-cards) {
   align-content: start;
+  min-height: 0;
+  flex: 1 1 auto;
   padding: 7px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dashboard-settings {
-  color: #a0a0a0;
+  color: var(--theme-text-muted);
 }
 
 .dashboard-settings__content {
   min-height: 0;
+  flex: 1 1 auto;
   padding: 7px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dashboard-dialog-header {
@@ -1933,7 +1941,7 @@ onBeforeUnmount(() => {
   align-items: flex-end;
   justify-content: space-between;
   padding: 0 8px 12px 16px;
-  color: #f2f2f2;
+  color: var(--theme-text);
 }
 
 .dashboard-dialog-header__title {
@@ -1951,57 +1959,75 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #9a9a9a;
+  color: var(--theme-text-muted);
   cursor: pointer;
   font-size: 15px;
 }
 
 .dashboard-dialog-header__close:hover {
-  background: #1d1d1d;
-  color: #fff;
+  background: var(--theme-surface-muted);
+  color: var(--theme-text);
 }
 
 :global(.el-overlay:has(.dashboard-modal)) {
-  height: 100vh;
+  height: 100dvh;
   min-height: 100dvh;
-  background: #000;
+  background: var(--theme-overlay) !important;
 }
 
 :global(.el-overlay:has(.dashboard-modal) .el-overlay-dialog) {
   display: flex;
-  height: 100%;
+  height: 100dvh;
   min-height: 100dvh;
   flex-direction: column;
+  background: var(--theme-bg) !important;
 }
 
 :global(.dashboard-modal.el-dialog) {
+  --el-bg-color: var(--theme-surface) !important;
+  --el-bg-color-page: var(--theme-bg) !important;
+  --el-bg-color-overlay: var(--theme-surface) !important;
+  --el-fill-color: var(--theme-surface-muted) !important;
+  --el-fill-color-light: var(--theme-surface-muted) !important;
+  --el-fill-color-lighter: var(--theme-surface-strong) !important;
+  --el-fill-color-blank: var(--theme-surface) !important;
+  --el-text-color-primary: var(--theme-text) !important;
+  --el-text-color-regular: var(--theme-text-muted) !important;
+  --el-text-color-secondary: var(--theme-text-soft) !important;
+  --el-text-color-placeholder: var(--theme-text-soft) !important;
+  --el-border-color: var(--theme-border) !important;
+  --el-border-color-light: var(--theme-border) !important;
+  --el-border-color-lighter: var(--theme-border) !important;
   display: flex;
   width: 100vw !important;
   min-width: 100vw;
-  height: 100vh;
-  min-height: 100dvh;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
   max-width: none;
   max-height: none;
   margin: 0 !important;
   flex-direction: column;
   border: 0;
   border-radius: 0;
-  background: #060606;
-  box-shadow: none;
+  background: var(--theme-bg) !important;
+  color: var(--theme-text) !important;
+  box-shadow: none !important;
   overflow: hidden;
 }
 
 :global(.dashboard-modal .el-dialog__header) {
   margin: 0;
   padding: 0;
-  border-bottom: 1px solid #252525;
+  border-bottom: 1px solid var(--theme-border);
+  background: var(--theme-bg) !important;
   flex: 0 0 auto;
 }
 
 :global(.dashboard-modal .el-dialog__body) {
   min-height: 0;
-  flex: 1;
+  flex: 1 1 auto;
   padding: 0;
+  background: var(--theme-bg) !important;
   overflow: hidden;
 }
 
@@ -2012,20 +2038,20 @@ onBeforeUnmount(() => {
 :deep(.dashboard-settings .settings-row) {
   gap: 7px;
   padding: 7px 8px;
-  border-color: #282828;
+  border-color: var(--theme-border) !important;
   border-radius: 7px;
-  background: #111;
+  background: var(--theme-surface) !important;
 }
 
 :deep(.dashboard-settings .settings-row__label),
 :deep(.dashboard-settings .settings-addr-row__value) {
-  color: #ededed;
+  color: var(--theme-text);
 }
 
 :deep(.dashboard-settings .settings-row__hint),
 :deep(.dashboard-settings .settings-row__meta),
 :deep(.dashboard-settings .settings-addr-row__label) {
-  color: #818181;
+  color: var(--theme-text-muted);
 }
 
 :deep(.dashboard-settings .settings-row__content) {
@@ -2045,18 +2071,62 @@ onBeforeUnmount(() => {
 :deep(.dashboard-settings .settings-input .el-input__wrapper),
 :deep(.dashboard-settings .settings-addr-row) {
   min-height: 25px;
-  border-color: #303030;
+  border-color: var(--theme-border) !important;
   border-radius: 5px;
-  background: #171717;
+  background: var(--theme-surface-muted) !important;
+  box-shadow: none !important;
 }
 
 :deep(.dashboard-settings .settings-input .el-input__inner) {
-  color: #e6e6e6;
+  color: var(--theme-text);
 }
 
 :deep(.dashboard-settings .seg .el-radio-button__inner) {
   min-height: 22px;
+  border-color: var(--theme-border) !important;
   border-radius: 5px !important;
+  background: var(--theme-surface-muted) !important;
+  color: var(--theme-text-muted) !important;
+  box-shadow: none !important;
+}
+
+:deep(
+  .dashboard-settings
+    .seg
+    .el-radio-button__original-radio:checked
+    + .el-radio-button__inner
+) {
+  border-color: var(--theme-text) !important;
+  background: var(--theme-text) !important;
+  color: var(--theme-contrast) !important;
+}
+
+:deep(.dashboard-settings .el-button) {
+  --el-button-bg-color: var(--theme-surface-muted);
+  --el-button-border-color: var(--theme-border);
+  --el-button-text-color: var(--theme-text);
+  --el-button-hover-bg-color: var(--theme-surface-strong);
+  --el-button-hover-border-color: var(--theme-border-strong);
+  --el-button-hover-text-color: var(--theme-text);
+  --el-button-active-bg-color: var(--theme-surface-strong);
+  --el-button-active-border-color: var(--theme-border-strong);
+  --el-button-disabled-bg-color: var(--theme-surface-muted);
+  --el-button-disabled-border-color: var(--theme-border);
+  --el-button-disabled-text-color: var(--theme-text-soft);
+  background: var(--theme-surface-muted) !important;
+  color: var(--theme-text) !important;
+  box-shadow: none !important;
+}
+
+:deep(.dashboard-settings .el-button--primary) {
+  background: var(--theme-text) !important;
+  border-color: var(--theme-text) !important;
+  color: var(--theme-contrast) !important;
+}
+
+:deep(.dashboard-settings .el-button.is-text) {
+  background: transparent !important;
+  border-color: transparent !important;
 }
 
 @media (max-width: 900px) {

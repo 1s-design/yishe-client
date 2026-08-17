@@ -73,9 +73,9 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
   min-width: 0;
   min-height: 68px;
   padding: 8px 9px;
-  border: 1px solid #262626;
+  border: 1px solid var(--theme-border);
   border-radius: 7px;
-  background: #101010;
+  background: var(--theme-surface);
 }
 
 .dash-card__head {
@@ -100,7 +100,7 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  color: #aaa;
+  color: var(--theme-text-muted);
   font-size: 11px;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -109,7 +109,7 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
 
 .dash-card__value {
   flex: 0 0 auto;
-  color: #f2f2f2;
+  color: var(--theme-text);
   font-size: 12px;
   font-weight: 600;
 }
@@ -117,7 +117,7 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
 .dash-card__description {
   margin: 5px 0 0;
   overflow: hidden;
-  color: #858585;
+  color: var(--theme-text-muted);
   font-size: 10px;
   line-height: 1.3;
   text-overflow: ellipsis;
@@ -133,10 +133,10 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
 
 .dash-card__actions button {
   min-height: 22px;
-  border: 1px solid #343434;
+  border: 1px solid var(--theme-border);
   border-radius: 5px;
   background: transparent;
-  color: #d7d7d7;
+  color: var(--theme-text-muted);
   cursor: pointer;
   padding: 0 7px;
   font: inherit;
@@ -144,8 +144,8 @@ const emit = defineEmits<{ cardAction: [key: string] }>();
 }
 
 .dash-card__actions button:hover:not(:disabled) {
-  border-color: #5a5a5a;
-  color: #fff;
+  border-color: var(--theme-border-strong);
+  color: var(--theme-text);
 }
 
 .dash-card__actions button:disabled {

@@ -112,6 +112,10 @@ function setThemePreference(nextPreference: ThemePreference) {
   scheduleAutoRefresh();
 }
 
+function toggleTheme() {
+  setThemePreference(resolvedTheme.value === "dark" ? "light" : "dark");
+}
+
 function initializeThemeMode() {
   if (initialized) {
     return;
@@ -138,15 +142,15 @@ const resolvedThemeLabel = computed(() =>
   resolvedTheme.value === "dark" ? "深色模式" : "浅色模式",
 );
 
-const themeToggleIcon = computed(() => {
-  if (themePreference.value === "auto") {
-    return "mdi-theme-light-dark";
-  }
+const themeToggleIcon = computed(() =>
+  resolvedTheme.value === "dark"
+    ? "mdi-white-balance-sunny"
+    : "mdi-weather-night",
+);
 
-  return resolvedTheme.value === "dark"
-    ? "mdi-weather-night"
-    : "mdi-white-balance-sunny";
-});
+const nextThemeLabel = computed(() =>
+  resolvedTheme.value === "dark" ? "浅色模式" : "深色模式",
+);
 
 const isAutoTheme = computed(() => themePreference.value === "auto");
 
@@ -157,7 +161,9 @@ export function useThemeMode() {
     resolvedTheme,
     resolvedThemeLabel,
     themeToggleIcon,
+    nextThemeLabel,
     isAutoTheme,
     setThemePreference,
+    toggleTheme,
   };
 }

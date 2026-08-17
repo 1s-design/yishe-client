@@ -4,7 +4,7 @@
       <div
         v-if="visible"
         class="loading-overlay"
-        :class="{ 'minimal-mode': minimal }"
+        :class="{ 'minimal-mode': minimal, 'dark-mode': dark }"
         @click.self="handleClick"
       >
         <div
@@ -83,6 +83,7 @@ interface Props {
   showPercentage?: boolean;
   closable?: boolean;
   minimal?: boolean;
+  dark?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -92,6 +93,7 @@ const props = withDefaults(defineProps<Props>(), {
   showPercentage: false,
   closable: false,
   minimal: false,
+  dark: false,
 });
 
 const emit = defineEmits<{
@@ -369,5 +371,52 @@ const handleClick = () => {
   color: var(--theme-text-muted);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/* Used by authentication transitions so these screens never follow the app theme. */
+.loading-overlay.dark-mode {
+  background: #080808 !important;
+  color: #f2f2f2;
+}
+
+.loading-overlay.dark-mode .loading-container,
+.loading-overlay.dark-mode .loading-minimal {
+  border: 1px solid #292929;
+  background: #111 !important;
+  box-shadow: none;
+}
+
+.loading-overlay.dark-mode .loading-icon,
+.loading-overlay.dark-mode .minimal-icon {
+  background: #1b1b1b;
+  color: #f2f2f2;
+}
+
+.loading-overlay.dark-mode .spinner-ring,
+.loading-overlay.dark-mode .minimal-spinner .spinner-ring {
+  border-top-color: #f2f2f2;
+}
+
+.loading-overlay.dark-mode .loading-title,
+.loading-overlay.dark-mode .minimal-title,
+.loading-overlay.dark-mode .progress-current,
+.loading-overlay.dark-mode .loading-percentage {
+  color: #f2f2f2;
+}
+
+.loading-overlay.dark-mode .loading-message,
+.loading-overlay.dark-mode .minimal-message,
+.loading-overlay.dark-mode .progress-text,
+.loading-overlay.dark-mode .progress-total,
+.loading-overlay.dark-mode .progress-separator {
+  color: #909090;
+}
+
+.loading-overlay.dark-mode .progress-bar-wrapper {
+  background: #292929;
+}
+
+.loading-overlay.dark-mode .progress-bar {
+  background: #f2f2f2;
 }
 </style>
