@@ -181,10 +181,18 @@ jobs:
 
   # COS 只保存两个稳定下载路径。构建产物通过 Actions Artifact 汇总，
   # 确保 macOS 与 Windows 均构建成功后才覆盖最新版，避免只更新其中一个平台。
+  #
+  # 超时策略（防止 cos-nodejs-sdk-v5 在无网络响应时无限 hang）：
+  #   1. job 级 timeout-minutes: 10（GitHub 硬上限，超时整个 job 失败）
+  #   2. 每个上传步骤 timeout-minutes: 4（单步卡死则快速失败）
+  #   3. COS_TIMEOUT=30000（SDK socket 超时 30 秒，cos-nodejs-sdk-v5 支持该环境变量）
+  #   4. 上传前用 curl 探测 COS endpoint 连通性，不通则立即失败并给出诊断信息
+  #   5. 上传前校验 secret 非空，避免空密钥导致 SDK 卡在签名等待
   publish-cos:
     needs: [check-version, build]
     if: success() && needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Download macOS package
         uses: actions/download-artifact@v4
@@ -204,8 +212,49 @@ jobs:
           test -s cos-upload/mac/latest.dmg
           test -s cos-upload/windows/latest.exe
 
+      - name: Validate COS secrets are present
+        shell: bash
+        run: |
+          miss=()
+          [[ -n "${{ secrets.TENCENT_SECRET_ID }}" ]] || miss+=("TENCENT_SECRET_ID")
+          [[ -n "${{ secrets.TENCENT_SECRET_KEY }}" ]] || miss+=("TENCENT_SECRET_KEY")
+          [[ -n "${{ secrets.TENCENT_COS_BUCKET }}" ]] || miss+=("TENCENT_COS_BUCKET")
+          [[ -n "${{ secrets.TENCENT_COS_REGION }}" ]] || miss+=("TENCENT_COS_REGION")
+          if [[ ${#miss[@]} -gt 0 ]]; then
+            echo "::error::缺少以下 GitHub Secret，无法上传 COS：${miss[*]}。请到仓库 Settings → Secrets and variables → Actions 中补全。"
+            exit 1
+          fi
+          echo "COS secrets 校验通过"
+
+      - name: Probe COS endpoint connectivity
+        id: probe
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          REGION="${{ secrets.TENCENT_COS_REGION }}"
+          BUCKET="${{ secrets.TENCENT_COS_BUCKET }}"
+          # 构造 COS 默认 endpoint（cos.<region>.myqcloud.com）
+          ENDPOINT="https://${BUCKET}.cos.${REGION}.myqcloud.com"
+          echo "探测 COS endpoint: $ENDPOINT"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$ENDPOINT" || echo "000")
+          echo "http_code=$HTTP_CODE"
+          if [[ "$HTTP_CODE" == "000" ]]; then
+            echo "::error::无法连接到 COS endpoint（$ENDPOINT），网络不通或 DNS 解析失败。请检查：1) cos_region 是否正确（如 ap-guangzhou）；2) bucket 名称是否拼写正确；3) GitHub Runner 到腾讯云的网络是否被防火墙拦截。"
+            exit 1
+          fi
+          # 403/404 都说明 endpoint 可达（只是匿名访问被拒或根目录不存在），视为连通
+          if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 500 ]]; then
+            echo "COS endpoint 可达 (HTTP $HTTP_CODE)"
+          else
+            echo "::warning::COS endpoint 返回 HTTP $HTTP_CODE，继续尝试上传"
+          fi
+
       - name: Upload macOS latest package to Tencent COS
+        timeout-minutes: 4
         uses: TencentCloud/cos-action@v1
+        env:
+          # cos-nodejs-sdk-v5 支持 COS_TIMEOUT 环境变量（毫秒），控制 socket 超时
+          COS_TIMEOUT: "30000"
         with:
           secret_id: ${{ secrets.TENCENT_SECRET_ID }}
           secret_key: ${{ secrets.TENCENT_SECRET_KEY }}
@@ -215,7 +264,10 @@ jobs:
           remote_path: yishe-client/mac
 
       - name: Upload Windows latest package to Tencent COS
+        timeout-minutes: 4
         uses: TencentCloud/cos-action@v1
+        env:
+          COS_TIMEOUT: "30000"
         with:
           secret_id: ${{ secrets.TENCENT_SECRET_ID }}
           secret_key: ${{ secrets.TENCENT_SECRET_KEY }}

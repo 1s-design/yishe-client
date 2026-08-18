@@ -53,7 +53,7 @@ export const SERVER_TOOL_PREFIX = "server";
 
 /** OpenAI function name 不允许 `.`，统一替换为下划线。 */
 export function serverToolOpenAiName(toolName: string): string {
-  return `${SERVER_TOOL_PREFIX}_${toolName.replace(/\./g, "_")}`;
+  return `${SERVER_TOOL_PREFIX}_${(toolName || "").replace(/\./g, "_")}`;
 }
 
 interface ServerEndpointState {
@@ -176,15 +176,17 @@ export async function executeServerCapability(
 export function serverCapabilitiesToOpenAiTools(
   catalog: ServerCapabilityCatalog,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
-  return (catalog.tools || []).map((tool) => ({
-    type: "function",
-    function: {
-      name: serverToolOpenAiName(tool.name),
-      description: tool.description || `执行云端能力 ${tool.label}`,
-      parameters: (tool.inputSchema ||
-        { type: "object", properties: {} }) as Record<string, unknown>,
-    },
-  }));
+  return (catalog.tools || [])
+    .filter((tool) => tool && tool.name)
+    .map((tool) => ({
+      type: "function",
+      function: {
+        name: serverToolOpenAiName(tool.name),
+        description: tool.description || `执行云端能力 ${tool.label}`,
+        parameters: (tool.inputSchema ||
+          { type: "object", properties: {} }) as Record<string, unknown>,
+      },
+    }));
 }
 
 /** 判断某个 OpenAI 工具名是否由本模块托管（服务端能力）。 */
@@ -205,7 +207,9 @@ export function buildServerToolIndex(
 ): Map<string, ServerCapabilityTool> {
   const index = new Map<string, ServerCapabilityTool>();
   for (const tool of catalog?.tools || []) {
-    index.set(serverToolOpenAiName(tool.name), tool);
+    if (tool && tool.name) {
+      index.set(serverToolOpenAiName(tool.name), tool);
+    }
   }
   return index;
 }

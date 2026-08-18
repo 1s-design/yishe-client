@@ -175,6 +175,8 @@ import { searchCountryIs, getCountryIsStatus } from "./countryis";
 import { searchErApi, getErApiStatus } from "./erapi";
 import { searchFawazahmed, getFawazahmedStatus } from "./fawazahmed";
 import { searchColorApi, getColorApiStatus } from "./colorapi";
+import { hotSearchService } from "./hotsearch/hotsearch.service";
+import { getPlatform } from "./hotsearch/platforms";
 
 import {
   searchSvgrepo,
@@ -4679,6 +4681,29 @@ ipcMain.handle("colorapi:search", async (_e, p) => {
   }
 });
 ipcMain.handle("colorapi:status", async () => getColorApiStatus());
+
+// HotSearch
+ipcMain.handle("hotsearch:status", async () => {
+  const platforms = hotSearchService.getPlatforms();
+  return {
+    ok: true,
+    available: platforms.length > 0,
+    connected: true,
+    message: `热搜服务可用，共 ${platforms.length} 个平台`,
+    platforms,
+  };
+});
+ipcMain.handle("hotsearch:search", async (_e, p) => {
+  try {
+    const key = p?.key || p?.platform || "";
+    const platform = getPlatform(key);
+    if (!platform) throw new Error(`平台不存在: ${key}`);
+    const result = await hotSearchService.fetchPlatform(platform);
+    return { ok: true, data: result };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
 
 ipcMain.handle(
   "cos:upload-file",

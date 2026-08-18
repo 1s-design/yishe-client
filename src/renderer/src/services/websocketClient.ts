@@ -13207,6 +13207,295 @@ for (const cfg of newsServicesConfig) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+// 数据工具类服务注册 (14工具 + Shopify)
+// ══════════════════════════════════════════════════════════════
+
+const dataToolsConfig = [
+  {
+    key: "openmeteo",
+    label: "Open-Meteo 天气预报",
+    searchFn: (api: any, p: any) =>
+      api.searchOpenmeteo({
+        latitude: p.latitude ?? 39.9,
+        longitude: p.longitude ?? 116.4,
+      }),
+    statusFn: (api: any) => api.getOpenmeteoStatus(),
+  },
+  {
+    key: "wttr",
+    label: "wttr.in 天气",
+    searchFn: (api: any, p: any) =>
+      api.searchWttr({ city: p.city || "Beijing" }),
+    statusFn: (api: any) => api.getWttrStatus(),
+  },
+  {
+    key: "coingecko",
+    label: "CoinGecko 加密货币行情",
+    searchFn: (api: any, p: any) =>
+      api.searchCoingecko({
+        ids: p.ids || "bitcoin,ethereum",
+        vs_currencies: p.vs_currencies || "usd,cny",
+      }),
+    statusFn: (api: any) => api.getCoingeckoStatus(),
+  },
+  {
+    key: "frankfurter",
+    label: "欧洲央行汇率",
+    searchFn: (api: any, p: any) =>
+      api.searchFrankfurter({ from: p.from || "USD", to: p.to || "CNY,EUR" }),
+    statusFn: (api: any) => api.getFrankfurterStatus(),
+  },
+  {
+    key: "dictionary",
+    label: "英语词典",
+    searchFn: (api: any, p: any) =>
+      api.searchDictionary({ word: p.word || "technology" }),
+    statusFn: (api: any) => api.getDictionaryStatus(),
+  },
+  {
+    key: "joke",
+    label: "趣味笑话",
+    searchFn: (api: any) => api.searchJoke(),
+    statusFn: (api: any) => api.getJokeStatus(),
+  },
+  {
+    key: "ipify",
+    label: "公网 IP 查询",
+    searchFn: (api: any) => api.searchIpify(),
+    statusFn: (api: any) => api.getIpifyStatus(),
+  },
+  {
+    key: "sunrisesunset",
+    label: "日出日落时间",
+    searchFn: (api: any, p: any) =>
+      api.searchSunrisesunset({ lat: p.lat ?? 39.9, lng: p.lng ?? 116.4 }),
+    statusFn: (api: any) => api.getSunrisesunsetStatus(),
+  },
+  {
+    key: "timeapi",
+    label: "全球时区时间",
+    searchFn: (api: any, p: any) =>
+      api.searchTimeapi({ timezone: p.timezone || "Asia/Shanghai" }),
+    statusFn: (api: any) => api.getTimeapiStatus(),
+  },
+  {
+    key: "zippopotam",
+    label: "邮编地理查询",
+    searchFn: (api: any, p: any) =>
+      api.searchZippopotam({
+        countryCode: p.countryCode || "us",
+        zipCode: p.zipCode || "90210",
+      }),
+    statusFn: (api: any) => api.getZippopotamStatus(),
+  },
+  {
+    key: "countryis",
+    label: "IP 归属国家",
+    searchFn: (api: any, p: any) => api.searchCountryis({ ip: p.ip || "8.8.8.8" }),
+    statusFn: (api: any) => api.getCountryisStatus(),
+  },
+  {
+    key: "erapi",
+    label: "实时外汇汇率",
+    searchFn: (api: any, p: any) => api.searchErapi({ base: p.base || "USD" }),
+    statusFn: (api: any) => api.getErapiStatus(),
+  },
+  {
+    key: "fawazahmed",
+    label: "全球币种汇率",
+    searchFn: (api: any, p: any) =>
+      api.searchFawazahmed({ base: p.base || "usd" }),
+    statusFn: (api: any) => api.getFawazahmedStatus(),
+  },
+  {
+    key: "colorapi",
+    label: "颜色代码解析",
+    searchFn: (api: any, p: any) =>
+      api.searchColorapi({ hex: p.hex || "24B1E0" }),
+    statusFn: (api: any) => api.getColorapiStatus(),
+  },
+];
+
+for (const cfg of dataToolsConfig) {
+  registerLocalService({
+    key: cfg.key,
+    pluginKey: cfg.key,
+    label: cfg.label,
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi) {
+        return {
+          label: cfg.label,
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: `未注入桌面端 ${cfg.label} 能力`,
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+      let status: any = { ok: true, available: true };
+      try {
+        if (cfg.statusFn) status = await cfg.statusFn(nativeApi);
+      } catch (e: any) {
+        status = { ok: false, available: false, message: e?.message };
+      }
+      const available = status?.ok !== false && status?.available !== false;
+      return {
+        label: cfg.label,
+        connected: true,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || `${cfg.label} 可用`,
+        endpoint: "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "collect", "fetch"],
+        details: { siteAvailable: true, runtime: "desktop" },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi) throw new Error(`当前环境未注入桌面端 ${cfg.label} 能力`);
+      const payload = command.payload || {};
+      try {
+        const res = await cfg.searchFn(nativeApi, payload);
+        const rawData = res?.data ?? res;
+        const items = rawData?.items ?? (Array.isArray(rawData) ? rawData : []);
+        const count = rawData?.count ?? items.length;
+        return {
+          success: res?.ok !== false && res?.success !== false,
+          message: `${cfg.label} 检索完成: 共 ${count} 条`,
+          data: {
+            successCount: count,
+            failCount: 0,
+            items,
+            count,
+            raw: rawData,
+          },
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err?.message || `${cfg.label} 执行失败`,
+          data: { successCount: 0, failCount: 1, items: [] },
+        };
+      }
+    },
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// 热搜采集服务注册 (21平台)
+// ══════════════════════════════════════════════════════════════
+
+const hotsearchConfig = [
+  { key: "weibo", label: "微博" },
+  { key: "douyin", label: "抖音" },
+  { key: "bilibili", label: "哔哩哔哩" },
+  { key: "zhihu", label: "知乎" },
+  { key: "toutiao", label: "今日头条" },
+  { key: "douban", label: "豆瓣" },
+  { key: "kuaishou", label: "快手" },
+  { key: "v2ex", label: "V2EX" },
+  { key: "36kr", label: "36氪" },
+  { key: "ithome", label: "IT之家" },
+  { key: "google_trends", label: "Google Trends" },
+  { key: "hackernews", label: "Hacker News" },
+  { key: "github", label: "GitHub" },
+  { key: "wikipedia", label: "维基百科" },
+  { key: "bbc_news", label: "BBC News" },
+  { key: "cnn", label: "CNN" },
+  { key: "nytimes", label: "New York Times" },
+  { key: "aljazeera", label: "Al Jazeera" },
+  { key: "devto", label: "Dev.to" },
+  { key: "ebay_trending", label: "eBay Trending" },
+  { key: "shopify_trending", label: "Shopify Trending" },
+];
+
+for (const cfg of hotsearchConfig) {
+  registerLocalService({
+    key: cfg.key,
+    pluginKey: cfg.key,
+    label: cfg.label,
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi) {
+        return {
+          label: cfg.label,
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: `未注入桌面端热搜能力`,
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+      let status: any = { ok: true, available: true };
+      try {
+        status = await nativeApi.hotsearchStatus();
+      } catch (e: any) {
+        status = { ok: false, available: false, message: e?.message };
+      }
+      const available = status?.ok !== false && status?.available !== false;
+      return {
+        label: cfg.label,
+        connected: true,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || `${cfg.label} 可用`,
+        endpoint: "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: ["refreshRuntime", "health", "search", "collect", "fetch"],
+        details: { runtime: "desktop" },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi) throw new Error("当前环境未注入桌面端热搜能力");
+      const payload = command.payload || {};
+      try {
+        const res = await nativeApi.hotsearchSearch({ key: cfg.key, ...payload });
+        const rawData = res?.data ?? res;
+        const items = rawData?.items ?? [];
+        const count = rawData?.count ?? items.length;
+        const success = res?.ok !== false && rawData?.success !== false && rawData?.error == null;
+        return {
+          success,
+          message: rawData?.error
+            ? rawData.error
+            : success
+              ? `${cfg.label} 采集完成: 共 ${count} 条`
+              : `${cfg.label} 执行失败`,
+          data: { successCount: count, failCount: success ? 0 : 1, items, count, raw: rawData },
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err?.message || `${cfg.label} 执行失败`,
+          data: { successCount: 0, failCount: 1, items: [] },
+        };
+      }
+    },
+  });
+}
+
 function emitClientInfo() {
   if (!socket || !socket.connected) return;
   const payload = buildClientInfoPayloadForWs();

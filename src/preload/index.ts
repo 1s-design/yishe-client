@@ -497,6 +497,51 @@ const api = {
     options?: any;
   }) => ipcRenderer.invoke("huxiu:search", payload),
   getHuxiuStatus: () => ipcRenderer.invoke("huxiu:status"),
+  // 数据工具 API 导出
+  searchOpenmeteo: (payload: { latitude?: number; longitude?: number }) =>
+    ipcRenderer.invoke("openmeteo:search", payload),
+  getOpenmeteoStatus: () => ipcRenderer.invoke("openmeteo:status"),
+  searchWttr: (payload: { city?: string }) =>
+    ipcRenderer.invoke("wttr:search", payload),
+  getWttrStatus: () => ipcRenderer.invoke("wttr:status"),
+  searchCoingecko: (payload: { ids?: string; vs_currencies?: string }) =>
+    ipcRenderer.invoke("coingecko:search", payload),
+  getCoingeckoStatus: () => ipcRenderer.invoke("coingecko:status"),
+  searchFrankfurter: (payload: { from?: string; to?: string }) =>
+    ipcRenderer.invoke("frankfurter:search", payload),
+  getFrankfurterStatus: () => ipcRenderer.invoke("frankfurter:status"),
+  searchDictionary: (payload: { word?: string }) =>
+    ipcRenderer.invoke("dictionary:search", payload),
+  getDictionaryStatus: () => ipcRenderer.invoke("dictionary:status"),
+  searchJoke: () => ipcRenderer.invoke("joke:search"),
+  getJokeStatus: () => ipcRenderer.invoke("joke:status"),
+  searchIpify: () => ipcRenderer.invoke("ipify:search"),
+  getIpifyStatus: () => ipcRenderer.invoke("ipify:status"),
+  searchSunrisesunset: (payload: { lat?: number; lng?: number }) =>
+    ipcRenderer.invoke("sunrisesunset:search", payload),
+  getSunrisesunsetStatus: () => ipcRenderer.invoke("sunrisesunset:status"),
+  searchTimeapi: (payload: { timezone?: string }) =>
+    ipcRenderer.invoke("timeapi:search", payload),
+  getTimeapiStatus: () => ipcRenderer.invoke("timeapi:status"),
+  searchZippopotam: (payload: { countryCode?: string; zipCode?: string }) =>
+    ipcRenderer.invoke("zippopotam:search", payload),
+  getZippopotamStatus: () => ipcRenderer.invoke("zippopotam:status"),
+  searchCountryis: (payload: { ip?: string }) =>
+    ipcRenderer.invoke("countryis:search", payload),
+  getCountryisStatus: () => ipcRenderer.invoke("countryis:status"),
+  searchErapi: (payload: { base?: string }) =>
+    ipcRenderer.invoke("erapi:search", payload),
+  getErapiStatus: () => ipcRenderer.invoke("erapi:status"),
+  searchFawazahmed: (payload: { base?: string }) =>
+    ipcRenderer.invoke("fawazahmed:search", payload),
+  getFawazahmedStatus: () => ipcRenderer.invoke("fawazahmed:status"),
+  searchColorapi: (payload: { hex?: string }) =>
+    ipcRenderer.invoke("colorapi:search", payload),
+  getColorapiStatus: () => ipcRenderer.invoke("colorapi:status"),
+  // 热搜采集 API 导出
+  hotsearchStatus: () => ipcRenderer.invoke("hotsearch:status"),
+  hotsearchSearch: (payload: { key?: string; platform?: string }) =>
+    ipcRenderer.invoke("hotsearch:search", payload),
   // nounproject API 导出
   searchNounProject: (payload: {
     query: string;

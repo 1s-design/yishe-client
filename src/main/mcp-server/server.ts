@@ -396,7 +396,7 @@ export class McpServerManager {
 
       }
 
-      // 注册 Google Art 采集工具
+      // 注册 Google Art 采集工具（支持多种命名格式）
       try {
         const googleArtSearchSchema = {
           keyword: z.string().describe('搜索关键词（英文效果更佳，如 "van gogh"、"impressionism"）。'),
@@ -423,6 +423,7 @@ export class McpServerManager {
           google_art_collect: googleArtCollectSchema,
         };
 
+        // 注册原始名称的工具
         for (const toolDef of [googleArtSearchTool, googleArtDownloadTool, googleArtCollectTool]) {
           const toolName = toolDef.definition.name;
           const schema = schemasMap[toolName];
@@ -441,10 +442,27 @@ export class McpServerManager {
             handler: async (args) => toolDef.execute(args) as any,
           });
         }
+
+        // 额外注册 googleArt.search, googleArt.zoom, googleArt.collect（兼容服务端 MCP Bridge）
+        const extraTools = [
+          { name: 'googleArt_search', schema: googleArtSearchSchema, execute: googleArtSearchTool.execute },
+          { name: 'googleArt_download', schema: googleArtDownloadSchema, execute: googleArtDownloadTool.execute },
+          { name: 'googleArt_collect', schema: googleArtCollectSchema, execute: googleArtCollectTool.execute },
+        ];
+        for (const t of extraTools) {
+          this.toolRegistry.set(t.name, {
+            name: t.name,
+            description: 'Google Art 工具',
+            inputSchema: { type: 'object', properties: {} },
+            category: 'google_art',
+            handler: async (args) => t.execute(args) as any,
+          });
+        }
+
         writeClientLog({
           level: 'INFO',
           module: 'mcp-server',
-          message: '已注册 3 个 Google Art 工具',
+          message: `已注册 Google Art 工具（含兼容格式）`,
         });
       } catch (e) {
         writeClientLog({
@@ -456,29 +474,31 @@ export class McpServerManager {
       }
 
 
-      // 注册通用客户端能力工具
+      // 直接注册 googleArt 工具（确保可用）
       try {
-        const { getCapabilityMcpTools } = await import('../capabilities/bridge');
-        const capTools = getCapabilityMcpTools();
-        for (const capTool of capTools) {
-          server.tool(
-            capTool.name,
-            capTool.description,
-            capTool.inputSchema as any,
-            async (args) => capTool.handler(args) as any
-          );
-          this.toolRegistry.set(capTool.name, {
-            name: capTool.name,
-            description: capTool.description,
-            inputSchema: capTool.inputSchema,
-            category: capTool.category,
-            handler: capTool.handler,
+        const { callCapability } = await import('../capabilities/index');
+        const googleArtTools = ['search', 'status', 'zoom', 'collect'];
+        for (const toolName of googleArtTools) {
+          const fullName = `googleArt_${toolName}`;
+          this.toolRegistry.set(fullName, {
+            name: fullName,
+            description: `googleArt.${toolName}`,
+            inputSchema: { type: 'object', properties: {} },
+            category: 'googleArt',
+            handler: async (args) => {
+              const result = await callCapability('googleArt', toolName, args);
+              return {
+                content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+                isError: !result.success,
+              };
+            },
           });
         }
-        console.log(`[MCP Server] 已注册 ${capTools.length} 个通用能力工具`);
+        console.log(`[MCP Server] 直接注册了 ${googleArtTools.length} 个 googleArt 工具`);
       } catch (e) {
-        console.warn('[MCP Server] 通用能力注册失败:', (e as Error)?.message);
+        console.warn('[MCP Server] googleArt 工具注册失败:', (e as Error)?.message);
       }
+
       return server;
 
     };
@@ -690,7 +710,18 @@ export class McpServerManager {
     toolName: string,
     toolArgs: Record<string, any> = {},
   ): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
-    const tool = this.toolRegistry.get(toolName);
+    // 支持多种格式: googleArt.search, googleArt_search, google_art_search
+    let tool = this.toolRegistry.get(toolName);
+    if (!tool) {
+      // 将点号转为下划线: googleArt.search -> googleArt_search
+      const underscoreName = toolName.replace(/\./g, '_');
+      tool = this.toolRegistry.get(underscoreName);
+    }
+    if (!tool) {
+      // 尝试全小写加下划线: googleArt.search -> google_art_search
+      const normalizedName = toolName.replace(/\./g, '_').toLowerCase();
+      tool = this.toolRegistry.get(normalizedName);
+    }
     if (!tool) {
       return {
         content: [{ type: 'text', text: `Tool not found: ${toolName}` }],
