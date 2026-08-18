@@ -3,7 +3,7 @@
  * 统一管理所有客户端能力的注册、发现和调用
  */
 
-import type { CapabilityDefinition, RegisteredCapability, CapabilityResult } from './types';
+import type { CapabilityCallContext, CapabilityDefinition, RegisteredCapability, CapabilityResult } from './types';
 
 class CapabilityRegistryImpl {
   private capabilities = new Map<string, CapabilityDefinition>();
@@ -32,7 +32,12 @@ class CapabilityRegistryImpl {
   /**
    * 调用一个能力
    */
-  async call<T = any>(namespace: string, name: string, args: any = {}): Promise<CapabilityResult<T>> {
+  async call<T = any>(
+    namespace: string,
+    name: string,
+    args: any = {},
+    context?: CapabilityCallContext,
+  ): Promise<CapabilityResult<T>> {
     const key = `${namespace}.${name}`;
     const capability = this.capabilities.get(key);
     if (!capability) {
@@ -45,10 +50,10 @@ class CapabilityRegistryImpl {
       if (!parsed.success) {
         return {
           success: false,
-          error: `参数校验失败: ${parsed.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+          error: `参数校验失败: ${parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
         };
       }
-      return await capability.handler(parsed.data);
+      return await capability.handler(parsed.data, context);
     } catch (error: any) {
       return { success: false, error: error?.message || String(error) };
     }
@@ -57,14 +62,18 @@ class CapabilityRegistryImpl {
   /**
    * 通过完整名称调用
    */
-  async callByFullName<T = any>(fullName: string, args: any = {}): Promise<CapabilityResult<T>> {
+  async callByFullName<T = any>(
+    fullName: string,
+    args: any = {},
+    context?: CapabilityCallContext,
+  ): Promise<CapabilityResult<T>> {
     const dotIndex = fullName.indexOf('.');
     if (dotIndex === -1) {
       return { success: false, error: `无效的能力名称: ${fullName}` };
     }
     const namespace = fullName.substring(0, dotIndex);
     const name = fullName.substring(dotIndex + 1);
-    return this.call(namespace, name, args);
+    return this.call(namespace, name, args, context);
   }
 
   /**

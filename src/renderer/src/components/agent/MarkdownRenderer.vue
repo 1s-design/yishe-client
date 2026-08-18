@@ -56,6 +56,14 @@ function renderMarkdown(md: string): string {
   result = result.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   result = result.replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
+  // 图片 [![alt](url)](optional-link) —— 必须在链接处理之前，否则 ![ 会被链接正则吞掉
+  result = result.replace(
+    /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+    (_match, alt, src) => {
+      return `<img class="markdown-img" src="${escapeHtml(src)}" alt="${escapeHtml(alt || '')}" loading="lazy" />`;
+    }
+  );
+
   // 链接
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
@@ -137,6 +145,18 @@ function renderMarkdown(md: string): string {
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+.markdown-body :deep(img.markdown-img) {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  margin: 0.75em 0;
+  border: 1px solid rgba(128, 128, 128, 0.18);
+  background: #fafafa;
 }
 
 .markdown-body :deep(ul),

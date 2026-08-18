@@ -14,6 +14,17 @@ export interface CapabilityResult<T = any> {
   error?: string;
 }
 
+/**
+ * 能力调用上下文。
+ *
+ * 这里的数据由主进程填充，不暴露给模型，适合承载会话级可信状态的键。
+ * 工具参数仍只包含模型可见、可编辑的数据，不能用来区分不同 Agent 会话。
+ */
+export interface CapabilityCallContext {
+  sessionId?: string;
+  runId?: string;
+}
+
 /** 能力定义 */
 export interface CapabilityDefinition<TArgs = any, TResult = any> {
   name: string;
@@ -21,7 +32,7 @@ export interface CapabilityDefinition<TArgs = any, TResult = any> {
   description: string;
   riskLevel: RiskLevel;
   argsSchema: z.ZodType<TArgs>;
-  handler: (args: TArgs) => Promise<CapabilityResult<TResult>>;
+  handler: (args: TArgs, context?: CapabilityCallContext) => Promise<CapabilityResult<TResult>>;
 }
 
 /** 注册的能力（不含 schema，对外暴露） */
@@ -33,10 +44,4 @@ export interface RegisteredCapability {
 }
 
 /** 能力命名空间 */
-export type CapabilityNamespace =
-  | 'filesystem'
-  | 'clipboard'
-  | 'system'
-  | 'screen'
-  | 'network'
-  | 'print';
+export type CapabilityNamespace = 'filesystem' | 'clipboard' | 'system' | 'screen' | 'network' | 'print';

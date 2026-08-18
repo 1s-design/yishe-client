@@ -31,10 +31,6 @@ export const googleArtCollectTool = {
           type: 'boolean' as const,
           description: '自动选择最高分辨率，默认 true。',
         },
-        syncToMaterial: {
-          type: 'boolean' as const,
-          description: '是否同步到素材库，默认 true。',
-        },
       },
       required: [],
     },
@@ -45,7 +41,6 @@ export const googleArtCollectTool = {
     const countInput = args.maxCount ?? args.limit ?? args.count ?? args.num;
     const maxCount = Math.min(Math.max(Number(countInput) || 2, 1), 50);
     const autoMax = (args.autoMax as boolean) ?? true;
-    const syncToMaterial = (args.syncToMaterial as boolean) ?? true;
 
     const logs: string[] = [];
     const errors: string[] = [];
@@ -115,16 +110,15 @@ export const googleArtCollectTool = {
         const downloadResult = await googleArtDownloadTool.execute({
           url: link,
           autoMax,
-          syncToMaterial,
           metadata: itemMetadata,
         });
 
         const downloadText = (downloadResult.content?.[0] as any)?.text;
         if (downloadText) {
           const downloadData = JSON.parse(downloadText);
-          if (downloadData.success) {
+          if (downloadData.success && downloadData.materialLibraryOk === true) {
             images.push({
-              url: downloadData.filePath,
+              filePath: downloadData.filePath,
               width: downloadData.width,
               height: downloadData.height,
               fileSize: downloadData.fileSize,
@@ -146,12 +140,16 @@ export const googleArtCollectTool = {
       }
     }
 
+    const allSucceeded = successCount === links.length && failCount === 0;
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
-          success: true,
-          collected: links.length,
+          success: allSucceeded,
+          partialSuccess: successCount > 0 && !allSucceeded,
+          materialLibraryOk: allSucceeded,
+          requestedCount: links.length,
+          collected: successCount,
           successCount,
           failCount,
           images,
@@ -159,6 +157,7 @@ export const googleArtCollectTool = {
           errors: errors.length > 0 ? errors : undefined,
         }, null, 2),
       }],
+      isError: !allSucceeded,
     };
   },
 };

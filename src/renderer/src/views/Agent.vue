@@ -10,6 +10,7 @@
       @new-chat="handleNewChat"
       @select="handleSelectSession"
       @delete="handleDeleteSession"
+      @refresh="handleRefresh"
       @login="emit('open-login')"
       @open-dashboard="emit('open-dashboard')"
       @logout="emit('logout')"
@@ -62,6 +63,7 @@ const {
   stopGeneration,
   resolveToolApproval,
   syncCloudConfig,
+  refreshSessions,
 } = useAgent();
 
 const userInfo = computed(() => props.userInfo);
@@ -113,6 +115,10 @@ function handleSelectSession(id: string) {
 
 function handleDeleteSession(id: string) {
   deleteSession(id);
+}
+
+async function handleRefresh() {
+  await refreshSessions();
 }
 
 async function handleSend(text: string, attachments?: any[]) {

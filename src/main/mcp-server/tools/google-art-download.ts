@@ -36,7 +36,7 @@ async function getWorkspaceDir(): Promise<string> {
 export const googleArtDownloadTool = {
   definition: {
     name: 'google_art_download',
-    description: '从 Google Arts & Culture 下载高清艺术作品图片。自动获取可用分辨率，可自动选择最高分辨率或指定级别，可选同步到素材库。',
+    description: '从 Google Arts & Culture 下载高清艺术作品并强制写入素材库。只有 materialLibraryOk=true 才返回成功。',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -51,10 +51,6 @@ export const googleArtDownloadTool = {
         autoMax: {
           type: 'boolean' as const,
           description: '自动选择最高分辨率，默认 true。',
-        },
-        syncToMaterial: {
-          type: 'boolean' as const,
-          description: '是否同步到素材库，默认 true。',
         },
         metadata: {
           type: 'object' as const,
@@ -80,7 +76,6 @@ export const googleArtDownloadTool = {
   async execute(args: Record<string, unknown>): Promise<CallToolResult> {
     const url = args.url as string;
     const autoMax = (args.autoMax as boolean) ?? true;
-    const syncToMaterial = (args.syncToMaterial as boolean) ?? true;
 
     if (!url) {
       return {
@@ -182,15 +177,17 @@ export const googleArtDownloadTool = {
         },
       });
 
-      if (!downloadResult.ok) {
+      if (!downloadResult.ok || downloadResult.materialLibraryOk !== true) {
         return {
           content: [{
             type: 'text',
             text: JSON.stringify({
               success: false,
-              error: downloadResult.msg || '下载失败',
+              error: downloadResult.msg || '下载或素材库入库失败',
               url,
               zoomLevel: targetZoom,
+              downloaded: !!downloadResult.filePath,
+              materialLibraryOk: false,
             }, null, 2),
           }],
           isError: true,
@@ -212,8 +209,8 @@ export const googleArtDownloadTool = {
             filePath: downloadResult.filePath,
             fileName: downloadResult.fileName,
             fileSize: downloadResult.fileSize,
-            materialLibraryOk: downloadResult.materialLibraryOk,
-            syncToMaterial,
+            materialLibraryOk: true,
+            syncToMaterial: true,
             availableZooms: zooms.map(z => ({ idx: z.idx, label: z.label, width: z.width, height: z.height })),
           }, null, 2),
         }],

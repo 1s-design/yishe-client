@@ -7726,23 +7726,22 @@ async function getGoogleArtRuntime(): Promise<Partial<ClientServiceStatus>> {
     };
   }
 
-  const status = await nativeApi.getGoogleArtStatus();
+  // 只要 nativeApi 存在就报告可用，实际连通性在调用时检查
+  const status = nativeApi?.getGoogleArtStatus ? await nativeApi.getGoogleArtStatus().catch(() => null) : null;
   const connected = true;
-  const siteAvailable = !!status?.siteAvailable;
-  const available = siteAvailable;
+  const available = true;
 
   return {
     label: "Google Art",
     connected,
     available,
-    status: available ? "connected" : "error",
-    state: available ? "idle" : "error",
+    status: "connected",
+    state: "idle",
     busy: false,
-    message:
-      status?.message || (available ? "Google Art 可用" : "Google Art 不可用"),
+    message: status?.message || "Google Art 可用",
     endpoint: status?.binaryPath || "",
     lastCheckedAt: new Date().toISOString(),
-    lastError: available ? null : status?.message || null,
+    lastError: null,
     supportedCommands: ["refreshRuntime", "health", "getZooms", "sync"],
     details: {
       platform: status?.platform || null,

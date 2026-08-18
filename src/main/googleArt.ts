@@ -2,23 +2,14 @@ import { spawn } from 'child_process'
 import fs from 'fs'
 import { app, session } from 'electron'
 import { join, resolve } from 'path'
-import { uploadFileToCos, generateCosKey } from './cos'
 import https from 'https'
-import { HttpsProxyAgent } from 'https-proxy-agent'
 import { URL } from 'url'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 import { checkSiteAvailability } from './siteAvailability'
-
-type ServerModule = typeof import('./server')
-
-let serverModulePromise: Promise<ServerModule> | null = null
-
-function getServerModule() {
-  if (!serverModulePromise) {
-    serverModulePromise = import('./server')
-  }
-
-  return serverModulePromise
-}
+import {
+  uploadToMaterialLibrary as uploadToMaterialLibraryShared,
+  type MaterialLibraryResult,
+} from './materialLibrary'
 
 interface ZoomLevel {
   idx: number
@@ -34,10 +25,41 @@ function getPlatformBinaryName(platform: NodeJS.Platform): string | null {
   const binaryNames: Record<string, string> = {
     win32: 'dezoomify-rs-win.exe',
     darwin: 'dezoomify-rs-mac',
-    linux: 'dezoomify-rs-linux'
+    linux: 'dezoomify-rs-linux',
   }
 
   return binaryNames[platform] || null
+}
+
+function extractDezoomifyError(stderr: string): string | null {
+  if (!stderr) return null
+  const norm = stderr.trim()
+  if (!norm) return null
+  if (/404 Not Found/.test(norm)) {
+    return '作品页链接无效（HTTP 404），请确认 URL 是否正确'
+  }
+  const m = norm.match(/network error: ([^(\n]+)/i)
+  if (m) return `网络错误：${m[1].trim()}`
+  const dezoomers = norm.match(/Tried all of the dezoomers, none succeeded/)
+  if (dezoomers) return '该链接不是可缩放的 Google Arts 作品页，或页面已失效'
+  // 截取前几行错误信息
+  return norm.split('\n').slice(0, 3).join(' ').slice(0, 300)
+}
+
+function isGoogleArtAssetUrl(raw: string): boolean {
+  try {
+    const parsed = new URL(raw)
+    const hostname = parsed.hostname.toLowerCase().replace(/^www\./, '')
+    const segments = parsed.pathname.split('/').filter(Boolean)
+    return (
+      (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+      hostname === 'artsandculture.google.com' &&
+      segments[0] === 'asset' &&
+      segments.length >= 3
+    )
+  } catch {
+    return false
+  }
 }
 
 export async function getGoogleArtStatus() {
@@ -45,7 +67,9 @@ export async function getGoogleArtStatus() {
   const platformName =
     process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform
   const supported = ['win32', 'darwin', 'linux'].includes(process.platform)
-  const site = await checkSiteAvailability(GOOGLE_ART_SITE_URL, { timeoutMs: 5000 })
+  const site = await checkSiteAvailability(GOOGLE_ART_SITE_URL, {
+    timeoutMs: 5000,
+  })
   const binaryExists = !!binary
   const available = site.ok
   let message = ''
@@ -71,7 +95,7 @@ export async function getGoogleArtStatus() {
     siteLatencyMs: site.latencyMs,
     siteCheckedAt: site.checkedAt,
     siteError: site.error,
-    message
+    message,
   }
 }
 
@@ -87,7 +111,7 @@ function resolveBinaryPath(): string | null {
     ['resources', 'google-art', binaryName],
     ['resources', 'plugin', process.platform, binaryName],
     ['resources', 'plugin', binaryName],
-    ['resources', binaryName]
+    ['resources', binaryName],
   ]
 
   const candidateAbs = candidateRelatives.flatMap((parts) => {
@@ -95,7 +119,7 @@ function resolveBinaryPath(): string | null {
     return [
       resolve(__dirname, '../../', rel), // dev
       join(process.resourcesPath, rel), // prod
-      join(app.getAppPath(), rel) // fallback
+      join(app.getAppPath(), rel), // fallback
     ]
   })
 
@@ -113,26 +137,37 @@ function sanitizeName(name: string) {
   return name.replace(/[<>:"/\\|?*]/g, '_')
 }
 
-export async function getGoogleArtZooms(
-  url: string
-): Promise<{ ok: boolean; zooms?: ZoomLevel[]; msg?: string }> {
-  if (!url || !/^https?:\/\/(www\.)?artsandculture\.google\.com\//.test(url)) {
-    return { ok: false, msg: '请输入有效的 Google Arts 链接（以 artsandculture.google.com 开头）' }
+export async function getGoogleArtZooms(url: string): Promise<{ ok: boolean; zooms?: ZoomLevel[]; msg?: string }> {
+  if (!url || !isGoogleArtAssetUrl(url)) {
+    return {
+      ok: false,
+      msg: '请输入有效的作品详情页链接（形如 https://artsandculture.google.com/asset/xxx/xxxxxx，来自搜索结果 items[].url）；不要传缩略图链接',
+    }
   }
 
   const binary = resolveBinaryPath()
   if (!binary) {
-    const platformName = process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform
+    const platformName =
+      process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform
     const binaryName = getPlatformBinaryName(process.platform) || 'dezoomify-rs'
-    return { ok: false, msg: `缺少 ${binaryName}，请放置在 resources/google-art/${process.platform}/ (当前平台: ${platformName})` }
+    return {
+      ok: false,
+      msg: `缺少 ${binaryName}，请放置在 resources/google-art/${process.platform}/ (当前平台: ${platformName})`,
+    }
   }
 
   return new Promise((resolvePromise) => {
     const child = spawn(binary, [url], { stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
+    let zoomErr = ''
     let zooms: ZoomLevel[] = []
+    let settled = false
 
     const regex = /^\s*(\d+)\.\s*(.+)\(\s*(\d+)\s*x\s*(\d+)\s*pixels,\s*(\d+)\s*tiles\)/gm
+
+    child.stderr?.on('data', (buf) => {
+      zoomErr += buf.toString()
+    })
 
     const tryParse = () => {
       const list: ZoomLevel[] = []
@@ -143,17 +178,34 @@ export async function getGoogleArtZooms(
           label: m[2].trim(),
           width: Number(m[3]),
           height: Number(m[4]),
-          tiles: Number(m[5])
+          tiles: Number(m[5]),
         })
       }
       if (list.length) zooms = list
     }
 
+    const failMsg = () => {
+      const err = extractDezoomifyError(zoomErr)
+      if (err) return err
+      // stderr 为空时，把 stdout 输出暴露出来，方便诊断
+      if (output.trim()) {
+        const head = output.trim().split('\n').slice(0, 5).join(' ').slice(0, 400)
+        return `dezoomify-rs 未返回分辨率列表，原始输出：${head}`
+      }
+      return '未能获取分辨率（dezoomify-rs 无输出，可能是网络或二进制问题）'
+    }
+
+    const settle = (result: { ok: boolean; zooms?: ZoomLevel[]; msg?: string }) => {
+      if (settled) return
+      settled = true
+      resolvePromise(result)
+    }
+
     const timer = setTimeout(() => {
       tryParse()
       child.kill()
-      resolvePromise(zooms.length ? { ok: true, zooms } : { ok: false, msg: '未能获取分辨率' })
-    }, 9000)
+      settle(zooms.length ? { ok: true, zooms } : { ok: false, msg: failMsg() })
+    }, 15000)
 
     child.stdout.on('data', (buf) => {
       output += buf.toString()
@@ -162,20 +214,25 @@ export async function getGoogleArtZooms(
         if (zooms.length) {
           clearTimeout(timer)
           child.kill()
-          resolvePromise({ ok: true, zooms })
+          settle({ ok: true, zooms })
         }
       }
     })
 
     child.on('error', (err) => {
       clearTimeout(timer)
-      resolvePromise({ ok: false, msg: err.message })
+      settle({ ok: false, msg: `dezoomify-rs 启动失败：${err.message}` })
     })
 
-    child.on('close', () => {
+    child.on('close', (code) => {
       clearTimeout(timer)
       tryParse()
-      resolvePromise(zooms.length ? { ok: true, zooms } : { ok: false, msg: '未能获取分辨率' })
+      if (zooms.length) {
+        settle({ ok: true, zooms })
+      } else {
+        const suffix = code !== 0 ? `（进程退出码 ${code}）` : ''
+        settle({ ok: false, msg: failMsg() + suffix })
+      }
     })
   })
 }
@@ -183,155 +240,72 @@ export async function getGoogleArtZooms(
 async function uploadToMaterialLibrary(
   localPath: string,
   fileName: string,
-  apiBase: string = 'https://api.1s.design/api',
+  _apiBase: string | undefined,
   originUrl?: string,
   metadata?: {
-    title?: string;
-    artist?: string;
-    date?: string;
-    institution?: string;
-    color?: string;        // 主色调 hex
-    thumbnail?: string;    // 缩略图 URL
-    aspectRatio?: number;  // 宽高比
-    hasPixels?: boolean;   // 是否有全景图
-    id?: string;           // Google Art 作品 ID
-  }
-): Promise<{ ok: boolean; msg?: string }> {
-  // 1. 先上传到 COS（使用新的分类路径）
-  const cosKey = await generateCosKey({
+    title?: string
+    artist?: string
+    date?: string
+    institution?: string
+    color?: string // 主色调 hex
+    thumbnail?: string // 缩略图 URL
+    aspectRatio?: number // 宽高比
+    hasPixels?: boolean // 是否有全景图
+    id?: string // Google Art 作品 ID
+  },
+): Promise<MaterialLibraryResult> {
+  const title = metadata?.title || fileName.replace(/\.jpg$/, '')
+  const artist = metadata?.artist || ''
+  const date = metadata?.date || ''
+  const institution = metadata?.institution || ''
+  const color = metadata?.color || ''
+
+  // 中文名称内容
+  const nameCn = title
+  // 描述：作者 - 年代 (展馆)
+  const descriptionStr = [artist, date, institution].filter(Boolean).join(' · ')
+  // 英文描述
+  const descriptionEnStr = [
+    artist ? `Artist: ${artist}` : '',
+    date ? `Date: ${date}` : '',
+    institution ? `Collection: ${institution}` : '',
+  ]
+    .filter(Boolean)
+    .join(' | ')
+  // 关键词展开：名称 + 作者 + 展馆 + impressionism
+  const keywordsCn = [title, artist, institution].filter(Boolean).join(',')
+  const keywordsEn = [title, artist, institution, 'google arts culture', 'fine art', 'painting']
+    .filter(Boolean)
+    .join(',')
+  // 色板：把 API 返回的主色调存为 colorPalette
+  const colorPalette = color ? color : ''
+
+  return uploadToMaterialLibraryShared(localPath, fileName, {
     category: 'google-art',
-    filename: fileName
+    group: 'google-art',
+    source: institution ? `Google Arts & Culture - ${institution}` : 'artsandculture.google.com',
+    originUrl: originUrl || '',
+    suffix: 'jpg',
+    name: nameCn,
+    nameEn: title,
+    description: descriptionStr,
+    descriptionEn: descriptionEnStr,
+    keywords: keywordsCn,
+    keywordsEn,
+    colorPalette,
+    meta: {
+      title,
+      artist,
+      date,
+      institution,
+      color,
+      thumbnail: metadata?.thumbnail || null,
+      aspectRatio: metadata?.aspectRatio ?? null,
+      hasPixels: metadata?.hasPixels ?? null,
+      googleArtId: metadata?.id || null,
+      source: 'google_arts_culture',
+    },
   })
-  const cosResult = await uploadFileToCos(localPath, cosKey)
-  
-  if (!cosResult.ok) {
-    const errMsg = 'msg' in cosResult ? cosResult.msg : 'COS 上传失败'
-    return { ok: false, msg: errMsg }
-  }
-  if (!cosResult.url) {
-    return { ok: false, msg: 'COS 上传失败' }
-  }
-
-  // 2. 调用素材库 API（改为直接入库到贴纸素材库）
-  try {
-    const apiUrl = new URL(`${apiBase}/sticker/create`)
-    const { getTokenValue } = await getServerModule()
-    const token = getTokenValue()
-    
-    const title = metadata?.title || fileName.replace(/\.jpg$/, '')
-    const artist = metadata?.artist || ''
-    const date = metadata?.date || ''
-    const institution = metadata?.institution || ''
-    const color = metadata?.color || ''
-
-    // 中文名称内容
-    const nameCn = title  // 如果将来有中文翻译可修改 name
-    // 描述：作者 - 年代 (展馆)
-    const descriptionStr = [artist, date, institution].filter(Boolean).join(' · ')
-    // 英文描述
-    const descriptionEnStr = [
-      artist ? `Artist: ${artist}` : '',
-      date ? `Date: ${date}` : '',
-      institution ? `Collection: ${institution}` : '',
-    ].filter(Boolean).join(' | ')
-    // 关键词展开：名称 + 作者 + 展馆 + impressionism
-    const keywordsCn = [title, artist, institution].filter(Boolean).join(',')
-    const keywordsEn = [
-      title, artist, institution,
-      'google arts culture', 'fine art', 'painting',
-    ].filter(Boolean).join(',')
-    // 色板：把 API 返回的主色调存为 colorPalette
-    const colorPalette = color ? color : ''
-
-    const postData = JSON.stringify({
-      // 基础字段
-      url: cosResult.url,
-      key: cosResult.key,
-      suffix: 'jpg',
-      originUrl: originUrl || '',
-      source: institution ? `Google Arts & Culture - ${institution}` : 'artsandculture.google.com',
-      group: 'google-art',
-      isPublic: true,
-      isTexture: false,
-      isCustom: false,
-      // 名称（中文写作品名，英文同样写进去）
-      name: nameCn,
-      nameEn: title,
-      // 描述
-      description: descriptionStr,
-      descriptionEn: descriptionEnStr,
-      // 关键词
-      keywords: keywordsCn,
-      keywordsEn: keywordsEn,
-      // 色板
-      colorPalette,
-      // 完整元数据 (JSON)
-      meta: {
-        title,
-        artist,
-        date,
-        institution,
-        color,
-        thumbnail: metadata?.thumbnail || null,
-        aspectRatio: metadata?.aspectRatio ?? null,
-        hasPixels: metadata?.hasPixels ?? null,
-        googleArtId: metadata?.id || null,
-        source: 'google_arts_culture',
-        collectedAt: new Date().toISOString(),
-      },
-    })
-
-    const options = {
-      hostname: apiUrl.hostname,
-      port: apiUrl.port || 443,
-      path: apiUrl.pathname + apiUrl.search,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData),
-        // 贴纸创建接口需要登录态，这里复用主进程中保存的 Token
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      rejectUnauthorized: false
-    }
-
-    return new Promise((resolve) => {
-      const req = https.request(options, (res: any) => {
-        let data = ''
-        res.on('data', (chunk: Buffer) => {
-          data += chunk.toString()
-        })
-        res.on('end', () => {
-          try {
-            // 检查 HTTP 状态码
-            if (res.statusCode && res.statusCode >= 400) {
-              resolve({ ok: false, msg: `HTTP ${res.statusCode}: 请求失败` })
-              return
-            }
-            
-            const result = JSON.parse(data)
-            // 后端使用 TransformInterceptor，响应格式为 { code: 0, data: ..., message: ..., status: true }
-            if (result.code === 0 && result.status === true) {
-              resolve({ ok: true })
-            } else {
-              resolve({ ok: false, msg: result.message || result.msg || '素材库保存失败' })
-            }
-          } catch (e) {
-            resolve({ ok: false, msg: '素材库 API 响应解析失败' })
-          }
-        })
-      })
-
-      req.on('error', (err: Error) => {
-        resolve({ ok: false, msg: `素材库 API 请求失败: ${err.message}` })
-      })
-
-      req.write(postData)
-      req.end()
-    })
-  } catch (error: any) {
-    return { ok: false, msg: `上传到素材库失败: ${error.message}` }
-  }
 }
 
 export async function syncGoogleArtToMaterialLibrary(options: {
@@ -340,22 +314,34 @@ export async function syncGoogleArtToMaterialLibrary(options: {
   qualityPreference?: 'max' | 'min'
   workspaceDir: string
   metadata?: {
-    title?: string;
-    artist?: string;
-    date?: string;
-    institution?: string;
-    color?: string;
-    thumbnail?: string;
-    aspectRatio?: number;
-    hasPixels?: boolean;
-    id?: string;
+    title?: string
+    artist?: string
+    date?: string
+    institution?: string
+    color?: string
+    thumbnail?: string
+    aspectRatio?: number
+    hasPixels?: boolean
+    id?: string
   }
-}): Promise<{ ok: boolean; msg?: string; filePath?: string; fileName?: string; fileSize?: number; materialLibraryOk?: boolean }> {
+}): Promise<{
+  ok: boolean
+  msg?: string
+  filePath?: string
+  fileName?: string
+  fileSize?: number
+  materialLibraryOk?: boolean
+  materialId?: string
+  materialUrl?: string
+}> {
   const { url, workspaceDir, metadata, qualityPreference = 'min' } = options
   let zoomLevel = options.zoomLevel
 
-  if (!url || !/^https?:\/\/(www\.)?artsandculture\.google\.com\//.test(url)) {
-    return { ok: false, msg: '请输入有效的 Google Arts 链接（以 artsandculture.google.com 开头）' }
+  if (!url || !isGoogleArtAssetUrl(url)) {
+    return {
+      ok: false,
+      msg: '请输入有效的作品详情页链接（形如 https://artsandculture.google.com/asset/xxx/xxxxxx，来自搜索结果 items[].url）；不要传缩略图链接',
+    }
   }
   if (!workspaceDir) return { ok: false, msg: '工作目录未设置' }
 
@@ -364,25 +350,35 @@ export async function syncGoogleArtToMaterialLibrary(options: {
     try {
       const zoomRes = await getGoogleArtZooms(url)
       if (zoomRes.ok && zoomRes.zooms && zoomRes.zooms.length > 0) {
-        const sorted = [...zoomRes.zooms].sort((a, b) => (a.width * a.height) - (b.width * b.height))
+        const sorted = [...zoomRes.zooms].sort((a, b) => a.width * a.height - b.width * b.height)
         if (qualityPreference === 'min') {
           zoomLevel = sorted[0].idx
         } else {
           zoomLevel = sorted[sorted.length - 1].idx
         }
       } else {
-        zoomLevel = 1
+        return {
+          ok: false,
+          msg: zoomRes.msg || '无法验证作品分辨率，已停止下载',
+        }
       }
-    } catch {
-      zoomLevel = 1
+    } catch (error: any) {
+      return {
+        ok: false,
+        msg: `无法验证作品分辨率：${error?.message || String(error)}`,
+      }
     }
   }
 
   const binary = resolveBinaryPath()
   if (!binary) {
-    const platformName = process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform
+    const platformName =
+      process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : process.platform
     const binaryName = getPlatformBinaryName(process.platform) || 'dezoomify-rs'
-    return { ok: false, msg: `缺少 ${binaryName}，请放置在 resources/google-art/${process.platform}/ (当前平台: ${platformName})` }
+    return {
+      ok: false,
+      msg: `缺少 ${binaryName}，请放置在 resources/google-art/${process.platform}/ (当前平台: ${platformName})`,
+    }
   }
 
   const nameMatch = url.match(/\/asset\/([^/]+)/)
@@ -396,18 +392,36 @@ export async function syncGoogleArtToMaterialLibrary(options: {
 
   return new Promise((resolvePromise) => {
     const args = ['--zoom-level', String(zoomLevel), url, outputPath]
-    const child = spawn(binary, args, { stdio: 'inherit' })
+    const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stderr = ''
+    // 必须持续读取两个 pipe，避免 dezoomify 进度输出填满缓冲区后子进程阻塞。
+    child.stdout?.resume()
+    child.stderr?.on('data', (buf) => {
+      if (stderr.length < 32_000) stderr += buf.toString()
+    })
 
     child.on('close', async (code) => {
       if (code !== 0) {
-        resolvePromise({ ok: false, msg: '下载失败，请稍后重试' })
+        const detail = extractDezoomifyError(stderr)
+        const suffix = stderr.trim() ? '' : '（dezoomify-rs 无错误输出，可能是网络或二进制问题）'
+        resolvePromise({ ok: false, msg: detail || `下载失败，请稍后重试${suffix}` })
         return
       }
       let size = 0
       try {
         const stat = fs.statSync(outputPath)
+        if (!stat.isFile() || stat.size <= 0) {
+          resolvePromise({
+            ok: false,
+            msg: '下载进程结束，但未生成有效图片文件',
+          })
+          return
+        }
         size = stat.size
-      } catch {}
+      } catch {
+        resolvePromise({ ok: false, msg: '下载进程结束，但图片文件不存在' })
+        return
+      }
 
       const materialResult = await uploadToMaterialLibrary(outputPath, fileName, undefined, url, metadata)
       resolvePromise({
@@ -416,7 +430,9 @@ export async function syncGoogleArtToMaterialLibrary(options: {
         fileName,
         fileSize: size,
         materialLibraryOk: materialResult.ok,
-        msg: materialResult.ok ? undefined : materialResult.msg
+        materialId: materialResult.materialId,
+        materialUrl: materialResult.materialUrl,
+        msg: materialResult.ok ? undefined : materialResult.msg,
       })
     })
 
@@ -425,7 +441,6 @@ export async function syncGoogleArtToMaterialLibrary(options: {
     })
   })
 }
-
 
 // ─── Google Arts API 搜索（无需浏览器）───
 
@@ -469,7 +484,7 @@ export async function searchGoogleArts(
       }
     | string,
   pageParam = 1,
-  hlParam = 'en'
+  hlParam = 'en',
 ): Promise<GoogleArtSearchResult> {
   let keyword = ''
   let page = pageParam
@@ -489,7 +504,9 @@ export async function searchGoogleArts(
 
   keyword = keyword.trim() || 'impressionism'
 
-  console.log(`[GoogleArts] 搜索请求: keyword="${keyword}", page=${page}, maxCount=${maxCount}, cursor=${cursor ? 'yes' : 'no'}`)
+  console.log(
+    `[GoogleArts] 搜索请求: keyword="${keyword}", page=${page}, maxCount=${maxCount}, cursor=${cursor ? 'yes' : 'no'}`,
+  )
 
   try {
     // 传入 cursor 且目标页 > 1：优先用 /api/assets/images 拿指定游标对应的批次（真分页）
@@ -518,7 +535,16 @@ export async function searchGoogleArts(
             })()
       currentCursor = result.nextCursor
       if (!currentCursor) {
-        return { success: true, query: keyword, page, total: 0, count: 0, items: [], links: [], nextCursor: null }
+        return {
+          success: true,
+          query: keyword,
+          page,
+          total: 0,
+          count: 0,
+          items: [],
+          links: [],
+          nextCursor: null,
+        }
       }
     }
 
@@ -534,7 +560,17 @@ export async function searchGoogleArts(
     }
   } catch (error: any) {
     console.error(`[GoogleArts] 搜索失败: ${error?.message || String(error)}`)
-    return { success: false, query: keyword, page, total: 0, count: 0, items: [], links: [], nextCursor: null, error: error?.message || String(error) }
+    return {
+      success: false,
+      query: keyword,
+      page,
+      total: 0,
+      count: 0,
+      items: [],
+      links: [],
+      nextCursor: null,
+      error: error?.message || String(error),
+    }
   }
 }
 
@@ -636,9 +672,9 @@ async function fetchPage(
   const data = JSON.parse(raw)
   const inner = data[0]
   const section = inner[3]
-  const assetsRaw = section[2]
-  const total = section[4]
-  const nextCursor = section[8]
+  const assetsRaw = Array.isArray(section?.[2]) ? section[2] : []
+  const total = section?.[4]
+  const nextCursor = section?.[8]
 
   const items: GoogleArtSearchItem[] = []
   for (const asset of assetsRaw) {
@@ -712,10 +748,10 @@ async function fetchImagesPage(
   }
 
   const data = JSON.parse(raw)
-  const section = data[0][0]
-  const assetsRaw = section[2] || []
-  const total = section[4]
-  const nextCursor = section[8]
+  const section = data[0]?.[0]
+  const assetsRaw = Array.isArray(section?.[2]) ? section[2] : []
+  const total = section?.[4]
+  const nextCursor = section?.[8]
 
   const items: GoogleArtSearchItem[] = []
   for (const asset of assetsRaw) {

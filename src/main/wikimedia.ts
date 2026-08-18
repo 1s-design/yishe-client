@@ -8,8 +8,8 @@
  */
 import fs from 'fs'
 import { join } from 'path'
-import { uploadFileToCos, generateCosKey } from './cos'
 import { checkSiteAvailability } from './siteAvailability'
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
 
 const WIKIMEDIA_API_URL = 'https://commons.wikimedia.org/w/api.php'
 const WIKIMEDIA_SITE_URL = 'https://commons.wikimedia.org/'
@@ -315,12 +315,12 @@ export async function syncWikimediaToMaterialLibrary(options: {
 }
 
 /**
- * 上传 COS 并入库素材库（仿 pinterest.ts 的 uploadToMaterialLibrary）
+ * 上传 COS 并入库素材库（复用通用素材库模块）
  */
 async function uploadToMaterialLibrary(
   localPath: string,
   fileName: string,
-  apiBase: string = 'https://api.1s.design/api',
+  _apiBase: string | undefined,
   metadata?: {
     title?: string
     description?: string
@@ -335,85 +335,42 @@ async function uploadToMaterialLibrary(
     id?: string
   }
 ): Promise<{ ok: boolean; msg?: string }> {
-  const cosKey = await generateCosKey({ category: 'wikimedia', filename: fileName })
-  const cosResult = await uploadFileToCos(localPath, cosKey)
-  if (!cosResult.ok || !cosResult.url) {
-    return { ok: false, msg: 'msg' in cosResult ? (cosResult.msg as string) : 'COS 上传失败' }
-  }
+  const title = metadata?.title || fileName.replace(/\.(jpg|png|jpeg|webp)$/i, '')
+  const description = metadata?.description || ''
+  const author = metadata?.author || ''
+  const license = metadata?.license || ''
+  const link = metadata?.link || ''
 
-  try {
-    const { getTokenValue } = await getServerModule()
-    const token = getTokenValue()
+  const keywordsEn = [title, author, license, 'wikimedia', 'commons', 'image'].filter(Boolean).join(',')
+  const keywordsCn = [title, author].filter(Boolean).join(',')
 
-    const title = metadata?.title || fileName.replace(/\.(jpg|png|jpeg|webp)$/i, '')
-    const description = metadata?.description || ''
-    const author = metadata?.author || ''
-    const license = metadata?.license || ''
-    const link = metadata?.link || ''
-
-    const keywordsEn = [title, author, license, 'wikimedia', 'commons', 'image'].filter(Boolean).join(',')
-    const keywordsCn = [title, author].filter(Boolean).join(',')
-
-    const postData = JSON.stringify({
-      url: cosResult.url,
-      key: cosResult.key,
-      suffix: 'jpg',
-      originUrl: metadata?.image || '',
-      source: author ? `Wikimedia Commons - ${author}` : 'commons.wikimedia.org',
-      group: 'wikimedia',
-      isPublic: true,
-      isTexture: false,
-      isCustom: false,
-      name: title,
-      nameEn: title,
+  return uploadToMaterialLibraryShared(localPath, fileName, {
+    category: 'wikimedia',
+    group: 'wikimedia',
+    source: author ? `Wikimedia Commons - ${author}` : 'commons.wikimedia.org',
+    originUrl: metadata?.image || '',
+    suffix: 'jpg',
+    name: title,
+    nameEn: title,
+    description,
+    descriptionEn: description,
+    keywords: keywordsCn,
+    keywordsEn,
+    colorPalette: '',
+    meta: {
+      title,
       description,
-      descriptionEn: description,
-      keywords: keywordsCn,
-      keywordsEn,
-      colorPalette: '',
-      meta: {
-        title,
-        description,
-        link,
-        author,
-        license,
-        date: metadata?.date || '',
-        width: metadata?.width ?? null,
-        height: metadata?.height ?? null,
-        mime: metadata?.mime || null,
-        wikimediaId: metadata?.id || null,
-        source: 'wikimedia',
-        collectedAt: new Date().toISOString(),
-      },
-    })
-
-    const apiUrl = new URL(`${apiBase}/sticker/create`)
-    const req = await fetch(apiUrl.toString(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: postData,
-    })
-
-    if (req.status >= 400) {
-      return { ok: false, msg: `素材库接口 HTTP ${req.status}` }
-    }
-    const result = await req.json()
-    return result?.code === 200 || result?.ok ? { ok: true } : { ok: false, msg: result?.message || '素材库入库失败' }
-  } catch (error: any) {
-    return { ok: false, msg: `素材库入库失败: ${error?.message || String(error)}` }
-  }
-}
-
-type ServerModule = typeof import('./server')
-let serverModulePromise: Promise<ServerModule> | null = null
-function getServerModule() {
-  if (!serverModulePromise) {
-    serverModulePromise = import('./server')
-  }
-  return serverModulePromise
+      link,
+      author,
+      license,
+      date: metadata?.date || '',
+      width: metadata?.width ?? null,
+      height: metadata?.height ?? null,
+      mime: metadata?.mime || null,
+      wikimediaId: metadata?.id || null,
+      source: 'wikimedia',
+    },
+  })
 }
 
 // ─── 工具函数 ──────────────────────────────────────────────

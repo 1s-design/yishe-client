@@ -62,6 +62,8 @@ import { registerThePaperCapabilities } from './thepaper';
 import { register36KrCapabilities } from './36kr';
 import { registerHuxiuCapabilities } from './huxiu';
 import { registerSvgrepoCapabilities } from './svgrepo';
+import { registerGoogleArtCapabilities } from './googleArt';
+import { registerMaterialLibraryCapabilities } from './materialLibrary';
 import { CapabilityRegistry } from './registry';
 import type { CapabilityResult, RegisteredCapability } from './types';
 
@@ -133,6 +135,8 @@ export function registerAllCapabilities(): void {
   register36KrCapabilities();
   registerHuxiuCapabilities();
   registerSvgrepoCapabilities();
+  registerGoogleArtCapabilities();
+  registerMaterialLibraryCapabilities();
 
   initialized = true;
   console.log(`[Capabilities] 全部注册完成，共 ${CapabilityRegistry.size} 个能力`);

@@ -122,6 +122,9 @@ async function getBackendApiBase(): Promise<string> {
   return String(base || '').replace(/\/$/, '')
 }
 
+/** 供其他模块复用：获取当前生效的后端 API 基地址（与 COS 配置获取保持一致） */
+export { getBackendApiBase }
+
 function extractEncryptedConfig(payload: any): string {
   if (typeof payload === 'string') {
     return payload

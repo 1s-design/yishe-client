@@ -5,8 +5,9 @@
     aria-label="衣设 Agent 导航"
   >
     <header class="sidebar-header">
-      <div class="sidebar-brand" aria-label="1s design">
-        <img :src="brandLogo" alt="1s design" class="sidebar-brand__logo" />
+      <div class="sidebar-brand" aria-label="衣设助手" title="衣设助手">
+        <span class="sidebar-brand__type">{{ brandText }}</span>
+        <span class="sidebar-brand__cursor" aria-hidden="true" />
       </div>
       <button
         type="button"
@@ -46,6 +47,18 @@
       >
         <div class="sidebar-section__heading">
           <span id="history-title">历史</span>
+          <button
+            type="button"
+            class="sidebar-icon-button sidebar-refresh-button"
+            title="刷新对话列表"
+            aria-label="刷新对话列表"
+            @click="$emit('refresh')"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+          </button>
         </div>
 
         <div class="sidebar-sessions">
@@ -160,10 +173,47 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import brandLogo from "../../assets/icon.png";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useThemeMode } from "../../composables/useThemeMode";
 import type { ChatSession } from "../../types/agent";
+
+const BRAND_PHRASES = [
+  "衣设助手",
+  "让设计快 1 秒",
+  "设计灵感，即刻呈现",
+  "你的贴身设计搭档",
+];
+
+const brandText = ref("");
+let brandIndex = 0;
+let phraseIndex = 0;
+let brandTimer: ReturnType<typeof setTimeout> | null = null;
+
+function streamBrand() {
+  brandText.value = "";
+  brandIndex = 0;
+  const phrase = BRAND_PHRASES[phraseIndex % BRAND_PHRASES.length];
+  const tick = () => {
+    if (brandIndex >= phrase.length) {
+      brandTimer = setTimeout(() => {
+        phraseIndex = (phraseIndex + 1) % BRAND_PHRASES.length;
+        streamBrand();
+      }, 2000);
+      return;
+    }
+    const size = Math.floor(Math.random() * 3) + 1;
+    brandText.value += phrase.slice(brandIndex, brandIndex + size);
+    brandIndex += size;
+    brandTimer = setTimeout(tick, Math.random() * 150 + 150);
+  };
+  tick();
+}
+
+onMounted(streamBrand);
+
+onUnmounted(() => {
+  if (brandTimer) clearTimeout(brandTimer);
+});
 
 type SidebarUser = {
   account?: string;
@@ -259,20 +309,42 @@ const accountInitial = computed(() =>
 
 .sidebar-brand {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  max-width: 100%;
+  min-width: 0;
   align-items: center;
-  justify-content: center;
+  line-height: 1;
+  white-space: nowrap;
   -webkit-app-region: no-drag;
 }
 
-.sidebar-brand__logo {
-  display: block;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  object-fit: cover;
+.sidebar-brand__type {
+  min-width: 0;
+  color: var(--menu-text);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.sidebar-brand__cursor {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: var(--menu-text);
+  animation: sidebar-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes sidebar-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .sidebar-icon-button,
@@ -657,6 +729,20 @@ const accountInitial = computed(() =>
   padding: 40px 10px 10px;
 }
 
+.chat-sidebar.is-collapsed .sidebar-brand {
+  justify-content: center;
+}
+
+.chat-sidebar.is-collapsed .sidebar-brand__type {
+  display: none;
+}
+
+.chat-sidebar.is-collapsed .sidebar-brand__cursor {
+  width: 19px;
+  height: 19px;
+  margin-left: 0;
+}
+
 .chat-sidebar.is-collapsed .sidebar-collapse-button {
   order: -1;
   width: 22px;
@@ -714,5 +800,31 @@ const accountInitial = computed(() =>
     width: 244px;
     min-width: 244px;
   }
+}
+</style>
+
+<style scoped>
+.sidebar-refresh-button {
+  width: 20px;
+  height: 20px;
+  padding: 2px;
+  margin-left: auto;
+  opacity: 0.6;
+  transition: opacity 0.2s, transform 0.3s;
+}
+.sidebar-refresh-button:hover {
+  opacity: 1;
+}
+.sidebar-refresh-button:active {
+  transform: rotate(180deg);
+}
+.sidebar-refresh-button svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
 }
 </style>

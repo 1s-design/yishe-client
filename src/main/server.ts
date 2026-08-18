@@ -22,6 +22,8 @@ import { crawlerCollectorService } from "./crawlerCollector";
 import { registerHotSearchRoutes } from "./hotsearch/hotsearch.routes";
 import { hotSearchService } from "./hotsearch/hotsearch.service";
 import { writeClientLog } from "./clientLogger";
+import { createAgentApiRouter } from "./agent/agent-api";
+import { sessionStore } from "./agent/session-store";
 
 // 为了兼容部分证书配置不规范的站点，在 Node/Electron 端放宽 HTTPS 校验，
 // 行为与之前 axios + https.Agent({ rejectUnauthorized: false }) 保持一致，
@@ -274,6 +276,12 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
   app.get("/", (_req, res) => {
     res.send("Yishe Client Server Running");
   });
+
+  // ── Agent HTTP API ────────────────────────────────────────
+  // 初始化会话存储
+  sessionStore.load();
+  // Agent API 允许本地调用，不需要 service secret（只暴露 GET/POST）
+  app.use("/api/agent", createAgentApiRouter());
 
   // Swagger API 文档路由
   app.use(

@@ -44,8 +44,11 @@
             >
               <Attachments
                 v-if="message.attachments?.length"
-                variant="inline"
-                class="agent-attachments"
+                :variant="message.role === 'user' ? 'inline' : 'grid'"
+                :class="[
+                  'agent-attachments',
+                  message.role === 'assistant' && 'agent-attachments--grid',
+                ]"
               >
                 <Attachment
                   v-for="attachment in message.attachments"
@@ -457,6 +460,23 @@ function handlePaste(event: ClipboardEvent) {
 </script>
 
 <style scoped>
+.agent-attachments--grid {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.agent-attachments--grid :deep(.group) {
+  width: 128px;
+  height: 128px;
+  cursor: zoom-in;
+  border: 1px solid rgba(128, 128, 128, 0.18);
+  transition: transform 0.2s ease;
+}
+
+.agent-attachments--grid :deep(.group:hover) {
+  transform: scale(1.04);
+}
+
 .agent-main {
   --agent-main-bg: var(--theme-bg);
   --agent-surface: var(--theme-surface);

@@ -109,6 +109,7 @@ export function setupAgentIpc(): void {
             },
           },
           request.config,
+          { runId, sessionId },
         );
       } catch (error: any) {
         const message = error?.message || "Agent 执行发生异常";

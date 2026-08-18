@@ -8,59 +8,13 @@ import type {
   ToolApprovalInteraction,
 } from "../types/agent";
 
-interface AgentApi {
-  sendMessage(payload: {
-    runId: string;
-    sessionId: string;
-    messages: unknown[];
-    config?: Partial<AgentConfig>;
-  }): void;
-  stop(): Promise<{ success: boolean }>;
-  resolveToolApproval(payload: {
-    callId: string;
-    approved: boolean;
-  }): Promise<{ success: boolean }>;
-  getConfig(): Promise<AgentConfig>;
-  saveConfig(config: Partial<AgentConfig>): Promise<AgentConfig>;
-  syncCloudConfig(payload: {
-    serverBase: string;
-    token: string;
-  }): Promise<AgentConfig>;
-  onReasoning(
-    callback: (data: StreamPayload & { delta: string }) => void,
-  ): () => void;
-  onContent(
-    callback: (data: StreamPayload & { delta: string }) => void,
-  ): () => void;
-  onToolApproval(
-    callback: (
-      data: StreamPayload & {
-        id: string;
-        name: string;
-        args: Record<string, unknown>;
-        riskLevel: ToolApprovalInteraction["riskLevel"];
-        description?: string;
-      },
-    ) => void,
-  ): () => void;
-  onToolStart(
-    callback: (data: StreamPayload & ToolCallItem) => void,
-  ): () => void;
-  onToolEnd(callback: (data: StreamPayload & ToolCallItem) => void): () => void;
-  onComplete(
-    callback: (
-      data: StreamPayload & { fullText: string; fullReasoning: string },
-    ) => void,
-  ): () => void;
-  onError(
-    callback: (data: StreamPayload & { error: string }) => void,
-  ): () => void;
-}
-
 interface StreamPayload {
   runId: string;
   sessionId: string;
 }
+
+// 本地 Agent API 地址（与 server.ts 监听端口一致）
+const AGENT_BASE = "http://localhost:1519/api/agent";
 
 const sessions = ref<ChatSession[]>([]);
 const activeSessionId = ref<string | null>(null);
@@ -70,38 +24,10 @@ const streamingReasoning = ref("");
 const streamingToolCalls = ref<ToolCallItem[]>([]);
 const currentAssistantMessageId = ref<string | null>(null);
 const activeRunId = ref<string | null>(null);
-let listenersReady = false;
-
-function api(): AgentApi | null {
-  return (
-    (window as unknown as { api?: { agent?: AgentApi } }).api?.agent ?? null
-  );
-}
+let abortController: AbortController | null = null;
 
 function id(prefix = "id") {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function loadSessions(): ChatSession[] {
-  try {
-    const value = JSON.parse(
-      localStorage.getItem("yishe-agent-sessions") || "[]",
-    );
-    return Array.isArray(value) ? value : [];
-  } catch {
-    return [];
-  }
-}
-
-function persist() {
-  try {
-    localStorage.setItem(
-      "yishe-agent-sessions",
-      JSON.stringify(sessions.value),
-    );
-  } catch {
-    /* storage is optional */
-  }
 }
 
 function currentMessage(): ChatMessage | undefined {
@@ -120,77 +46,42 @@ function acceptsEvent(payload: StreamPayload) {
   );
 }
 
-function ensureListeners() {
-  if (listenersReady) return;
-  const agent = api();
-  if (!agent) return;
-  listenersReady = true;
-
-  agent.onReasoning((event) => {
-    if (!acceptsEvent(event)) return;
-    streamingReasoning.value += event.delta;
-    const message = currentMessage();
-    if (message) message.reasoning = streamingReasoning.value;
-  });
-  agent.onContent((event) => {
-    if (!acceptsEvent(event)) return;
-    streamingContent.value += event.delta;
-    const message = currentMessage();
-    if (message) message.content = streamingContent.value;
-  });
-  agent.onToolApproval((event) => {
-    if (!acceptsEvent(event)) return;
-    const message = currentMessage();
-    if (!message) return;
-    message.interaction = {
-      id: event.id,
-      type: "tool_approval",
-      toolName: event.name,
-      args: event.args || {},
-      riskLevel: event.riskLevel,
-      description: event.description,
-      status: "pending",
-    };
-    persist();
-  });
-  agent.onToolStart((event) => {
-    if (!acceptsEvent(event)) return;
-    streamingToolCalls.value.push({
-      id: event.id,
-      name: event.name,
-      args: event.args || {},
-      status: "running",
-    });
-    const message = currentMessage();
-    if (message) message.toolCalls = [...streamingToolCalls.value];
-  });
-  agent.onToolEnd((event) => {
-    if (!acceptsEvent(event)) return;
-    const item = streamingToolCalls.value.find((tool) => tool.id === event.id);
-    if (item)
-      Object.assign(item, {
-        result: event.result,
-        durationMs: event.durationMs,
-        error: event.error,
-        status: event.error ? "error" : "success",
-      });
-    const message = currentMessage();
-    if (message) message.toolCalls = [...streamingToolCalls.value];
-  });
-  agent.onComplete((event) => {
-    if (!acceptsEvent(event)) return;
-    finish(event.fullText, event.fullReasoning);
-  });
-  agent.onError((event) => {
-    if (!acceptsEvent(event)) return;
-    const message = currentMessage();
-    if (message) {
-      message.error = event.error;
-      message.isStreaming = false;
+/** 从任意嵌套对象中提取 http(s) 图片 URL 列表（缩略图/图片字段），去重并限量 */
+function extractImageUrls(value: unknown, limit = 12): string[] {
+  const urls = new Set<string>();
+  const IMG = /(?:\.(?:jpe?g|png|webp|gif|avif|bmp|svg)|images|photos|cdn\.|gettr|notes)/i;
+  const scan = (node: unknown, key?: string) => {
+    if (urls.size >= limit) return;
+    if (typeof node === "string") {
+      const url = node.trim();
+      if (/^https?:\/\//i.test(url) && (IMG.test(url) || /(thumbnail|image|photo|thumb|pic|img|preview)/i.test(key || ""))) {
+        urls.add(url);
+      }
+      return;
     }
-    resetStream();
-    persist();
-  });
+    if (Array.isArray(node)) {
+      for (const item of node) scan(item);
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        scan(v, k);
+      }
+    }
+  };
+  scan(value);
+  return [...urls];
+}
+
+function toAttachment(url: string, index: number): AttachmentData {
+  return {
+    id: `img_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+    name: `图片 ${index + 1}`,
+    filename: `image-${index + 1}`,
+    mediaType: "image/jpeg",
+    size: 0,
+    url,
+  };
 }
 
 function resetStream() {
@@ -200,6 +91,7 @@ function resetStream() {
   streamingToolCalls.value = [];
   currentAssistantMessageId.value = null;
   activeRunId.value = null;
+  abortController = null;
 }
 
 function finish(content: string, reasoning: string) {
@@ -214,7 +106,274 @@ function finish(content: string, reasoning: string) {
   );
   if (session) session.updatedAt = Date.now();
   resetStream();
-  persist();
+}
+
+// ── HTTP API 调用 ──────────────────────────────────────────
+
+async function apiGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${AGENT_BASE}${path}`);
+  return res.json();
+}
+
+async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${AGENT_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+}
+
+// ── 服务端会话类型（列表接口返回） ────────────────────────
+
+interface SessionListItem {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+// ── 服务端消息类型 ────────────────────────────────────────
+
+interface ServerChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } }
+  >;
+  attachments?: AttachmentData[];
+  reasoning_content?: string;
+  tool_call_id?: string;
+  name?: string;
+}
+
+function serverMessageToChatMessage(msg: ServerChatMessage, idx: number): ChatMessage {
+  let content = "";
+  if (typeof msg.content === "string") {
+    content = msg.content;
+  } else if (Array.isArray(msg.content)) {
+    content = msg.content
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
+      .join("");
+  }
+  return {
+    id: `srv_${idx}_${Date.now()}`,
+    role: msg.role === "tool" ? "assistant" : msg.role,
+    content,
+    reasoning: msg.reasoning_content,
+    timestamp: Date.now(),
+    attachments: msg.attachments,
+    isStreaming: false,
+  };
+}
+
+// ── 从服务端加载会话 ──────────────────────────────────────
+
+async function loadSessionsFromApi(): Promise<ChatSession[]> {
+  try {
+    const res = await apiGet<{ success: boolean; data: SessionListItem[] }>("/sessions");
+    if (res.success && Array.isArray(res.data)) {
+      return res.data.map(s => ({
+        id: s.id,
+        title: s.title,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        messages: [],
+      }));
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+async function loadSessionDetail(sessionId: string): Promise<ChatSession | null> {
+  try {
+    const res = await apiGet<{ success: boolean; data: { id: string; title: string; createdAt: number; updatedAt: number; messages: ServerChatMessage[] } }>(`/sessions/${sessionId}`);
+    if (res.success && res.data) {
+      const messages = res.data.messages.map((m, i) => serverMessageToChatMessage(m, i));
+      return {
+        id: res.data.id,
+        title: res.data.title,
+        createdAt: res.data.createdAt,
+        updatedAt: res.data.updatedAt,
+        messages,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ── SSE 流式处理 ──────────────────────────────────────────
+
+async function processSSEStream(
+  response: Response,
+  runId: string,
+  sessionId: string,
+) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("无法读取响应流");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    let currentEvent = "";
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        const dataStr = line.slice(6);
+        try {
+          const data = JSON.parse(dataStr);
+          handleSSEEvent(currentEvent, data, { runId, sessionId });
+        } catch {
+          // 忽略解析失败的行
+        }
+        currentEvent = "";
+      }
+    }
+  }
+}
+
+function handleSSEEvent(
+  event: string,
+  data: any,
+  payload: StreamPayload,
+) {
+  switch (event) {
+    case "reasoning":
+      if (!acceptsEvent(payload)) return;
+      streamingReasoning.value += data.delta;
+      const msg = currentMessage();
+      if (msg) msg.reasoning = streamingReasoning.value;
+      break;
+
+    case "content":
+      if (!acceptsEvent(payload)) return;
+      streamingContent.value += data.delta;
+      const msg2 = currentMessage();
+      if (msg2) msg2.content = streamingContent.value;
+      break;
+
+    case "tool_approval":
+      if (!acceptsEvent(payload)) return;
+      const approvalMsg = currentMessage();
+      if (!approvalMsg) return;
+      approvalMsg.interaction = {
+        id: data.id,
+        type: "tool_approval",
+        toolName: data.name,
+        args: data.args || {},
+        riskLevel: data.riskLevel,
+        description: data.description,
+        status: "pending",
+      };
+      break;
+
+    case "tool_start":
+      if (!acceptsEvent(payload)) return;
+      streamingToolCalls.value.push({
+        id: data.id,
+        name: data.name,
+        args: data.args || {},
+        status: "running",
+      });
+      const startMsg = currentMessage();
+      if (startMsg) startMsg.toolCalls = [...streamingToolCalls.value];
+      break;
+
+    case "tool_end":
+      if (!acceptsEvent(payload)) return;
+      const item = streamingToolCalls.value.find((tool) => tool.id === data.id);
+      if (item)
+        Object.assign(item, {
+          result: data.result,
+          durationMs: data.durationMs,
+          error: data.error,
+          status: data.error ? "error" : "success",
+        });
+      const endMsg = currentMessage();
+      if (endMsg) endMsg.toolCalls = [...streamingToolCalls.value];
+
+      if (!data.error && data.result) {
+        const imageUrls = extractImageUrls(data.result, 12);
+        if (imageUrls.length) {
+          const next = [
+            ...(endMsg?.attachments || []),
+            ...imageUrls.map((url, i) => toAttachment(url, i)),
+          ];
+          if (endMsg) endMsg.attachments = next;
+        }
+      }
+      break;
+
+    case "complete":
+      if (!acceptsEvent(payload)) return;
+      finish(data.fullText, data.fullReasoning);
+      refreshSessions();
+      break;
+
+    case "error":
+      if (!acceptsEvent(payload)) return;
+      const errMsg = currentMessage();
+      if (errMsg) {
+        errMsg.error = data.error;
+        errMsg.isStreaming = false;
+      }
+      resetStream();
+      break;
+  }
+}
+
+async function refreshSessions() {
+  try {
+    const remote = await loadSessionsFromApi();
+    if (remote.length > 0) {
+      sessions.value = sessions.value.map(local => {
+        const remoteSession = remote.find(r => r.id === local.id);
+        if (remoteSession && local.messages.length > 0) {
+          return { ...remoteSession, messages: local.messages };
+        }
+        return remoteSession || local;
+      });
+      for (const r of remote) {
+        if (!sessions.value.some(s => s.id === r.id)) {
+          sessions.value.push(r);
+        }
+      }
+    }
+  } catch {
+    // 忽略刷新失败
+  }
+}
+
+// ── 公开方法 ──────────────────────────────────────────────
+
+async function initSessions() {
+  sessions.value = await loadSessionsFromApi();
+  activeSessionId.value = sessions.value[0]?.id ?? null;
+  if (activeSessionId.value) {
+    const detail = await loadSessionDetail(activeSessionId.value);
+    if (detail) {
+      const idx = sessions.value.findIndex(s => s.id === detail.id);
+      if (idx >= 0) {
+        sessions.value[idx] = { ...sessions.value[idx], messages: detail.messages };
+      }
+    }
+  }
 }
 
 function createSession(): ChatSession {
@@ -227,14 +386,23 @@ function createSession(): ChatSession {
   };
   sessions.value.unshift(session);
   activeSessionId.value = session.id;
-  persist();
+  apiPost("/sessions", { id: session.id, title: session.title }).catch(() => {});
   return session;
 }
 
 function setActiveSession(sessionId: string) {
   if (isStreaming.value) return;
-  if (sessions.value.some((item) => item.id === sessionId))
+  if (sessions.value.some((item) => item.id === sessionId)) {
     activeSessionId.value = sessionId;
+    loadSessionDetail(sessionId).then((detail) => {
+      if (detail) {
+        const idx = sessions.value.findIndex(s => s.id === detail.id);
+        if (idx >= 0) {
+          sessions.value[idx] = { ...sessions.value[idx], messages: detail.messages };
+        }
+      }
+    });
+  }
 }
 
 function deleteSession(sessionId: string) {
@@ -242,13 +410,10 @@ function deleteSession(sessionId: string) {
   sessions.value = sessions.value.filter((item) => item.id !== sessionId);
   if (activeSessionId.value === sessionId)
     activeSessionId.value = sessions.value[0]?.id ?? null;
-  persist();
+  fetch(`${AGENT_BASE}/sessions/${sessionId}`, { method: "DELETE" }).catch(() => {});
 }
 
 function toAgentMessage(message: ChatMessage) {
-  // UI 的 toolCalls 是展示用结构（name / args / result / status），不是 OpenAI 的
-  // tool_calls 协议。将它作为历史再次提交会让第二轮请求携带无效工具调用并卡在模型端。
-  // 工具结果已由上一轮助手文本总结，后续上下文只需保留可读的消息内容与用户附件。
   return {
     role: message.role,
     content: message.content,
@@ -297,52 +462,114 @@ async function sendMessage(
   streamingContent.value = "";
   streamingReasoning.value = "";
   streamingToolCalls.value = [];
-  persist();
 
-  const agent = api();
-  if (!agent) {
-    const message = currentMessage();
-    if (message) {
-      message.error = "Agent IPC 不可用";
-      message.isStreaming = false;
+  abortController = new AbortController();
+
+  try {
+    const response = await fetch(`${AGENT_BASE}/sessions/${session.id}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId,
+        text: content.trim(),
+        attachments: attachments.length ? attachments : undefined,
+        autoApprove: false,
+      }),
+      signal: abortController.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    await processSSEStream(response, runId, session.id);
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      // 用户主动停止
+    } else {
+      const message = currentMessage();
+      if (message) {
+        message.error = err?.message || "请求失败";
+        message.isStreaming = false;
+      }
     }
     resetStream();
-    return;
   }
-
-  agent.sendMessage({
-    runId,
-    sessionId: session.id,
-    messages: session.messages
-      .filter((item) => !item.isStreaming)
-      .map(toAgentMessage),
-  });
 }
 
 async function resolveToolApproval(callId: string, approved: boolean) {
   const message = currentMessage();
   if (message?.interaction?.id === callId) {
     message.interaction.status = approved ? "approved" : "rejected";
-    persist();
   }
-  return api()?.resolveToolApproval({ callId, approved }) ?? { success: false };
+  try {
+    await apiPost("/approve", { callId, approved });
+  } catch {
+    // 忽略审批请求失败
+  }
 }
 
 async function stopGeneration() {
   if (!isStreaming.value) return;
-  await api()?.stop();
+  abortController?.abort();
+  try {
+    await apiPost("/stop");
+  } catch {
+    // 忽略停止请求失败
+  }
   const message = currentMessage();
   if (message) message.isStreaming = false;
   resetStream();
-  persist();
+}
+
+// ── 配置相关（保留 IPC 实现，需要从云端同步） ────────────
+
+async function getConfig(): Promise<AgentConfig | null> {
+  try {
+    const agentApi = (window as any)?.api?.agent;
+    if (agentApi?.getConfig) {
+      return await agentApi.getConfig();
+    }
+    const res = await apiGet<{ success: boolean; data: AgentConfig }>("/config");
+    return res.success ? res.data : null;
+  } catch {
+    return null;
+  }
+}
+
+async function syncCloudConfig(payload: {
+  serverBase: string;
+  token: string;
+}): Promise<AgentConfig | null> {
+  try {
+    const agentApi = (window as any)?.api?.agent;
+    if (agentApi?.syncCloudConfig) {
+      return await agentApi.syncCloudConfig(payload);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** 手动刷新会话列表（从服务端重新加载） */
+async function refreshSessionsManual() {
+  await refreshSessions();
+  if (activeSessionId.value) {
+    const detail = await loadSessionDetail(activeSessionId.value);
+    if (detail) {
+      const idx = sessions.value.findIndex(s => s.id === detail.id);
+      if (idx >= 0) {
+        sessions.value[idx] = { ...sessions.value[idx], messages: detail.messages };
+      }
+    }
+  }
 }
 
 export function useAgent() {
   if (sessions.value.length === 0) {
-    sessions.value = loadSessions();
-    activeSessionId.value = sessions.value[0]?.id ?? null;
+    initSessions();
   }
-  ensureListeners();
 
   return {
     sessions,
@@ -357,10 +584,20 @@ export function useAgent() {
     sendMessage,
     stopGeneration,
     resolveToolApproval,
-    getConfig: () => api()?.getConfig() ?? Promise.resolve(null),
-    saveConfig: (config: Partial<AgentConfig>) =>
-      api()?.saveConfig(config) ?? Promise.resolve(config as AgentConfig),
-    syncCloudConfig: (payload: { serverBase: string; token: string }) =>
-      api()?.syncCloudConfig(payload) ?? Promise.resolve(null),
+    getConfig,
+    saveConfig: async (config: Partial<AgentConfig>) => {
+      try {
+        const agentApi = (window as any)?.api?.agent;
+        if (agentApi?.saveConfig) {
+          return await agentApi.saveConfig(config);
+        }
+        const res = await apiPost<{ data: AgentConfig }>("/config", config);
+        return (res as any).data || config as AgentConfig;
+      } catch {
+        return config as AgentConfig;
+      }
+    },
+    syncCloudConfig,
+    refreshSessions: refreshSessionsManual,
   };
 }

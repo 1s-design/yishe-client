@@ -6,8 +6,8 @@
  */
 import fs from 'fs'
 import { join } from 'path'
-import { uploadFileToCos, generateCosKey } from './cos'
 import { checkSiteAvailability } from './siteAvailability'
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
 
 const PINTEREST_SITE_URL = 'https://www.pinterest.com/'
 const SEARCH_RESOURCE = '/resource/BaseSearchResource/get/'
@@ -374,12 +374,12 @@ export async function syncPinterestToMaterialLibrary(options: {
 }
 
 /**
- * 上传 COS 并入库素材库 (仿 googleArt.ts 的 uploadToMaterialLibrary)
+ * 上传 COS 并入库素材库（复用通用素材库模块）
  */
 async function uploadToMaterialLibrary(
   localPath: string,
   fileName: string,
-  apiBase: string = 'https://api.1s.design/api',
+  _apiBase: string | undefined,
   metadata?: {
     title?: string
     description?: string
@@ -393,86 +393,41 @@ async function uploadToMaterialLibrary(
     isVideo?: boolean
   }
 ): Promise<{ ok: boolean; msg?: string }> {
-  // 1. 上传 COS
-  const cosKey = await generateCosKey({ category: 'pinterest', filename: fileName })
-  const cosResult = await uploadFileToCos(localPath, cosKey)
-  if (!cosResult.ok || !cosResult.url) {
-    return { ok: false, msg: 'msg' in cosResult ? (cosResult.msg as string) : 'COS 上传失败' }
-  }
+  const title = metadata?.title || fileName.replace(/\.(jpg|png|jpeg|webp)$/i, '')
+  const description = metadata?.description || ''
+  const boardName = metadata?.boardName || ''
+  const pinner = metadata?.pinner || ''
+  const link = metadata?.link || ''
 
-  // 2. 素材库 sticker/create
-  try {
-    const { getTokenValue } = await getServerModule()
-    const token = getTokenValue()
+  const keywordsEn = [title, boardName, pinner, 'pinterest', 'image'].filter(Boolean).join(',')
+  const keywordsCn = [title, boardName, pinner].filter(Boolean).join(',')
 
-    const title = metadata?.title || fileName.replace(/\.(jpg|png|jpeg|webp)$/i, '')
-    const description = metadata?.description || ''
-    const boardName = metadata?.boardName || ''
-    const pinner = metadata?.pinner || ''
-    const link = metadata?.link || ''
-
-    const keywordsEn = [title, boardName, pinner, 'pinterest', 'image'].filter(Boolean).join(',')
-    const keywordsCn = [title, boardName, pinner].filter(Boolean).join(',')
-
-    const postData = JSON.stringify({
-      url: cosResult.url,
-      key: cosResult.key,
-      suffix: 'jpg',
-      originUrl: metadata?.image || '',
-      source: boardName ? `Pinterest - ${boardName}` : 'pinterest.com',
-      group: 'pinterest',
-      isPublic: true,
-      isTexture: false,
-      isCustom: false,
-      name: title,
-      nameEn: title,
+  return uploadToMaterialLibraryShared(localPath, fileName, {
+    category: 'pinterest',
+    group: 'pinterest',
+    source: boardName ? `Pinterest - ${boardName}` : 'pinterest.com',
+    originUrl: metadata?.image || '',
+    suffix: 'jpg',
+    name: title,
+    nameEn: title,
+    description,
+    descriptionEn: description,
+    keywords: keywordsCn,
+    keywordsEn,
+    colorPalette: '',
+    meta: {
+      title,
       description,
-      descriptionEn: description,
-      keywords: keywordsCn,
-      keywordsEn,
-      colorPalette: '',
-      meta: {
-        title,
-        description,
-        link,
-        boardName,
-        pinner,
-        width: metadata?.width ?? null,
-        height: metadata?.height ?? null,
-        pinterestId: metadata?.id || null,
-        isVideo: metadata?.isVideo ?? null,
-        source: 'pinterest',
-        collectedAt: new Date().toISOString(),
-      },
-    })
-
-    const apiUrl = new URL(`${apiBase}/sticker/create`)
-    const req = await fetch(apiUrl.toString(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: postData,
-    })
-
-    if (req.status >= 400) {
-      return { ok: false, msg: `素材库接口 HTTP ${req.status}` }
-    }
-    const result = await req.json()
-    return result?.code === 200 || result?.ok ? { ok: true } : { ok: false, msg: result?.message || '素材库入库失败' }
-  } catch (error: any) {
-    return { ok: false, msg: `素材库入库失败: ${error?.message || String(error)}` }
-  }
-}
-
-type ServerModule = typeof import('./server')
-let serverModulePromise: Promise<ServerModule> | null = null
-function getServerModule() {
-  if (!serverModulePromise) {
-    serverModulePromise = import('./server')
-  }
-  return serverModulePromise
+      link,
+      boardName,
+      pinner,
+      width: metadata?.width ?? null,
+      height: metadata?.height ?? null,
+      pinterestId: metadata?.id || null,
+      isVideo: metadata?.isVideo ?? null,
+      source: 'pinterest',
+    },
+  })
 }
 
 function sanitizeName(name: string) {

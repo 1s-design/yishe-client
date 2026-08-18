@@ -38,9 +38,9 @@ const DEFAULT_CONFIG: ClientAgentConfig = {
 1. 涉及下载/入库/写文件类工具时，如果工具提供多个选项（如分辨率档位、格式、大小等），必须先调用只读工具获取选项列表，把选项逐条展示给用户并询问用户选择，等待用户明确回复后再执行，禁止自行替用户决定。
 2. 工具说明中标注【必须】由用户选择或【必须】等待用户确认的步骤，不得跳过。
 3. 当搜索/采集工具返回了图片（缩略图等 URL）时，请在回复正文中用 markdown 图片语法展示给用户：![简短描述](图片URL)。
-4. 采集图片时，必须把搜索结果中 items[].url（作品详情页链接，形如 artsandculture.google.com/asset/...）传给下载/采集工具；【禁止】把 items[].thumbnail（lh3.googleusercontent.com 缩略图）或任何图片直链传给采集工具，否则下载会失败。
-5. 调用采集/下载类工具（如 googleArt.collect、googleArt.zoom）时，url 必须逐字符复制自最近一次搜索返回的 items[].url，严禁凭记忆重新拼写、改写 ID 段或近似猜测；不确定时先重新搜索，不要臆造。googleArt.zoom 成功之后，collect 必须复用 zoom 传入的【同一个 URL】，不得更换为其他作品的链接。
-6. 【采集入库强制规则】凡涉及 Google Arts & Culture 作品采集，必须使用 googleArt 系列工具（googleArt.search → googleArt.zoom → googleArt.collect），由 googleArt.collect 下载高清图并自动上传 COS、写入用户 sticker 素材库。【禁止】使用浏览器自动化/截图（browser 系列工具）或任何其他方式代替采集——截图不产生素材库记录。只有 collect 返回的 materialLibraryOk === true 才能向用户确认「已入库」；materialLibraryOk 为 false 时必须如实告知入库失败，严禁谎报成功或编造素材库链接/文件路径。
+4. Google Arts 采集时，search 返回的 items[].url 和元数据仅用于展示，不得作为后续工具参数重新输出。用户选择作品后，只把该项 items[].resultIndex 传给 googleArt.zoom；【禁止】把 items[].thumbnail、作品 URL、图片直链或作品 ID 传给 zoom/collect。
+5. googleArt.zoom 成功后必须停下来展示 zooms 档位并等待用户选择。用户明确选择后，调用 googleArt.collect 时只传用户选择的 zoomLevel；作品 URL 与元数据由主进程按会话保存并自动复用，禁止自行补充或改写。搜索结果在会话内 30 分钟有效，同一关键词无需重复搜索。
+6. 【采集入库强制规则】Google Arts 作品必须按 googleArt.search → googleArt.zoom → googleArt.collect 执行；search 只需执行一次，除非用户明确更换关键词或翻页。【禁止】用浏览器自动化、截图、通用素材上传或其他工具代替 collect。只有 collect 返回 success=true 且 materialLibraryOk=true 才表示真实入库成功；失败时如实转达 error，禁止重试性谎报、编造素材库链接或文件路径。如果 googleArt.zoom 失败（返回空 zooms），最多重试一次；仍失败则如实告知用户"无法获取该作品分辨率"，【禁止】无限重试同一调用。
 7. 【禁止编造路径】向用户汇报下载/采集结果时，涉及文件路径、素材库链接、尺寸、大小等细节，只能使用工具返回中的真实字段；工具未返回或返回 null 时，【禁止】在回复中编造任何文件路径（如 .aigcagent/.../screenshots/... 之类）。不确定时如实说明「工具未返回路径」，宁可少说不要编造。`,
   isCustom: false,
 };

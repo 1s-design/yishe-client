@@ -409,14 +409,12 @@ export class McpServerManager {
           url: z.string().describe('Google Arts 作品链接。'),
           zoomLevel: z.number().optional().describe('分辨率级别。不传则自动选择最高分辨率。'),
           autoMax: z.boolean().optional().describe('是否自动选择最高分辨率，默认 true。'),
-          syncToMaterial: z.boolean().optional().describe('是否自动保存并同步到素材库，默认 true。'),
         };
 
         const googleArtCollectSchema = {
           keyword: z.string().describe('搜索关键词（英文效果更佳，如 "van gogh"、"impressionism"）。'),
           maxCount: z.number().optional().describe('采集数量，默认 10，最大 50。'),
           autoMax: z.boolean().optional().describe('是否自动选择最高分辨率，默认 true。'),
-          syncToMaterial: z.boolean().optional().describe('是否自动同步到素材库，默认 true。'),
         };
 
         const schemasMap: Record<string, any> = {
