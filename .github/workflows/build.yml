@@ -183,16 +183,17 @@ jobs:
   # 确保 macOS 与 Windows 均构建成功后才覆盖最新版，避免只更新其中一个平台。
   #
   # 超时策略（防止 cos-nodejs-sdk-v5 在无网络响应时无限 hang）：
-  #   1. job 级 timeout-minutes: 10（GitHub 硬上限，超时整个 job 失败）
-  #   2. 每个上传步骤 timeout-minutes: 4（单步卡死则快速失败）
+  #   1. job 级 timeout-minutes: 20（GitHub 硬上限，超时整个 job 失败）
+  #   2. 每个上传步骤 timeout-minutes: 10（单步卡死则快速失败）
   #   3. COS_TIMEOUT=30000（SDK socket 超时 30 秒，cos-nodejs-sdk-v5 支持该环境变量）
   #   4. 上传前用 curl 探测 COS endpoint 连通性，不通则立即失败并给出诊断信息
   #   5. 上传前校验 secret 非空，避免空密钥导致 SDK 卡在签名等待
+  #   6. 上传前测速，预估时间，带宽过低时提前告警
   publish-cos:
     needs: [check-version, build]
     if: success() && needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Download macOS package
         uses: actions/download-artifact@v4
@@ -209,6 +210,7 @@ jobs:
       - name: Verify COS packages
         shell: bash
         run: |
+          ls -lh cos-upload/mac/ cos-upload/windows/
           test -s cos-upload/mac/latest.dmg
           test -s cos-upload/windows/latest.exe
 
@@ -226,14 +228,13 @@ jobs:
           fi
           echo "COS secrets 校验通过"
 
-      - name: Probe COS endpoint connectivity
+      - name: Probe COS endpoint + speed test
         id: probe
         shell: bash
-        timeout-minutes: 1
+        timeout-minutes: 2
         run: |
           REGION="${{ secrets.TENCENT_COS_REGION }}"
           BUCKET="${{ secrets.TENCENT_COS_BUCKET }}"
-          # 构造 COS 默认 endpoint（cos.<region>.myqcloud.com）
           ENDPOINT="https://${BUCKET}.cos.${REGION}.myqcloud.com"
           echo "探测 COS endpoint: $ENDPOINT"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$ENDPOINT" || echo "000")
@@ -242,15 +243,45 @@ jobs:
             echo "::error::无法连接到 COS endpoint（$ENDPOINT），网络不通或 DNS 解析失败。请检查：1) cos_region 是否正确（如 ap-guangzhou）；2) bucket 名称是否拼写正确；3) GitHub Runner 到腾讯云的网络是否被防火墙拦截。"
             exit 1
           fi
-          # 403/404 都说明 endpoint 可达（只是匿名访问被拒或根目录不存在），视为连通
           if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 500 ]]; then
             echo "COS endpoint 可达 (HTTP $HTTP_CODE)"
           else
             echo "::warning::COS endpoint 返回 HTTP $HTTP_CODE，继续尝试上传"
           fi
 
+          # 测速：上传 1MB 匿名探测（仅测 TCP+TLS 握手+上行带宽）
+          echo ""
+          echo "=== 上传带宽测速（1MB 测试文件）==="
+          SPEED_KEY="_gha_speedtest/$(date +%s).bin"
+          SPEED_BODY=$(head -c 1048576 /dev/urandom | base64 | head -c 1048576)
+          START_MS=$(date +%s%3N)
+          SPEED_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
+            -X PUT \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "$SPEED_BODY" \
+            "${ENDPOINT}/${SPEED_KEY}" || echo "000")
+          END_MS=$(date +%s%3N)
+          ELAPSED_MS=$((END_MS - START_MS))
+          if [[ "$SPEED_CODE" == "000" ]]; then
+            echo "::warning::测速上传失败（无响应），网络可能不稳定，继续尝试实际上传"
+          else
+            # 计算带宽 (Mbps)：1MB = 8Mb
+            BW_MBPS=$(echo "scale=2; 8000 / $ELAPSED_MS" | bc 2>/dev/null || echo "0")
+            echo "1MB 上传耗时: ${ELAPSED_MS}ms, 估算带宽: ~${BW_MBPS} Mbps (HTTP $SPEED_CODE)"
+            # 预估 300MB 时间
+            if [[ "$BW_MBPS" != "0" ]]; then
+              EST_S=$(echo "scale=0; 300 * 8 / $BW_MBPS" | bc 2>/dev/null || echo "0")
+              echo "预估 300MB 上传耗时: ~${EST_S}s ($(( EST_S / 60 ))m $(( EST_S % 60 ))s)"
+              if [[ "$EST_S" -gt 600 ]]; then
+                echo "::warning::预估上传超过 10 分钟，可能触发 job 超时。建议：1) 换用离 GitHub Runner 更近的 COS region（如 ap-singapore / na-siliconvalley）；2) 或先只发布 GitHub Release，COS 同步走独立流程。"
+              fi
+            fi
+          fi
+          # 清理测速文件（忽略错误）
+          curl -s -o /dev/null --max-time 5 -X DELETE "${ENDPOINT}/${SPEED_KEY}" || true
+
       - name: Upload macOS latest package to Tencent COS
-        timeout-minutes: 4
+        timeout-minutes: 10
         uses: TencentCloud/cos-action@v1
         env:
           # cos-nodejs-sdk-v5 支持 COS_TIMEOUT 环境变量（毫秒），控制 socket 超时
@@ -264,7 +295,7 @@ jobs:
           remote_path: yishe-client/mac
 
       - name: Upload Windows latest package to Tencent COS
-        timeout-minutes: 4
+        timeout-minutes: 10
         uses: TencentCloud/cos-action@v1
         env:
           COS_TIMEOUT: "30000"
