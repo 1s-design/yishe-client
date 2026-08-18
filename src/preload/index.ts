@@ -236,8 +236,11 @@ const api = {
   stopMcpServer: () => ipcRenderer.invoke("mcp-server:stop"),
   checkMcpServerStatus: () => ipcRenderer.invoke("mcp-server:status"),
   // MCP 工具执行
-  callMcpTool: (toolName: string, toolArgs: Record<string, any>) =>
-    ipcRenderer.invoke("mcp:call-tool", toolName, toolArgs),
+  callMcpTool: (
+    toolName: string,
+    toolArgs: Record<string, any>,
+    context?: { sessionId?: string; runId?: string },
+  ) => ipcRenderer.invoke("mcp:call-tool", toolName, toolArgs, context),
   listMcpTools: () => ipcRenderer.invoke("mcp:list-tools"),
   // Agent 配置同步
   setAgentConfig: (config: {

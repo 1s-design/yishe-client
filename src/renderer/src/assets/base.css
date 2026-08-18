@@ -100,6 +100,16 @@
   transform: translateX(-2px);
   background: var(--secondary);
 }
+.el-notification.client-toast.right {
+  right: auto !important;
+  left: 50% !important;
+  top: 50% !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%) !important;
+}
+.el-notification.client-toast.right:hover {
+  transform: translate(calc(-50% - 2px), -50%) !important;
+}
 .el-notification.client-toast--success {
   --toast-accent: #51c77d;
 }

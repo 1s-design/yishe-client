@@ -41,7 +41,7 @@ program
 
 // 解析命令行参数
 const env = process.argv[2] === 'dev' ? 'dev' : 'prod';
-const baseUrl = env === 'dev' ? 'http://localhost:1520' : 'https://1s.design:1520';
+const baseUrl = env === 'dev' ? 'http://localhost:1520' : 'https://api.1s.design';
 
 // 数据源配置
 const DATA_SOURCES = {

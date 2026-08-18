@@ -5,7 +5,6 @@ import type {
   ChatMessage,
   ChatSession,
   ToolCallItem,
-  ToolApprovalInteraction,
 } from "../types/agent";
 
 interface StreamPayload {
@@ -411,16 +410,6 @@ function deleteSession(sessionId: string) {
   if (activeSessionId.value === sessionId)
     activeSessionId.value = sessions.value[0]?.id ?? null;
   fetch(`${AGENT_BASE}/sessions/${sessionId}`, { method: "DELETE" }).catch(() => {});
-}
-
-function toAgentMessage(message: ChatMessage) {
-  return {
-    role: message.role,
-    content: message.content,
-    ...(message.role === "user" && message.attachments?.length
-      ? { attachments: message.attachments }
-      : {}),
-  };
 }
 
 async function sendMessage(

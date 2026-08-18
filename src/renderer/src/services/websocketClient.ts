@@ -5396,11 +5396,16 @@ function bindSocketEvents(currentSocket: Socket) {
     "mcp-call",
     async (data: {
       requestId: string;
-      payload: { toolName: string; toolArgs?: Record<string, any> };
+      payload: {
+        toolName: string;
+        toolArgs?: Record<string, any>;
+        context?: { sessionId?: string; runId?: string };
+      };
     }) => {
       const { requestId, payload } = data || {};
       const toolName = payload?.toolName || "";
       const toolArgs = payload?.toolArgs || {};
+      const context = payload?.context;
       emitter.emit("log", {
         level: "info",
         message: `[ws] received mcp-call: requestId=${requestId} tool=${toolName}`,
@@ -5427,7 +5432,7 @@ function bindSocketEvents(currentSocket: Socket) {
         (async () => {
           try {
             const nativeApi = getNativeApi() as any;
-            const result = await nativeApi.callMcpTool(toolName, toolArgs);
+            const result = await nativeApi.callMcpTool(toolName, toolArgs, context);
             socket?.emit("mcp-async-result", {
               requestId,
               toolName,
@@ -5452,7 +5457,7 @@ function bindSocketEvents(currentSocket: Socket) {
         if (!nativeApi?.callMcpTool) {
           throw new Error("当前环境未注入 MCP 工具执行能力");
         }
-        const result = await nativeApi.callMcpTool(toolName, toolArgs);
+        const result = await nativeApi.callMcpTool(toolName, toolArgs, context);
         socket?.emit("mcp-result", {
           requestId,
           result,
@@ -7749,7 +7754,7 @@ async function getGoogleArtRuntime(): Promise<Partial<ClientServiceStatus>> {
       binaryExists: !!status?.binaryExists,
       binaryPath: status?.binaryPath || null,
       siteUrl: status?.siteUrl || null,
-      siteAvailable,
+      siteAvailable: status?.siteAvailable ?? null,
       siteStatus: status?.siteStatus ?? null,
       siteLatencyMs: status?.siteLatencyMs ?? null,
       siteCheckedAt: status?.siteCheckedAt || null,

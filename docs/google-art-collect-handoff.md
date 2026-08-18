@@ -58,7 +58,7 @@ googleArt.collect(resultIndex, zoomLevel)
 | `src/main/googleArt.ts` | 底层搜索/缩放/拼图/下载实现；`syncGoogleArtToMaterialLibrary` 透传 materialId/materialUrl |
 | `src/main/capabilities/registry.ts` / `types.ts` / `index.ts` | `CapabilityCallContext`（含 sessionId、workflow）、能力注册 |
 | `src/main/agent/agent-config.ts` | 系统提示词规则（禁止自行选档、禁止编造路径等） |
-| `src/main/mcp-server/server.ts`、`tools/google-art-*.ts` | MCP 侧 google_art 同名工具，**从模型侧过滤**（本地工作流是唯一采集入口） |
+| `src/main/mcp-server/server.ts` | MCP 只从 `CapabilityRegistry` 自动生成 `googleArt_search/zoom/collect/status`，不再维护第二套 Google Art handler |
 
 ---
 
@@ -141,8 +141,8 @@ googleArt.collect(resultIndex, zoomLevel)
 1. **定位 §6.1 关键词固化**：打印模型实际传入的 search args（keyword vs query），确认 handler transform 与缓存命中逻辑；必要时统一字段名、强调用用户关键词。
 2. **精简 cached 返回**（§6.2），控制上下文膨胀。
 3. **复查附件渲染异常**（§6.3），确认前端粘贴图片是否重复。
-4. **复查 MCP 侧最终 diff**：`mcp-server/server.ts`、`tools/google-art-download.ts`、`tools/google-art-collect.ts` 此前部分恢复以控制影响面，需确认最终状态。
-5. **密钥处理**：`agent-config.ts` 中默认 API key 为暴露密钥，需确认归属（是否应改为占位/走配置）。
+4. **工作流迁移**：服务端 `google_arts_culture` 已改走 `googleArt_search → googleArt_zoom → googleArt_collect`，需补充带 `zoomLevel` 的自动化回归测试。
+5. **密钥处理**：客户端默认模型密钥已移除，必须在供应商侧轮换历史暴露密钥。
 6. **回归验证**：完整走一遍 §5.1 链路，确认采集成功且对话展示不混乱。
 
 ---

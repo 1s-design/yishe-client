@@ -85,7 +85,8 @@ export function registerHotSearchRoutes(
     process.env.NODE_ENV === "development"
       ? "http://localhost:1520/api"
       : "https://api.1s.design/api";
-  const FALLBACK_BASE = "http://localhost:1520/api";
+  const FALLBACK_BASE =
+    process.env.NODE_ENV === "development" ? "http://localhost:1520/api" : REMOTE_BASE;
 
   /** 带 fallback 的 fetch */
   async function fetchWithFallback(path: string, init?: RequestInit): Promise<any> {

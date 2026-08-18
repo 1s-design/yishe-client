@@ -28,7 +28,7 @@ import {
 const TEMU_REMOTE_API_BASE =
   process.env.NODE_ENV === "development"
     ? process.env.YISHE_LOCAL_API_BASE || "http://localhost:1520/api"
-    : process.env.YISHE_REMOTE_API_BASE || "https://1s.design:1520/api";
+    : process.env.YISHE_REMOTE_API_BASE || "https://api.1s.design/api";
 
 const TEMU_PUBLISH_DETAIL_TRIGGER_MODE_PAGE_LOAD = "pageLoad";
 const TEMU_PUBLISH_DETAIL_TRIGGER_MODE_MANUAL = "manual";

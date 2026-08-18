@@ -7,16 +7,16 @@ import {
 } from './operation-registry.js';
 
 /**
- * AI服务配置（硬编码在代码中）
- * 如需修改配置，请直接编辑以下常量
+ * AI 服务默认配置。
+ * API Key 只能来自运行时环境变量，禁止打包进客户端。
  */
 const AI_CONFIG = {
-  apiKey: 'sk-6b30d334c13b4995a85400958e7f1ea7',
+  apiKey: '',
   baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   model: 'qwen-plus-latest',
   maxTokens: 4096,
   temperature: 0.2,
-  enabled: true,
+  enabled: false,
 };
 
 const MODEL_ALIASES = {
@@ -182,7 +182,7 @@ class AIService {
 
     const enabled = process.env.AI_ENABLED !== undefined
       ? process.env.AI_ENABLED === 'true'
-      : AI_CONFIG.enabled;
+      : Boolean(apiKey);
 
     this.configMeta = {
       enabled,
@@ -192,10 +192,10 @@ class AIService {
       model,
       maxTokens,
       temperature,
-      apiKeySource: process.env.OPENAI_API_KEY || process.env.AI_API_KEY ? 'environment' : 'code',
+      apiKeySource: process.env.OPENAI_API_KEY || process.env.AI_API_KEY ? 'environment' : 'none',
       baseURLSource: process.env.AI_BASE_URL || process.env.OPENAI_BASE_URL ? 'environment' : 'code',
       modelSource: process.env.AI_MODEL || process.env.OPENAI_MODEL ? 'environment' : 'code',
-      enabledSource: process.env.AI_ENABLED !== undefined ? 'environment' : 'code',
+      enabledSource: process.env.AI_ENABLED !== undefined ? 'environment' : 'derived-from-key',
     };
 
     if (!enabled) {

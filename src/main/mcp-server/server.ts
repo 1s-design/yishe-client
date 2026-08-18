@@ -19,9 +19,9 @@ import { getTokenValue } from '../server';
 import { writeClientLog } from '../clientLogger';
 import { listOperationDefinitions } from '../image-tool/legacy/operation-registry.js';
 import { browserTools } from './tools/browser-tools';
-import { googleArtSearchTool } from './tools/google-art-search';
-import { googleArtDownloadTool } from './tools/google-art-download';
-import { googleArtCollectTool } from './tools/google-art-collect';
+import { registerAllCapabilities } from '../capabilities';
+import { CapabilityRegistry } from '../capabilities/registry';
+import type { CapabilityCallContext } from '../capabilities/types';
 
 type ToolCapability = {
   key: string;
@@ -69,6 +69,14 @@ function zodShapeToInputSchema(shape: Record<string, any>): Record<string, any> 
   return { type: 'object', properties };
 }
 
+function getZodObjectShape(schema: any): Record<string, any> {
+  if (!schema) return {};
+  if (schema.shape && typeof schema.shape === 'object') return schema.shape;
+  if (typeof schema?._def?.shape === 'function') return schema._def.shape();
+  if (schema?._def?.shape && typeof schema._def.shape === 'object') return schema._def.shape;
+  return {};
+}
+
 let serviceStatusTool: any = null;
 
 async function loadTools() {
@@ -85,8 +93,13 @@ interface RegisteredTool {
   capability?: { key: string; label: string; description?: string };
   operations?: ToolCapability[];
   actions?: ToolCapability[];
-  handler: (args: Record<string, any>) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
+  handler: (args: Record<string, any>, context?: CapabilityCallContext) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
 }
+
+type McpToolRegistration = RegisteredTool & {
+  /** MCP SDK 的 Zod raw shape；inputSchema 是同一份定义的 JSON 视图。 */
+  zodShape?: Record<string, any>;
+};
 
 export class McpServerManager {
   private serverFactory: (() => Promise<McpServer>) | null = null;
@@ -96,9 +109,39 @@ export class McpServerManager {
   private running = false;
   private port: number;
   private toolRegistry = new Map<string, RegisteredTool>();
+  private readonly namesByServer = new WeakMap<object, Set<string>>();
 
   constructor(port: number = 3210) {
     this.port = port;
+  }
+
+  /**
+   * MCP 协议注册和运行时目录必须共用同一个定义，禁止出现
+   * server.tool(...) 与 toolRegistry.set(...) 两套容易漂移的 schema/handler。
+   */
+  private registerTool(server: McpServer, definition: McpToolRegistration): void {
+    const names = this.namesByServer.get(server) || new Set<string>();
+    if (names.has(definition.name)) {
+      throw new Error(`MCP 工具重复注册: ${definition.name}`);
+    }
+    names.add(definition.name);
+    this.namesByServer.set(server, names);
+    server.tool(
+      definition.name,
+      definition.description,
+      (definition.zodShape || {}) as any,
+      async (args) => definition.handler(args as Record<string, any>) as any,
+    );
+    this.toolRegistry.set(definition.name, {
+      name: definition.name,
+      description: definition.description,
+      inputSchema: definition.inputSchema,
+      category: definition.category,
+      capability: definition.capability,
+      operations: definition.operations,
+      actions: definition.actions,
+      handler: definition.handler,
+    });
   }
 
   /**
@@ -112,17 +155,12 @@ export class McpServerManager {
       );
 
       // 注册客户端服务状态工具
-      server.tool(
-        serviceStatusTool.definition.name,
-        serviceStatusTool.definition.description,
-        {
-          service: z.string().optional().describe('要查询的服务名称，留空则查询所有服务'),
-        },
-        async (args) => serviceStatusTool.execute(args) as any,
-      );
-      this.toolRegistry.set(serviceStatusTool.definition.name, {
+      this.registerTool(server, {
         name: serviceStatusTool.definition.name,
         description: serviceStatusTool.definition.description,
+        zodShape: {
+          service: z.string().optional().describe('要查询的服务名称，留空则查询所有服务'),
+        },
         inputSchema: serviceStatusTool.definition.inputSchema,
         category: 'system',
         capability: { key: 'service_status', label: '本地服务状态', description: '查询客户端本地服务健康状态。' },
@@ -133,19 +171,12 @@ export class McpServerManager {
       const platforms = getAllPlatformConfigs();
       for (const [key, config] of Object.entries(platforms)) {
         const toolName = `hotsearch_${key}`;
-        server.tool(
-          toolName,
-          config.description,
-          {
-            reportToServer: z.boolean().optional().describe('是否上报到服务端，默认 true'),
-          },
-          async (args) => {
-            return await executePlatformCollect(key, args.reportToServer ?? true);
-          }
-        );
-        this.toolRegistry.set(toolName, {
+        this.registerTool(server, {
           name: toolName,
           description: config.description,
+          zodShape: {
+            reportToServer: z.boolean().optional().describe('是否上报到服务端，默认 true'),
+          },
           inputSchema: { reportToServer: { type: 'boolean', optional: true } },
           category: 'hotsearch',
           capability: { key: 'platform_hotsearch', label: '平台热搜采集', description: '采集指定平台的热搜数据。' },
@@ -155,20 +186,13 @@ export class McpServerManager {
       }
 
       // 注册全平台采集工具
-      server.tool(
-        'hotsearch_collect_all',
-        '采集所有启用平台的热搜数据（并发采集）',
-        {
+      this.registerTool(server, {
+        name: 'hotsearch_collect_all',
+        description: '采集所有启用平台的热搜数据（并发采集）',
+        zodShape: {
           platforms: z.array(z.string()).optional().describe('指定平台 key 列表，留空则采集所有启用平台'),
           reportToServer: z.boolean().optional().describe('是否上报到服务端，默认 true'),
         },
-        async (args) => {
-          return executeAllPlatformCollect(args.platforms, args.reportToServer ?? true);
-        }
-      );
-      this.toolRegistry.set('hotsearch_collect_all', {
-        name: 'hotsearch_collect_all',
-        description: '采集所有启用平台的热搜数据（并发采集）',
         inputSchema: { platforms: { type: 'array', items: { type: 'string' }, optional: true }, reportToServer: { type: 'boolean', optional: true } },
         category: 'hotsearch',
         capability: { key: 'platform_hotsearch', label: '全平台热搜采集', description: '并发采集所有启用平台热搜。' },
@@ -176,30 +200,20 @@ export class McpServerManager {
       });
 
       // 注册 AI 图片处理 MCP 工具
-      server.tool(
-        'image_process_execute',
-        '编程式执行图片处理操作链（如缩放、裁剪、水印、低多边形、滤镜等），方便 AI 直接调用',
-        {
-          imageUrl: z.string().describe('待处理的远程图片 URL 地址'),
-          operations: z
-            .array(
-              z.object({
-                type: z.string().describe('操作类型，如 resize, watermark, lowpoly, sepia, crop 等'),
-                params: z.record(z.string(), z.any()).optional().describe('操作参数对象'),
-              })
-            )
-            .optional()
-            .describe('按顺序排列的处理操作链'),
-          processorId: z.string().optional().describe('图像引擎 ID，如 imagemagick, sharp'),
-        },
-        async (args) => {
-          const { executeImageToolPlan } = await import('./tools/image-processing');
-          return await executeImageToolPlan(args);
-        }
-      );
-      this.toolRegistry.set('image_process_execute', {
+      const imageProcessShape = {
+        imageUrl: z.string().describe('待处理的远程图片 URL 地址'),
+        operations: z.array(
+          z.object({
+            type: z.string().describe('操作类型，如 resize, watermark, lowpoly, sepia, crop 等'),
+            params: z.record(z.string(), z.any()).optional().describe('操作参数对象'),
+          }),
+        ).optional().describe('按顺序排列的处理操作链'),
+        processorId: z.string().optional().describe('图像引擎 ID，如 imagemagick, sharp'),
+      };
+      this.registerTool(server, {
         name: 'image_process_execute',
         description: '编程式执行图片处理操作链（如缩放、裁剪、水印、低多边形、滤镜等），方便 AI 直接调用',
+        zodShape: imageProcessShape,
         inputSchema: {
           imageUrl: { type: 'string' },
           operations: { type: 'array', optional: true },
@@ -225,26 +239,19 @@ export class McpServerManager {
       });
 
       // 注册 Remotion 视频渲染 MCP 工具
-      server.tool(
-        'video_render_execute',
-        'Remotion 视频渲染工具：提交视频渲染任务、查询状态、列出模板。支持两种AI模式：ai-generate（模板填充）和 ai-free-generate（自由编排SceneGraph）',
-        {
-          templateId: z.string().optional().describe('视频模板 ID'),
-          inputProps: z.record(z.string(), z.any()).optional().describe('模板输入参数'),
-          action: z.enum(['render', 'status', 'list', 'catalog', 'ai-generate', 'ai-free-generate']).optional().describe('render=渲染, status=查状态, list=列任务, catalog=列模板, ai-generate=AI模板填充, ai-free-generate=AI自由编排SceneGraph'),
-          jobId: z.string().optional().describe('任务ID（action=status 时必填）'),
-          prompt: z.string().optional().describe('自然语言描述（action=ai-generate/ai-free-generate 时必填）'),
-          width: z.number().optional().describe('视频宽度px（action=ai-free-generate 时可选，默认竖屏1080）'),
-          height: z.number().optional().describe('视频高度px（action=ai-free-generate 时可选，默认竖屏1920）'),
-        },
-        async (args) => {
-          const { executeVideoRender } = await import('./tools/video-rendering');
-          return await executeVideoRender(args);
-        }
-      );
-      this.toolRegistry.set('video_render_execute', {
+      const videoRenderShape = {
+        templateId: z.string().optional().describe('视频模板 ID'),
+        inputProps: z.record(z.string(), z.any()).optional().describe('模板输入参数'),
+        action: z.enum(['render', 'status', 'list', 'catalog', 'ai-generate', 'ai-free-generate']).optional().describe('render=渲染, status=查状态, list=列任务, catalog=列模板, ai-generate=AI模板填充, ai-free-generate=AI自由编排SceneGraph'),
+        jobId: z.string().optional().describe('任务ID（action=status 时必填）'),
+        prompt: z.string().optional().describe('自然语言描述（action=ai-generate/ai-free-generate 时必填）'),
+        width: z.number().optional().describe('视频宽度px（action=ai-free-generate 时可选，默认竖屏1080）'),
+        height: z.number().optional().describe('视频高度px（action=ai-free-generate 时可选，默认竖屏1920）'),
+      };
+      this.registerTool(server, {
         name: 'video_render_execute',
-        description: 'Remotion 视频渲染工具：提交视频渲染任务、查询状态、列出模板',
+        description: 'Remotion 视频渲染工具：提交视频渲染任务、查询状态、列出模板。支持两种AI模式：ai-generate（模板填充）和 ai-free-generate（自由编排SceneGraph）',
+        zodShape: videoRenderShape,
         inputSchema: {
           templateId: { type: 'string', optional: true },
           inputProps: { type: 'object', optional: true },
@@ -275,25 +282,18 @@ export class McpServerManager {
       });
 
       // 注册浏览器自动化 Agent MCP 工具
-      server.tool(
-        'browser_agent_execute',
-        'AI 浏览器自动化 Agent：使用自然语言描述任务，browser-use 会自动操作浏览器完成。支持导航、点击、输入、采集数据、截图等。需要浏览器已启动。',
-        {
-          task: z.string().describe('要执行的浏览器任务描述'),
-          apiKey: z.string().describe('AI API Key'),
-          baseUrl: z.string().describe('AI API Base URL'),
-          model: z.string().describe('AI 模型名称'),
-          maxSteps: z.number().optional().describe('最大执行步数，默认 25'),
-          skillPrompt: z.string().optional().describe('匹配到的 Skill 指引（包含 goal 和 agentPrompt）'),
-        },
-        async (args) => {
-          const { browserAgentTool } = await import('./tools/browser-agent');
-          return browserAgentTool.execute(args as any) as any;
-        }
-      );
-      this.toolRegistry.set('browser_agent_execute', {
+      const browserAgentShape = {
+        task: z.string().describe('要执行的浏览器任务描述'),
+        apiKey: z.string().describe('AI API Key'),
+        baseUrl: z.string().describe('AI API Base URL'),
+        model: z.string().describe('AI 模型名称'),
+        maxSteps: z.number().optional().describe('最大执行步数，默认 25'),
+        skillPrompt: z.string().optional().describe('匹配到的 Skill 指引（包含 goal 和 agentPrompt）'),
+      };
+      this.registerTool(server, {
         name: 'browser_agent_execute',
         description: 'AI 浏览器自动化 Agent：使用自然语言描述任务，browser-use 会自动操作浏览器完成。支持导航、点击、输入、采集数据、截图等。需要浏览器已启动。',
+        zodShape: browserAgentShape,
         inputSchema: {
           task: { type: 'string' },
           apiKey: { type: 'string' },
@@ -317,22 +317,15 @@ export class McpServerManager {
       });
 
       // 注册浏览器自动化调用工具
-      server.tool(
-        'browser_invoke',
-        '调用浏览器自动化功能。可以启动/关闭浏览器、查看状态、执行页面操作等。支持的路径：/api/browser/status, /api/browser/connect, /api/browser/close',
-        {
-          method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional().describe('HTTP 方法，默认 GET'),
-          path: z.string().describe('API 路径，如 /api/browser/connect'),
-          body: z.record(z.string(), z.any()).optional().describe('请求体'),
-        },
-        async (args) => {
-          const { browserInvokeTool } = await import('./tools/browser-automation');
-          return browserInvokeTool.execute(args as any);
-        }
-      );
-      this.toolRegistry.set('browser_invoke', {
+      const browserInvokeShape = {
+        method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional().describe('HTTP 方法，默认 GET'),
+        path: z.string().describe('API 路径，如 /api/browser/connect'),
+        body: z.record(z.string(), z.any()).optional().describe('请求体'),
+      };
+      this.registerTool(server, {
         name: 'browser_invoke',
         description: '调用浏览器自动化功能。可以启动/关闭浏览器、查看状态、执行页面操作等。',
+        zodShape: browserInvokeShape,
         inputSchema: {
           method: { type: 'string', optional: true },
           path: { type: 'string' },
@@ -361,28 +354,19 @@ export class McpServerManager {
       ];
       for (const toolName of browserToolNames) {
         const browserDefinition = browserTools.find((tool) => tool.name === toolName);
-        server.tool(
-          toolName,
-          browserDefinition?.description || `浏览器操作: ${toolName}`,
-          (browserDefinition?.schema || {}) as any,
-          async (args) => {
-            const { browserToolMap } = await import('./tools/browser-tools');
-            const tool = browserToolMap.get(toolName);
-            if (!tool) return { content: [{ type: 'text' as const, text: `工具 ${toolName} 不存在` }], isError: true };
-            return (await tool.execute(args as any)) as any;
-          }
-        );
-        this.toolRegistry.set(toolName, {
+        const inputSchema = zodShapeToInputSchema(browserDefinition?.schema || {});
+        this.registerTool(server, {
           name: toolName,
           description: browserDefinition?.description || `浏览器操作: ${toolName}`,
-          inputSchema: zodShapeToInputSchema(browserDefinition?.schema || {}),
+          zodShape: (browserDefinition?.schema || {}) as any,
+          inputSchema,
           category: 'browser',
           capability: { key: 'browser_page_actions', label: '浏览器页面操作', description: '对当前页面执行单步交互。' },
           actions: [{
             key: toolName.replace(/^browser_/, ''),
             label: toolName.replace(/^browser_/, ''),
             description: browserDefinition?.description,
-            inputSchema: zodShapeToInputSchema(browserDefinition?.schema || {}),
+            inputSchema,
           }],
           handler: async (args) => {
             const { browserToolMap } = await import('./tools/browser-tools');
@@ -391,113 +375,49 @@ export class McpServerManager {
             return tool.execute(args as any);
           },
         });
-
-
-
       }
 
-      // 注册 Google Art 采集工具（支持多种命名格式）
-      try {
-        const googleArtSearchSchema = {
-          keyword: z.string().describe('搜索关键词（英文效果更佳，如 "van gogh"、"impressionism"）。'),
-          page: z.number().optional().describe('页码，从 1 开始（每页约 60 条）。默认 1。'),
-          maxCount: z.number().optional().describe('最多返回多少条结果（在分页基础上截断）。默认不限制。'),
-          hl: z.string().optional().describe('语言代码，默认 "en"。'),
-        };
+      // 客户端 CapabilityRegistry 是本地工具的唯一真相源。
+      // MCP 只做协议适配，不再为 googleArt / 其他本地能力重复定义 handler、schema 或参数。
+      registerAllCapabilities();
+      for (const capability of CapabilityRegistry.list()) {
+        const definition = CapabilityRegistry.getDefinition(
+          capability.namespace,
+          capability.name,
+        );
+        if (!definition) continue;
 
-        const googleArtDownloadSchema = {
-          url: z.string().describe('Google Arts 作品链接。'),
-          zoomLevel: z.number().optional().describe('分辨率级别。不传则自动选择最高分辨率。'),
-          autoMax: z.boolean().optional().describe('是否自动选择最高分辨率，默认 true。'),
-        };
-
-        const googleArtCollectSchema = {
-          keyword: z.string().describe('搜索关键词（英文效果更佳，如 "van gogh"、"impressionism"）。'),
-          maxCount: z.number().optional().describe('采集数量，默认 10，最大 50。'),
-          autoMax: z.boolean().optional().describe('是否自动选择最高分辨率，默认 true。'),
-        };
-
-        const schemasMap: Record<string, any> = {
-          google_art_search: googleArtSearchSchema,
-          google_art_download: googleArtDownloadSchema,
-          google_art_collect: googleArtCollectSchema,
-        };
-
-        // 注册原始名称的工具
-        for (const toolDef of [googleArtSearchTool, googleArtDownloadTool, googleArtCollectTool]) {
-          const toolName = toolDef.definition.name;
-          const schema = schemasMap[toolName];
-
-          server.tool(
-            toolName,
-            toolDef.definition.description,
-            schema,
-            async (args) => toolDef.execute(args) as any
+        const toolName = `${capability.namespace}_${capability.name}`;
+        const inputShape = getZodObjectShape(definition.argsSchema);
+        const inputSchema = zodShapeToInputSchema(inputShape);
+        const handler = async (args: Record<string, any>, context?: CapabilityCallContext) => {
+          const result = await CapabilityRegistry.call(
+            capability.namespace,
+            capability.name,
+            args,
+            context,
           );
-          this.toolRegistry.set(toolName, {
-            name: toolName,
-            description: toolDef.definition.description,
-            inputSchema: toolDef.definition.inputSchema,
-            category: 'google_art',
-            handler: async (args) => toolDef.execute(args) as any,
-          });
-        }
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            isError: !result.success,
+          };
+        };
 
-        // 额外注册 googleArt.search, googleArt.zoom, googleArt.collect（兼容服务端 MCP Bridge）
-        const extraTools = [
-          { name: 'googleArt_search', schema: googleArtSearchSchema, execute: googleArtSearchTool.execute },
-          { name: 'googleArt_download', schema: googleArtDownloadSchema, execute: googleArtDownloadTool.execute },
-          { name: 'googleArt_collect', schema: googleArtCollectSchema, execute: googleArtCollectTool.execute },
-        ];
-        for (const t of extraTools) {
-          this.toolRegistry.set(t.name, {
-            name: t.name,
-            description: 'Google Art 工具',
-            inputSchema: { type: 'object', properties: {} },
-            category: 'google_art',
-            handler: async (args) => t.execute(args) as any,
-          });
-        }
-
-        writeClientLog({
-          level: 'INFO',
-          module: 'mcp-server',
-          message: `已注册 Google Art 工具（含兼容格式）`,
-        });
-      } catch (e) {
-        writeClientLog({
-          level: 'ERROR',
-          module: 'mcp-server',
-          message: `Google Art 工具注册失败: ${(e as Error)?.message}`,
-          context: { error: String(e), stack: (e as Error)?.stack },
+        this.registerTool(server, {
+          name: toolName,
+          description: capability.description,
+          zodShape: inputShape,
+          inputSchema,
+          category: capability.namespace,
+          handler,
         });
       }
 
-
-      // 直接注册 googleArt 工具（确保可用）
-      try {
-        const { callCapability } = await import('../capabilities/index');
-        const googleArtTools = ['search', 'status', 'zoom', 'collect'];
-        for (const toolName of googleArtTools) {
-          const fullName = `googleArt_${toolName}`;
-          this.toolRegistry.set(fullName, {
-            name: fullName,
-            description: `googleArt.${toolName}`,
-            inputSchema: { type: 'object', properties: {} },
-            category: 'googleArt',
-            handler: async (args) => {
-              const result = await callCapability('googleArt', toolName, args);
-              return {
-                content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-                isError: !result.success,
-              };
-            },
-          });
-        }
-        console.log(`[MCP Server] 直接注册了 ${googleArtTools.length} 个 googleArt 工具`);
-      } catch (e) {
-        console.warn('[MCP Server] googleArt 工具注册失败:', (e as Error)?.message);
-      }
+      writeClientLog({
+        level: 'INFO',
+        module: 'mcp-server',
+        message: `已从 CapabilityRegistry 注册 ${CapabilityRegistry.size} 个 MCP 工具`,
+      });
 
       return server;
 
@@ -611,7 +531,9 @@ export class McpServerManager {
 
     try {
       const resp = await fetch(
-        'http://localhost:1521/api/ai/runtime-config?featureCode=ai.client-agent.execute',
+        process.env.NODE_ENV !== "development"
+          ? "https://api.1s.design/api/ai/runtime-config?featureCode=ai.client-agent.execute"
+          : "http://localhost:1521/api/ai/runtime-config?featureCode=ai.client-agent.execute",
         { headers: { Authorization: `Bearer ${token}` } },
       );
       const json = (await resp.json()) as any;
@@ -709,18 +631,37 @@ export class McpServerManager {
   async callTool(
     toolName: string,
     toolArgs: Record<string, any> = {},
+    context?: CapabilityCallContext,
   ): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
-    // 支持多种格式: googleArt.search, googleArt_search, google_art_search
-    let tool = this.toolRegistry.get(toolName);
+    // 规范名称只有 namespace_action；点号格式仅作为无重复的兼容映射。
+    // 旧 google_art_* 下载/批量采集链路不再映射，避免绕过可信 googleArt 工作流。
+    const normalizedInput = String(toolName || '').trim();
+    if (/^google_art_(download|collect)$/.test(normalizedInput)) {
+      return {
+        content: [{
+          type: 'text',
+          text: '旧 Google Arts MCP 工具已停用，请使用 googleArt_search → googleArt_zoom → googleArt_collect。',
+        }],
+        isError: true,
+      };
+    }
+    const canonicalName = normalizedInput === 'google_art_search'
+      ? 'googleArt_search'
+      : normalizedInput;
+    let tool = this.toolRegistry.get(canonicalName);
     if (!tool) {
       // 将点号转为下划线: googleArt.search -> googleArt_search
-      const underscoreName = toolName.replace(/\./g, '_');
+      const underscoreName = canonicalName.replace(/\./g, '_');
       tool = this.toolRegistry.get(underscoreName);
     }
     if (!tool) {
       // 尝试全小写加下划线: googleArt.search -> google_art_search
-      const normalizedName = toolName.replace(/\./g, '_').toLowerCase();
-      tool = this.toolRegistry.get(normalizedName);
+      const legacyName = canonicalName.replace(/\./g, '_').toLowerCase();
+      if (legacyName === 'google_art_search') {
+        tool = this.toolRegistry.get('googleArt_search');
+      } else {
+        tool = this.toolRegistry.get(legacyName);
+      }
     }
     if (!tool) {
       return {
@@ -729,7 +670,7 @@ export class McpServerManager {
       };
     }
     try {
-      return await tool.handler(toolArgs);
+      return await tool.handler(toolArgs, context);
     } catch (error: any) {
       return {
         content: [{ type: 'text', text: error?.message || String(error) }],

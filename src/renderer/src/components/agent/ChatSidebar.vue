@@ -315,6 +315,10 @@ const accountInitial = computed(() =>
   -webkit-app-region: drag;
 }
 
+:global(:root[data-platform="windows"]) .sidebar-header {
+  padding-top: 10px;
+}
+
 .sidebar-brand {
   display: inline-flex;
   max-width: 100%;
@@ -735,6 +739,10 @@ const accountInitial = computed(() =>
   justify-content: flex-start;
   gap: 12px;
   padding: 40px 10px 10px;
+}
+
+:global(:root[data-platform="windows"]) .chat-sidebar.is-collapsed .sidebar-header {
+  padding-top: 10px;
 }
 
 .chat-sidebar.is-collapsed .sidebar-brand {

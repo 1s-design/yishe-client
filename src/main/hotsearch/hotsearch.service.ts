@@ -79,17 +79,10 @@ class HotSearchService {
   }
 
   /**
-   * 带 fallback 的 API 请求（REMOTE_API_BASE 失败时回退到 localhost:1520）
+   * 请求服务端 API（REMOTE_API_BASE 已按 NODE_ENV 决定本地/生产地址）
    */
   private async apiFetch(path: string, init?: RequestInit): Promise<Response> {
-    const primaryUrl = `${REMOTE_API_BASE}${path}`;
-    const fallbackUrl = `http://localhost:1520/api${path}`;
-    try {
-      return await fetch(primaryUrl, init);
-    } catch (primaryErr: any) {
-      console.warn(`[HotSearch] 主地址失败 (${primaryErr?.cause?.code || primaryErr?.message}), fallback → ${fallbackUrl}`);
-      return fetch(fallbackUrl, init);
-    }
+    return fetch(`${REMOTE_API_BASE}${path}`, init);
   }
 
   /**

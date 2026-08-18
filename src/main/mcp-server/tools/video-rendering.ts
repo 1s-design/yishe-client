@@ -266,7 +266,11 @@ export async function executeVideoRender(args: {
 }): Promise<CallToolResult> {
   try {
     const { templateId, inputProps, action = 'render', jobId, prompt, width, height } = args;
-    const serverUrl = process.env.VITE_BASE_URL || 'http://localhost:1520';
+    const serverUrl =
+      process.env.VITE_BASE_URL ||
+      (process.env.NODE_ENV === "development"
+        ? "http://localhost:1520"
+        : "https://api.1s.design");
 
     // 列出模板目录
     if (action === 'catalog') {

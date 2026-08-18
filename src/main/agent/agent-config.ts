@@ -27,8 +27,11 @@ const DEFAULT_CONFIG: ClientAgentConfig = {
   provider: "openai",
   model: "gpt5.6sol",
   baseUrl: "https://aidaapi.site/",
-  apiKey: "sk-wPWMV4d1c3fAZhq5N7TTtFYeuhSseyVfS61PsZWUzNAaBsok",
-  enabled: true,
+  // Never ship a credential in the application bundle.  The model credential
+  // is populated in the main process by syncCloudAgentConfig() after the user
+  // signs in and has an ai.client-agent.execute binding.
+  apiKey: "",
+  enabled: false,
   temperature: 0.7,
   maxTokens: 4096,
   systemPrompt: `你是「衣设客户端」智能副驾 Agent，具备调用桌面原生工具、本地文件系统、Photoshop 自动化、网页数据抓取与 178+ 项本地能力的高级智能助手。

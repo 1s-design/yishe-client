@@ -6,6 +6,11 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import { setupElementPlus } from "./plugins/elementPlus";
 
+const isWindows = /win/i.test(navigator.platform);
+if (isWindows) {
+  document.documentElement.dataset.platform = "windows";
+}
+
 const app = createApp(App);
 
 // 全局注册 Element Plus，UI 统一使用 Element Plus 组件

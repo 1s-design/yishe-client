@@ -4,18 +4,22 @@
       <div class="capability-modal">
         <!-- Header -->
         <div class="cap-header">
-          <h2>能力库</h2>
-          <span class="cap-count">{{ allTools.length }} 个工具</span>
-          <button class="cap-close" @click="close">✕</button>
+          <div class="cap-header-left">
+            <h2>能力库</h2>
+            <span class="cap-count">{{ allTools.length }} 个工具</span>
+          </div>
+          <div class="cap-header-right">
+            <button class="cap-close" @click="close">✕</button>
+          </div>
         </div>
 
-        <!-- Search -->
-        <div class="cap-search-row">
+        <!-- Search & Filter -->
+        <div class="cap-controls">
           <input
             v-model="searchQuery"
             type="text"
-            placeholder="搜索工具..."
-            class="cap-search-input"
+            placeholder="搜索工具名称或描述..."
+            class="cap-search"
           />
           <div class="cap-tabs">
             <button
@@ -25,45 +29,51 @@
               @click="activeTab = tab.value"
             >
               {{ tab.label }}
+              <span class="cap-tab-num">{{ getTabCount(tab.value) }}</span>
             </button>
           </div>
         </div>
 
-        <!-- Tool List -->
+        <!-- Content - Card Grid -->
         <div class="cap-content">
           <div v-if="loading" class="cap-loading">加载中...</div>
-          <div v-else-if="filteredTools.length === 0" class="cap-empty">暂无匹配的工具</div>
-          <div v-else class="cap-list">
+          <div v-else-if="filteredTools.length === 0" class="cap-empty">
+            {{ allTools.length === 0 ? '暂无可用工具' : '没有匹配的工具' }}
+          </div>
+          <div v-else class="cap-grid">
             <div
               v-for="tool in filteredTools"
               :key="tool.id"
-              :class="['cap-item', { selected: isSelected(tool.id) }]"
+              :class="['cap-card', { selected: selectedIds.has(tool.id) }]"
               @click="toggleSelect(tool)"
             >
-              <input
-                type="checkbox"
-                :checked="isSelected(tool.id)"
-                @click.stop
-                @change="toggleSelect(tool)"
-              />
-              <div class="cap-item-info">
-                <span class="cap-item-name">{{ tool.displayName }}</span>
-                <span class="cap-item-desc">{{ tool.description }}</span>
+              <div class="cap-card-header">
+                <input
+                  type="checkbox"
+                  :checked="selectedIds.has(tool.id)"
+                  @click.stop
+                  @change="toggleSelect(tool)"
+                />
+                <span :class="['cap-card-badge', tool.source]">{{ tool.source === 'client' ? '本地' : '云端' }}</span>
               </div>
-              <span :class="['cap-badge', tool.source]">{{ tool.source === 'client' ? '本地' : '云端' }}</span>
+              <div class="cap-card-name">{{ tool.displayName }}</div>
+              <div class="cap-card-desc">{{ tool.description || '暂无描述' }}</div>
+              <div class="cap-card-category">{{ tool.category }}</div>
             </div>
           </div>
         </div>
 
         <!-- Footer -->
         <div class="cap-footer">
-          <span v-if="selectedCount > 0" class="cap-selected">已选 {{ selectedCount }} 个</span>
-          <span v-else class="cap-hint">点击选择工具</span>
+          <span v-if="selectedIds.size > 0" class="cap-selected-count">
+            已选 <strong>{{ selectedIds.size }}</strong> 个
+          </span>
+          <span v-else class="cap-hint">点击卡片选择工具</span>
           <div class="cap-actions">
             <button class="cap-btn" @click="clearSelection">清空</button>
             <button
               class="cap-btn cap-btn-primary"
-              :disabled="selectedCount === 0"
+              :disabled="selectedIds.size === 0"
               @click="addToConversation"
             >
               添加到对话
@@ -76,7 +86,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
+import { LOCAL_API_BASE } from '../../config/api';
 
 export interface CapabilityTool {
   id: string;
@@ -107,9 +118,8 @@ async function fetchTools() {
   loading.value = true;
   const tools: CapabilityTool[] = [];
 
-  // Client capabilities
   try {
-    const res = await fetch('/api/capabilities');
+    const res = await fetch(`${LOCAL_API_BASE}/capabilities`);
     const data = await res.json();
     if (data.success && data.capabilities) {
       for (const cap of data.capabilities) {
@@ -125,12 +135,11 @@ async function fetchTools() {
       }
     }
   } catch (e) {
-    console.warn('Failed to fetch client capabilities:', e);
+    console.error('Failed to fetch client capabilities:', e);
   }
 
-  // Server capabilities
   try {
-    const res = await fetch('/api/agent/server-capabilities');
+    const res = await fetch(`${LOCAL_API_BASE}/agent/server-capabilities`);
     const data = await res.json();
     if (data.data?.tools) {
       for (const tool of data.data.tools) {
@@ -147,19 +156,25 @@ async function fetchTools() {
       }
     }
   } catch (e) {
-    console.warn('Failed to fetch server capabilities:', e);
+    console.error('Failed to fetch server capabilities:', e);
   }
 
   allTools.value = tools;
   loading.value = false;
 }
 
-watch(() => props.isOpen, (val) => {
-  if (val) {
-    selectedIds.value.clear();
-    fetchTools();
-  }
-});
+watch(
+  () => props.isOpen,
+  async (val) => {
+    if (val) {
+      selectedIds.value.clear();
+      searchQuery.value = '';
+      activeTab.value = 'all';
+      await nextTick();
+      fetchTools();
+    }
+  },
+);
 
 const filteredTools = computed(() => {
   let tools = allTools.value;
@@ -171,16 +186,16 @@ const filteredTools = computed(() => {
       (t) =>
         t.name.toLowerCase().includes(q) ||
         t.description.toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q)
+        t.category.toLowerCase().includes(q),
     );
   }
   return tools;
 });
 
-const selectedCount = computed(() => selectedIds.value.size);
-
-function isSelected(id: string) {
-  return selectedIds.value.has(id);
+function getTabCount(tab: string) {
+  if (tab === 'client') return allTools.value.filter((t) => t.source === 'client').length;
+  if (tab === 'server') return allTools.value.filter((t) => t.source === 'server').length;
+  return allTools.value.length;
 }
 
 function toggleSelect(tool: CapabilityTool) {
@@ -210,20 +225,21 @@ function close() {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 24px;
 }
 
 .capability-modal {
   width: 100%;
-  max-width: 700px;
-  max-height: 85vh;
-  background: var(--background);
+  height: 100%;
+  max-width: 1400px;
+  max-height: 100%;
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -232,180 +248,218 @@ function close() {
 .cap-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px 20px;
+  justify-content: space-between;
+  padding: 16px 24px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.cap-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .cap-header h2 {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   margin: 0;
+  color: var(--card-foreground);
 }
 
 .cap-count {
   font-size: 12px;
-  color: var(--text-muted);
-  background: var(--surface);
-  padding: 2px 8px;
-  border-radius: 10px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  padding: 4px 10px;
+  border-radius: 12px;
 }
 
 .cap-close {
-  margin-left: auto;
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--muted-foreground);
   cursor: pointer;
-  font-size: 18px;
-  padding: 4px 8px;
-  border-radius: 4px;
+  font-size: 20px;
+  padding: 6px 10px;
+  border-radius: 6px;
 }
 
 .cap-close:hover {
-  background: var(--surface);
+  background: var(--muted);
 }
 
-.cap-search-row {
-  padding: 12px 20px;
+.cap-controls {
+  padding: 12px 24px;
   border-bottom: 1px solid var(--border);
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  align-items: center;
+  flex-shrink: 0;
 }
 
-.cap-search-input {
-  width: 100%;
-  padding: 8px 12px;
-  background: var(--surface);
+.cap-search {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--muted);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--foreground);
-  font-size: 13px;
+  border-radius: 8px;
+  color: var(--card-foreground);
+  font-size: 14px;
   outline: none;
 }
 
-.cap-search-input:focus {
-  border-color: var(--primary, #4a9eff);
+.cap-search:focus {
+  border-color: var(--ring);
 }
 
 .cap-tabs {
   display: flex;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .cap-tab {
-  background: var(--surface);
+  background: var(--muted);
   border: none;
-  color: var(--text-muted);
-  padding: 6px 12px;
-  border-radius: 14px;
-  font-size: 12px;
+  color: var(--muted-foreground);
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 13px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+}
+
+.cap-tab:hover {
+  background: var(--accent);
 }
 
 .cap-tab.active {
-  background: var(--primary, #4a9eff);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.cap-tab-num {
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 .cap-content {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 20px;
+  padding: 16px 24px;
 }
 
 .cap-loading,
 .cap-empty {
   text-align: center;
-  padding: 40px;
-  color: var(--text-muted);
+  padding: 60px;
+  color: var(--muted-foreground);
 }
 
-.cap-list {
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.cap-card {
+  background: var(--muted);
+  border: 2px solid transparent;
+  border-radius: 10px;
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
-.cap-item {
+.cap-card:hover {
+  border-color: var(--border);
+  background: var(--accent);
+}
+
+.cap-card.selected {
+  border-color: var(--primary);
+  background: var(--accent);
+}
+
+.cap-card-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  justify-content: space-between;
+}
+
+.cap-card-header input {
   cursor: pointer;
-  transition: background 0.15s;
 }
 
-.cap-item:hover {
-  background: var(--surface);
-}
-
-.cap-item.selected {
-  background: rgba(74, 158, 255, 0.1);
-}
-
-.cap-item input {
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.cap-item-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.cap-item-name {
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.cap-item-desc {
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cap-badge {
+.cap-card-badge {
   font-size: 10px;
   padding: 2px 8px;
   border-radius: 10px;
-  flex-shrink: 0;
 }
 
-.cap-badge.client {
-  background: rgba(74, 158, 255, 0.15);
+.cap-card-badge.client {
+  background: rgba(74, 158, 255, 0.2);
   color: #4a9eff;
 }
 
-.cap-badge.server {
-  background: rgba(74, 255, 158, 0.15);
+.cap-card-badge.server {
+  background: rgba(74, 255, 158, 0.2);
   color: #4ae09e;
+}
+
+.cap-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--card-foreground);
+}
+
+.cap-card-desc {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cap-card-category {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .cap-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  padding: 14px 24px;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.cap-selected {
-  font-size: 12px;
-  color: var(--text-muted);
+.cap-selected-count {
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
+.cap-selected-count strong {
+  color: var(--primary);
 }
 
 .cap-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  opacity: 0.6;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  opacity: 0.7;
 }
 
 .cap-actions {
@@ -414,26 +468,27 @@ function close() {
 }
 
 .cap-btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 13px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
   cursor: pointer;
   border: none;
-  background: var(--surface);
-  color: var(--foreground);
+  background: var(--muted);
+  color: var(--card-foreground);
+  transition: all 0.15s;
 }
 
 .cap-btn:hover {
-  background: var(--surface-hover, #3a3a5a);
+  background: var(--accent);
 }
 
 .cap-btn-primary {
-  background: var(--primary, #4a9eff);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .cap-btn-primary:hover:not(:disabled) {
-  opacity: 0.9;
+  opacity: 0.85;
 }
 
 .cap-btn-primary:disabled {

@@ -1586,10 +1586,10 @@ app.whenReady().then(() => {
   // MCP 工具执行 IPC
   ipcMain.handle(
     "mcp:call-tool",
-    async (_event, toolName: string, toolArgs: Record<string, any>) => {
+    async (_event, toolName: string, toolArgs: Record<string, any>, context?: { sessionId?: string; runId?: string }) => {
       try {
         const { callMcpTool } = await getMcpServerModule();
-        return await callMcpTool(toolName, toolArgs || {});
+        return await callMcpTool(toolName, toolArgs || {}, context);
       } catch (error: any) {
         writeMainLog("ERROR", "MCP 工具执行失败", {
           toolName,

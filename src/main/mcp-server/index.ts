@@ -4,6 +4,7 @@
  */
 
 import { McpServerManager } from './server';
+import type { CapabilityCallContext } from '../capabilities/types';
 
 let mcpManager: McpServerManager | null = null;
 
@@ -63,6 +64,7 @@ export function getMcpServerInfo(): {
 export async function callMcpTool(
   toolName: string,
   toolArgs: Record<string, any> = {},
+  context?: CapabilityCallContext,
 ): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
   if (!mcpManager) {
     return {
@@ -70,7 +72,7 @@ export async function callMcpTool(
       isError: true,
     };
   }
-  return mcpManager.callTool(toolName, toolArgs);
+  return mcpManager.callTool(toolName, toolArgs, context);
 }
 
 /**
