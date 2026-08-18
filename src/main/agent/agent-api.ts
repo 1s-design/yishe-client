@@ -102,6 +102,17 @@ export function createAgentApiRouter(): Router {
     res.json({ success: true, data: { resolved: true } });
   });
 
+  // ── 服务端能力目录 ──────────────────────────────────────
+  router.get("/server-capabilities", async (_req, res) => {
+    try {
+      const { fetchServerCapabilities } = await import("./server-capabilities");
+      const catalog = await fetchServerCapabilities();
+      res.json({ success: true, data: catalog });
+    } catch (err: any) {
+      res.json({ success: false, error: err?.message || String(err), data: { tools: [] } });
+    }
+  });
+
   // ── Google Arts 连通性检查 ──────────────────────────────
   router.get("/google-art-health", async (_req, res) => {
     const https = require("https");

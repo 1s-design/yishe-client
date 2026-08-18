@@ -530,6 +530,9 @@ function handlePaste(event: ClipboardEvent) {
   align-items: center;
   justify-content: center;
   padding: 24px 0 32px;
+  /* 优化：提升为独立合成层，避免resize时重绘 */
+  will-change: auto;
+  contain: layout style;
 }
 
 .agent-empty-state__inner {
@@ -538,6 +541,8 @@ function handlePaste(event: ClipboardEvent) {
   flex-direction: column;
   align-items: center;
   text-align: center;
+  /* 优化：GPU加速 */
+  transform: translateZ(0);
 }
 
 .agent-empty-state__inner h1 {
@@ -556,12 +561,14 @@ function handlePaste(event: ClipboardEvent) {
 }
 
 .agent-suggestions {
-  display: flex;
+  display: grid;
   width: 100%;
-  flex-wrap: wrap;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   justify-content: center;
   gap: 8px;
   margin-top: 26px;
+  /* 优化：grid比flex-wrap性能更好 */
+  contain: layout;
 }
 
 .agent-suggestion {
@@ -582,6 +589,9 @@ function handlePaste(event: ClipboardEvent) {
   transition:
     border-color 150ms ease,
     background-color 150ms ease;
+  /* 优化：提升为独立合成层 */
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 .agent-suggestion:hover,

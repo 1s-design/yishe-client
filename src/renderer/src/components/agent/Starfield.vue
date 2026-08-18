@@ -512,19 +512,33 @@ function updateMeteors(delta: number) {
 
 function animate(time: number) {
   if (!ctx) return;
+  // 限制delta最大值，避免后台切换后的大跳跃
   const delta = Math.min(time - lastTime, 50);
+  lastTime = time;
   ctx.clearRect(0, 0, width, height);
+  // 使用缓动跟随鼠标
   mouseX += (targetMouseX - mouseX) * 0.04;
   mouseY += (targetMouseY - mouseY) * 0.04;
+  // 批量绘制星星
   for (let i = 0; i < stars.length; i++) drawStar(stars[i], time);
   updateStars(delta);
   updateMeteors(delta);
   updatePlanets(delta);
-  lastTime = time;
   animationId = requestAnimationFrame(animate);
 }
 
+// 防抖计时器
+let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
 function resizeCanvas() {
+  // 防抖：避免频繁重绘
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    performResize();
+  }, 100);
+}
+
+function performResize() {
   const canvas = canvasRef.value;
   if (!canvas) return;
   width = window.innerWidth;
@@ -538,7 +552,10 @@ function resizeCanvas() {
   ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
   centerX = width / 2;
   centerY = height / 2;
-  createStars();
+  // 只在星星数量不匹配时才重建（避免每次resize都重建）
+  if (stars.length !== CONFIG.starCount) {
+    createStars();
+  }
   scheduleNextMeteor();
   nextPlanetTime =
     performance.now() + random(CONFIG.planetMinInterval, CONFIG.planetMaxInterval);

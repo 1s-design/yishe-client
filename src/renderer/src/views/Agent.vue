@@ -11,6 +11,7 @@
       @select="handleSelectSession"
       @delete="handleDeleteSession"
       @refresh="handleRefresh"
+      @open-capability-browser="handleOpenCapabilityBrowser"
       @login="emit('open-login')"
       @open-dashboard="emit('open-dashboard')"
       @logout="emit('logout')"
@@ -25,6 +26,12 @@
       @stop="handleStop"
       @resolve-tool-approval="handleResolveToolApproval"
     />
+
+    <CapabilityBrowser
+      :is-open="showCapabilityBrowser"
+      @close="showCapabilityBrowser = false"
+      @add-tools="handleAddTools"
+    />
   </div>
 </template>
 
@@ -35,6 +42,8 @@ import { useAgent } from "../composables/useAgent";
 import ChatSidebar from "../components/agent/ChatSidebar.vue";
 import ChatView from "../components/agent/ChatView.vue";
 import Starfield from "../components/agent/Starfield.vue";
+import CapabilityBrowser from "../components/agent/CapabilityBrowser.vue";
+import type { CapabilityTool } from "../components/agent/CapabilityBrowser.vue";
 
 const emit = defineEmits<{
   (e: "open-dashboard"): void;
@@ -119,6 +128,19 @@ function handleDeleteSession(id: string) {
 
 async function handleRefresh() {
   await refreshSessions();
+}
+
+const showCapabilityBrowser = ref(false);
+
+function handleOpenCapabilityBrowser() {
+  showCapabilityBrowser.value = true;
+}
+
+async function handleAddTools(tools: CapabilityTool[]) {
+  if (tools.length === 0) return;
+  const toolNames = tools.map(t => t.name).join('、');
+  const message = `请使用以下工具帮我完成任务：${toolNames}。请告诉我你想用这些工具做什么。`;
+  await sendMessage(message);
 }
 
 async function handleSend(text: string, attachments?: any[]) {
