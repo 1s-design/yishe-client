@@ -13128,6 +13128,425 @@ const newsServicesConfig = [
       }),
     statusFn: (api: any) => api.getHuxiuStatus(),
   },
+  {
+    key: "techcrunchrss",
+    label: "TechCrunch RSS",
+    searchFn: (api: any, p: any) =>
+      api.fetchTechcrunchrss({
+        category: p.category || p.keyword || p.query || "all",
+      }),
+    statusFn: (api: any) => api.getTechcrunchrssStatus(),
+  },
+  {
+    key: "arstechnicarss",
+    label: "Ars Technica RSS",
+    searchFn: (api: any, p: any) =>
+      api.fetchArstechnicarss({
+        category: p.category || p.keyword || p.query || "all",
+      }),
+    statusFn: (api: any) => api.getArstechnicarssStatus(),
+  },
+  {
+    key: "thevergerss",
+    label: "The Verge RSS",
+    searchFn: (api: any, p: any) =>
+      api.fetchThevergerss({
+        category: p.category || p.keyword || p.query || "all",
+      }),
+    statusFn: (api: any) => api.getThevergerssStatus(),
+  },
+  {
+    key: "wired",
+    label: "Wired",
+    searchFn: (api: any, p: any) =>
+      api.fetchWired({
+        category: p.category || p.keyword || p.query || "all",
+      }),
+    statusFn: (api: any) => api.getWiredStatus(),
+  },
+  {
+    key: "mittechreviewrss",
+    label: "MIT Tech Review RSS",
+    searchFn: (api: any, p: any) =>
+      api.fetchMittechreviewrss({
+        category: p.category || p.keyword || p.query || "all",
+      }),
+    statusFn: (api: any) => api.getMittechreviewrssStatus(),
+  },
+  {
+    key: "engadget",
+    label: "Engadget",
+    searchFn: (api: any, p: any) =>
+      api.fetchEngadget({
+        category: p.category || p.keyword || p.query || "all",
+      }),
+    statusFn: (api: any) => api.getEngadgetStatus(),
+  },
+  {
+    key: "bbctechnology",
+    label: "BBC Technology",
+    searchFn: (api: any, p: any) =>
+      api.fetchBbctechnology({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getBbctechnologyStatus(),
+  },
+  {
+    key: "guardiantechnology",
+    label: "Guardian Technology",
+    searchFn: (api: any, p: any) =>
+      api.fetchGuardiantechnology({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getGuardiantechnologyStatus(),
+  },
+  {
+    key: "time",
+    label: "TIME",
+    searchFn: (api: any, p: any) =>
+      api.fetchTime({
+        category: p.category || p.keyword || p.query || "all",
+      }),
+    statusFn: (api: any) => api.getTimeStatus(),
+  },
+  {
+    key: "apnews",
+    label: "AP News",
+    searchFn: (api: any, p: any) =>
+      api.fetchApnews({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getApnewsStatus(),
+  },
+  {
+    key: "nprtechnology",
+    label: "NPR Technology",
+    searchFn: (api: any, p: any) =>
+      api.fetchNprtechnology({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getNprtechnologyStatus(),
+  },
+  {
+    key: "sciencedaily",
+    label: "ScienceDaily",
+    searchFn: (api: any, p: any) =>
+      api.fetchScienceDaily({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getScienceDailyStatus(),
+  },
+  {
+    key: "physorg",
+    label: "Phys.org",
+    searchFn: (api: any, p: any) =>
+      api.fetchPhysorg({
+        category: p.category || p.keyword || p.query || "breaking",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getPhysorgStatus(),
+  },
+  {
+    key: "quantamagazine",
+    label: "Quanta Magazine",
+    searchFn: (api: any, p: any) =>
+      api.fetchQuanta({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getQuantaStatus(),
+  },
+  {
+    key: "spacecom",
+    label: "Space.com",
+    searchFn: (api: any, p: any) =>
+      api.fetchSpacecom({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getSpacecomStatus(),
+  },
+  {
+    key: "nature",
+    label: "Nature",
+    searchFn: (api: any, p: any) =>
+      api.fetchNature({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getNatureStatus(),
+  },
+  {
+    key: "scienceaaas",
+    label: "Science AAAS",
+    searchFn: (api: any, p: any) =>
+      api.fetchScienceAaas({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getScienceAaasStatus(),
+  },
+  {
+    key: "jiqizhixin",
+    label: "机器之心",
+    searchFn: (api: any, p: any) =>
+      api.fetchJiqizhixin({
+        category: p.category || p.keyword || p.query || "ai",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getJiqizhixinStatus(),
+  },
+  {
+    key: "sspai",
+    label: "少数派",
+    searchFn: (api: any, p: any) =>
+      api.fetchSspai({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getSspaiStatus(),
+  },
+  {
+    key: "variety",
+    label: "Variety",
+    searchFn: (api: any, p: any) =>
+      api.fetchVariety({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getVarietyStatus(),
+  },
+  {
+    key: "hollywood_reporter",
+    label: "Hollywood Reporter",
+    searchFn: (api: any, p: any) =>
+      api.fetchHollywoodReporter({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getHollywoodReporterStatus(),
+  },
+  {
+    key: "deadline",
+    label: "Deadline",
+    searchFn: (api: any, p: any) =>
+      api.fetchDeadline({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getDeadlineStatus(),
+  },
+  {
+    key: "billboard",
+    label: "Billboard",
+    searchFn: (api: any, p: any) =>
+      api.fetchBillboard({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getBillboardStatus(),
+  },
+  {
+    key: "tmz",
+    label: "TMZ",
+    searchFn: (api: any, p: any) =>
+      api.fetchTmz({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getTmzStatus(),
+  },
+  {
+    key: "ign",
+    label: "IGN",
+    searchFn: (api: any, p: any) =>
+      api.fetchIGN({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getIGNStatus(),
+  },
+  {
+    key: "polygon",
+    label: "Polygon",
+    searchFn: (api: any, p: any) =>
+      api.fetchPolygon({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getPolygonStatus(),
+  },
+  {
+    key: "douban_movie",
+    label: "豆瓣电影",
+    searchFn: (api: any, p: any) =>
+      api.fetchDoubanMovie({
+        category: p.category || p.keyword || p.query || "hot",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getDoubanMovieStatus(),
+  },
+  {
+    key: "douban_book",
+    label: "豆瓣读书",
+    searchFn: (api: any, p: any) =>
+      api.fetchDoubanBook({
+        category: p.category || p.keyword || p.query || "hot",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getDoubanBookStatus(),
+  },
+  {
+    key: "douban_gallery",
+    label: "豆瓣广场",
+    searchFn: (api: any, p: any) =>
+      api.fetchDoubanGallery({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getDoubanGalleryStatus(),
+  },
+  {
+    key: "zhibo8",
+    label: "直播吧",
+    searchFn: (api: any, p: any) =>
+      api.fetchZhibo8({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getZhibo8Status(),
+  },
+  {
+    key: "hupu",
+    label: "虎扑",
+    searchFn: (api: any, p: any) =>
+      api.fetchHuPu({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getHuPuStatus(),
+  },
+  {
+    key: "bbc_sport",
+    label: "BBC Sport",
+    searchFn: (api: any, p: any) =>
+      api.fetchBBCSport({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getBBCSportStatus(),
+  },
+  {
+    key: "flashscore",
+    label: "Flashscore",
+    searchFn: (api: any, p: any) =>
+      api.fetchFlashScore({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getFlashScoreStatus(),
+  },
+  {
+    key: "lagou",
+    label: "拉勾",
+    searchFn: (api: any, p: any) =>
+      api.fetchLagou({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getLagouStatus(),
+  },
+  {
+    key: "zhipin",
+    label: "BOSS直聘",
+    searchFn: (api: any, p: any) =>
+      api.fetchZhipin({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getZhipinStatus(),
+  },
+  {
+    key: "51job",
+    label: "前程无忧",
+    searchFn: (api: any, p: any) =>
+      api.fetch51Job({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.get51JobStatus(),
+  },
+  {
+    key: "linkedin_jobs",
+    label: "LinkedIn Jobs",
+    searchFn: (api: any, p: any) =>
+      api.fetchLinkedInJobs({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getLinkedInJobsStatus(),
+  },
+  {
+    key: "stats_gov",
+    label: "国家统计局",
+    searchFn: (api: any, p: any) =>
+      api.fetchStatsGov({
+        category: p.category || p.keyword || p.query || "news",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getStatsGovStatus(),
+  },
+  {
+    key: "sse",
+    label: "上交所",
+    searchFn: (api: any, p: any) =>
+      api.fetchSSE({
+        category: p.category || p.keyword || p.query || "news",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getSSEStatus(),
+  },
+  {
+    key: "chinamoney",
+    label: "中国货币网",
+    searchFn: (api: any, p: any) =>
+      api.fetchChinaMoney({
+        category: p.category || p.keyword || p.query || "news",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getChinaMoneyStatus(),
+  },
+  {
+    key: "worldometers",
+    label: "Worldometers",
+    searchFn: (api: any, p: any) =>
+      api.fetchWorldometers({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getWorldometersStatus(),
+  },
+  {
+    key: "ourworldindata",
+    label: "Our World in Data",
+    searchFn: (api: any, p: any) =>
+      api.fetchOurWorldInData({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getOurWorldInDataStatus(),
+  },
+  {
+    key: "medrxiv",
+    label: "medRxiv",
+    searchFn: (api: any, p: any) =>
+      api.fetchMedRxiv({
+        category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
+      }),
+    statusFn: (api: any) => api.getMedRxivStatus(),
+  },
 ];
 
 for (const cfg of newsServicesConfig) {
@@ -13320,6 +13739,60 @@ const dataToolsConfig = [
       api.searchColorapi({ hex: p.hex || "24B1E0" }),
     statusFn: (api: any) => api.getColorapiStatus(),
   },
+  {
+    key: "weather_cn",
+    label: "中国天气网",
+    searchFn: (api: any, p: any) =>
+      api.searchWeatherCn({ cityCode: p.cityCode || "101010100" }),
+    statusFn: (api: any) => api.getWeatherCnStatus(),
+  },
+  {
+    key: "weather_com",
+    label: "Weather.com",
+    searchFn: (api: any, p: any) =>
+      api.searchWeatherCom({ loc: p.loc || "USNY0996:1:US" }),
+    statusFn: (api: any) => api.getWeatherComStatus(),
+  },
+  {
+    key: "yahoo_finance",
+    label: "Yahoo Finance",
+    searchFn: (api: any, p: any) =>
+      api.searchYahooFinance({
+        symbol: p.symbol || "AAPL",
+        range: p.range || "1d",
+        interval: p.interval || "1d",
+      }),
+    statusFn: (api: any) => api.getYahooFinanceStatus(),
+  },
+  {
+    key: "sina_finance",
+    label: "新浪财经",
+    searchFn: (api: any, p: any) =>
+      api.searchSinaFinance({
+        codes: p.codes || "s_sh000001,s_sz399001,s_sz399006",
+      }),
+    statusFn: (api: any) => api.getSinaFinanceStatus(),
+  },
+  {
+    key: "eastmoney",
+    label: "东方财富",
+    searchFn: (api: any, p: any) =>
+      api.searchEastmoney({ secid: p.secid || "1.000001" }),
+    statusFn: (api: any) => api.getEastmoneyStatus(),
+  },
+  {
+    key: "cls_telegraph",
+    label: "财联社电报",
+    searchFn: (api: any) => api.searchClsTelegraph(),
+    statusFn: (api: any) => api.getClsTelegraphStatus(),
+  },
+  {
+    key: "coinmarketcap",
+    label: "CoinMarketCap",
+    searchFn: (api: any, p: any) =>
+      api.searchCoinmarketcap({ limit: p.limit || 20 }),
+    statusFn: (api: any) => api.getCoinmarketcapStatus(),
+  },
 ];
 
 for (const cfg of dataToolsConfig) {
@@ -13424,6 +13897,10 @@ const hotsearchConfig = [
   { key: "devto", label: "Dev.to" },
   { key: "ebay_trending", label: "eBay Trending" },
   { key: "shopify_trending", label: "Shopify Trending" },
+  { key: "baidu", label: "百度热搜" },
+  { key: "lobsters", label: "Lobsters" },
+  { key: "tencent_news", label: "腾讯新闻" },
+  { key: "tencent_tech", label: "腾讯科技" },
 ];
 
 for (const cfg of hotsearchConfig) {

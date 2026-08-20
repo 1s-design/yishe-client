@@ -31,6 +31,10 @@ function ensureExecutablePermissions(resourcesDir, productFilename) {
   // 需要保证可执行权限的二进制路径（相对于 Contents/Resources）
   const binaryRelPaths = [
     "resources/google-art/darwin/dezoomify-rs-mac",
+    "resources/plugin/darwin/image-tool/imagemagick/bin/magick",
+    "resources/plugin/darwin/image-tool/imagemagick/bin/identify",
+    "resources/plugin/darwin/image-tool/imagemagick/bin/convert",
+    "resources/plugin/darwin/image-tool/imagemagick/bin/mogrify",
   ];
 
   for (const relPath of binaryRelPaths) {
@@ -43,6 +47,34 @@ function ensureExecutablePermissions(resourcesDir, productFilename) {
         console.warn(`[after-pack] chmod 失败 ${relPath}: ${err.message}`);
       }
     }
+  }
+
+  // ImageMagick coder/filter 模块是 dlopen 加载的 .so，同样需要可执行权限
+  const imageMagickModulesPath = path.join(
+    contentsResourcesPath,
+    "resources/plugin/darwin/image-tool/imagemagick/lib/ImageMagick",
+  );
+  if (fs.existsSync(imageMagickModulesPath)) {
+    const soFiles = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const entryPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(entryPath);
+        } else if (entry.name.endsWith(".so")) {
+          soFiles.push(entryPath);
+        }
+      }
+    };
+    walk(imageMagickModulesPath);
+    for (const soPath of soFiles) {
+      try {
+        fs.chmodSync(soPath, 0o755);
+      } catch (err) {
+        console.warn(`[after-pack] chmod 失败 ${soPath}: ${err.message}`);
+      }
+    }
+    console.log(`[after-pack] chmod +x ${soFiles.length} 个 ImageMagick 模块`);
   }
 }
 

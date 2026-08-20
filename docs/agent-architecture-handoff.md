@@ -2,7 +2,7 @@
 
 > **阅读入口（重要）**：本文是详细实现交接，先阅读 [`architecture-overview.md`](./architecture-overview.md) 了解三仓库边界、两个 Agent、三类工具注册表和两套 MCP 语境。本文中的固定工具数量、历史参数示例和旧实现说明可能随源码变化；排障时以运行时目录接口和源码为准。
 >
-> **当前已知差异**：客户端 `CapabilityRegistry`、服务端 `AiAssistantToolRegistryService` 和客户端 MCP `toolRegistry` 并非同一个注册表；本地 MCP 已改为自动适配客户端 CapabilityRegistry。服务端工作流中的 Google Arts 节点仍是独立的 `service-command` 编排路径，后续必须迁移到规范能力调用，不能再新增第三套下载实现。
+> **当前已知差异**：客户端 `CapabilityRegistry`、服务端 `AiAssistantToolRegistryService` 和客户端 MCP `toolRegistry` 并非同一个注册表；本地 MCP 已改为自动适配客户端 CapabilityRegistry。Google Arts、素材、热搜和外部数据工作流已改为通过 MCP Bridge 调用规范能力；图片处理、视频渲染仍需接入同一通用适配器。
 
 ## 目录
 

@@ -10,6 +10,32 @@ const WINDOWS_EXECUTABLE_SUFFIX = process.platform === 'win32' ? '.exe' : '';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function buildCommandEnv(executable) {
+  if (process.platform !== 'darwin' || !executable || !hasPathLikeSyntax(executable)) {
+    return COMMAND_ENV;
+  }
+
+  // 从可执行文件路径推导捆绑目录：<root>/bin/magick
+  const resolvedExecutable = path.resolve(executable);
+  const resolvedRoot = path.resolve(
+    path.join(path.dirname(resolvedExecutable), '..'),
+  );
+  const modulesPath = path.join(resolvedRoot, 'lib', 'ImageMagick', 'modules-Q16HDRI', 'coders');
+  if (
+    !fs.existsSync(path.join(resolvedRoot, 'bin')) ||
+    !fs.existsSync(modulesPath)
+  ) {
+    return COMMAND_ENV;
+  }
+
+  return {
+    ...COMMAND_ENV,
+    MAGICK_HOME: resolvedRoot,
+    MAGICK_CONFIGURE_PATH: path.join(resolvedRoot, 'etc', 'ImageMagick-7'),
+    MAGICK_CODER_MODULE_PATH: modulesPath,
+  };
+}
+
 function parseImageMagickVersion(output) {
   if (!output) {
     return null;
@@ -179,6 +205,14 @@ function buildExecutableCandidates() {
     path.resolve(__dirname, '../../../../resources/plugin/image-tool/imagemagick'),
     path.resolve(__dirname, '../../../resources/plugin', process.platform, 'image-tool', 'imagemagick'),
     path.resolve(__dirname, '../../../resources/plugin/image-tool/imagemagick'),
+    ...(typeof process.resourcesPath === 'string' && process.resourcesPath
+      ? [
+          path.join(process.resourcesPath, 'resources', 'plugin', process.platform, 'image-tool', 'imagemagick'),
+          path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'plugin', process.platform, 'image-tool', 'imagemagick'),
+          path.join(process.resourcesPath, 'resources', 'plugin', 'image-tool', 'imagemagick'),
+          path.join(process.resourcesPath, 'imagemagick'),
+        ]
+      : []),
   ];
   for (const bundledDirectory of bundledDirectoryCandidates) {
     for (const candidate of buildDirectoryCandidates(
@@ -192,13 +226,39 @@ function buildExecutableCandidates() {
   pushCandidate(buildExecutableCandidate('magick', 'path:magick'));
   pushCandidate(buildExecutableCandidate('convert', 'path:convert'));
 
+  // 打包后的 GUI 应用（macOS/Windows 从 Finder/开始菜单启动）通常不继承终端 PATH，
+  // 这里补充常见安装位置，避免已安装的 ImageMagick 因 PATH 缺失而无法被识别。
+  if (process.platform === 'darwin') {
+    for (const root of ['/opt/homebrew', '/usr/local', '/opt/local', '/usr']) {
+      for (const candidate of buildDirectoryCandidates(
+        path.join(root, 'bin'),
+        `common:${path.join(root, 'bin')}`,
+      )) {
+        pushCandidate(candidate);
+      }
+    }
+  }
+  if (process.platform === 'win32') {
+    const programFilesCandidate = process.env['ProgramFiles']
+      ? path.join(process.env['ProgramFiles'], 'ImageMagick*')
+      : null;
+    if (programFilesCandidate) {
+      for (const candidate of buildDirectoryCandidates(
+        path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'ImageMagick'),
+        'common:ProgramFiles/ImageMagick',
+      )) {
+        if (candidate) pushCandidate(candidate);
+      }
+    }
+  }
+
   return candidates;
 }
 
 async function runExecutable(command, args = []) {
   return execFileAsync(command, args, {
     encoding: 'utf8',
-    env: COMMAND_ENV,
+    env: buildCommandEnv(command),
   });
 }
 
@@ -378,7 +438,7 @@ class ImageProcessor {
       
       const { stdout, stderr } = await execFileAsync(cmd, normalizedArgs, {
         encoding: 'utf8',
-        env: COMMAND_ENV
+        env: buildCommandEnv(cmd)
       });
       
       // 图像处理引擎通常将信息输出到 stderr，这是正常的

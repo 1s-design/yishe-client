@@ -405,6 +405,21 @@ export async function generateCosKey(options: CosKeyOptions): Promise<string> {
   })
 }
 
+async function registerFileAssetBestEffort(payload: Record<string, any>): Promise<void> {
+  try {
+    const apiBase = await getBackendApiBase()
+    const token = await getCurrentAccessToken()
+    if (!token) return
+    await requestText(`${apiBase}/file-asset/register`, 'POST', JSON.stringify({
+      provider: 'tencent-cos',
+      sourceApp: 'yishe-client',
+      ...payload,
+    }), { Authorization: `Bearer ${token}` })
+  } catch (error: any) {
+    console.warn('[file-asset] 登记失败，不影响 COS 上传:', error?.message || error)
+  }
+}
+
 export async function uploadFileToCos(filePath: string, key?: string): Promise<UploadResult> {
 
   if (!filePath || !fs.existsSync(filePath)) {
@@ -446,7 +461,19 @@ export async function uploadFileToCos(filePath: string, key?: string): Promise<U
           console.error('[COS] 上传失败:', err)
           resolve({ ok: false, msg: err?.message || 'COS 上传失败' })
         } else {
-          resolve({ ok: true, url: `https://${data.Location}`, key: cosKey })
+          const url = `https://${data.Location}`
+          void registerFileAssetBestEffort({
+            bucket: cosConfig.Bucket,
+            region: cosConfig.Region,
+            objectKey: cosKey,
+            url,
+            fileName,
+            size: fs.statSync(filePath).size,
+            sourceModule: cosKey.split('/')[2] || 'uncategorized',
+            category: cosKey.split('/')[2] || 'uncategorized',
+            metadata: { uploadMode: 'electron-main' },
+          })
+          resolve({ ok: true, url, key: cosKey })
         }
       }
     )

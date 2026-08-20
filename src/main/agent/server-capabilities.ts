@@ -56,6 +56,32 @@ export function serverToolOpenAiName(toolName: string): string {
   return `${SERVER_TOOL_PREFIX}_${(toolName || "").replace(/\./g, "_")}`;
 }
 
+/** 将服务端原名转换为与本地 Capability 函数名可比较的身份。 */
+export function capabilityIdentity(name: string): string {
+  return String(name || "")
+    .trim()
+    .replace(/\./g, "_")
+    .replace(/-/g, "_")
+    .toLowerCase();
+}
+
+/**
+ * 客户端本地能力优先：服务端目录中与本地能力同身份的定义不再挂给模型。
+ * 这只是目录去重，不会删除或修改服务端真实工具。
+ */
+export function filterMissingServerCapabilities(
+  catalog: ServerCapabilityCatalog,
+  localToolNames: Iterable<string>,
+): ServerCapabilityCatalog {
+  const local = new Set(Array.from(localToolNames).map(capabilityIdentity));
+  return {
+    ...catalog,
+    tools: (catalog.tools || []).filter(
+      (tool) => !local.has(capabilityIdentity(tool.name)),
+    ),
+  };
+}
+
 interface ServerEndpointState {
   serverBase: string;
   token: string;
@@ -183,8 +209,10 @@ export function serverCapabilitiesToOpenAiTools(
       function: {
         name: serverToolOpenAiName(tool.name),
         description: tool.description || `执行云端能力 ${tool.label}`,
-        parameters: (tool.inputSchema ||
-          { type: "object", properties: {} }) as Record<string, unknown>,
+        parameters: (tool.inputSchema || {
+          type: "object",
+          properties: {},
+        }) as Record<string, unknown>,
       },
     }));
 }
@@ -219,6 +247,24 @@ export function buildServerToolIndex(
  * 新工具若未命中关键词，在通用对话（相关工具 < 3）时仍会随 allTools 挂载。
  */
 export const SERVER_TOOL_KEYWORDS: Record<string, string[]> = {
+  // 服务端的只读账号、任务和健康检查能力属于 system 类别。若不在
+  // 这里声明，selectRelevantTools 会把它们从 Agent 的工具集中过滤掉，
+  // 导致客户端明明已经拉到了云端能力目录，却仍然回复“没有这个工具”。
+  system: [
+    "账号",
+    "登录信息",
+    "用户信息",
+    "我的资料",
+    "我的账户",
+    "当前用户",
+    "运行中任务",
+    "任务队列",
+    "服务状态",
+    "健康状态",
+    "system",
+  ],
+  workflow: ["工作流", "workflow", "节点", "执行流程", "流程图"],
+  material: ["素材库", "素材记录", "贴纸", "图片素材", "material"],
   browser: [
     "浏览器",
     "打开网页",
@@ -242,4 +288,3 @@ export const SERVER_TOOL_KEYWORDS: Record<string, string[]> = {
     "hotsearch",
   ],
 };
-

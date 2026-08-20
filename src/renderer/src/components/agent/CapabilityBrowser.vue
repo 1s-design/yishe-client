@@ -116,14 +116,21 @@ const tabs = [
 
 async function fetchTools() {
   loading.value = true;
-  const tools: CapabilityTool[] = [];
+  // 本地能力是第一真相源；服务端目录只用于补充本地没有的能力。
+  const toolsByIdentity = new Map<string, CapabilityTool>();
+  const normalizeIdentity = (name: unknown) =>
+    String(name || '')
+      .trim()
+      .replace(/\./g, '_')
+      .replace(/-/g, '_')
+      .toLowerCase();
 
   try {
     const res = await fetch(`${LOCAL_API_BASE}/capabilities`);
     const data = await res.json();
     if (data.success && data.capabilities) {
       for (const cap of data.capabilities) {
-        tools.push({
+        const item: CapabilityTool = {
           id: `c:${cap.namespace}:${cap.name}`,
           name: `${cap.namespace}.${cap.name}`,
           displayName: cap.name,
@@ -131,7 +138,8 @@ async function fetchTools() {
           source: 'client',
           category: cap.namespace,
           riskLevel: cap.riskLevel || 'low',
-        });
+        };
+        toolsByIdentity.set(normalizeIdentity(item.name), item);
       }
     }
   } catch (e) {
@@ -144,22 +152,27 @@ async function fetchTools() {
     if (data.data?.tools) {
       for (const tool of data.data.tools) {
         if (!tool.name) continue;
-        tools.push({
+        const item: CapabilityTool = {
           id: `s:${tool.name}`,
           name: tool.name,
-          displayName: tool.name,
+          displayName: tool.label || tool.name,
           description: tool.description || '',
           source: 'server',
           category: tool.category || '',
           riskLevel: tool.riskLevel || 'low',
-        });
+        };
+        const identity = normalizeIdentity(item.name);
+        // 不覆盖本地能力；服务端只补充客户端没有的能力。
+        if (!toolsByIdentity.has(identity)) {
+          toolsByIdentity.set(identity, item);
+        }
       }
     }
   } catch (e) {
     console.error('Failed to fetch server capabilities:', e);
   }
 
-  allTools.value = tools;
+  allTools.value = Array.from(toolsByIdentity.values());
   loading.value = false;
 }
 
@@ -362,15 +375,16 @@ function close() {
 
 .cap-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
 }
 
 .cap-card {
   background: var(--muted);
   border: 2px solid transparent;
   border-radius: 10px;
-  padding: 14px;
+  min-height: 176px;
+  padding: 16px;
   cursor: pointer;
   transition: all 0.15s;
   display: flex;
@@ -417,7 +431,10 @@ function close() {
 .cap-card-name {
   font-size: 14px;
   font-weight: 600;
+  line-height: 1.4;
   color: var(--card-foreground);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .cap-card-desc {
@@ -436,6 +453,30 @@ function close() {
   opacity: 0.6;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+@media (max-width: 720px) {
+  .capability-overlay {
+    padding: 12px;
+  }
+
+  .cap-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cap-tabs {
+    width: 100%;
+  }
+
+  .cap-tab {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .cap-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .cap-footer {

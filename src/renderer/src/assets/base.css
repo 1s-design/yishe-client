@@ -49,6 +49,8 @@
   --sidebar: #f9f9f9;
   --sidebar-foreground: #374151;
   --sidebar-border: #e5e5e5;
+  --toast-bg: #f4f4f4;
+  --toast-bg-hover: #eaeaea;
   --radius: 0.75rem;
 }
 
@@ -78,18 +80,20 @@
   --sidebar: #121212;
   --sidebar-foreground: #d1d5db;
   --sidebar-border: #262626;
+  --toast-bg: #212121;
+  --toast-bg-hover: #2a2a2a;
 }
 
 /* Compact desktop notifications */
 .el-notification.client-toast {
-  width: min(300px, calc(100vw - 32px));
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
   min-height: 0;
   margin: 0 0 8px;
   padding: 0;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--toast-accent);
-  border-radius: 9px;
-  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  background: var(--toast-bg);
   box-shadow: var(--theme-shadow-sm);
   overflow: hidden;
   transition:
@@ -97,18 +101,14 @@
     background-color 160ms ease;
 }
 .el-notification.client-toast:hover {
-  transform: translateX(-2px);
-  background: var(--secondary);
+  background: var(--toast-bg-hover);
 }
 .el-notification.client-toast.right {
   right: auto !important;
   left: 50% !important;
-  top: 50% !important;
+  top: 20px !important;
   margin: 0 !important;
-  transform: translate(-50%, -50%) !important;
-}
-.el-notification.client-toast.right:hover {
-  transform: translate(calc(-50% - 2px), -50%) !important;
+  transform: translateX(-50%) !important;
 }
 .el-notification.client-toast--success {
   --toast-accent: #51c77d;
@@ -129,31 +129,25 @@
 .el-notification.client-toast .el-notification__content {
   margin: 0;
 }
-.el-notification.client-toast .el-notification__closeBtn {
-  top: 9px;
-  right: 9px;
-  color: var(--muted-foreground);
-  font-size: 13px;
-}
-.el-notification.client-toast .el-notification__closeBtn:hover {
-  color: var(--foreground);
-}
 .client-toast__content {
   display: flex;
-  min-height: 38px;
+  min-height: 34px;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 8px 28px 8px 10px;
+  padding: 6px 14px;
+  text-align: center;
+  white-space: nowrap;
 }
 .client-toast__icon {
   display: inline-flex;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
   align-items: center;
   justify-content: center;
   color: var(--toast-accent);
-  font-size: 15px;
+  font-size: 13px;
 }
 .client-toast__dot {
   width: 6px;
@@ -167,4 +161,6 @@
   font-size: 11px;
   font-weight: 500;
   line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

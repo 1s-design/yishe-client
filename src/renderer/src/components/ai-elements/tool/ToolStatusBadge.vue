@@ -33,7 +33,7 @@ const props = defineProps<Props>()
     />
     <span
       v-else-if="props.status === 'error'"
-      class="inline-block size-1.5 rounded-full bg-destructive"
+      class="inline-block size-1.5 rounded-full bg-destructive-foreground"
     />
     <slot>{{ props.status }}</slot>
   </Badge>

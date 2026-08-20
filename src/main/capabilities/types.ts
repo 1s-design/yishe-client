@@ -23,6 +23,9 @@ export interface CapabilityResult<T = any> {
 export interface CapabilityCallContext {
   sessionId?: string;
   runId?: string;
+  contextId?: string;
+  idempotencyKey?: string;
+  signal?: AbortSignal;
 }
 
 /** 能力定义 */

@@ -134,6 +134,25 @@ yishe-admin AiAssistant
 5. **同一个 MCP Server 实例禁止重复注册。** 客户端 MCP 注册器现在会在重复名称时直接抛错，避免 `server.tool` 和运行时目录静默覆盖。
 6. **所有连续调用必须传递 context。** 例如 Google Arts 的 search → zoom → collect 通过 `sessionId/contextId` 隔离，不允许使用全局共享临时状态。
 
+### 3.5 服务端 Agent 的客户端能力委托
+
+服务端 Agent 不再拉取或复制客户端完整工具目录。模型只看到一个服务端入口：
+
+```text
+client_runtime.execute
+```
+
+调用参数中指定客户端规范能力：
+
+```json
+{
+  "toolName": "googleArt_search",
+  "toolArgs": { "keyword": "Mona Lisa", "maxCount": 8 }
+}
+```
+
+服务端自动定位当前用户的客户端（单客户端自动选择，多客户端才需要选择），再通过 WebSocket/MCP Bridge 委托给客户端 `CapabilityRegistry`。客户端的 handler、schema、会话状态和风险校验仍归客户端所有，服务端不复制工具目录。
+
 当前规范示例：
 
 ```text
@@ -280,7 +299,8 @@ Admin workflow editor
 | MCP 自定义工具的协议注册 → 运行时目录 | 已完成第一阶段 | 使用 `registerTool()` 统一注册；同一 MCP Server 实例重复名称直接报错 |
 | Google Arts Agent / MCP | 已完成 | 只保留 `googleArt_search/zoom/collect/status`，旧批量下载工具移除 |
 | Google Arts 服务端工作流节点 | 已完成第一阶段 | 改为通过 MCP Bridge 顺序调用规范工具，并要求显式 `zoomLevel` |
-| Pinterest / Wikimedia / Pexels 等素材工作流节点 | 进行中 | 仍有部分旧 `service-command` 编排器，下一阶段迁移到对应 Capability MCP 工具 |
-| 热搜、图片、视频工作流节点 | 进行中 | 先统一工具目录和参数，再逐个替换直接 service-command handler |
+| Pinterest / Wikimedia / Pexels 等素材工作流节点 | 已完成第一阶段 | 统一使用 `namespace_collect` Capability MCP 工具；节点只负责选择设备、传递上下文和汇总结果 |
+| 热搜、外部数据、素材工作流节点 | 已完成第一阶段 | 统一通过客户端规范 MCP 工具执行；节点执行器只保留通用设备选择、上下文传递和结果汇总 |
+| 图片处理、视频渲染 MCP 工具 | 已完成第一阶段 | 通过统一 `registerTool()` 同时注册 MCP 协议和运行时目录；当前没有对应的重复工作流 executor |
 
 因此当前原则是：**不再新增重复实现；已有非 Google 工作流路径按上表逐步迁移。**

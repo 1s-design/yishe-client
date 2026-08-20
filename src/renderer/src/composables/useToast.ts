@@ -39,7 +39,7 @@ export function useToast() {
       ]),
       duration: options.duration ?? 3000,
       position: "top-right",
-      showClose: true,
+      showClose: false,
       customClass: `client-toast client-toast--${tone}`,
     });
   };

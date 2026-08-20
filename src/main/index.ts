@@ -161,6 +161,49 @@ import {
 } from "./thepaper";
 import { fetch36Kr, get36KrStatus, sync36KrToLibrary } from "./36kr";
 import { fetchHuxiu, getHuxiuStatus, syncHuxiuToLibrary } from "./huxiu";
+import { fetchIGN, getIGNStatus, syncIGNToLibrary } from "./ign";
+import { fetchPolygon, getPolygonStatus, syncPolygonToLibrary } from "./polygon";
+import { fetchDoubanMovie, getDoubanMovieStatus, syncDoubanMovieToLibrary } from "./douban_movie";
+import { fetchDoubanBook, getDoubanBookStatus, syncDoubanBookToLibrary } from "./douban_book";
+import { fetchDoubanGallery, getDoubanGalleryStatus, syncDoubanGalleryToLibrary } from "./douban_gallery";
+import { fetchZhibo8, getZhibo8Status, syncZhibo8ToLibrary } from "./zhibo8";
+import { fetchHuPu, getHuPuStatus, syncHuPuToLibrary } from "./hupu";
+import { fetchBBCSport, getBBCSportStatus, syncBBCSportToLibrary } from "./bbc_sport";
+import { fetchFlashScore, getFlashScoreStatus, syncFlashScoreToLibrary } from "./flashscore";
+import { fetchLagou, getLagouStatus, syncLagouToLibrary } from "./lagou";
+import { fetchZhipin, getZhipinStatus, syncZhipinToLibrary } from "./zhipin";
+import { fetch51Job, get51JobStatus, sync51JobToLibrary } from "./51job";
+import { fetchLinkedInJobs, getLinkedInJobsStatus, syncLinkedInJobsToLibrary } from "./linkedin_jobs";
+import { fetchStatsGov, getStatsGovStatus, syncStatsGovToLibrary } from "./stats_gov";
+import { fetchSSE, getSSEStatus, syncSSEToLibrary } from "./sse";
+import { fetchChinaMoney, getChinaMoneyStatus, syncChinaMoneyToLibrary } from "./chinamoney";
+import { fetchWorldometers, getWorldometersStatus, syncWorldometersToLibrary } from "./worldometers";
+import { fetchOurWorldInData, getOurWorldInDataStatus, syncOurWorldInDataToLibrary } from "./ourworldindata";
+import { fetchMedRxiv, getMedRxivStatus, syncMedRxivToLibrary } from "./medrxiv";
+import { fetchTechcrunchrss, getTechcrunchrssStatus, syncTechcrunchrssToLibrary } from "./techcrunchrss";
+import { fetchArstechnicarss, getArstechnicarssStatus, syncArstechnicarssToLibrary } from "./arstechnicarss";
+import { fetchThevergerss, getThevergerssStatus, syncThevergerssToLibrary } from "./thevergerss";
+import { fetchWired, getWiredStatus, syncWiredToLibrary } from "./wired";
+import { fetchMittechreviewrss, getMittechreviewrssStatus, syncMittechreviewrssToLibrary } from "./mittechreviewrss";
+import { fetchEngadget, getEngadgetStatus, syncEngadgetToLibrary } from "./engadget";
+import { fetchBbctechnology, getBbctechnologyStatus, syncBbctechnologyToLibrary } from "./bbctechnology";
+import { fetchGuardiantechnology, getGuardiantechnologyStatus, syncGuardiantechnologyToLibrary } from "./guardiantechnology";
+import { fetchTime, getTimeStatus, syncTimeToLibrary } from "./time";
+import { fetchApnews, getApnewsStatus, syncApnewsToLibrary } from "./apnews";
+import { fetchNprtechnology, getNprtechnologyStatus, syncNprtechnologyToLibrary } from "./nprtechnology";
+import { fetchScienceDaily, getScienceDailyStatus, syncScienceDailyToLibrary } from "./sciencedaily";
+import { fetchPhysorg, getPhysorgStatus, syncPhysorgToLibrary } from "./physorg";
+import { fetchQuanta, getQuantaStatus, syncQuantaToLibrary } from "./quantamagazine";
+import { fetchSpacecom, getSpacecomStatus, syncSpacecomToLibrary } from "./spacecom";
+import { fetchNature, getNatureStatus, syncNatureToLibrary } from "./nature";
+import { fetchScienceAaas, getScienceAaasStatus, syncScienceAaasToLibrary } from "./scienceaaas";
+import { fetchJiqizhixin, getJiqizhixinStatus, syncJiqizhixinToLibrary } from "./jiqizhixin";
+import { fetchSspai, getSspaiStatus, syncSspaiToLibrary } from "./sspai";
+import { fetchVariety, getVarietyStatus, syncVarietyToLibrary } from "./variety";
+import { fetchHollywoodReporter, getHollywoodReporterStatus, syncHollywoodReporterToLibrary } from "./hollywood_reporter";
+import { fetchDeadline, getDeadlineStatus, syncDeadlineToLibrary } from "./deadline";
+import { fetchBillboard, getBillboardStatus, syncBillboardToLibrary } from "./billboard";
+import { fetchTmz, getTmzStatus, syncTmzToLibrary } from "./tmz";
 import { searchOpenMeteo, getOpenMeteoStatus } from "./openmeteo";
 import { searchWttr, getWttrStatus } from "./wttr";
 import { searchCoinGecko, getCoinGeckoStatus } from "./coingecko";
@@ -175,6 +218,13 @@ import { searchCountryIs, getCountryIsStatus } from "./countryis";
 import { searchErApi, getErApiStatus } from "./erapi";
 import { searchFawazahmed, getFawazahmedStatus } from "./fawazahmed";
 import { searchColorApi, getColorApiStatus } from "./colorapi";
+import { searchWeatherCn, getWeatherCnStatus } from "./weather_cn";
+import { searchWeatherCom, getWeatherComStatus } from "./weather_com";
+import { searchYahooFinance, getYahooFinanceStatus } from "./yahoo_finance";
+import { searchSinaFinance, getSinaFinanceStatus } from "./sina_finance";
+import { searchEastmoney, getEastmoneyStatus } from "./eastmoney";
+import { searchClsTelegraph, getClsTelegraphStatus } from "./cls_telegraph";
+import { searchCoinmarketcap, getCoinmarketcapStatus } from "./coinmarketcap";
 import { hotSearchService } from "./hotsearch/hotsearch.service";
 import { getPlatform } from "./hotsearch/platforms";
 
@@ -1235,6 +1285,19 @@ app.whenReady().then(() => {
     }
     wc.openDevTools({ mode: "right" });
     return { opened: true };
+  });
+
+  // renderer 主题切换时同步 Windows 标题栏控制按钮颜色
+  ipcMain.handle("title-bar:set-theme", async (_event, theme: "light" | "dark") => {
+    if (process.platform !== "win32" || !mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    const isDark = theme === "dark";
+    mainWindow.setTitleBarOverlay({
+      color: isDark ? "#181818" : "#ffffff",
+      symbolColor: isDark ? "#ececec" : "#000000",
+      height: 40,
+    });
   });
 
   // 监听 token 保存事件，启动服务
@@ -4265,6 +4328,739 @@ ipcMain.handle(
   },
 );
 
+// ─── TechCrunch RSS ─────────────────────────────────────
+ipcMain.handle("techcrunchrss:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchTechcrunchrss(
+      payload?.category || payload?.query || "all",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("techcrunchrss:status", async () => {
+  return getTechcrunchrssStatus();
+});
+
+ipcMain.handle(
+  "techcrunchrss:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncTechcrunchrssToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Ars Technica RSS ─────────────────────────────────────
+ipcMain.handle("arstechnicarss:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchArstechnicarss(
+      payload?.category || payload?.query || "all",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("arstechnicarss:status", async () => {
+  return getArstechnicarssStatus();
+});
+
+ipcMain.handle(
+  "arstechnicarss:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncArstechnicarssToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── The Verge RSS ─────────────────────────────────────
+ipcMain.handle("thevergerss:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchThevergerss(
+      payload?.category || payload?.query || "all",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("thevergerss:status", async () => {
+  return getThevergerssStatus();
+});
+
+ipcMain.handle(
+  "thevergerss:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncThevergerssToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Wired ─────────────────────────────────────
+ipcMain.handle("wired:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchWired(
+      payload?.category || payload?.query || "all",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("wired:status", async () => {
+  return getWiredStatus();
+});
+
+ipcMain.handle(
+  "wired:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncWiredToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── MIT Tech Review RSS ─────────────────────────────────────
+ipcMain.handle("mittechreviewrss:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchMittechreviewrss(
+      payload?.category || payload?.query || "all",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("mittechreviewrss:status", async () => {
+  return getMittechreviewrssStatus();
+});
+
+ipcMain.handle(
+  "mittechreviewrss:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncMittechreviewrssToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Engadget ─────────────────────────────────────
+ipcMain.handle("engadget:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchEngadget(
+      payload?.category || payload?.query || "all",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("engadget:status", async () => {
+  return getEngadgetStatus();
+});
+
+ipcMain.handle(
+  "engadget:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncEngadgetToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── BBC Technology ─────────────────────────────────────
+ipcMain.handle("bbctechnology:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchBbctechnology(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("bbctechnology:status", async () => {
+  return getBbctechnologyStatus();
+});
+
+ipcMain.handle(
+  "bbctechnology:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncBbctechnologyToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Guardian Technology ─────────────────────────────────────
+ipcMain.handle("guardiantechnology:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchGuardiantechnology(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("guardiantechnology:status", async () => {
+  return getGuardiantechnologyStatus();
+});
+
+ipcMain.handle(
+  "guardiantechnology:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncGuardiantechnologyToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── TIME ─────────────────────────────────────
+ipcMain.handle("time:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchTime(
+      payload?.category || payload?.query || "all",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("time:status", async () => {
+  return getTimeStatus();
+});
+
+ipcMain.handle(
+  "time:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncTimeToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── AP News ─────────────────────────────────────
+ipcMain.handle("apnews:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchApnews(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("apnews:status", async () => {
+  return getApnewsStatus();
+});
+
+ipcMain.handle(
+  "apnews:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncApnewsToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── NPR Technology ─────────────────────────────────────
+ipcMain.handle("nprtechnology:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchNprtechnology(
+      payload?.category || payload?.query || "technology",
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("nprtechnology:status", async () => {
+  return getNprtechnologyStatus();
+});
+
+ipcMain.handle(
+  "nprtechnology:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncNprtechnologyToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── ScienceDaily ─────────────────────────────────────
+ipcMain.handle("sciencedaily:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchScienceDaily(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("sciencedaily:status", async () => {
+  return getScienceDailyStatus();
+});
+
+ipcMain.handle(
+  "sciencedaily:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncScienceDailyToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Phys.org ─────────────────────────────────────
+ipcMain.handle("physorg:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchPhysorg(
+      payload?.category || payload?.query || "breaking",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("physorg:status", async () => {
+  return getPhysorgStatus();
+});
+
+ipcMain.handle(
+  "physorg:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncPhysorgToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Quanta Magazine ─────────────────────────────────────
+ipcMain.handle("quantamagazine:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchQuanta(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("quantamagazine:status", async () => {
+  return getQuantaStatus();
+});
+
+ipcMain.handle(
+  "quantamagazine:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncQuantaToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Space.com ─────────────────────────────────────
+ipcMain.handle("spacecom:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchSpacecom(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("spacecom:status", async () => {
+  return getSpacecomStatus();
+});
+
+ipcMain.handle(
+  "spacecom:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncSpacecomToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Nature ─────────────────────────────────────
+ipcMain.handle("nature:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchNature(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("nature:status", async () => {
+  return getNatureStatus();
+});
+
+ipcMain.handle(
+  "nature:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncNatureToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Science AAAS ─────────────────────────────────────
+ipcMain.handle("scienceaaas:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchScienceAaas(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("scienceaaas:status", async () => {
+  return getScienceAaasStatus();
+});
+
+ipcMain.handle(
+  "scienceaaas:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncScienceAaasToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 机器之心 ─────────────────────────────────────
+ipcMain.handle("jiqizhixin:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchJiqizhixin(
+      payload?.category || payload?.query || "ai",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("jiqizhixin:status", async () => {
+  return getJiqizhixinStatus();
+});
+
+ipcMain.handle(
+  "jiqizhixin:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncJiqizhixinToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 少数派 ─────────────────────────────────────
+ipcMain.handle("sspai:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchSspai(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("sspai:status", async () => {
+  return getSspaiStatus();
+});
+
+ipcMain.handle(
+  "sspai:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncSspaiToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Variety ─────────────────────────────────────
+ipcMain.handle("variety:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchVariety(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("variety:status", async () => {
+  return getVarietyStatus();
+});
+
+ipcMain.handle(
+  "variety:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncVarietyToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Hollywood Reporter ─────────────────────────────────────
+ipcMain.handle("hollywood_reporter:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchHollywoodReporter(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("hollywood_reporter:status", async () => {
+  return getHollywoodReporterStatus();
+});
+
+ipcMain.handle(
+  "hollywood_reporter:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncHollywoodReporterToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Deadline ─────────────────────────────────────
+ipcMain.handle("deadline:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchDeadline(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("deadline:status", async () => {
+  return getDeadlineStatus();
+});
+
+ipcMain.handle(
+  "deadline:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncDeadlineToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Billboard ─────────────────────────────────────
+ipcMain.handle("billboard:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchBillboard(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("billboard:status", async () => {
+  return getBillboardStatus();
+});
+
+ipcMain.handle(
+  "billboard:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncBillboardToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── TMZ ─────────────────────────────────────
+ipcMain.handle("tmz:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchTmz(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle("tmz:status", async () => {
+  return getTmzStatus();
+});
+
+ipcMain.handle(
+  "tmz:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncTmzToLibrary("local", {
+        metadata: payload?.metadata || {},
+      });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
 // ─── China Daily ─────────────────────────────────────
 ipcMain.handle("chinadaily:search", async (_event, payload: any) => {
   try {
@@ -4454,6 +5250,519 @@ ipcMain.handle(
       const res = await syncHuxiuToLibrary("local", {
         metadata: payload?.metadata || {},
       });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── IGN ─────────────────────────────────────
+ipcMain.handle("ign:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchIGN(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("ign:status", async () => {
+  return getIGNStatus();
+});
+ipcMain.handle(
+  "ign:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncIGNToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Polygon ─────────────────────────────────────
+ipcMain.handle("polygon:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchPolygon(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("polygon:status", async () => {
+  return getPolygonStatus();
+});
+ipcMain.handle(
+  "polygon:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncPolygonToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 豆瓣电影 ─────────────────────────────────────
+ipcMain.handle("douban_movie:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchDoubanMovie(
+      payload?.category || payload?.query || "hot",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("douban_movie:status", async () => {
+  return getDoubanMovieStatus();
+});
+ipcMain.handle(
+  "douban_movie:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncDoubanMovieToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 豆瓣读书 ─────────────────────────────────────
+ipcMain.handle("douban_book:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchDoubanBook(
+      payload?.category || payload?.query || "hot",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("douban_book:status", async () => {
+  return getDoubanBookStatus();
+});
+ipcMain.handle(
+  "douban_book:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncDoubanBookToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 豆瓣广场 ─────────────────────────────────────
+ipcMain.handle("douban_gallery:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchDoubanGallery(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("douban_gallery:status", async () => {
+  return getDoubanGalleryStatus();
+});
+ipcMain.handle(
+  "douban_gallery:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncDoubanGalleryToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 直播吧 ─────────────────────────────────────
+ipcMain.handle("zhibo8:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchZhibo8(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("zhibo8:status", async () => {
+  return getZhibo8Status();
+});
+ipcMain.handle(
+  "zhibo8:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncZhibo8ToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 虎扑 ─────────────────────────────────────
+ipcMain.handle("hupu:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchHuPu(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("hupu:status", async () => {
+  return getHuPuStatus();
+});
+ipcMain.handle(
+  "hupu:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncHuPuToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── BBC Sport ─────────────────────────────────────
+ipcMain.handle("bbc_sport:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchBBCSport(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("bbc_sport:status", async () => {
+  return getBBCSportStatus();
+});
+ipcMain.handle(
+  "bbc_sport:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncBBCSportToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Flashscore ─────────────────────────────────────
+ipcMain.handle("flashscore:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchFlashScore(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("flashscore:status", async () => {
+  return getFlashScoreStatus();
+});
+ipcMain.handle(
+  "flashscore:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncFlashScoreToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 拉勾 ─────────────────────────────────────
+ipcMain.handle("lagou:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchLagou(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("lagou:status", async () => {
+  return getLagouStatus();
+});
+ipcMain.handle(
+  "lagou:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncLagouToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── BOSS直聘 ─────────────────────────────────────
+ipcMain.handle("zhipin:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchZhipin(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("zhipin:status", async () => {
+  return getZhipinStatus();
+});
+ipcMain.handle(
+  "zhipin:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncZhipinToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 前程无忧 ─────────────────────────────────────
+ipcMain.handle("51job:search", async (_event, payload: any) => {
+  try {
+    const result = await fetch51Job(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("51job:status", async () => {
+  return get51JobStatus();
+});
+ipcMain.handle(
+  "51job:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await sync51JobToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── LinkedIn Jobs ─────────────────────────────────────
+ipcMain.handle("linkedin_jobs:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchLinkedInJobs(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("linkedin_jobs:status", async () => {
+  return getLinkedInJobsStatus();
+});
+ipcMain.handle(
+  "linkedin_jobs:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncLinkedInJobsToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 国家统计局 ─────────────────────────────────────
+ipcMain.handle("stats_gov:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchStatsGov(
+      payload?.category || payload?.query || "news",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("stats_gov:status", async () => {
+  return getStatsGovStatus();
+});
+ipcMain.handle(
+  "stats_gov:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncStatsGovToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 上交所 ─────────────────────────────────────
+ipcMain.handle("sse:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchSSE(
+      payload?.category || payload?.query || "news",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("sse:status", async () => {
+  return getSSEStatus();
+});
+ipcMain.handle(
+  "sse:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncSSEToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── 中国货币网 ─────────────────────────────────────
+ipcMain.handle("chinamoney:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchChinaMoney(
+      payload?.category || payload?.query || "news",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("chinamoney:status", async () => {
+  return getChinaMoneyStatus();
+});
+ipcMain.handle(
+  "chinamoney:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncChinaMoneyToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Worldometers ─────────────────────────────────────
+ipcMain.handle("worldometers:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchWorldometers(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("worldometers:status", async () => {
+  return getWorldometersStatus();
+});
+ipcMain.handle(
+  "worldometers:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncWorldometersToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── Our World in Data ─────────────────────────────────────
+ipcMain.handle("ourworldindata:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchOurWorldInData(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("ourworldindata:status", async () => {
+  return getOurWorldInDataStatus();
+});
+ipcMain.handle(
+  "ourworldindata:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncOurWorldInDataToLibrary("local", { metadata: payload?.metadata || {} });
+      return { ok: res.success, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+// ─── medRxiv ─────────────────────────────────────
+ipcMain.handle("medrxiv:search", async (_event, payload: any) => {
+  try {
+    const result = await fetchMedRxiv(
+      payload?.category || payload?.query || "all",
+      payload?.options || {},
+    );
+    return { ok: true, data: result };
+  } catch (error: any) {
+    return { ok: false, msg: error?.message || String(error) };
+  }
+});
+ipcMain.handle("medrxiv:status", async () => {
+  return getMedRxivStatus();
+});
+ipcMain.handle(
+  "medrxiv:sync",
+  async (_event, payload: { metadata?: Record<string, any> }) => {
+    try {
+      const res = await syncMedRxivToLibrary("local", { metadata: payload?.metadata || {} });
       return { ok: res.success, data: res };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -4681,6 +5990,80 @@ ipcMain.handle("colorapi:search", async (_e, p) => {
   }
 });
 ipcMain.handle("colorapi:status", async () => getColorApiStatus());
+
+// ══════════════════════════════════════════════════════
+// 新数据工具 IPC Handlers (7 utilities)
+// ══════════════════════════════════════════════════════
+
+// 中国天气网
+ipcMain.handle("weather_cn:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchWeatherCn(p?.cityCode || "101010100") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("weather_cn:status", async () => getWeatherCnStatus());
+
+// Weather.com
+ipcMain.handle("weather_com:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchWeatherCom(p?.loc || "USNY0996:1:US") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("weather_com:status", async () => getWeatherComStatus());
+
+// Yahoo Finance
+ipcMain.handle("yahoo_finance:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchYahooFinance(p || {}) };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("yahoo_finance:status", async () => getYahooFinanceStatus());
+
+// 新浪财经
+ipcMain.handle("sina_finance:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchSinaFinance(p?.codes || "s_sh000001,s_sz399001,s_sz399006") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("sina_finance:status", async () => getSinaFinanceStatus());
+
+// 东方财富
+ipcMain.handle("eastmoney:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchEastmoney(p?.secid || "1.000001") };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("eastmoney:status", async () => getEastmoneyStatus());
+
+// 财联社电报
+ipcMain.handle("cls_telegraph:search", async () => {
+  try {
+    return { ok: true, data: await searchClsTelegraph() };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("cls_telegraph:status", async () => getClsTelegraphStatus());
+
+// CoinMarketCap
+ipcMain.handle("coinmarketcap:search", async (_e, p) => {
+  try {
+    return { ok: true, data: await searchCoinmarketcap(p?.limit || 20) };
+  } catch (e: any) {
+    return { ok: false, msg: e?.message };
+  }
+});
+ipcMain.handle("coinmarketcap:status", async () => getCoinmarketcapStatus());
 
 // HotSearch
 ipcMain.handle("hotsearch:status", async () => {

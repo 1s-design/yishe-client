@@ -1,6 +1,8 @@
 import { mkdirSync, statSync } from "node:fs";
+import { accessSync, constants } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { app } from "electron";
 import { DatabaseSync } from "node:sqlite";
 
 const LOCAL_DATABASE_SCHEMA_VERSION = 1;
@@ -33,6 +35,39 @@ function resolveLocalDatabasePath(workspaceDirectory: string): string {
   );
 }
 
+function isDirectoryWritable(directoryPath: string): boolean {
+  try {
+    mkdirSync(directoryPath, { recursive: true });
+    accessSync(directoryPath, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveAvailableDatabasePath(workspaceDirectory: string): string {
+  const primaryPath = resolveLocalDatabasePath(workspaceDirectory);
+  const parentDirectory = dirname(primaryPath);
+
+  if (isDirectoryWritable(parentDirectory)) {
+    return primaryPath;
+  }
+
+  // 工作目录无写权限（例如目录被 root 占用）时，
+  // 回退到应用 userData 目录，保证本地 SQLite 可用。
+  try {
+    const fallbackBase = app.getPath("userData");
+    const fallbackPath = join(fallbackBase, "database", LOCAL_DATABASE_FILE_NAME);
+    if (isDirectoryWritable(dirname(fallbackPath))) {
+      return fallbackPath;
+    }
+  } catch {
+    // 忽略回退路径解析失败
+  }
+
+  return primaryPath;
+}
+
 function createDisconnectedInfo(databasePath: string, error: unknown): LocalDatabaseInfo {
   return {
     connected: false,
@@ -52,7 +87,7 @@ export function getLocalDatabaseInfo(workspaceDirectory: string): LocalDatabaseI
   let databasePath = "";
 
   try {
-    databasePath = resolveLocalDatabasePath(workspaceDirectory);
+    databasePath = resolveAvailableDatabasePath(workspaceDirectory);
     mkdirSync(dirname(databasePath), { recursive: true });
 
     const database = new DatabaseSync(databasePath);

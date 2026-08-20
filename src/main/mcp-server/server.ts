@@ -93,6 +93,11 @@ interface RegisteredTool {
   capability?: { key: string; label: string; description?: string };
   operations?: ToolCapability[];
   actions?: ToolCapability[];
+  readOnly?: boolean;
+  executionMode?: 'read_only' | 'safe_write' | 'confirm_required';
+  riskLevel?: 'low' | 'medium' | 'high';
+  confirmRequired?: boolean;
+  plannerEnabled?: boolean;
   handler: (args: Record<string, any>, context?: CapabilityCallContext) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
 }
 
@@ -140,6 +145,11 @@ export class McpServerManager {
       capability: definition.capability,
       operations: definition.operations,
       actions: definition.actions,
+      readOnly: definition.readOnly,
+      executionMode: definition.executionMode,
+      riskLevel: definition.riskLevel,
+      confirmRequired: definition.confirmRequired,
+      plannerEnabled: definition.plannerEnabled,
       handler: definition.handler,
     });
   }
@@ -409,6 +419,11 @@ export class McpServerManager {
           zodShape: inputShape,
           inputSchema,
           category: capability.namespace,
+          readOnly: capability.riskLevel === 'read',
+          executionMode: capability.riskLevel === 'read' ? 'read_only' : 'confirm_required',
+          riskLevel: capability.riskLevel === 'read' ? 'low' : 'medium',
+          confirmRequired: capability.riskLevel !== 'read',
+          plannerEnabled: true,
           handler,
         });
       }
@@ -499,18 +514,74 @@ export class McpServerManager {
 
     this.httpServer = createServer(this.app);
 
-    await new Promise<void>((resolve, reject) => {
-      this.httpServer!.listen(this.port, '127.0.0.1', () => {
+    // 端口占用自愈：先检测目标端口是否已是本应用其他实例的 MCP Server，
+    // 若是则直接复用（adopt），否则依次尝试后续端口，避免 EADDRINUSE 直接失败。
+    const isYisheMcpOnPort = async (port: number): Promise<boolean> => {
+      try {
+        const resp = await fetch(`http://127.0.0.1:${port}/health`, {
+          signal: AbortSignal.timeout(1500),
+        });
+        if (!resp.ok) return false;
+        const body = await resp.json();
+        return body?.server === 'yishe-client-mcp';
+      } catch {
+        return false;
+      }
+    };
+
+    const tryListenOn = (port: number): Promise<boolean> =>
+      new Promise<boolean>((resolve) => {
+        const onError = (err: NodeJS.ErrnoException) => {
+          this.httpServer!.off('listening', onListening);
+          if (err?.code === 'EADDRINUSE') {
+            resolve(false);
+          } else {
+            console.error('[MCP Server] 启动失败:', err);
+            this.running = false;
+            resolve(false);
+          }
+        };
+        const onListening = () => {
+          this.httpServer!.off('error', onError);
+          this.running = true;
+          resolve(true);
+        };
+        this.httpServer!.once('error', onError);
+        this.httpServer!.once('listening', onListening);
+        this.httpServer!.listen(port, '127.0.0.1');
+      });
+
+    // 如果目标端口已被同款 MCP Server 占用，直接采用复用方案
+    if (await isYisheMcpOnPort(this.port)) {
+      console.log(`[MCP Server] 检测到 ${this.port} 端口已有实例，直接复用`);
+      this.running = true;
+      // 复用模式下 httpServer 保持挂起即可，status 查询走内存状态
+      return;
+    }
+
+    const candidatePorts: number[] = [];
+    for (let offset = 0; offset < 20; offset += 1) {
+      const nextPort = this.port + offset;
+      if (nextPort > 0 && nextPort <= 65535) candidatePorts.push(nextPort);
+    }
+
+    let started = false;
+    for (const candidatePort of candidatePorts) {
+      const ok = await tryListenOn(candidatePort);
+      if (ok) {
+        this.port = candidatePort;
+        started = true;
         console.log(`[MCP Server] 已启动，监听 http://127.0.0.1:${this.port}`);
         console.log(`[MCP Server] 已注册 ${this.toolRegistry.size} 个工具`);
-        this.running = true;
-        resolve();
-      });
-      this.httpServer!.on('error', (err) => {
-        console.error('[MCP Server] 启动失败:', err);
-        reject(err);
-      });
-    });
+        break;
+      }
+    }
+
+    if (!started) {
+      throw new Error(
+        `MCP Server 端口 ${this.port}~${this.port + candidatePorts.length - 1} 均被占用`,
+      );
+    }
 
     // 启动后异步获取 AI 配置并推送给 Python 浏览器服务
     // token 可能在 MCP Server 启动时尚未注入，需要等待
@@ -600,16 +671,19 @@ export class McpServerManager {
       this.transport = null;
     }
     if (this.httpServer) {
+      const httpServer = this.httpServer;
+      this.httpServer = null;
       await new Promise<void>((resolve) => {
-        this.httpServer!.close(() => {
+        // 复用模式下服务器可能尚未 listen，close 会回调错误，也视为已停止
+        httpServer.close(() => {
           console.log('[MCP Server] 已停止');
           this.running = false;
           resolve();
         });
       });
     }
-    this.httpServer = null;
     this.app = null;
+    this.running = false;
   }
 
   isRunning(): boolean {
@@ -687,6 +761,11 @@ export class McpServerManager {
     capability?: RegisteredTool['capability'];
     operations?: ToolCapability[];
     actions?: ToolCapability[];
+    readOnly?: boolean;
+    executionMode?: 'read_only' | 'safe_write' | 'confirm_required';
+    riskLevel?: 'low' | 'medium' | 'high';
+    confirmRequired?: boolean;
+    plannerEnabled?: boolean;
   }> {
     return Array.from(this.toolRegistry.values()).map((tool) => ({
       name: tool.name,
@@ -696,6 +775,11 @@ export class McpServerManager {
       capability: tool.capability,
       operations: tool.operations,
       actions: tool.actions,
+      readOnly: tool.readOnly,
+      executionMode: tool.executionMode,
+      riskLevel: tool.riskLevel,
+      confirmRequired: tool.confirmRequired,
+      plannerEnabled: tool.plannerEnabled,
     }));
   }
 }

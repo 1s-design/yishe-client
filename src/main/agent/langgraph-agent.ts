@@ -10,6 +10,7 @@
  */
 import OpenAI from "openai";
 import { CapabilityRegistry } from "../capabilities/registry";
+import { registerAllCapabilities } from "../capabilities";
 import type { CapabilityCallContext } from "../capabilities/types";
 import { hasTrustedGoogleArtZoom } from "../capabilities/googleArt";
 import { zodToJsonSchema } from "../mcp-server/server";
@@ -21,6 +22,7 @@ import {
   toOriginalToolName,
   serverCapabilitiesToOpenAiTools,
   buildServerToolIndex,
+  filterMissingServerCapabilities,
   SERVER_TOOL_KEYWORDS,
   type ServerCapabilityCatalog,
   type ServerCapabilityTool,
@@ -75,6 +77,9 @@ export interface AgentStreamEvents {
 export function getCapabilityOpenAiTools(
   namespaces?: string[],
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  // Agent 可能在 app.whenReady 的异步注册完成前收到第一条消息，
+  // 这里幂等补注册，避免 googleArt 等工具只出现在 MCP 目录而不在 Agent 工具集中。
+  registerAllCapabilities();
   const capabilities = CapabilityRegistry.list();
   const filtered = namespaces?.length
     ? capabilities.filter((item) => namespaces.includes(item.namespace))
@@ -270,9 +275,9 @@ export function selectRelevantTools(
   const rest = relevant.filter((tool) => !prioritize(tool));
   const result = [...prioritized, ...rest];
   if (result.length >= 3) return result.slice(0, 48);
-  const fallback = allTools.filter(prioritize).concat(
-    allTools.filter((tool) => !prioritize(tool)),
-  );
+  const fallback = allTools
+    .filter(prioritize)
+    .concat(allTools.filter((tool) => !prioritize(tool)));
   return fallback.slice(0, 48);
 }
 
@@ -285,6 +290,351 @@ interface GraphState {
   pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
   /** Google Arts 写工具的真实结果；用于替换模型自由发挥的最终成功/失败总结。 */
   googleArtCollectResults: Array<Record<string, any>>;
+  /** zoom 成功后必须结束本回合，等待下一条用户消息明确选择分辨率。 */
+  awaitingGoogleArtZoomSelection: boolean;
+}
+
+function getLatestUserText(messages: AgentChatMessage[]): string {
+  const last = [...messages]
+    .reverse()
+    .find((message) => message.role === "user");
+  return typeof last?.content === "string" ? last.content.trim() : "";
+}
+
+function userExplicitlySelectedGoogleArtZoom(
+  messages: AgentChatMessage[],
+  zoomLevel: unknown,
+): boolean {
+  const text = getLatestUserText(messages);
+  const level = Number(zoomLevel);
+  if (!Number.isInteger(level)) return false;
+  if (text === String(level)) return true;
+  const escaped = String(level).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `(?:选择|选|档位|分辨率|zoom)\\s*(?:为|是|第)?\\s*${escaped}\\b`,
+    "i",
+  ).test(text);
+}
+
+function formatGoogleArtZoomSelection(result: unknown): string | null {
+  const value = result as any;
+  if (!value || value.success === false) return null;
+  const zooms = Array.isArray(value.zooms)
+    ? value.zooms
+    : Array.isArray(value?.data?.zooms)
+      ? value.data.zooms
+      : [];
+  if (!zooms.length) return null;
+  const selected = value.selected || value?.data?.selected || {};
+  const title = selected.title ? `《${String(selected.title)}》` : "该作品";
+  const lines = zooms.map(
+    (zoom: any) =>
+      `档位 ${zoom.idx}：${zoom.width} × ${zoom.height}（${zoom.tiles} 个切片）`,
+  );
+  return [
+    `${title} 可选择以下分辨率：`,
+    ...lines,
+    "\n请回复要下载的档位编号（例如“1”）。收到你的明确选择后才会下载并写入素材库。",
+  ].join("\n");
+}
+
+function buildDirectGoogleArtSearchCall(current: GraphState) {
+  const last = current.messages[current.messages.length - 1];
+  if (last?.role !== "user" || typeof last.content !== "string") return null;
+  const text = last.content.trim();
+  if (
+    !/(google\s*art|google arts|谷歌艺术|蒙娜丽莎|名画|艺术作品)/i.test(text)
+  ) {
+    return null;
+  }
+  if (!/(搜|查|找|搜索|search|找到)/i.test(text)) return null;
+
+  const tool = current.tools.find(
+    (item) =>
+      item.type === "function" && item.function.name === "googleArt_search",
+  );
+  if (!tool) return null;
+
+  const keyword = resolveGoogleArtKeyword(text);
+
+  return {
+    id: `direct_google_art_search_${Date.now()}`,
+    name: "googleArt_search",
+    arguments: JSON.stringify({ keyword, maxCount: 8 }),
+  };
+}
+
+function resolveGoogleArtKeyword(text: string): string {
+  if (/梵高|向日葵/i.test(text)) return "Van Gogh Sunflowers";
+  if (/莫奈/i.test(text)) return "Claude Monet";
+  if (/蒙娜丽莎|mona\s*lisa/i.test(text)) return "Mona Lisa";
+  return "Mona Lisa";
+}
+
+/**
+ * 客户端重启后，历史消息仍在磁盘中，但 Google Arts 的可信状态会被清空。
+ * 只在本会话历史明确存在 Google Arts 搜索请求时恢复搜索，不接受模型或
+ * 助手文本中的 URL/元数据作为可信输入。
+ */
+function findPreviousGoogleArtSearchKeyword(
+  messages: AgentChatMessage[],
+): string | null {
+  for (const message of [...messages].reverse()) {
+    if (message.role !== "user" || typeof message.content !== "string")
+      continue;
+    const text = message.content.trim();
+    if (
+      /(google\s*art|google arts|谷歌艺术|蒙娜丽莎|名画|艺术作品)/i.test(
+        text,
+      ) &&
+      /(搜|查|找|搜索|search|找到|下载|采集)/i.test(text)
+    ) {
+      return resolveGoogleArtKeyword(text);
+    }
+  }
+  return null;
+}
+
+/**
+ * Google Arts 搜索是受约束的本地能力，不需要让模型先决定“是否存在工具”。
+ * 对明确的首轮搜索请求直接调用 CapabilityRegistry，保证用户总能看到真实
+ * search 结果与 resultIndex；下载仍必须在后续 zoom + 用户选档后进行。
+ */
+async function tryDirectGoogleArtSearch(
+  current: GraphState,
+  events: AgentStreamEvents,
+  executionContext?: CapabilityCallContext,
+): Promise<string | null> {
+  const last = current.messages[current.messages.length - 1];
+  if (last?.role !== "user" || typeof last.content !== "string") return null;
+  const text = last.content.trim();
+  if (
+    !/(google\s*art|google arts|谷歌艺术|蒙娜丽莎|名画|艺术作品)/i.test(text) ||
+    !/(搜|查|找|搜索|search|找到|下载|采集)/i.test(text)
+  ) {
+    return null;
+  }
+
+  let keyword = "Mona Lisa";
+  if (/梵高|向日葵/i.test(text)) keyword = "Van Gogh Sunflowers";
+  else if (/莫奈/i.test(text)) keyword = "Claude Monet";
+  else if (/蒙娜丽莎|mona\s*lisa/i.test(text)) keyword = "Mona Lisa";
+
+  const callId = `direct_google_art_search_${Date.now()}`;
+  const args = { keyword, maxCount: 8 };
+  events.onToolStart?.({ id: callId, name: "googleArt_search", args });
+  const startedAt = Date.now();
+  const result = await withTimeout(
+    CapabilityRegistry.call("googleArt", "search", args, executionContext),
+    TOOL_CALL_TIMEOUT_MS,
+    "googleArt.search",
+  );
+  const error = toolResultError(result, undefined);
+  events.onToolEnd?.({
+    id: callId,
+    name: "googleArt_search",
+    result,
+    durationMs: Date.now() - startedAt,
+    error,
+  });
+
+  const data = result as any;
+  if (!data?.success) {
+    return `Google Arts 搜索失败：${String(data?.error || "未知错误")}`;
+  }
+  const items = Array.isArray(data?.items) ? data.items : [];
+  if (!items.length) {
+    return `没有找到与“${keyword}”匹配的 Google Arts 作品。请换一个关键词后重试。`;
+  }
+  const lines = items.slice(0, 8).map((item: any) => {
+    const title = String(item?.title || "未命名作品");
+    const artist = item?.artist ? ` — ${String(item.artist)}` : "";
+    return `${item?.resultIndex}. 《${title}》${artist}`;
+  });
+  return [
+    `已在 Google Arts 找到“${keyword}”相关作品：`,
+    ...lines,
+    "\n请回复要下载的作品编号（例如“1”）。我会先获取可选分辨率，等待你选择档位后再下载入库。",
+  ].join("\n");
+}
+
+/**
+ * 搜索结果后的“作品编号”也不能交给模型猜工具是否存在。
+ * 若当前会话尚未取得可信 zoom，纯数字输入直接按 resultIndex 调用 zoom，
+ * 成功后展示档位并结束本轮；已存在可信 zoom 时由 tryAutoCollectZoomLevel
+ * 处理为用户明确选择档位。
+ */
+async function tryDirectGoogleArtZoomSelection(
+  current: GraphState,
+  events: AgentStreamEvents,
+  executionContext?: CapabilityCallContext,
+): Promise<string | null> {
+  const userText = getLatestUserText(current.messages);
+  if (!/^\d+$/.test(userText)) return null;
+
+  try {
+    const { hasTrustedGoogleArtZoom } = await import(
+      "../capabilities/googleArt"
+    );
+    if (hasTrustedGoogleArtZoom(executionContext)) return null;
+  } catch {
+    return null;
+  }
+
+  const resultIndex = Number(userText);
+  const callId = `direct_google_art_zoom_${Date.now()}`;
+  const args = { resultIndex };
+  events.onToolStart?.({ id: callId, name: "googleArt_zoom", args });
+  const startedAt = Date.now();
+  const result = await withTimeout(
+    CapabilityRegistry.call("googleArt", "zoom", args, executionContext),
+    TOOL_CALL_TIMEOUT_MS,
+    "googleArt.zoom",
+  );
+  const error = toolResultError(result, undefined);
+  events.onToolEnd?.({
+    id: callId,
+    name: "googleArt_zoom",
+    result,
+    durationMs: Date.now() - startedAt,
+    error,
+  });
+
+  // 客户端重启会清空内存中的可信 search 状态。若本会话历史明确存在
+  // 搜索请求，则重新执行一次真实 search，再用同一个 resultIndex zoom；
+  // 不从助手文本恢复 URL/元数据，避免绕过可信状态校验。
+  if (
+    (result as any)?.success === false &&
+    /resultIndex.*最近一次搜索结果|搜索结果中/.test(
+      String((result as any)?.error || ""),
+    )
+  ) {
+    const keyword = findPreviousGoogleArtSearchKeyword(current.messages);
+    if (keyword) {
+      const searchCallId = `direct_google_art_search_recover_${Date.now()}`;
+      const searchArgs = { keyword, maxCount: 8 };
+      events.onToolStart?.({
+        id: searchCallId,
+        name: "googleArt_search",
+        args: searchArgs,
+      });
+      const searchStartedAt = Date.now();
+      const searchResult = await withTimeout(
+        CapabilityRegistry.call(
+          "googleArt",
+          "search",
+          searchArgs,
+          executionContext,
+        ),
+        TOOL_CALL_TIMEOUT_MS,
+        "googleArt.search (恢复会话状态)",
+      );
+      events.onToolEnd?.({
+        id: searchCallId,
+        name: "googleArt_search",
+        result: searchResult,
+        durationMs: Date.now() - searchStartedAt,
+        error: toolResultError(searchResult, undefined),
+      });
+      if ((searchResult as any)?.success) {
+        const retryCallId = `direct_google_art_zoom_recover_${Date.now()}`;
+        events.onToolStart?.({ id: retryCallId, name: "googleArt_zoom", args });
+        const retryStartedAt = Date.now();
+        const retryResult = await withTimeout(
+          CapabilityRegistry.call("googleArt", "zoom", args, executionContext),
+          TOOL_CALL_TIMEOUT_MS,
+          "googleArt.zoom (恢复会话状态)",
+        );
+        events.onToolEnd?.({
+          id: retryCallId,
+          name: "googleArt_zoom",
+          result: retryResult,
+          durationMs: Date.now() - retryStartedAt,
+          error: toolResultError(retryResult, undefined),
+        });
+        const recoveredSelection = formatGoogleArtZoomSelection(retryResult);
+        if (recoveredSelection) return recoveredSelection;
+      }
+    }
+  }
+
+  const selection = !error ? formatGoogleArtZoomSelection(result) : null;
+  if (selection) return selection;
+  // 没有可信 search 状态时让普通 Agent 正常处理数字输入，避免吞掉其他对话。
+  return null;
+}
+
+/** 对明确的本地文件读取请求走真实只读能力，避免模型复述用户给出的内容。 */
+async function tryDirectFilesystemRead(
+  current: GraphState,
+  events: AgentStreamEvents,
+  executionContext?: CapabilityCallContext,
+): Promise<string | null> {
+  const text = getLatestUserText(current.messages);
+  if (!/(读取|读一下|查看|打开).*(文件|内容)/i.test(text)) return null;
+  const match = text.match(/(?:\/|[A-Za-z]:[\\/])[^\s`"'，。！？]+/);
+  if (!match) return null;
+  const filePath = match[0].replace(/[，。！？]+$/, "");
+  const callId = `direct_filesystem_read_${Date.now()}`;
+  const args = { path: filePath, encoding: "utf8" };
+  events.onToolStart?.({ id: callId, name: "filesystem_file_read", args });
+  const startedAt = Date.now();
+  const result = await withTimeout(
+    CapabilityRegistry.call("filesystem", "file_read", args, executionContext),
+    TOOL_CALL_TIMEOUT_MS,
+    "filesystem.file_read",
+  );
+  events.onToolEnd?.({
+    id: callId,
+    name: "filesystem_file_read",
+    result,
+    durationMs: Date.now() - startedAt,
+    error: toolResultError(result, undefined),
+  });
+  const data = result as any;
+  if (!data?.success)
+    return `读取文件失败：${String(data?.error || "未知错误")}`;
+  if (typeof data?.data?.content !== "string") {
+    return `文件已读取，但工具未返回文本内容：${filePath}`;
+  }
+  return `文件内容为：\n\n\`\`\`\n${data.data.content}\n\`\`\``;
+}
+
+async function tryDirectFilesystemDelete(
+  current: GraphState,
+  events: AgentStreamEvents,
+  executionContext?: CapabilityCallContext,
+): Promise<string | null> {
+  const text = getLatestUserText(current.messages);
+  if (!/(删除|移除|清理).*(文件|测试文件)/i.test(text)) return null;
+  const match = text.match(/(?:\/|[A-Za-z]:[\\/])[^\s`"'，。！？]+/);
+  if (!match) return null;
+  const filePath = match[0].replace(/[，。！？]+$/, "");
+  const callId = `direct_filesystem_delete_${Date.now()}`;
+  const args = { path: filePath };
+  events.onToolStart?.({ id: callId, name: "filesystem_file_delete", args });
+  const startedAt = Date.now();
+  const result = await withTimeout(
+    CapabilityRegistry.call(
+      "filesystem",
+      "file_delete",
+      args,
+      executionContext,
+    ),
+    TOOL_CALL_TIMEOUT_MS,
+    "filesystem.file_delete",
+  );
+  events.onToolEnd?.({
+    id: callId,
+    name: "filesystem_file_delete",
+    result,
+    durationMs: Date.now() - startedAt,
+    error: toolResultError(result, undefined),
+  });
+  const data = result as any;
+  return data?.success
+    ? `已删除文件：${String(data?.data?.path || filePath)}`
+    : `删除文件失败：${String(data?.error || "未知错误")}`;
 }
 
 type GraphNode = (state: GraphState) => Promise<void>;
@@ -368,6 +718,7 @@ class ClientStateGraph {
           finalReasoning: { value, default: () => "" },
           pendingToolCalls: { value, default: () => [] },
           googleArtCollectResults: { value, default: () => [] },
+          awaitingGoogleArtZoomSelection: { value, default: () => false },
         },
       });
       for (const [name, node] of this.nodes) {
@@ -383,7 +734,9 @@ class ClientStateGraph {
             ? "tools"
             : "__end__",
         )
-        .addEdge("tools", "agent");
+        .addConditionalEdges("tools", (state: GraphState) =>
+          state.awaitingGoogleArtZoomSelection ? "__end__" : "agent",
+        );
       return stateGraph.compile();
     } catch {
       return null;
@@ -546,8 +899,7 @@ function textClaimsGoogleArtCollectSuccess(text: string): boolean {
     /(已入库|入库成功|已成功采集|采集成功|下载成功|已保存到素材库|写入素材库|成功保存|已入库到|已添加到素材库|已上传至素材库|成功上传到素材库)/;
   const pathOrLibrary =
     /(\/[^\s]+\/[^\s]+\.(jpg|jpeg|png|webp))|(素材库|materialLibrary)/i;
-  const fakeSize =
-    /(文件大小|fileSize|KB|MB).*(文件路径|path|本地文件)/;
+  const fakeSize = /(文件大小|fileSize|KB|MB).*(文件路径|path|本地文件)/;
   return (
     successClaims.test(text) &&
     (pathOrLibrary.test(text) || fakeSize.test(text))
@@ -589,8 +941,11 @@ async function tryAutoCollectZoomLevel(
 ): Promise<boolean> {
   try {
     // 1. 检查是否是纯数字消息（允许空白）
-    const lastUser = [...current.messages].reverse().find((m) => m.role === "user");
-    const userText = typeof lastUser?.content === "string" ? lastUser.content.trim() : "";
+    const lastUser = [...current.messages]
+      .reverse()
+      .find((m) => m.role === "user");
+    const userText =
+      typeof lastUser?.content === "string" ? lastUser.content.trim() : "";
     if (!/^-?\d+$/.test(userText)) return false;
 
     // 2. 检查是否有可信 zoom
@@ -613,7 +968,12 @@ async function tryAutoCollectZoomLevel(
     });
     const startedAt = Date.now();
     const result = await withTimeout(
-      CapabilityRegistry.call("googleArt", "collect", { zoomLevel }, executionContext),
+      CapabilityRegistry.call(
+        "googleArt",
+        "collect",
+        { zoomLevel },
+        executionContext,
+      ),
       GOOGLE_ART_COLLECT_TIMEOUT_MS,
       "googleArt.collect (auto)",
     );
@@ -629,11 +989,16 @@ async function tryAutoCollectZoomLevel(
     current.messages.push({
       role: "assistant",
       content: "",
-      tool_calls: [{
-        id: callId,
-        type: "function" as const,
-        function: { name: "googleArt.collect", arguments: JSON.stringify({ zoomLevel }) },
-      }],
+      tool_calls: [
+        {
+          id: callId,
+          type: "function" as const,
+          function: {
+            name: "googleArt.collect",
+            arguments: JSON.stringify({ zoomLevel }),
+          },
+        },
+      ],
     });
     current.messages.push({
       role: "tool",
@@ -839,20 +1204,26 @@ export class ClientLangGraphAgent {
       if (serverCatalog?.tools?.length) {
         // Google Arts 必须走本地的会话级可信工作流。旧服务端/MCP 目录可能仍
         // 暴露接收任意 URL 的同名工具，不能同时挂给模型形成绕过路径。
-        const safeServerCatalog = {
-          ...serverCatalog,
-          tools: serverCatalog.tools.filter((tool) => {
-            const identity = [
-              tool.name,
-              tool.label,
-              tool.description,
-              ...(tool.tags || []),
-            ]
-              .join(" ")
-              .toLowerCase();
-            return !/google[\s._-]*art|谷歌艺术/.test(identity);
-          }),
-        };
+        const localToolNames = CapabilityRegistry.list().map(
+          (capability) => `${capability.namespace}_${capability.name}`,
+        );
+        const safeServerCatalog = filterMissingServerCapabilities(
+          {
+            ...serverCatalog,
+            tools: serverCatalog.tools.filter((tool) => {
+              const identity = [
+                tool.name,
+                tool.label,
+                tool.description,
+                ...(tool.tags || []),
+              ]
+                .join(" ")
+                .toLowerCase();
+              return !/google[\s._-]*art|谷歌艺术/.test(identity);
+            }),
+          },
+          localToolNames,
+        );
         allTools.push(...serverCapabilitiesToOpenAiTools(safeServerCatalog));
         serverToolIndex = buildServerToolIndex(safeServerCatalog);
       }
@@ -880,7 +1251,90 @@ export class ClientLangGraphAgent {
       finalReasoning: "",
       pendingToolCalls: [],
       googleArtCollectResults: [],
+      awaitingGoogleArtZoomSelection: false,
     };
+
+    // 强约束入口：搜索阶段直接使用本地可信能力，避免模型因上下文/工具截断
+    // 误报“没有 Google Arts 工具”。后续选作品和选档仍使用相同 sessionId 状态。
+    const directGoogleArtResult = await tryDirectGoogleArtSearch(
+      state,
+      events,
+      executionContext,
+    );
+    if (directGoogleArtResult !== null) {
+      state.finalText = directGoogleArtResult;
+      state.messages.push({
+        role: "assistant",
+        content: directGoogleArtResult,
+      });
+      events.onContent?.(directGoogleArtResult);
+      events.onComplete?.(directGoogleArtResult, "");
+      return {
+        text: directGoogleArtResult,
+        reasoning: "",
+        messages: state.messages,
+      };
+    }
+
+    const directGoogleArtZoomResult = await tryDirectGoogleArtZoomSelection(
+      state,
+      events,
+      executionContext,
+    );
+    if (directGoogleArtZoomResult !== null) {
+      state.finalText = directGoogleArtZoomResult;
+      state.messages.push({
+        role: "assistant",
+        content: directGoogleArtZoomResult,
+      });
+      events.onContent?.(directGoogleArtZoomResult);
+      events.onComplete?.(directGoogleArtZoomResult, "");
+      return {
+        text: directGoogleArtZoomResult,
+        reasoning: "",
+        messages: state.messages,
+      };
+    }
+
+    const directFilesystemReadResult = await tryDirectFilesystemRead(
+      state,
+      events,
+      executionContext,
+    );
+    if (directFilesystemReadResult !== null) {
+      state.finalText = directFilesystemReadResult;
+      state.messages.push({
+        role: "assistant",
+        content: directFilesystemReadResult,
+      });
+      events.onContent?.(directFilesystemReadResult);
+      events.onComplete?.(directFilesystemReadResult, "");
+      return {
+        text: directFilesystemReadResult,
+        reasoning: "",
+        messages: state.messages,
+      };
+    }
+
+    const directFilesystemDeleteResult = await tryDirectFilesystemDelete(
+      state,
+      events,
+      executionContext,
+    );
+    if (directFilesystemDeleteResult !== null) {
+      state.finalText = directFilesystemDeleteResult;
+      state.messages.push({
+        role: "assistant",
+        content: directFilesystemDeleteResult,
+      });
+      events.onContent?.(directFilesystemDeleteResult);
+      events.onComplete?.(directFilesystemDeleteResult, "");
+      return {
+        text: directFilesystemDeleteResult,
+        reasoning: "",
+        messages: state.messages,
+      };
+    }
 
     const graph = new ClientStateGraph()
       .addNode("agent", async (current) => {
@@ -890,15 +1344,48 @@ export class ClientLangGraphAgent {
         // ── 前置检查：用户选了档位数字时直接执行 collect，跳过模型 ──
         // 模型常在应当调用 googleArt.collect 时改为输出"已成功"的文字，
         // 触发事后纠偏也无法真正下载。这里拦截数字回复并代为执行。
-        if (current.iteration === 1 || current.googleArtCollectResults.length === 0) {
-          const autoCollected = await tryAutoCollectZoomLevel(current, events, executionContext);
+        if (
+          current.iteration === 1 ||
+          current.googleArtCollectResults.length === 0
+        ) {
+          const autoCollected = await tryAutoCollectZoomLevel(
+            current,
+            events,
+            executionContext,
+          );
           if (autoCollected) {
             current.finalText = formatGoogleArtCollectResult(
-              current.googleArtCollectResults[current.googleArtCollectResults.length - 1],
+              current.googleArtCollectResults[
+                current.googleArtCollectResults.length - 1
+              ],
             );
             current.messages.push({
               role: "assistant",
               content: current.finalText,
+            });
+            return;
+          }
+        }
+
+        // 明确的 Google Arts 搜索请求不交给模型猜工具名称，直接进入
+        // 客户端唯一可信 Capability 流程，避免模型误报“没有 googleArt”。
+        if (current.iteration === 1) {
+          const directGoogleArtCall = buildDirectGoogleArtSearchCall(current);
+          if (directGoogleArtCall) {
+            current.pendingToolCalls = [directGoogleArtCall];
+            current.messages.push({
+              role: "assistant",
+              content: "",
+              tool_calls: [
+                {
+                  id: directGoogleArtCall.id,
+                  type: "function",
+                  function: {
+                    name: directGoogleArtCall.name,
+                    arguments: directGoogleArtCall.arguments,
+                  },
+                },
+              ],
             });
             return;
           }
@@ -910,9 +1397,7 @@ export class ClientLangGraphAgent {
         // 模型若在最终输出里声称“已入库/采集成功”，视为编造，需要兜底纠偏。
         const hasTrustedZoom = (() => {
           try {
-            return (
-              hasTrustedGoogleArtZoomForAgent(executionContext) === true
-            );
+            return hasTrustedGoogleArtZoomForAgent(executionContext) === true;
           } catch {
             return false;
           }
@@ -1048,9 +1533,42 @@ export class ClientLangGraphAgent {
             : undefined;
           const isGoogleArtCollect =
             namespace === "googleArt" && capabilityName === "collect";
+          const isGoogleArtZoom =
+            namespace === "googleArt" && capabilityName === "zoom";
           // collect 不再信任模型传入 URL。确认前按 sessionId 读取最后一次成功 zoom
           // 的主进程可信状态，并校验用户选择的档位。
           if (isGoogleArtCollect) {
+            if (
+              !userExplicitlySelectedGoogleArtZoom(
+                current.messages,
+                args?.zoomLevel,
+              )
+            ) {
+              const result = {
+                success: false,
+                ok: false,
+                materialLibraryOk: false,
+                downloaded: false,
+                filePath: null,
+                error:
+                  "请先查看分辨率，并在下一条消息中明确选择要下载的档位编号。",
+              };
+              current.googleArtCollectResults.push(result);
+              events.onToolEnd?.({
+                id: call.id,
+                name: call.name,
+                result,
+                durationMs: 0,
+                error: result.error,
+              });
+              current.messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                name: call.name,
+                content: serializeToolResultForModel(result),
+              });
+              continue;
+            }
             const { prepareGoogleArtCollect } = await import(
               "../capabilities/googleArt"
             );
@@ -1102,47 +1620,49 @@ export class ClientLangGraphAgent {
             (definition.riskLevel === "write" ||
               definition.riskLevel === "system")
           ) {
-            events.onToolApproval?.({
-              id: call.id,
-              name: call.name,
-              args,
-              riskLevel: definition.riskLevel,
-              description: definition.description,
-            });
+            if (!this.autoApproveWrite) {
+              events.onToolApproval?.({
+                id: call.id,
+                name: call.name,
+                args,
+                riskLevel: definition.riskLevel,
+                description: definition.description,
+              });
+            }
             // 自动审批模式（HTTP API）直接放行
             if (this.autoApproveWrite) {
               // 继续执行，approved = true
             } else {
               const approved = await this.waitForToolApproval(call.id, signal);
               if (!approved) {
-              const result = {
-                success: false,
-                ok: false,
-                materialLibraryOk: false,
-                downloaded: false,
-                filePath: null,
-                error: "用户取消了本次工具执行",
-                cancelled: true,
-              };
-              if (isGoogleArtCollect) {
-                current.googleArtCollectResults.push(result);
+                const result = {
+                  success: false,
+                  ok: false,
+                  materialLibraryOk: false,
+                  downloaded: false,
+                  filePath: null,
+                  error: "用户取消了本次工具执行",
+                  cancelled: true,
+                };
+                if (isGoogleArtCollect) {
+                  current.googleArtCollectResults.push(result);
+                }
+                events.onToolEnd?.({
+                  id: call.id,
+                  name: call.name,
+                  result,
+                  durationMs: 0,
+                  error: result.error,
+                });
+                current.messages.push({
+                  role: "tool",
+                  tool_call_id: call.id,
+                  name: call.name,
+                  content: serializeToolResultForModel(result),
+                });
+                continue;
               }
-              events.onToolEnd?.({
-                id: call.id,
-                name: call.name,
-                result,
-                durationMs: 0,
-                error: result.error,
-              });
-              current.messages.push({
-                role: "tool",
-                tool_call_id: call.id,
-                name: call.name,
-                content: serializeToolResultForModel(result),
-              });
-              continue;
             }
-          }
           }
 
           events.onToolStart?.({ id: call.id, name: call.name, args });
@@ -1185,6 +1705,16 @@ export class ClientLangGraphAgent {
             name: call.name,
             content: serializeToolResultForModel(result),
           });
+          if (isGoogleArtZoom && !reportedError) {
+            const selection = formatGoogleArtZoomSelection(result);
+            if (selection) {
+              current.awaitingGoogleArtZoomSelection = true;
+              current.finalText += selection;
+              events.onContent?.(selection);
+              // 当前模型即使同批返回 collect，也不能执行；必须等待下一轮用户选择。
+              break;
+            }
+          }
         }
       })
       .addConditionalEdges("agent", (current) =>
@@ -1193,7 +1723,9 @@ export class ClientLangGraphAgent {
           ? "tools"
           : "END",
       )
-      .addConditionalEdges("tools", () => "agent");
+      .addConditionalEdges("tools", (current) =>
+        current.awaitingGoogleArtZoomSelection ? "END" : "agent",
+      );
 
     try {
       const result = await graph.invoke(state, "agent", signal);

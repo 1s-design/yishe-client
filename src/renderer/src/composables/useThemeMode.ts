@@ -47,6 +47,9 @@ function applyThemeToDocument(theme: ResolvedTheme) {
   document.documentElement.setAttribute("data-theme", theme);
   document.documentElement.style.colorScheme = theme;
   document.body?.setAttribute("data-theme", theme);
+
+  const api = (window as any).api;
+  api?.setTitleBarTheme?.(theme);
 }
 
 function clearAutoRefreshTimer() {

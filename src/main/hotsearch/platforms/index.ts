@@ -11,6 +11,9 @@ import kuaishou from './kuaishou'
 import v2ex from './v2ex'
 import kr36 from './36kr'
 import ithome from './ithome'
+import baidu from './baidu'
+import tencentNews from './tencent_news'
+import tencentTech from './tencent_tech'
 
 // 国际新闻/趋势 (proxy)
 import googleTrends from './google-trends'
@@ -22,6 +25,7 @@ import cnn from './cnn'
 import nytimes from './nytimes'
 import aljazeera from './aljazeera'
 import devto from './devto'
+import lobsters from './lobsters'
 
 // 电商平台 (proxy)
 import ebayTrending from './ebay-trending'
@@ -39,6 +43,9 @@ export const allPlatforms: PlatformModule[] = [
   v2ex,
   kr36,
   ithome,
+  baidu,
+  tencentNews,
+  tencentTech,
   // 国际新闻/趋势 (proxy)
   googleTrends,
   hackernews,
@@ -49,6 +56,7 @@ export const allPlatforms: PlatformModule[] = [
   nytimes,
   aljazeera,
   devto,
+  lobsters,
   // 电商平台 (proxy)
   ebayTrending,
   shopifyTrending,

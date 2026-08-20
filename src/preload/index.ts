@@ -21,6 +21,8 @@ const api = {
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
   toggleDevTools: () => ipcRenderer.invoke("toggle-devtools"),
+  setTitleBarTheme: (theme: "light" | "dark") =>
+    ipcRenderer.invoke("title-bar:set-theme", theme),
   writeClientLog: (payload: {
     level?: string;
     module?: string;
@@ -500,6 +502,103 @@ const api = {
     options?: any;
   }) => ipcRenderer.invoke("huxiu:search", payload),
   getHuxiuStatus: () => ipcRenderer.invoke("huxiu:status"),
+  fetchIGN: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("ign:search", payload),
+  getIGNStatus: () => ipcRenderer.invoke("ign:status"),
+  fetchPolygon: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("polygon:search", payload),
+  getPolygonStatus: () => ipcRenderer.invoke("polygon:status"),
+  fetchDoubanMovie: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("douban_movie:search", payload),
+  getDoubanMovieStatus: () => ipcRenderer.invoke("douban_movie:status"),
+  fetchDoubanBook: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("douban_book:search", payload),
+  getDoubanBookStatus: () => ipcRenderer.invoke("douban_book:status"),
+  fetchDoubanGallery: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("douban_gallery:search", payload),
+  getDoubanGalleryStatus: () => ipcRenderer.invoke("douban_gallery:status"),
+  fetchZhibo8: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("zhibo8:search", payload),
+  getZhibo8Status: () => ipcRenderer.invoke("zhibo8:status"),
+  fetchHuPu: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("hupu:search", payload),
+  getHuPuStatus: () => ipcRenderer.invoke("hupu:status"),
+  fetchBBCSport: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("bbc_sport:search", payload),
+  getBBCSportStatus: () => ipcRenderer.invoke("bbc_sport:status"),
+  fetchFlashScore: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("flashscore:search", payload),
+  getFlashScoreStatus: () => ipcRenderer.invoke("flashscore:status"),
+  fetchLagou: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("lagou:search", payload),
+  getLagouStatus: () => ipcRenderer.invoke("lagou:status"),
+  fetchZhipin: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("zhipin:search", payload),
+  getZhipinStatus: () => ipcRenderer.invoke("zhipin:status"),
+  fetch51Job: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("51job:search", payload),
+  get51JobStatus: () => ipcRenderer.invoke("51job:status"),
+  fetchLinkedInJobs: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("linkedin_jobs:search", payload),
+  getLinkedInJobsStatus: () => ipcRenderer.invoke("linkedin_jobs:status"),
+  fetchStatsGov: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("stats_gov:search", payload),
+  getStatsGovStatus: () => ipcRenderer.invoke("stats_gov:status"),
+  fetchSSE: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("sse:search", payload),
+  getSSEStatus: () => ipcRenderer.invoke("sse:status"),
+  fetchChinaMoney: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("chinamoney:search", payload),
+  getChinaMoneyStatus: () => ipcRenderer.invoke("chinamoney:status"),
+  fetchWorldometers: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("worldometers:search", payload),
+  getWorldometersStatus: () => ipcRenderer.invoke("worldometers:status"),
+  fetchOurWorldInData: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("ourworldindata:search", payload),
+  getOurWorldInDataStatus: () => ipcRenderer.invoke("ourworldindata:status"),
+  fetchMedRxiv: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("medrxiv:search", payload),
+  getMedRxivStatus: () => ipcRenderer.invoke("medrxiv:status"),
+  // 第二批新闻服务 API 导出
+  fetchScienceDaily: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("sciencedaily:search", payload),
+  getScienceDailyStatus: () => ipcRenderer.invoke("sciencedaily:status"),
+  fetchPhysorg: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("physorg:search", payload),
+  getPhysorgStatus: () => ipcRenderer.invoke("physorg:status"),
+  fetchQuanta: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("quantamagazine:search", payload),
+  getQuantaStatus: () => ipcRenderer.invoke("quantamagazine:status"),
+  fetchSpacecom: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("spacecom:search", payload),
+  getSpacecomStatus: () => ipcRenderer.invoke("spacecom:status"),
+  fetchNature: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("nature:search", payload),
+  getNatureStatus: () => ipcRenderer.invoke("nature:status"),
+  fetchScienceAaas: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("scienceaaas:search", payload),
+  getScienceAaasStatus: () => ipcRenderer.invoke("scienceaaas:status"),
+  fetchJiqizhixin: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("jiqizhixin:search", payload),
+  getJiqizhixinStatus: () => ipcRenderer.invoke("jiqizhixin:status"),
+  fetchSspai: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("sspai:search", payload),
+  getSspaiStatus: () => ipcRenderer.invoke("sspai:status"),
+  fetchVariety: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("variety:search", payload),
+  getVarietyStatus: () => ipcRenderer.invoke("variety:status"),
+  fetchHollywoodReporter: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("hollywood_reporter:search", payload),
+  getHollywoodReporterStatus: () => ipcRenderer.invoke("hollywood_reporter:status"),
+  fetchDeadline: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("deadline:search", payload),
+  getDeadlineStatus: () => ipcRenderer.invoke("deadline:status"),
+  fetchBillboard: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("billboard:search", payload),
+  getBillboardStatus: () => ipcRenderer.invoke("billboard:status"),
+  fetchTmz: (payload: { category?: string; options?: any }) =>
+    ipcRenderer.invoke("tmz:search", payload),
+  getTmzStatus: () => ipcRenderer.invoke("tmz:status"),
   // 数据工具 API 导出
   searchOpenmeteo: (payload: { latitude?: number; longitude?: number }) =>
     ipcRenderer.invoke("openmeteo:search", payload),
@@ -541,6 +640,27 @@ const api = {
   searchColorapi: (payload: { hex?: string }) =>
     ipcRenderer.invoke("colorapi:search", payload),
   getColorapiStatus: () => ipcRenderer.invoke("colorapi:status"),
+  // 数据工具 API 导出 (新增 7 个)
+  searchWeatherCn: (payload: { cityCode?: string }) =>
+    ipcRenderer.invoke("weather_cn:search", payload),
+  getWeatherCnStatus: () => ipcRenderer.invoke("weather_cn:status"),
+  searchWeatherCom: (payload: { loc?: string }) =>
+    ipcRenderer.invoke("weather_com:search", payload),
+  getWeatherComStatus: () => ipcRenderer.invoke("weather_com:status"),
+  searchYahooFinance: (payload: { symbol?: string; range?: string; interval?: string }) =>
+    ipcRenderer.invoke("yahoo_finance:search", payload),
+  getYahooFinanceStatus: () => ipcRenderer.invoke("yahoo_finance:status"),
+  searchSinaFinance: (payload: { codes?: string }) =>
+    ipcRenderer.invoke("sina_finance:search", payload),
+  getSinaFinanceStatus: () => ipcRenderer.invoke("sina_finance:status"),
+  searchEastmoney: (payload: { secid?: string }) =>
+    ipcRenderer.invoke("eastmoney:search", payload),
+  getEastmoneyStatus: () => ipcRenderer.invoke("eastmoney:status"),
+  searchClsTelegraph: () => ipcRenderer.invoke("cls_telegraph:search"),
+  getClsTelegraphStatus: () => ipcRenderer.invoke("cls_telegraph:status"),
+  searchCoinmarketcap: (payload: { limit?: number }) =>
+    ipcRenderer.invoke("coinmarketcap:search", payload),
+  getCoinmarketcapStatus: () => ipcRenderer.invoke("coinmarketcap:status"),
   // 热搜采集 API 导出
   hotsearchStatus: () => ipcRenderer.invoke("hotsearch:status"),
   hotsearchSearch: (payload: { key?: string; platform?: string }) =>

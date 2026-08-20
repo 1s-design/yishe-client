@@ -291,6 +291,8 @@ export async function searchIconify(
 
     const data = await res.json();
     const { items, total } = parseIconifySearchResponse(data, themeColor);
+    // Iconify 某些响应会忽略 limit，客户端能力契约必须保证返回数量不超过调用方要求。
+    const limitedItems = items.slice(0, limit);
 
     // 计算分页信息
     const totalPages = Math.ceil(total / limit) || 1;
@@ -298,11 +300,11 @@ export async function searchIconify(
     return {
       success: true,
       query: keyword,
-      count: items.length,
+      count: limitedItems.length,
       total,
       totalPages,
-      items,
-      links: items.map((item) => item.image),
+      items: limitedItems,
+      links: limitedItems.map((item) => item.image),
       page,
       nextPage: page < totalPages ? page + 1 : null,
     };

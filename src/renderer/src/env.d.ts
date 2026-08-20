@@ -50,6 +50,7 @@ interface Window {
     onExtensionConnectionStatus(callback: (status: any) => void): void;
     openExternal(url: string): Promise<void>;
     toggleDevTools(): Promise<{ opened: boolean }>;
+    setTitleBarTheme(theme: "light" | "dark"): Promise<void>;
     writeClientLog(payload: {
       level?: string;
       module?: string;
