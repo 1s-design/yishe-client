@@ -138,9 +138,16 @@ function handleOpenCapabilityBrowser() {
 
 async function handleAddTools(tools: CapabilityTool[]) {
   if (tools.length === 0) return;
-  const toolNames = tools.map(t => t.name).join('、');
-  const message = `请使用以下工具帮我完成任务：${toolNames}。请告诉我你想用这些工具做什么。`;
-  await sendMessage(message);
+  const toolNames = tools.map((t) => t.name).join("、");
+  const message = `已选择工具：${toolNames}。请告诉我需要执行的具体任务或参数。`;
+  await sendMessage(message, [], {
+    selectedTools: tools.map((tool) => ({
+      name: tool.name,
+      source: tool.source,
+      label: tool.displayName,
+    })),
+    toolSelectionOnly: true,
+  });
 }
 
 async function handleSend(text: string, attachments?: any[]) {

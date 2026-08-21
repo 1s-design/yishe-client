@@ -48,12 +48,17 @@ function acceptsEvent(payload: StreamPayload) {
 /** 从任意嵌套对象中提取 http(s) 图片 URL 列表（缩略图/图片字段），去重并限量 */
 function extractImageUrls(value: unknown, limit = 12): string[] {
   const urls = new Set<string>();
-  const IMG = /(?:\.(?:jpe?g|png|webp|gif|avif|bmp|svg)|images|photos|cdn\.|gettr|notes)/i;
+  const IMG =
+    /(?:\.(?:jpe?g|png|webp|gif|avif|bmp|svg)|images|photos|cdn\.|gettr|notes)/i;
   const scan = (node: unknown, key?: string) => {
     if (urls.size >= limit) return;
     if (typeof node === "string") {
       const url = node.trim();
-      if (/^https?:\/\//i.test(url) && (IMG.test(url) || /(thumbnail|image|photo|thumb|pic|img|preview)/i.test(key || ""))) {
+      if (
+        /^https?:\/\//i.test(url) &&
+        (IMG.test(url) ||
+          /(thumbnail|image|photo|thumb|pic|img|preview)/i.test(key || ""))
+      ) {
         urls.add(url);
       }
       return;
@@ -137,17 +142,22 @@ interface SessionListItem {
 
 interface ServerChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | Array<
-    | { type: "text"; text: string }
-    | { type: "image_url"; image_url: { url: string } }
-  >;
+  content:
+    | string
+    | Array<
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+      >;
   attachments?: AttachmentData[];
   reasoning_content?: string;
   tool_call_id?: string;
   name?: string;
 }
 
-function serverMessageToChatMessage(msg: ServerChatMessage, idx: number): ChatMessage {
+function serverMessageToChatMessage(
+  msg: ServerChatMessage,
+  idx: number,
+): ChatMessage {
   let content = "";
   if (typeof msg.content === "string") {
     content = msg.content;
@@ -172,9 +182,11 @@ function serverMessageToChatMessage(msg: ServerChatMessage, idx: number): ChatMe
 
 async function loadSessionsFromApi(): Promise<ChatSession[]> {
   try {
-    const res = await apiGet<{ success: boolean; data: SessionListItem[] }>("/sessions");
+    const res = await apiGet<{ success: boolean; data: SessionListItem[] }>(
+      "/sessions",
+    );
     if (res.success && Array.isArray(res.data)) {
-      return res.data.map(s => ({
+      return res.data.map((s) => ({
         id: s.id,
         title: s.title,
         createdAt: s.createdAt,
@@ -188,11 +200,24 @@ async function loadSessionsFromApi(): Promise<ChatSession[]> {
   }
 }
 
-async function loadSessionDetail(sessionId: string): Promise<ChatSession | null> {
+async function loadSessionDetail(
+  sessionId: string,
+): Promise<ChatSession | null> {
   try {
-    const res = await apiGet<{ success: boolean; data: { id: string; title: string; createdAt: number; updatedAt: number; messages: ServerChatMessage[] } }>(`/sessions/${sessionId}`);
+    const res = await apiGet<{
+      success: boolean;
+      data: {
+        id: string;
+        title: string;
+        createdAt: number;
+        updatedAt: number;
+        messages: ServerChatMessage[];
+      };
+    }>(`/sessions/${sessionId}`);
     if (res.success && res.data) {
-      const messages = res.data.messages.map((m, i) => serverMessageToChatMessage(m, i));
+      const messages = res.data.messages.map((m, i) =>
+        serverMessageToChatMessage(m, i),
+      );
       return {
         id: res.data.id,
         title: res.data.title,
@@ -247,11 +272,7 @@ async function processSSEStream(
   }
 }
 
-function handleSSEEvent(
-  event: string,
-  data: any,
-  payload: StreamPayload,
-) {
+function handleSSEEvent(event: string, data: any, payload: StreamPayload) {
   switch (event) {
     case "reasoning":
       if (!acceptsEvent(payload)) return;
@@ -341,15 +362,15 @@ async function refreshSessions() {
   try {
     const remote = await loadSessionsFromApi();
     if (remote.length > 0) {
-      sessions.value = sessions.value.map(local => {
-        const remoteSession = remote.find(r => r.id === local.id);
+      sessions.value = sessions.value.map((local) => {
+        const remoteSession = remote.find((r) => r.id === local.id);
         if (remoteSession && local.messages.length > 0) {
           return { ...remoteSession, messages: local.messages };
         }
         return remoteSession || local;
       });
       for (const r of remote) {
-        if (!sessions.value.some(s => s.id === r.id)) {
+        if (!sessions.value.some((s) => s.id === r.id)) {
           sessions.value.push(r);
         }
       }
@@ -367,9 +388,12 @@ async function initSessions() {
   if (activeSessionId.value) {
     const detail = await loadSessionDetail(activeSessionId.value);
     if (detail) {
-      const idx = sessions.value.findIndex(s => s.id === detail.id);
+      const idx = sessions.value.findIndex((s) => s.id === detail.id);
       if (idx >= 0) {
-        sessions.value[idx] = { ...sessions.value[idx], messages: detail.messages };
+        sessions.value[idx] = {
+          ...sessions.value[idx],
+          messages: detail.messages,
+        };
       }
     }
   }
@@ -385,7 +409,9 @@ function createSession(): ChatSession {
   };
   sessions.value.unshift(session);
   activeSessionId.value = session.id;
-  apiPost("/sessions", { id: session.id, title: session.title }).catch(() => {});
+  apiPost("/sessions", { id: session.id, title: session.title }).catch(
+    () => {},
+  );
   return session;
 }
 
@@ -395,9 +421,12 @@ function setActiveSession(sessionId: string) {
     activeSessionId.value = sessionId;
     loadSessionDetail(sessionId).then((detail) => {
       if (detail) {
-        const idx = sessions.value.findIndex(s => s.id === detail.id);
+        const idx = sessions.value.findIndex((s) => s.id === detail.id);
         if (idx >= 0) {
-          sessions.value[idx] = { ...sessions.value[idx], messages: detail.messages };
+          sessions.value[idx] = {
+            ...sessions.value[idx],
+            messages: detail.messages,
+          };
         }
       }
     });
@@ -409,12 +438,22 @@ function deleteSession(sessionId: string) {
   sessions.value = sessions.value.filter((item) => item.id !== sessionId);
   if (activeSessionId.value === sessionId)
     activeSessionId.value = sessions.value[0]?.id ?? null;
-  fetch(`${AGENT_BASE}/sessions/${sessionId}`, { method: "DELETE" }).catch(() => {});
+  fetch(`${AGENT_BASE}/sessions/${sessionId}`, { method: "DELETE" }).catch(
+    () => {},
+  );
 }
 
 async function sendMessage(
   content: string,
   attachments: AttachmentData[] = [],
+  options?: {
+    selectedTools?: Array<{
+      name: string;
+      source?: "client" | "server";
+      label?: string;
+    }>;
+    toolSelectionOnly?: boolean;
+  },
 ) {
   if (isStreaming.value || (!content.trim() && attachments.length === 0))
     return;
@@ -455,17 +494,24 @@ async function sendMessage(
   abortController = new AbortController();
 
   try {
-    const response = await fetch(`${AGENT_BASE}/sessions/${session.id}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        runId,
-        text: content.trim(),
-        attachments: attachments.length ? attachments : undefined,
-        autoApprove: false,
-      }),
-      signal: abortController.signal,
-    });
+    const response = await fetch(
+      `${AGENT_BASE}/sessions/${session.id}/messages`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId,
+          text: content.trim(),
+          attachments: attachments.length ? attachments : undefined,
+          selectedTools: options?.selectedTools?.length
+            ? options.selectedTools
+            : undefined,
+          toolSelectionOnly: options?.toolSelectionOnly === true,
+          autoApprove: false,
+        }),
+        signal: abortController.signal,
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -519,7 +565,9 @@ async function getConfig(): Promise<AgentConfig | null> {
     if (agentApi?.getConfig) {
       return await agentApi.getConfig();
     }
-    const res = await apiGet<{ success: boolean; data: AgentConfig }>("/config");
+    const res = await apiGet<{ success: boolean; data: AgentConfig }>(
+      "/config",
+    );
     return res.success ? res.data : null;
   } catch {
     return null;
@@ -547,9 +595,12 @@ async function refreshSessionsManual() {
   if (activeSessionId.value) {
     const detail = await loadSessionDetail(activeSessionId.value);
     if (detail) {
-      const idx = sessions.value.findIndex(s => s.id === detail.id);
+      const idx = sessions.value.findIndex((s) => s.id === detail.id);
       if (idx >= 0) {
-        sessions.value[idx] = { ...sessions.value[idx], messages: detail.messages };
+        sessions.value[idx] = {
+          ...sessions.value[idx],
+          messages: detail.messages,
+        };
       }
     }
   }
@@ -581,7 +632,7 @@ export function useAgent() {
           return await agentApi.saveConfig(config);
         }
         const res = await apiPost<{ data: AgentConfig }>("/config", config);
-        return (res as any).data || config as AgentConfig;
+        return (res as any).data || (config as AgentConfig);
       } catch {
         return config as AgentConfig;
       }

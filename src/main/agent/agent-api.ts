@@ -15,7 +15,7 @@ import type { Router } from "express";
 import { randomUUID } from "crypto";
 import { sessionStore } from "./session-store";
 import { clientLangGraphAgent } from "./langgraph-agent";
-import type { AgentChatMessage } from "./langgraph-agent";
+import type { AgentChatMessage, AgentSelectedTool } from "./langgraph-agent";
 
 export function createAgentApiRouter(): Router {
   // 动态 import express 避免循环依赖
@@ -109,7 +109,11 @@ export function createAgentApiRouter(): Router {
       const catalog = await fetchServerCapabilities();
       res.json({ success: true, data: catalog });
     } catch (err: any) {
-      res.json({ success: false, error: err?.message || String(err), data: { tools: [] } });
+      res.json({
+        success: false,
+        error: err?.message || String(err),
+        data: { tools: [] },
+      });
     }
   });
 
@@ -120,31 +124,42 @@ export function createAgentApiRouter(): Router {
     const startTime = Date.now();
     try {
       await new Promise<void>((resolve, reject) => {
-        const req = https.get(url, { timeout: 8000, headers: { "User-Agent": "Mozilla/5.0" } }, (response) => {
-          response.resume(); // consume response data
-          const elapsed = Date.now() - startTime;
-          if (response.statusCode && response.statusCode < 400) {
-            resolve();
-          } else {
-            reject(new Error(`HTTP ${response.statusCode}`));
-          }
-        });
+        const req = https.get(
+          url,
+          { timeout: 8000, headers: { "User-Agent": "Mozilla/5.0" } },
+          (response) => {
+            response.resume(); // consume response data
+            const elapsed = Date.now() - startTime;
+            if (response.statusCode && response.statusCode < 400) {
+              resolve();
+            } else {
+              reject(new Error(`HTTP ${response.statusCode}`));
+            }
+          },
+        );
         req.on("timeout", () => {
           req.destroy();
           reject(new Error("请求超时"));
         });
         req.on("error", reject);
       });
-      res.json({ success: true, data: { reachable: true, elapsedMs: Date.now() - startTime } });
+      res.json({
+        success: true,
+        data: { reachable: true, elapsedMs: Date.now() - startTime },
+      });
     } catch (err: any) {
-      res.json({ success: false, error: err?.message || "Google Arts & Culture 不可达" });
+      res.json({
+        success: false,
+        error: err?.message || "Google Arts & Culture 不可达",
+      });
     }
   });
 
   // ── 发送消息（SSE 流式） ──────────────────────────────────
   router.post("/sessions/:id/messages", async (req, res) => {
     const sessionId = req.params.id;
-    const { text, attachments, autoApprove } = req.body ?? {};
+    const { text, attachments, selectedTools, toolSelectionOnly, autoApprove } =
+      req.body ?? {};
 
     if (!text || typeof text !== "string") {
       res.status(400).json({ success: false, error: "缺少 text 参数" });
@@ -159,6 +174,19 @@ export function createAgentApiRouter(): Router {
       role: "user",
       content: text,
       attachments: attachments || [],
+      selectedTools: Array.isArray(selectedTools)
+        ? selectedTools
+            .filter((item: any) => item && typeof item.name === "string")
+            .map(
+              (item: any): AgentSelectedTool => ({
+                name: item.name.trim(),
+                source: item.source === "server" ? "server" : "client",
+                label: typeof item.label === "string" ? item.label : undefined,
+              }),
+            )
+            .filter((item: AgentSelectedTool) => item.name)
+        : undefined,
+      toolSelectionOnly: toolSelectionOnly === true,
     };
     sessionStore.appendMessage(sessionId, userMessage);
 

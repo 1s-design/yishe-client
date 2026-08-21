@@ -19,6 +19,7 @@ import {
   fetchServerCapabilities,
   executeServerCapability,
   isServerToolName,
+  serverToolOpenAiName,
   toOriginalToolName,
   serverCapabilitiesToOpenAiTools,
   buildServerToolIndex,
@@ -27,6 +28,14 @@ import {
   type ServerCapabilityCatalog,
   type ServerCapabilityTool,
 } from "./server-capabilities";
+
+export interface AgentSelectedTool {
+  /** 工具的原始能力名，例如 material.sticker.search。 */
+  name: string;
+  /** 选择时看到的运行位置，仅用于诊断与兼容旧会话。 */
+  source?: "client" | "server";
+  label?: string;
+}
 
 export interface AgentAttachment {
   id?: string;
@@ -46,6 +55,10 @@ export interface AgentChatMessage {
         | { type: "image_url"; image_url: { url: string } }
       >;
   attachments?: AgentAttachment[];
+  /** 能力库“添加到对话”时显式绑定的工具。该信息持久化在会话中，不能只依赖模型记忆。 */
+  selectedTools?: AgentSelectedTool[];
+  /** true 表示这条消息只是选择工具，尚未提交业务参数。 */
+  toolSelectionOnly?: boolean;
   tool_call_id?: string;
   name?: string;
   reasoning_content?: string;
@@ -109,8 +122,18 @@ export function selectRelevantTools(
   prompt: string,
   allTools: OpenAI.Chat.Completions.ChatCompletionTool[],
   serverToolIndex?: Map<string, ServerCapabilityTool> | null,
+  explicitToolNames: string[] = [],
 ) {
   const text = prompt.toLowerCase();
+  const explicitOpenAiNames = new Set(
+    explicitToolNames
+      .map((name) => String(name || "").trim())
+      .filter(Boolean)
+      .flatMap((name) => [
+        name.replace(/\./g, "_"),
+        `server_${name.replace(/\./g, "_")}`,
+      ]),
+  );
   const namespaces: Record<string, string[]> = {
     openmeteo: ["天气", "气温", "下雨", "温度", "weather"],
     coingecko: ["币价", "比特币", "btc", "eth", "crypto"],
@@ -237,6 +260,7 @@ export function selectRelevantTools(
   );
   const relevant = allTools.filter((tool) => {
     const name = String((tool as any).function?.name || "");
+    if (explicitOpenAiNames.has(name)) return true;
     if (isServerToolName(name)) {
       const serverTool = serverToolIndex?.get(name);
       const category = serverTool?.category || name.split("_")[1] || "";
@@ -281,6 +305,192 @@ export function selectRelevantTools(
   return fallback.slice(0, 48);
 }
 
+/**
+ * 从持久化会话恢复能力库中“添加到对话”的显式工具选择。
+ * 旧版本的选择消息没有结构化字段，仍兼容其文本格式，避免升级后丢失上下文。
+ */
+function getSelectedToolsForTurn(
+  messages: AgentChatMessage[],
+): AgentSelectedTool[] {
+  for (const message of [...messages].reverse()) {
+    if (message.role !== "user") continue;
+    if (Array.isArray(message.selectedTools) && message.selectedTools.length) {
+      return message.selectedTools.filter((item) => item?.name);
+    }
+    if (typeof message.content !== "string") continue;
+    const legacy = message.content.match(
+      /请使用以下工具帮我完成任务：([^。\n]+)[。！!]*/,
+    );
+    if (legacy?.[1]) {
+      return legacy[1]
+        .split(/[、,，]/)
+        .map((name) => name.trim())
+        .filter(Boolean)
+        .map((name) => ({ name }));
+    }
+  }
+  return [];
+}
+
+function isToolSelectionOnlyMessage(message?: AgentChatMessage): boolean {
+  if (!message || message.role !== "user") return false;
+  if (message.toolSelectionOnly) return true;
+  return (
+    typeof message.content === "string" &&
+    /请使用以下工具帮我完成任务：/.test(message.content)
+  );
+}
+
+/**
+ * 对显式选中的“搜索”工具做确定性参数映射。用户第二句仅输入“猫咪”也应真正搜索，
+ * 不能把工具名丢给模型猜，更不能退化为本地不存在的同名能力。
+ */
+function buildExplicitSearchToolCall(
+  current: GraphState,
+  selectedTools: AgentSelectedTool[],
+  allTools: OpenAI.Chat.Completions.ChatCompletionTool[],
+): { id: string; name: string; arguments: string } | null {
+  const last = current.messages[current.messages.length - 1];
+  if (
+    !last ||
+    isToolSelectionOnlyMessage(last) ||
+    typeof last.content !== "string"
+  )
+    return null;
+  const text = last.content.trim();
+  if (!text || selectedTools.length !== 1) return null;
+  const selectedName = String(selectedTools[0]?.name || "").trim();
+  if (!/(?:^|[._])search(?:$|[._])|搜索/i.test(selectedName)) return null;
+
+  const tool = findExplicitOpenAiTool(selectedTools[0], allTools);
+  if (!tool) return null;
+  const functionTool = tool as any;
+  const properties = ((functionTool.function?.parameters as any)?.properties ||
+    {}) as Record<string, unknown>;
+  // 某些 zod-to-json-schema 版本会把能力参数放进 $ref/definitions，
+  // 使顶层没有 properties。显式选择不能因此退化成“云端工具不可用”，
+  // 对常见搜索能力提供稳定的参数键兜底。
+  const fallbackKeys: Record<string, string> = {
+    openmeteo: "city",
+    dictionary: "word",
+    timeapi: "timezone",
+    zippopotam: "postcode",
+    countryis: "ip",
+    colorapi: "hex",
+  };
+  const keywordKey =
+    [
+      "keyword",
+      "query",
+      "q",
+      "search",
+      "location",
+      "city",
+      "name",
+      "text",
+    ].find((key) => key in properties) ||
+    fallbackKeys[selectedName.split(/[._]/)[0]] ||
+    "query";
+
+  const keyword = text
+    .replace(
+      /^(?:请|帮我|帮忙)?(?:搜索|搜一下|搜|查找|查一下|查|找一下|找)\s*/i,
+      "",
+    )
+    .replace(/[。！？!?]+$/, "")
+    .trim();
+  if (!keyword) return null;
+  const args: Record<string, unknown> = { [keywordKey]: keyword };
+  const count = keyword.match(/(?:前|共|要)?\s*(\d{1,2})\s*(?:个|条|张)/)?.[1];
+  if (count) {
+    const sizeKey = ["pageSize", "limit", "maxCount", "count"].find(
+      (key) => key in properties,
+    );
+    if (sizeKey) args[sizeKey] = Number(count);
+  }
+  return {
+    id: `explicit_${functionTool.function.name}_${Date.now()}`,
+    name: functionTool.function.name,
+    arguments: JSON.stringify(args),
+  };
+}
+
+function findExplicitOpenAiTool(
+  selectedTool: AgentSelectedTool,
+  allTools: OpenAI.Chat.Completions.ChatCompletionTool[],
+): OpenAI.Chat.Completions.ChatCompletionTool | null {
+  const selectedName = String(selectedTool?.name || "").trim();
+  if (!selectedName) return null;
+  const candidates = [
+    selectedName.replace(/\./g, "_"),
+    serverToolOpenAiName(selectedName),
+  ];
+  const listed = allTools.find(
+    (item: any) =>
+      item?.type === "function" && candidates.includes(item?.function?.name),
+  );
+  if (listed) return listed;
+
+  // 本地能力是客户端的事实来源，不应因为模型工具列表被截断或服务端目录
+  // 拉取失败而被判定为“未同步”。为本地已注册能力生成最小函数描述，
+  // 执行时仍通过 CapabilityRegistry，业务实现不会被复制。
+  if (selectedTool.source === "client") {
+    const dotIndex = selectedName.indexOf(".");
+    if (dotIndex > 0) {
+      const namespace = selectedName.slice(0, dotIndex);
+      const name = selectedName.slice(dotIndex + 1);
+      if (CapabilityRegistry.getDefinition(namespace, name)) {
+        return {
+          type: "function",
+          function: {
+            name: selectedName.replace(/\./g, "_"),
+            description: selectedTool.label || selectedName,
+            parameters: { type: "object", properties: {} },
+          },
+        } as OpenAI.Chat.Completions.ChatCompletionTool;
+      }
+    }
+  }
+  return null;
+}
+
+function buildExplicitToolSelectionResponse(
+  current: GraphState,
+): string | null {
+  const last = current.messages[current.messages.length - 1];
+  if (
+    !isToolSelectionOnlyMessage(last) ||
+    !current.explicitSelectedTools.length
+  ) {
+    return null;
+  }
+  const labels = current.explicitSelectedTools.map(
+    (item) => item.label || item.name,
+  );
+  const names = current.explicitSelectedTools.map((item) => item.name);
+  const unavailable = current.explicitSelectedTools.filter(
+    (item) =>
+      item.source !== "client" && !findExplicitOpenAiTool(item, current.tools),
+  );
+  if (unavailable.length) {
+    return `已记录您选择的工具：${names.join("、")}。当前客户端还没有同步到该工具的连接信息，请重新登录并同步能力后再执行。`;
+  }
+  const needs = names.some((name) => /openmeteo|weather|天气/i.test(name))
+    ? "请告诉我城市或地区，例如“北京今天的天气”。"
+    : names.some((name) => /search|搜索/i.test(name))
+      ? "请告诉我搜索关键词，例如“猫咪”或“春季花朵”。"
+      : "请告诉我具体任务和参数。";
+  return `已选择${labels.join("、")}。${needs}`;
+}
+
+function explicitToolsSystemInstruction(
+  selectedTools: AgentSelectedTool[],
+): string | null {
+  if (!selectedTools.length) return null;
+  const names = selectedTools.map((item) => item.name).join("、");
+  return `【强制工具约束】用户已通过能力库明确选择：${names}。这是本会话的绑定工具，不得改用同名或相似的本地工具。当前用户消息只要已包含该工具所需参数，就必须先调用这个工具再回答；仅在参数缺失时，才简洁询问缺少的参数。若云端工具目录尚未同步，不得声称“能力不存在”，应明确提示“所选云端工具暂不可连接，请重新登录并同步客户端能力”。`;
+}
+
 interface GraphState {
   messages: AgentChatMessage[];
   tools: OpenAI.Chat.Completions.ChatCompletionTool[];
@@ -292,6 +502,7 @@ interface GraphState {
   googleArtCollectResults: Array<Record<string, any>>;
   /** zoom 成功后必须结束本回合，等待下一条用户消息明确选择分辨率。 */
   awaitingGoogleArtZoomSelection: boolean;
+  explicitSelectedTools: AgentSelectedTool[];
 }
 
 function getLatestUserText(messages: AgentChatMessage[]): string {
@@ -1236,15 +1447,23 @@ export class ClientLangGraphAgent {
     const lastUser = [...historyMessages]
       .reverse()
       .find((message) => message.role === "user");
+    const explicitSelectedTools = getSelectedToolsForTurn(historyMessages);
+    const explicitInstruction = explicitToolsSystemInstruction(
+      explicitSelectedTools,
+    );
     const state: GraphState = {
       messages: [
         { role: "system", content: config.systemPrompt },
+        ...(explicitInstruction
+          ? [{ role: "system" as const, content: explicitInstruction }]
+          : []),
         ...historyMessages,
       ],
       tools: selectRelevantTools(
         typeof lastUser?.content === "string" ? lastUser.content : "",
         allTools,
         serverToolIndex,
+        explicitSelectedTools.map((item) => item.name),
       ),
       iteration: 0,
       finalText: "",
@@ -1252,6 +1471,7 @@ export class ClientLangGraphAgent {
       pendingToolCalls: [],
       googleArtCollectResults: [],
       awaitingGoogleArtZoomSelection: false,
+      explicitSelectedTools,
     };
 
     // 强约束入口：搜索阶段直接使用本地可信能力，避免模型因上下文/工具截断
@@ -1336,6 +1556,22 @@ export class ClientLangGraphAgent {
       };
     }
 
+    const directToolSelectionResult = buildExplicitToolSelectionResponse(state);
+    if (directToolSelectionResult !== null) {
+      state.finalText = directToolSelectionResult;
+      state.messages.push({
+        role: "assistant",
+        content: directToolSelectionResult,
+      });
+      events.onContent?.(directToolSelectionResult);
+      events.onComplete?.(directToolSelectionResult, "");
+      return {
+        text: directToolSelectionResult,
+        reasoning: "",
+        messages: state.messages,
+      };
+    }
+
     const graph = new ClientStateGraph()
       .addNode("agent", async (current) => {
         current.iteration += 1;
@@ -1362,6 +1598,34 @@ export class ClientLangGraphAgent {
             current.messages.push({
               role: "assistant",
               content: current.finalText,
+            });
+            return;
+          }
+        }
+
+        // 能力库中显式选择的搜索工具：第二句只输入“猫咪”也必须实际调用。
+        // 这条确定性路径绕过模型对工具名的猜测，避免 server 工具被误当成本地能力。
+        if (current.iteration === 1) {
+          const explicitSearchCall = buildExplicitSearchToolCall(
+            current,
+            current.explicitSelectedTools,
+            current.tools,
+          );
+          if (explicitSearchCall) {
+            current.pendingToolCalls = [explicitSearchCall];
+            current.messages.push({
+              role: "assistant",
+              content: "",
+              tool_calls: [
+                {
+                  id: explicitSearchCall.id,
+                  type: "function",
+                  function: {
+                    name: explicitSearchCall.name,
+                    arguments: explicitSearchCall.arguments,
+                  },
+                },
+              ],
             });
             return;
           }
@@ -1524,7 +1788,13 @@ export class ClientLangGraphAgent {
             continue;
           }
 
-          const separator = call.name.indexOf("_");
+          // OpenAI 规范要求 function name 不含点号，但部分兼容模型会把
+          // 能力原名 material.sticker.search / openmeteo.search 原样返回。
+          // 统一接受两种格式，避免“工具已选中却被判定为未知工具名称”。
+          const dotSeparator = call.name.indexOf(".");
+          const underscoreSeparator = call.name.indexOf("_");
+          const separator =
+            dotSeparator > 0 ? dotSeparator : underscoreSeparator;
           const namespace = separator > 0 ? call.name.slice(0, separator) : "";
           const capabilityName =
             separator > 0 ? call.name.slice(separator + 1) : "";

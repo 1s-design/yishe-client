@@ -681,14 +681,26 @@ function handlePaste(event: ClipboardEvent) {
 }
 
 .agent-thinking-spinner {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
-  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: agent-spin 700ms linear infinite;
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  aspect-ratio: 1;
+  padding: 3px;
+  box-sizing: border-box;
+  filter: contrast(10);
+}
+.agent-thinking-spinner::before,
+.agent-thinking-spinner::after {
+  content: "";
+  grid-area: 1/1;
+  width: 8px;
+  height: 8px;
+  background: #3a86ff;
+  animation: l7 2s infinite;
+}
+.agent-thinking-spinner::after {
+  animation-delay: -1s;
 }
 
 .agent-approval {
@@ -978,10 +990,12 @@ function handlePaste(event: ClipboardEvent) {
   opacity: 1 !important;
 }
 
-@keyframes agent-spin {
-  to {
-    transform: rotate(360deg);
-  }
+@keyframes l7 {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(100%, 0); }
+  50%  { transform: translate(100%, 100%); }
+  75%  { transform: translate(0, 100%); }
+  100% { transform: translate(0, 0); }
 }
 
 @media (max-width: 760px) {
