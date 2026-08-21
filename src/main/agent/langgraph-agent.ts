@@ -278,38 +278,30 @@ export function selectRelevantTools(
     }
     return selected.has(name.split("_")[0]);
   });
-  // 服务端工具排在末尾，slice(0,48) 时可能被本地工具挤掉；确保命中的服务端工具优先。
-  if (
-    relevant.some((tool) =>
-      isServerToolName(String((tool as any).function?.name || "")),
-    )
-  ) {
-    const ordered = allTools.filter(
-      (tool) => !isServerToolName(String((tool as any).function?.name || "")),
-    );
-    const matchedServer = relevant.filter((tool) =>
-      isServerToolName(String((tool as any).function?.name || "")),
-    );
-    const restServer = allTools.filter(
-      (tool) =>
-        isServerToolName(String((tool as any).function?.name || "")) &&
-        !matchedServer.includes(tool),
-    );
-    return [...matchedServer, ...ordered, ...restServer].slice(0, 48);
+  const matchedServer = relevant.filter((tool) =>
+    isServerToolName(String((tool as any).function?.name || "")),
+  );
+  const matchedLocal = relevant.filter(
+    (tool) => !isServerToolName(String((tool as any).function?.name || "")),
+  );
+
+  // 命中的服务端业务能力和本地能力优先
+  const prioritized = [...matchedServer, ...matchedLocal];
+  if (prioritized.length >= 3) {
+    return prioritized.slice(0, 48);
   }
-  // Google Arts 采集工作流（search → zoom → collect）与素材库上传必须始终可用：
-  // 用户消息如「0」「1」等档位选择不命中任何关键词，会回退到全量截断，
-  // googleArt 若排在第 48 位之后就会被挤出工具列表，模型将无法真正调用 collect。
-  const prioritize = (tool: any) =>
-    /^(googleArt|materialLibrary)_/.test(String(tool?.function?.name || ""));
-  const prioritized = relevant.filter(prioritize);
-  const rest = relevant.filter((tool) => !prioritize(tool));
-  const result = [...prioritized, ...rest];
-  if (result.length >= 3) return result.slice(0, 48);
-  const fallback = allTools
-    .filter(prioritize)
-    .concat(allTools.filter((tool) => !prioritize(tool)));
-  return fallback.slice(0, 48);
+
+  const restServer = allTools.filter(
+    (tool) =>
+      isServerToolName(String((tool as any).function?.name || "")) &&
+      !prioritized.includes(tool),
+  );
+  const restLocal = allTools.filter(
+    (tool) =>
+      !isServerToolName(String((tool as any).function?.name || "")) &&
+      !prioritized.includes(tool),
+  );
+  return [...prioritized, ...restServer, ...restLocal].slice(0, 48);
 }
 
 /**
@@ -1458,9 +1450,15 @@ export class ClientLangGraphAgent {
     const explicitInstruction = explicitToolsSystemInstruction(
       explicitSelectedTools,
     );
+    const businessRulePrompt = `【衣设平台业务能力调用规范】
+1. 当用户询问或操作衣设平台的业务数据（如素材库/素材图/贴纸、组图/图片组、PSD模板、PS套图任务、独立站商品生成模板、跨境平台发布配置等）时，必须直接调用对应的服务端能力（如 server_material_*、server_product_*、server_publish_* 开头），禁止反问用户“指哪个平台”，严禁使用本地 filesystem_* 磁盘扫描替代。
+2. 只有用户明确指定本地电脑磁盘路径（如 /Users/xxx 或 D:\\xxx）或说明读取本机文件时，才使用 filesystem_* 工具。
+3. 只要存在可用的 server_ 工具，直接调用完成任务，不要回复“没有工具”。`;
+
     const state: GraphState = {
       messages: [
-        { role: "system", content: config.systemPrompt },
+        { role: "system", content: config.systemPrompt || "" },
+        { role: "system", content: businessRulePrompt },
         ...(explicitInstruction
           ? [{ role: "system" as const, content: explicitInstruction }]
           : []),
