@@ -250,9 +250,16 @@ export function selectRelevantTools(
     "materialLibrary",
   ].forEach((name) => selected.add(name));
   // 服务端能力：按目录里的 category 字段匹配关键词（客户端不复制工具实现）。
-  // browser / mcp 是客户端最常用且数量有限的云端能力，始终挂载，
-  // 避免「打开游览器」等拼写变体因关键词不命中而被排除。
-  const ALWAYS_SERVER_CATEGORIES = ["browser", "mcp"];
+  // 服务端全部工具只有 20~30 个，且是衣设平台最核心的业务功能，始终挂载保证模型随时可调用。
+  const ALWAYS_SERVER_CATEGORIES = [
+    "material",
+    "product",
+    "publish",
+    "workflow",
+    "system",
+    "browser",
+    "mcp",
+  ];
   const selectedServerCategories = new Set(
     Object.entries(SERVER_TOOL_KEYWORDS)
       .filter(([, words]) => words.some((word) => text.includes(word)))

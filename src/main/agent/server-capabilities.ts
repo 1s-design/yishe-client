@@ -247,9 +247,6 @@ export function buildServerToolIndex(
  * 新工具若未命中关键词，在通用对话（相关工具 < 3）时仍会随 allTools 挂载。
  */
 export const SERVER_TOOL_KEYWORDS: Record<string, string[]> = {
-  // 服务端的只读账号、任务和健康检查能力属于 system 类别。若不在
-  // 这里声明，selectRelevantTools 会把它们从 Agent 的工具集中过滤掉，
-  // 导致客户端明明已经拉到了云端能力目录，却仍然回复“没有这个工具”。
   system: [
     "账号",
     "登录信息",
@@ -263,8 +260,61 @@ export const SERVER_TOOL_KEYWORDS: Record<string, string[]> = {
     "健康状态",
     "system",
   ],
-  workflow: ["工作流", "workflow", "节点", "执行流程", "流程图"],
-  material: ["素材库", "素材记录", "贴纸", "图片素材", "material"],
+  workflow: [
+    "工作流",
+    "workflow",
+    "节点",
+    "执行流程",
+    "流程图",
+    "工作流定义",
+    "工作流运行",
+  ],
+  material: [
+    "素材",
+    "素材图",
+    "素材库",
+    "素材记录",
+    "贴纸",
+    "图片素材",
+    "图片",
+    "图库",
+    "组图",
+    "图片组",
+    "套图",
+    "psd",
+    "模板",
+    "psd模板",
+    "ps套图",
+    "画板",
+    "多少个素材",
+    "素材列表",
+    "查素材",
+    "找素材",
+    "material",
+    "sticker",
+  ],
+  product: [
+    "商品",
+    "独立站",
+    "独立站商品",
+    "商品配置",
+    "商品生成模板",
+    "产品",
+    "生成商品",
+    "创建商品",
+    "product",
+  ],
+  publish: [
+    "发布",
+    "发布配置",
+    "发布任务",
+    "temu",
+    "etsy",
+    "amazon",
+    "平台发布",
+    "跨境发布",
+    "publish",
+  ],
   browser: [
     "浏览器",
     "打开网页",
