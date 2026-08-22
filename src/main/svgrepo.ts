@@ -606,12 +606,18 @@ async function searchInBrowserContextAttempt(
     let context: any = null;
     let pageInstance: any;
     if (managedProfileId) {
-      const { createProfileBrowserPage, updateManagedProfileBrowserActivity } = await import(
+      const {
+        createProfileBrowserPage,
+        focusManagedProfileBrowser,
+        updateManagedProfileBrowserActivity,
+      } = await import(
         "./auto-browser/legacy/services/ManagedProfileBrowserPool.js"
       );
       pageInstance = await createProfileBrowserPage(managedProfileId);
       managedPage = pageInstance;
       updateManagedProfileBrowserActivity(managedProfileId);
+      // 受管环境必须给操作者明确的可见反馈，避免任务已进入客户端却看起来“毫无反应”。
+      await focusManagedProfileBrowser(managedProfileId).catch(() => undefined);
     } else {
       const contextOptions: any = {
         viewport: { width: 1280, height: 800 },
@@ -811,8 +817,20 @@ async function searchInBrowserContextAttempt(
     throw new Error("未能在页面中检测到矢量素材元素，请检查关键词或网络连接");
   } finally {
     if (managedProfileId) {
-      // 保留受管 Chrome 与其 Profile（Cookie/登录态），仅关闭本次采集页面。
+      // 专属 SVGRepo 环境的 Cookie/登录态保存在 userDataDir；采集结束后不需要常驻 Chrome。
+      // 关闭页面与受管浏览器实例，避免后台空窗口及 Chromium 进程持续占用内存/CPU。
       await managedPage?.close().catch(() => {});
+      try {
+        const { closeManagedProfileBrowser } = await import(
+          "./auto-browser/legacy/services/ManagedProfileBrowserPool.js"
+        );
+        await closeManagedProfileBrowser(managedProfileId);
+        console.log(`[SVGRepo] 已关闭本次采集使用的浏览器环境: ${managedProfileId}`);
+      } catch (closeError: any) {
+        console.warn(
+          `[SVGRepo] 关闭受管浏览器环境失败（不影响采集结果）: ${closeError?.message || closeError}`,
+        );
+      }
     } else {
       await browser?.close().catch(() => {});
     }

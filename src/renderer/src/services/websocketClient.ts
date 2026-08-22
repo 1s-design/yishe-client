@@ -5411,6 +5411,13 @@ function bindSocketEvents(currentSocket: Socket) {
         level: "info",
         message: `[ws] received mcp-call: requestId=${requestId} tool=${toolName}`,
       });
+      if (toolName.startsWith("svgrepo_")) {
+        emitTransientWsToast(`mcp-start:${requestId}`, {
+          color: "info",
+          icon: "mdi-vector-square",
+          message: "SVGRepo 采集任务已开始，正在启动浏览器环境…",
+        });
+      }
       const reportMcpFailure = (failure: unknown) => {
         const result = failure as any;
         const errorText =
