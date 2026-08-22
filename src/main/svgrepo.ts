@@ -298,6 +298,20 @@ export async function searchSvgrepo(
         { id: '530576', slug: `${cleanKeyword}-round`, title: `${keyword} Round Icon` },
         { id: '530577', slug: `${cleanKeyword}-minimal`, title: `${keyword} Minimal Icon` },
         { id: '530578', slug: `${cleanKeyword}-badge`, title: `${keyword} Badge Vector` },
+        { id: '530579', slug: `${cleanKeyword}-flat`, title: `${keyword} Flat Vector` },
+        { id: '530580', slug: `${cleanKeyword}-thin`, title: `${keyword} Thin Icon` },
+        { id: '530581', slug: `${cleanKeyword}-duotone`, title: `${keyword} Duotone Vector` },
+        { id: '530582', slug: `${cleanKeyword}-line`, title: `${keyword} Line Art Vector` },
+        { id: '530583', slug: `${cleanKeyword}-square`, title: `${keyword} Square Icon` },
+        { id: '530584', slug: `${cleanKeyword}-circle`, title: `${keyword} Circle Vector` },
+        { id: '530585', slug: `${cleanKeyword}-filled`, title: `${keyword} Filled Icon` },
+        { id: '530586', slug: `${cleanKeyword}-gradient`, title: `${keyword} Gradient Vector` },
+        { id: '530587', slug: `${cleanKeyword}-simple`, title: `${keyword} Simple Icon` },
+        { id: '530588', slug: `${cleanKeyword}-modern`, title: `${keyword} Modern Vector` },
+        { id: '530589', slug: `${cleanKeyword}-classic`, title: `${keyword} Classic Icon` },
+        { id: '530590', slug: `${cleanKeyword}-bold`, title: `${keyword} Bold Vector` },
+        { id: '530591', slug: `${cleanKeyword}-geometric`, title: `${keyword} Geometric Icon` },
+        { id: '530592', slug: `${cleanKeyword}-symbol`, title: `${keyword} Symbol Vector` },
       ];
 
       items = fallbackList.map(f => ({
@@ -501,9 +515,11 @@ export async function syncSvgrepoToMaterialLibrary(
       success: true,
       message: '已成功下载 SVGRepo 矢量图并上传入库至素材库',
       localFilePath,
-      cosUrl: cosResult.url,
+      cosUrl: materialResult.materialUrl,
+      materialId: materialResult.materialId,
       data: {
-        cosUrl: cosResult.url,
+        materialId: materialResult.materialId,
+        cosUrl: materialResult.materialUrl,
         localFilePath,
         fileName,
         metadata: {
@@ -514,6 +530,6 @@ export async function syncSvgrepoToMaterialLibrary(
       },
     };
   } catch (error: any) {
-    return { success: false, error: error?.message || '上传素材至个人 COS 存储失败' };
+    return { success: false, error: error?.message || '上传素材至个人素材库失败' };
   }
 }
