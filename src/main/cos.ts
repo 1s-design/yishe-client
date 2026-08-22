@@ -50,7 +50,7 @@ function normalizeCfg(cfg: any): CosConfig | null {
   return null
 }
 
-async function getCurrentAccessToken(): Promise<string | null> {
+export async function getCurrentAccessToken(): Promise<string | null> {
   try {
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (!mainWindow || mainWindow.isDestroyed()) {

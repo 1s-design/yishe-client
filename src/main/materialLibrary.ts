@@ -10,7 +10,7 @@ import path from "path";
 import http from "http";
 import https from "https";
 import { URL } from "url";
-import { uploadFileToCos, generateCosKey, getBackendApiBase } from "./cos";
+import { uploadFileToCos, generateCosKey, getBackendApiBase, getCurrentAccessToken } from "./cos";
 
 type ServerModule = typeof import("./server");
 
@@ -83,7 +83,9 @@ export async function uploadToMaterialLibrary(
   // 2. 入库 sticker/create
   try {
     const { getTokenValue } = await getServerModule();
-    const token = getTokenValue();
+    const serverToken = getTokenValue();
+    const windowToken = await getCurrentAccessToken();
+    const token = serverToken || windowToken || "";
     const apiBase = (await getBackendApiBase()).replace(/\/+$/, "");
 
     const name =
