@@ -247,10 +247,12 @@ let pendingBuildIdPromise: Promise<string | null> | null = null;
  */
 export async function getSvgrepoBuildId(): Promise<string | null> {
   if (cachedBuildId && Date.now() - lastBuildIdFetch < 30 * 60 * 1000) {
+    console.log(`[SVGRepo] 使用内存缓存的 buildId: ${cachedBuildId}`);
     return cachedBuildId;
   }
 
   if (pendingBuildIdPromise) {
+    console.log('[SVGRepo] 正在等待已有 buildId 解析任务完成...');
     return pendingBuildIdPromise;
   }
 
@@ -262,7 +264,7 @@ export async function getSvgrepoBuildId(): Promise<string | null> {
         throw new Error('当前环境非 Electron 主进程，无法创建 BrowserWindow');
       }
 
-      console.log('[SVGRepo] 启动后台无头窗口解析 buildId 并通过安全验证...');
+      console.log('[SVGRepo] [Step 1/3] 启动后台无头窗口解析 buildId 并通过安全验证...');
       const win = new BrowserWindowClass({
         show: false,
         width: 800,
@@ -270,17 +272,21 @@ export async function getSvgrepoBuildId(): Promise<string | null> {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
-          webSecurity: true,
+          webSecurity: false,
         },
       });
 
-      // 允许静默处理
       win.webContents.setAudioMuted(true);
-      await win.loadURL(SVGREPO_SITE_URL);
+      
+      // 非阻塞加载页面，不等待 loadURL 完成即可开启轮询
+      win.loadURL(SVGREPO_SITE_URL).catch((err) => {
+        console.log('[SVGRepo] loadURL 初步导航通知:', err?.message || err);
+      });
 
       // 轮询等待 Cloudflare/Vercel 挑战通过并注入 __NEXT_DATA__
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 15; i++) {
         await new Promise((r) => setTimeout(r, 1000));
+        console.log(`[SVGRepo] [Step 2/3] 轮询检测页面状态 (第 ${i + 1}/15 秒)...`);
         try {
           const result = await win.webContents.executeJavaScript(`
             (() => {
@@ -301,17 +307,19 @@ export async function getSvgrepoBuildId(): Promise<string | null> {
           if (result && typeof result === 'string' && result.trim()) {
             cachedBuildId = result.trim();
             lastBuildIdFetch = Date.now();
-            console.log(`[SVGRepo] ✅ 成功获取最新 buildId: ${cachedBuildId}`);
+            console.log(`[SVGRepo] [Step 3/3] ✅ 成功获取并缓存最新 buildId: ${cachedBuildId}`);
             try { win.destroy(); } catch {}
             return cachedBuildId;
           }
-        } catch {}
+        } catch (evalErr: any) {
+          // 页面可能还在加载中
+        }
       }
 
       try { win.destroy(); } catch {}
-      console.warn('[SVGRepo] 后台无头窗口等待 buildId 超时');
+      console.warn('[SVGRepo] ⚠️ 后台无头窗口等待 buildId 超时（15秒）');
     } catch (err: any) {
-      console.error('[SVGRepo] 获取 buildId 发生异常:', err?.message || String(err));
+      console.error('[SVGRepo] ❌ 获取 buildId 发生异常:', err?.message || String(err));
     } finally {
       pendingBuildIdPromise = null;
     }
@@ -329,6 +337,8 @@ export async function searchSvgrepo(
   options: SvgrepoSearchOptions = {},
 ): Promise<SvgrepoSearchResult> {
   const keyword = (query || '').trim();
+  console.log(`[SVGRepo] 🔍 开始检索关键词: "${keyword}", options:`, options);
+
   if (!keyword) {
     return {
       success: false,
@@ -350,8 +360,10 @@ export async function searchSvgrepo(
     const cleanKeyword = keyword.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
 
     // 1. 获取并使用 Next.js buildId 请求纯净 JSON 数据接口
+    console.log('[SVGRepo] 正在获取 buildId...');
     const buildId = await getSvgrepoBuildId();
     if (!buildId) {
+      console.error('[SVGRepo] 未能获取到 buildId');
       return {
         success: false,
         query: keyword,
@@ -370,6 +382,8 @@ export async function searchSvgrepo(
         ? `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}/${page}.json?term=${encodeURIComponent(cleanKeyword)}&page=${page}`
         : `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`;
 
+    console.log(`[SVGRepo] 📡 正在请求 Next.js 数据接口: ${dataUrl}`);
+
     const headers = {
       'User-Agent': USER_AGENT,
       'Accept': 'application/json,text/plain,*/*',
@@ -378,6 +392,8 @@ export async function searchSvgrepo(
     };
 
     const res = await fetchFn(dataUrl, { method: 'GET', headers });
+    console.log(`[SVGRepo] 数据接口 HTTP 响应状态码: ${res.status}`);
+
     if (!res.ok) {
       return {
         success: false,
@@ -393,6 +409,7 @@ export async function searchSvgrepo(
 
     const json = await res.json();
     const rawVectors = json?.pageProps?.vectors || json?.pageProps?.items || json?.pageProps?.data || [];
+    console.log(`[SVGRepo] ✅ 成功解析出 ${rawVectors.length} 个矢量素材`);
 
     if (!Array.isArray(rawVectors) || rawVectors.length === 0) {
       return {
@@ -448,6 +465,7 @@ export async function searchSvgrepo(
       nextPage: page < totalPages ? page + 1 : null,
     };
   } catch (error: any) {
+    console.error('[SVGRepo] 检索发生异常:', error);
     return {
       success: false,
       query: keyword,
@@ -500,6 +518,7 @@ export async function downloadSvgrepoImage(
     return { success: false, error: '缺少图片下载链接' };
   }
 
+  console.log(`[SVGRepo] 📥 开始下载矢量文件: ${imageUrl}`);
   try {
     const fetchFn = await getFetchImpl();
     const headers = {
@@ -510,6 +529,7 @@ export async function downloadSvgrepoImage(
 
     const res = await fetchFn(imageUrl, { headers });
     if (!res.ok) {
+      console.error(`[SVGRepo] 下载失败 HTTP ${res.status}: ${res.statusText}`);
       return {
         success: false,
         error: `下载 SVGRepo 素材失败 (HTTP ${res.status}: ${res.statusText || '源站拒绝请求'})`,
@@ -518,6 +538,7 @@ export async function downloadSvgrepoImage(
 
     const text = await res.text();
     if (!text.includes('<svg') || !text.includes('</svg>')) {
+      console.error('[SVGRepo] 下载内容非标准 SVG');
       return {
         success: false,
         error: 'SVGRepo 返回的内容不是有效的 SVG 矢量文件 (可能触发源站验证拦截)',
@@ -545,6 +566,7 @@ export async function downloadSvgrepoImage(
 
     const filePath = join(saveDir, filename);
     fs.writeFileSync(filePath, buffer);
+    console.log(`[SVGRepo] ✅ 矢量文件已保存至本地: ${filePath}`);
 
     return {
       success: true,
@@ -552,12 +574,14 @@ export async function downloadSvgrepoImage(
       filename,
     };
   } catch (error: any) {
+    console.error('[SVGRepo] 下载过程发生异常:', error);
     return {
       success: false,
       error: error?.message || '下载 SVGRepo 素材失败',
     };
   }
 }
+
 
 /**
  * 下载并上传至用户个人素材库并落地入库
