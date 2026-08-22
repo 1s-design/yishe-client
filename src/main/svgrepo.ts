@@ -281,57 +281,35 @@ export async function searchSvgrepo(
     };
 
     const res = await fetchFn(targetUrl, { method: 'GET', headers });
-    let html = '';
-    if (res.ok) {
-      html = await res.text();
+    if (!res.ok) {
+      return {
+        success: false,
+        query: keyword,
+        count: 0,
+        total: 0,
+        items: [],
+        links: [],
+        page,
+        nextPage: null,
+        error: `SVGRepo 请求失败 (HTTP ${res.status}: ${res.statusText || '连接异常'})，请检查网络或代理`,
+      };
     }
 
-    let { items, total, totalPages } = parseSvgrepoHtml(html);
+    const html = await res.text();
+    const { items, total, totalPages } = parseSvgrepoHtml(html);
 
-    // 兜底高兼容模式：若直接抓取遇到防护拦截，构造关键词索引库常用高质量矢量
     if (items.length === 0) {
-      console.log('[SVGRepo] 使用智能索引引擎检索矢量素材...');
-      const fallbackList = [
-        { id: '530573', slug: `${cleanKeyword}-outline`, title: `${keyword} Outline Vector` },
-        { id: '530574', slug: `${cleanKeyword}-solid`, title: `${keyword} Solid Vector` },
-        { id: '530575', slug: `${cleanKeyword}-color`, title: `${keyword} Color Vector` },
-        { id: '530576', slug: `${cleanKeyword}-round`, title: `${keyword} Round Icon` },
-        { id: '530577', slug: `${cleanKeyword}-minimal`, title: `${keyword} Minimal Icon` },
-        { id: '530578', slug: `${cleanKeyword}-badge`, title: `${keyword} Badge Vector` },
-        { id: '530579', slug: `${cleanKeyword}-flat`, title: `${keyword} Flat Vector` },
-        { id: '530580', slug: `${cleanKeyword}-thin`, title: `${keyword} Thin Icon` },
-        { id: '530581', slug: `${cleanKeyword}-duotone`, title: `${keyword} Duotone Vector` },
-        { id: '530582', slug: `${cleanKeyword}-line`, title: `${keyword} Line Art Vector` },
-        { id: '530583', slug: `${cleanKeyword}-square`, title: `${keyword} Square Icon` },
-        { id: '530584', slug: `${cleanKeyword}-circle`, title: `${keyword} Circle Vector` },
-        { id: '530585', slug: `${cleanKeyword}-filled`, title: `${keyword} Filled Icon` },
-        { id: '530586', slug: `${cleanKeyword}-gradient`, title: `${keyword} Gradient Vector` },
-        { id: '530587', slug: `${cleanKeyword}-simple`, title: `${keyword} Simple Icon` },
-        { id: '530588', slug: `${cleanKeyword}-modern`, title: `${keyword} Modern Vector` },
-        { id: '530589', slug: `${cleanKeyword}-classic`, title: `${keyword} Classic Icon` },
-        { id: '530590', slug: `${cleanKeyword}-bold`, title: `${keyword} Bold Vector` },
-        { id: '530591', slug: `${cleanKeyword}-geometric`, title: `${keyword} Geometric Icon` },
-        { id: '530592', slug: `${cleanKeyword}-symbol`, title: `${keyword} Symbol Vector` },
-      ];
-
-      items = fallbackList.map(f => ({
-        id: f.id,
-        name: sanitizeName(f.slug),
-        title: f.title,
-        description: `SVGRepo Open Source Vector — ${f.title}`,
-        image: `https://www.svgrepo.com/show/${f.id}/${f.slug}.svg`,
-        svgUrl: `https://www.svgrepo.com/show/${f.id}/${f.slug}.svg`,
-        thumbnail: `https://www.svgrepo.com/show/${f.id}/${f.slug}.svg`,
-        downloadUrl: `https://www.svgrepo.com/download/${f.id}/${f.slug}.svg`,
-        link: `https://www.svgrepo.com/svg/${f.id}/${f.slug}`,
-        url: `https://www.svgrepo.com/svg/${f.id}/${f.slug}`,
-        author: 'SVGRepo Open Community',
-        license: 'CC0 Public Domain',
-        isFree: true,
-        tags: [keyword],
-      }));
-      total = items.length;
-      totalPages = 1;
+      return {
+        success: false,
+        query: keyword,
+        count: 0,
+        total: 0,
+        items: [],
+        links: [],
+        page,
+        nextPage: null,
+        error: `SVGRepo 未匹配到关键词 "${keyword}" 的有效矢量图或触发了源站拦截`,
+      };
     }
 
     const pagedItems = items.slice(0, limit);
@@ -357,7 +335,7 @@ export async function searchSvgrepo(
       links: [],
       page,
       nextPage: null,
-      error: error?.message || '搜索 SVGRepo 素材发生异常',
+      error: `SVGRepo 搜索异常: ${error?.message || String(error)}`,
     };
   }
 }
@@ -408,52 +386,23 @@ export async function downloadSvgrepoImage(
       'Accept': 'image/svg+xml,*/*',
     };
 
-    let buffer: Buffer | null = null;
-
-    if (res.ok) {
-      const text = await res.text();
-      if (text.includes('<svg') && text.includes('</svg>')) {
-        buffer = Buffer.from(text, 'utf-8');
-      }
+    const res = await fetchFn(imageUrl, { headers });
+    if (!res.ok) {
+      return {
+        success: false,
+        error: `下载 SVGRepo 素材失败 (HTTP ${res.status}: ${res.statusText || '源站拒绝请求'})`,
+      };
     }
 
-    // 若原图下载受阻或未返回标准 SVG，通过高质量开源矢量引擎（按前缀轮询不同设计体系）动态获取该关键词的真实矢量
-    if (!buffer) {
-      const rawName = (options.filename || imageUrl.split('/').pop() || 'vector').replace(/\.svg$/i, '');
-      const cleanKeyword = rawName.toLowerCase()
-        .replace(/svgrepo|outline|solid|color|round|minimal|badge|flat|thin|duotone|line|square|circle|filled|gradient|simple|modern|classic|bold|geometric|symbol|_|-|\d+/g, ' ')
-        .trim().split(/\s+/)[0] || 'icon';
-
-      const prefixList = ['lucide', 'tabler', 'solar', 'ph', 'heroicons', 'carbon', 'feather', 'akar-icons', 'teenyicons', 'eva', 'radix-icons', 'bi', 'mdi'];
-      const hashIndex = Math.abs(rawName.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % prefixList.length;
-      const prefix = prefixList[hashIndex];
-
-      const candidateUrls = [
-        `https://api.iconify.design/${prefix}:${cleanKeyword}.svg`,
-        `https://api.iconify.design/lucide:${cleanKeyword}.svg`,
-        `https://api.iconify.design/tabler:${cleanKeyword}.svg`,
-        `https://api.iconify.design/mdi:${cleanKeyword}.svg`,
-      ];
-
-      for (const candUrl of candidateUrls) {
-        try {
-          const candRes = await fetchFn(candUrl, { headers: { 'User-Agent': USER_AGENT } });
-          if (candRes.ok) {
-            const candText = await candRes.text();
-            if (candText.includes('<svg') && candText.includes('</svg>')) {
-              buffer = Buffer.from(candText, 'utf-8');
-              break;
-            }
-          }
-        } catch {}
-      }
+    const text = await res.text();
+    if (!text.includes('<svg') || !text.includes('</svg>')) {
+      return {
+        success: false,
+        error: 'SVGRepo 返回的内容不是有效的 SVG 矢量文件 (可能触发源站验证拦截)',
+      };
     }
 
-    if (!buffer) {
-      const _safeTitle = (options.filename || 'svgrepo_vector').replace(/_/g, ' ');
-      const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="200" height="200" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
-      buffer = Buffer.from(fallbackSvg, 'utf-8');
-    }
+    const buffer = Buffer.from(text, 'utf-8');
 
     const workspaceDir = getSvgrepoWorkspaceDir();
     let saveDir = join(workspaceDir, 'svgrepo-downloads');
