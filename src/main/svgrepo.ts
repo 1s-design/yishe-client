@@ -241,10 +241,15 @@ let cachedBuildId: string | null = null;
 let lastBuildIdFetch = 0;
 
 /**
- * 创建一个通过 Cloudflare 验证的无头 Chromium 窗口，并在内部直接执行数据请求
- * 避免在窗口外使用 fetch（外部 fetch 不携带 Cloudflare Clearance Cookie，会被 429 拦截）
+ * 启动无头 Chromium 窗口直接导航至 SVGRepo 目标搜索页，
+ * 自动通过 Cloudflare/Vercel 验证后直接提取页面 SSR 注入的 __NEXT_DATA__ 矢量数据
  */
-async function fetchInBrowserContext(dataUrl: string): Promise<any> {
+async function searchInBrowserContext(cleanKeyword: string, page: number): Promise<{
+  vectors: any[];
+  total: number;
+  totalPages: number;
+  buildId?: string;
+}> {
   const electron = await import('electron');
   const BrowserWindowClass = electron.BrowserWindow || (electron as any).default?.BrowserWindow;
   if (!BrowserWindowClass) {
@@ -253,8 +258,8 @@ async function fetchInBrowserContext(dataUrl: string): Promise<any> {
 
   const win = new BrowserWindowClass({
     show: false,
-    width: 1024,
-    height: 768,
+    width: 1280,
+    height: 800,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -263,7 +268,7 @@ async function fetchInBrowserContext(dataUrl: string): Promise<any> {
   });
   win.webContents.setAudioMuted(true);
 
-  // 将系统/主进程代理同步到 renderer session，否则 renderer 不走代理会被 Cloudflare TLS 拦截
+  // 同步代理配置
   const proxyServer =
     process.env.ALL_PROXY ||
     process.env.all_proxy ||
@@ -271,7 +276,7 @@ async function fetchInBrowserContext(dataUrl: string): Promise<any> {
     process.env.https_proxy ||
     process.env.HTTP_PROXY ||
     process.env.http_proxy ||
-    null;
+    'socks5://127.0.0.1:7890';
 
   if (proxyServer) {
     try {
@@ -280,96 +285,139 @@ async function fetchInBrowserContext(dataUrl: string): Promise<any> {
     } catch (proxyErr) {
       console.warn('[SVGRepo] 代理配置失败:', proxyErr);
     }
-  } else {
-    // 尝试常见本地代理端口（Clash/V2ray 等常见软件）
-    const localProxyCandidates = [
-      'socks5://127.0.0.1:7890',
-      'socks5://127.0.0.1:1080',
-      'http://127.0.0.1:7890',
-      'http://127.0.0.1:8080',
-      'http://127.0.0.1:1087',
-    ];
-    // 直接设置最常见的 7890，如连接失败 Chromium 会自动回退 direct
-    try {
-      await win.webContents.session.setProxy({ proxyRules: 'socks5://127.0.0.1:7890' });
-      console.log('[SVGRepo] 已为无头窗口配置本地代理: socks5://127.0.0.1:7890');
-    } catch {}
   }
 
-  console.log('[SVGRepo] [Step 1] 启动无头窗口加载 SVGRepo 首页，完成 Cloudflare 验证...');
-  win.loadURL(SVGREPO_SITE_URL).catch(() => {});
+  const targetUrl = page > 1
+    ? `https://www.svgrepo.com/vectors/${encodeURIComponent(cleanKeyword)}/${page}/`
+    : `https://www.svgrepo.com/vectors/${encodeURIComponent(cleanKeyword)}/`;
 
+  console.log(`[SVGRepo] [Step 1] 启动无头窗口导航至搜索页: ${targetUrl}`);
+  win.loadURL(targetUrl).catch(() => {});
 
-  // 等待首页通过 Cloudflare 验证并出现 __NEXT_DATA__（最多 20 秒）
-  let buildId: string | null = cachedBuildId;
-  for (let i = 0; i < 20; i++) {
+  let extractedData: { vectors: any[]; total: number; totalPages: number; buildId?: string } | null = null;
+
+  // 轮询等待 Cloudflare 验证通过并提取 __NEXT_DATA__ 矢量数据（最多 25 秒）
+  for (let i = 0; i < 25; i++) {
     await new Promise((r) => setTimeout(r, 1000));
-    console.log(`[SVGRepo] [Step 2] 等待 Cloudflare 验证通过 (第 ${i + 1}/20 秒)...`);
+    console.log(`[SVGRepo] [Step 2] 等待 Cloudflare 验证与数据就绪 (第 ${i + 1}/25 秒)...`);
     try {
       const result = await win.webContents.executeJavaScript(`
         (() => {
-          if (window.__NEXT_DATA__ && window.__NEXT_DATA__.buildId) {
-            return window.__NEXT_DATA__.buildId;
+          // 1. 从内存中的 window.__NEXT_DATA__ 读取
+          if (window.__NEXT_DATA__ && window.__NEXT_DATA__.props && window.__NEXT_DATA__.props.pageProps) {
+            const p = window.__NEXT_DATA__.props.pageProps;
+            const vectors = p.vectors || p.items || p.data || [];
+            if (Array.isArray(vectors) && vectors.length > 0) {
+              return {
+                ok: true,
+                buildId: window.__NEXT_DATA__.buildId,
+                vectors,
+                total: Number(p.total || p.count) || vectors.length,
+                totalPages: Number(p.totalPages) || 1,
+              };
+            }
           }
+
+          // 2. 从 DOM <script id="__NEXT_DATA__"> 读取
           const el = document.getElementById('__NEXT_DATA__');
           if (el && el.textContent) {
-            try { return JSON.parse(el.textContent).buildId || null; } catch (e) {}
+            try {
+              const parsed = JSON.parse(el.textContent);
+              const p = parsed.props?.pageProps;
+              const vectors = p?.vectors || p?.items || p?.data || [];
+              if (Array.isArray(vectors) && vectors.length > 0) {
+                return {
+                  ok: true,
+                  buildId: parsed.buildId,
+                  vectors,
+                  total: Number(p.total || p.count) || vectors.length,
+                  totalPages: Number(p.totalPages) || 1,
+                };
+              }
+            } catch (e) {}
           }
+
+          // 3. 检测是否存在 buildId（如果首页已加载但 vectors 为空，可能是新关键词）
+          if (window.__NEXT_DATA__ && window.__NEXT_DATA__.buildId) {
+            return {
+              ok: true,
+              buildId: window.__NEXT_DATA__.buildId,
+              vectors: [],
+              total: 0,
+              totalPages: 1,
+            };
+          }
+
           return null;
         })()
       `);
-      if (result && typeof result === 'string') {
-        buildId = result.trim();
-        cachedBuildId = buildId;
-        lastBuildIdFetch = Date.now();
-        console.log(`[SVGRepo] ✅ buildId 已提取: ${buildId}`);
+
+      if (result && result.ok) {
+        if (result.buildId) {
+          cachedBuildId = result.buildId;
+          lastBuildIdFetch = Date.now();
+        }
+        extractedData = result;
+        console.log(`[SVGRepo] ✅ 成功从页面提取 ${result.vectors.length} 个矢量素材 (buildId: ${result.buildId || '未知'})`);
         break;
       }
     } catch {}
   }
 
-  if (!buildId) {
-    try { win.destroy(); } catch {}
-    throw new Error('SVGRepo Cloudflare 验证超时，未能提取 buildId');
-  }
+  // 4. 若 SSR 数据未直接命中但已获取 buildId，尝试在页面内部使用 fetch 调用 Next.js JSON 接口
+  if ((!extractedData || extractedData.vectors.length === 0) && cachedBuildId) {
+    console.log(`[SVGRepo] [Step 3] 尝试在页面内 fetch Next.js JSON 数据 (buildId: ${cachedBuildId})...`);
+    try {
+      const dataApiUrl = page > 1
+        ? `https://www.svgrepo.com/_next/data/${cachedBuildId}/vectors/${encodeURIComponent(cleanKeyword)}/${page}.json?term=${encodeURIComponent(cleanKeyword)}&page=${page}`
+        : `https://www.svgrepo.com/_next/data/${cachedBuildId}/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`;
 
-  // 在同一个通过验证的窗口内部，使用 fetch 调用数据接口（携带 Clearance Cookie）
-  console.log(`[SVGRepo] [Step 3] 在浏览器上下文内请求数据: ${dataUrl}`);
-  let jsonData: any = null;
-  try {
-    const result = await win.webContents.executeJavaScript(`
-      (async () => {
-        try {
-          const res = await fetch(${JSON.stringify(dataUrl)}, {
-            headers: {
-              'Accept': 'application/json,text/plain,*/*',
-              'x-nextjs-data': '1',
-              'Referer': 'https://www.svgrepo.com/',
-            },
-          });
-          if (!res.ok) return { ok: false, status: res.status, error: 'HTTP ' + res.status };
-          const json = await res.json();
-          return { ok: true, data: json };
-        } catch (e) {
-          return { ok: false, error: e.message || String(e) };
-        }
-      })()
-    `);
-    if (result?.ok && result?.data) {
-      jsonData = result.data;
-      console.log('[SVGRepo] ✅ 浏览器内 fetch 成功获取数据');
-    } else {
-      console.error('[SVGRepo] 浏览器内 fetch 失败:', result?.error, 'status:', result?.status);
-      if (result?.status === 429) {
-        throw new Error('SVGRepo 数据接口触发频次限制 (429)，请稍后再试');
+      const fetchResult = await win.webContents.executeJavaScript(`
+        (async () => {
+          try {
+            const res = await fetch(${JSON.stringify(dataApiUrl)}, {
+              headers: {
+                'Accept': 'application/json,text/plain,*/*',
+                'x-nextjs-data': '1',
+              },
+            });
+            if (!res.ok) return { ok: false, status: res.status };
+            const json = await res.json();
+            const p = json?.pageProps;
+            const vectors = p?.vectors || p?.items || p?.data || [];
+            return {
+              ok: true,
+              vectors,
+              total: Number(p?.total || p?.count) || vectors.length,
+              totalPages: Number(p?.totalPages) || 1,
+            };
+          } catch (e) {
+            return { ok: false, error: String(e) };
+          }
+        })()
+      `);
+
+      if (fetchResult && fetchResult.ok && Array.isArray(fetchResult.vectors) && fetchResult.vectors.length > 0) {
+        extractedData = {
+          vectors: fetchResult.vectors,
+          total: fetchResult.total,
+          totalPages: fetchResult.totalPages,
+          buildId: cachedBuildId,
+        };
+        console.log(`[SVGRepo] ✅ 页面内 fetch 成功获取 ${fetchResult.vectors.length} 个矢量素材`);
       }
-      throw new Error(result?.error || '浏览器内 fetch 数据失败');
+    } catch (fetchErr: any) {
+      console.warn('[SVGRepo] 页面内 fetch 失败:', fetchErr?.message || fetchErr);
     }
-  } finally {
-    try { win.destroy(); } catch {}
   }
 
-  return { buildId, jsonData };
+  try { win.destroy(); } catch {}
+
+  if (!extractedData) {
+    throw new Error('SVGRepo Cloudflare 验证超时，未能提取素材数据');
+  }
+
+  return extractedData;
 }
 
 /**
@@ -401,28 +449,8 @@ export async function searchSvgrepo(
   try {
     const cleanKeyword = keyword.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
 
-    // 先用缓存的 buildId 构造 URL；若无缓存，fetchInBrowserContext 内部会自动获取
-    const tempBuildId = cachedBuildId || 'PENDING';
-    const dataUrl = tempBuildId === 'PENDING'
-      ? `https://www.svgrepo.com/_next/data/PENDING/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`
-      : page > 1
-        ? `https://www.svgrepo.com/_next/data/${tempBuildId}/vectors/${encodeURIComponent(cleanKeyword)}/${page}.json?term=${encodeURIComponent(cleanKeyword)}&page=${page}`
-        : `https://www.svgrepo.com/_next/data/${tempBuildId}/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`;
-
-    // 调用浏览器上下文内部 fetch（自动携带 Cloudflare Clearance Cookie）
-    const { buildId, jsonData } = await fetchInBrowserContext(
-      page > 1
-        ? `https://www.svgrepo.com/_next/data/${cachedBuildId || 'PENDING'}/vectors/${encodeURIComponent(cleanKeyword)}/${page}.json?term=${encodeURIComponent(cleanKeyword)}&page=${page}`
-        : `https://www.svgrepo.com/_next/data/${cachedBuildId || 'PENDING'}/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`,
-    );
-
-    // 若浏览器内部拿到了最新 buildId，用正确的 buildId 再查一次（如 PENDING 占位被替换）
-    const finalUrl = page > 1
-      ? `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}/${page}.json?term=${encodeURIComponent(cleanKeyword)}&page=${page}`
-      : `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`;
-
-    const rawVectors = jsonData?.pageProps?.vectors || jsonData?.pageProps?.items || jsonData?.pageProps?.data || [];
-    console.log(`[SVGRepo] ✅ 成功解析出 ${rawVectors.length} 个矢量素材`);
+    // 启动无头窗口完成验证并提取矢量列表
+    const { vectors: rawVectors, total, totalPages } = await searchInBrowserContext(cleanKeyword, page);
 
     if (!Array.isArray(rawVectors) || rawVectors.length === 0) {
       return {
@@ -463,19 +491,17 @@ export async function searchSvgrepo(
     });
 
     const pagedItems = items.slice(0, limit);
-    const total = Number(jsonData?.pageProps?.total || jsonData?.pageProps?.count) || items.length;
-    const totalPages = Number(jsonData?.pageProps?.totalPages) || Math.ceil(total / limit) || 1;
 
     return {
       success: true,
       query: keyword,
       count: pagedItems.length,
-      total,
-      totalPages,
+      total: total || items.length,
+      totalPages: totalPages || Math.ceil((total || items.length) / limit) || 1,
       items: pagedItems,
       links: pagedItems.map((i) => i.svgUrl),
       page,
-      nextPage: page < totalPages ? page + 1 : null,
+      nextPage: page < (totalPages || 1) ? page + 1 : null,
     };
   } catch (error: any) {
     console.error('[SVGRepo] 检索发生异常:', error?.message || error);
@@ -492,6 +518,7 @@ export async function searchSvgrepo(
     };
   }
 }
+
 
 
 /**
