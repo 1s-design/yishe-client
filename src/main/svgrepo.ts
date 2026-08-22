@@ -237,6 +237,88 @@ function parseSvgrepoHtml(html: string): { items: SvgrepoItem[]; total?: number;
   };
 }
 
+let cachedBuildId: string | null = null;
+let lastBuildIdFetch = 0;
+
+/**
+ * 动态获取 SVGRepo Next.js buildId
+ * 优先从 HTML 中提取，若遇到 Vercel Checkpoint 防护则通过后台无头窗口完成验证并提取
+ */
+export async function getSvgrepoBuildId(): Promise<string | null> {
+  if (cachedBuildId && Date.now() - lastBuildIdFetch < 30 * 60 * 1000) {
+    return cachedBuildId;
+  }
+
+  const fetchFn = await getFetchImpl();
+  try {
+    const res = await fetchFn('https://www.svgrepo.com/', {
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    if (res.ok) {
+      const html = await res.text();
+      const match = html.match(/"buildId"\s*:\s*"([^"]+)"/);
+      if (match && match[1]) {
+        cachedBuildId = match[1];
+        lastBuildIdFetch = Date.now();
+        return cachedBuildId;
+      }
+    }
+  } catch {}
+
+  // 若直接请求被拦截，尝试通过 Electron 后台窗口静默完成 Vercel 挑战并提取 buildId
+  try {
+    const electron = await import('electron');
+    const BrowserWindowClass = electron.BrowserWindow || (electron as any).default?.BrowserWindow;
+    if (BrowserWindowClass) {
+      const win = new BrowserWindowClass({
+        show: false,
+        width: 800,
+        height: 600,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+        },
+      });
+
+      await win.loadURL('https://www.svgrepo.com/');
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try {
+          const buildId = await win.webContents.executeJavaScript(`
+            (() => {
+              if (window.__NEXT_DATA__ && window.__NEXT_DATA__.buildId) {
+                return window.__NEXT_DATA__.buildId;
+              }
+              const script = document.getElementById('__NEXT_DATA__');
+              if (script && script.textContent) {
+                try {
+                  const data = JSON.parse(script.textContent);
+                  return data.buildId || null;
+                } catch (e) {}
+              }
+              return null;
+            })()
+          `);
+          if (buildId) {
+            cachedBuildId = buildId;
+            lastBuildIdFetch = Date.now();
+            win.destroy();
+            return buildId;
+          }
+        } catch {}
+      }
+      win.destroy();
+    }
+  } catch (err) {
+    console.warn('[SVGRepo] 通过后台窗口获取 buildId 失败:', err);
+  }
+
+  return cachedBuildId;
+}
+
 /**
  * 搜索 SVGRepo 开源矢量图标
  */
@@ -264,6 +346,77 @@ export async function searchSvgrepo(
   try {
     const fetchFn = await getFetchImpl();
     const cleanKeyword = keyword.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
+
+    // 优先尝试 Next.js Data API 接口
+    const buildId = await getSvgrepoBuildId();
+    if (buildId) {
+      const dataUrl =
+        page > 1
+          ? `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}/${page}.json?term=${encodeURIComponent(cleanKeyword)}`
+          : `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`;
+
+      try {
+        const dataRes = await fetchFn(dataUrl, {
+          headers: {
+            'User-Agent': USER_AGENT,
+            'Accept': 'application/json,text/plain,*/*',
+            'Referer': 'https://www.svgrepo.com/',
+            'x-nextjs-data': '1',
+          },
+        });
+
+        if (dataRes.ok) {
+          const dataJson = await dataRes.json();
+          const rawVectors = dataJson?.pageProps?.vectors || dataJson?.pageProps?.items || [];
+          if (Array.isArray(rawVectors) && rawVectors.length > 0) {
+            const items: SvgrepoItem[] = rawVectors.map((raw: any) => {
+              const id = String(raw.id || raw.vectorId || raw.slug || '');
+              const slug = raw.slug || raw.name || `vector-${id}`;
+              const title = raw.title || raw.name || slug.replace(/-/g, ' ');
+              const svgUrl = raw.svgUrl || `https://www.svgrepo.com/show/${id}/${slug}.svg`;
+              const detailUrl = `https://www.svgrepo.com/svg/${id}/${slug}`;
+              return {
+                id,
+                name: sanitizeName(slug) || `svgrepo_${id}`,
+                title: title.replace(/SVG Vector/i, '').trim(),
+                description: `SVGRepo Vector — ${title}`,
+                image: svgUrl,
+                svgUrl,
+                thumbnail: svgUrl,
+                downloadUrl: `https://www.svgrepo.com/download/${id}/${slug}.svg`,
+                link: detailUrl,
+                url: detailUrl,
+                style: raw.style || 'monotone',
+                author: raw.author || raw.collection || 'SVGRepo Contributor',
+                license: raw.license || 'CC0 / MIT Open Source',
+                isFree: true,
+                tags: Array.isArray(raw.tags) ? raw.tags : [title],
+              };
+            });
+
+            const pagedItems = items.slice(0, limit);
+            const total = Number(dataJson?.pageProps?.total || dataJson?.pageProps?.count) || items.length;
+            const totalPages = Math.ceil(total / limit) || 1;
+
+            return {
+              success: true,
+              query: keyword,
+              count: pagedItems.length,
+              total,
+              totalPages,
+              items: pagedItems,
+              links: pagedItems.map((i) => i.svgUrl),
+              page,
+              nextPage: page < totalPages ? page + 1 : null,
+            };
+          }
+        }
+      } catch (nextApiErr) {
+        console.warn('[SVGRepo] Next.js Data API 请求失败，回退 HTML 页面解析:', nextApiErr);
+      }
+    }
+
+    // 回退尝试直接请求 HTML 页面
     const targetUrl =
       page > 1
         ? `https://www.svgrepo.com/vectors/${encodeURIComponent(cleanKeyword)}/${page}/`
