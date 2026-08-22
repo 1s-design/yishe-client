@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Vecteezy 免版税素材采集能力
  * 官方网站: https://www.vecteezy.com/
@@ -398,7 +399,6 @@ export async function syncVecteezyToMaterialLibrary(
 
   const localFilePath = dlResult.filePath;
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 
   // 2. 上传到素材库 (COS + sticker 表)
   try {

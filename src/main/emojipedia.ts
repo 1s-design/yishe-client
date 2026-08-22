@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Emojipedia Emoji/Sticker 搜索能力
  * 官方网站: https://emojipedia.org/
@@ -386,7 +387,6 @@ export async function syncEmojipediaToMaterialLibrary(
 
   const localFilePath = dlResult.filePath;
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 
   // 2. 上传到素材库 (COS + sticker 表)
   try {

@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Iconify 图标聚合平台采集能力
  * 官方网站: https://icon-sets.iconify.design/

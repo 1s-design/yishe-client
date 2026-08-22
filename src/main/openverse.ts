@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Openverse 开放公共领域图库采集能力
  * API: https://api.openverse.org/v1/images/
@@ -292,7 +293,6 @@ export async function syncOpenverseToMaterialLibrary(
     }
   }
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
 
   const localFilePath = downloadResult.filePath
   try {

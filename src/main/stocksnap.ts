@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * StockSnap 免版权高清图库采集能力
  * 提供：图搜 / 单图下载 / 同步素材库
@@ -320,7 +321,6 @@ export async function syncStockSnapToMaterialLibrary(
     }
   }
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
 
   const localFilePath = downloadResult.filePath
   try {

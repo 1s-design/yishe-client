@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * SVGRepo 50万+ 开源矢量图标与插画采集能力
  * 官方网站: https://www.svgrepo.com/

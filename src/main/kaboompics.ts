@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Kaboompics 免费高清图库采集能力
  * 官方网站: https://kaboompics.com/
@@ -339,7 +340,6 @@ export async function syncKaboompicsToMaterialLibrary(
 
   const localFilePath = dlResult.filePath;
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 
   // 2. 上传到素材库 (COS + sticker 表)
   try {

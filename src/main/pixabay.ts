@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Pixabay 免费摄影图片采集能力
  * 提供：图搜 / 单图下载 / 同步素材库
@@ -295,7 +296,6 @@ export async function syncPixabayToMaterialLibrary(
     const localFilePath = join(outputDir, fileName)
     fs.writeFileSync(localFilePath, buffer)
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
 
     const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
       category: 'pixabay',

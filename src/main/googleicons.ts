@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Google Material Icons 图标库采集能力
  * 官方网站: https://fonts.google.com/icons
@@ -357,7 +358,6 @@ export async function downloadGoogleIcon(
 /**
  * 下载并上传至用户个人 COS 存储
  */
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 
 export async function syncGoogleIconsToMaterialLibrary(
   _clientId: string,

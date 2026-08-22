@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * The Noun Project 图标与摄影图库采集能力
  * 官方网站: https://thenounproject.com/
@@ -496,7 +497,6 @@ export async function syncNounProjectToMaterialLibrary(
 
   const localFilePath = dlResult.filePath;
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 
   // 2. 上传到素材库 (COS + sticker 表)
   try {

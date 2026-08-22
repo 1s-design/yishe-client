@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Pexels 高清摄影采集能力
  * 提供：图搜 / 单图下载 / 同步素材库
@@ -373,7 +374,6 @@ export async function syncPexelsToMaterialLibrary(
     const localFilePath = join(outputDir, fileName)
     fs.writeFileSync(localFilePath, buffer)
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
 
     const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
       category: 'pexels',

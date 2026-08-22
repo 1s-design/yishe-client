@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Openclipart 免费矢量插画图库采集能力
  * 官方网站: https://openclipart.org/
@@ -332,7 +333,6 @@ export async function syncOpenclipartToMaterialLibrary(
   const localFilePath = dlResult.filePath;
 
   // 2. 强制上传原图到用户个人的 COS 存储
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 
   try {
     const isSvg = localFilePath.endsWith('.svg');

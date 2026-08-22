@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * OpenMoji 开源 Emoji 图标库采集能力
  * 官方网站: https://openmoji.org/
@@ -313,7 +314,6 @@ export async function syncOpenMojiToMaterialLibrary(
 
   const localFilePath = dlResult.filePath;
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 
   // 2. 上传到素材库 (COS + sticker 表)
   try {

@@ -1,3 +1,4 @@
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
 /**
  * Rawpixel 免费与公共领域艺术图库采集能力
  * 提供：图搜 / 单图下载 / 同步素材库
@@ -353,7 +354,6 @@ export async function syncRawpixelToMaterialLibrary(
     const localFilePath = join(outputDir, fileName)
     fs.writeFileSync(localFilePath, buffer)
 
-import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
 
     const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
       category: 'rawpixel',
