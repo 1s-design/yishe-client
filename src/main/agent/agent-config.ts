@@ -71,6 +71,7 @@ export async function requestDesignServer<T>(
       data,
       headers: { Authorization: `Bearer ${token}` },
       timeout: 6000,
+      proxy: false,
       ...(httpsAgent ? { httpsAgent } : {}),
     });
 
