@@ -5406,10 +5406,28 @@ function bindSocketEvents(currentSocket: Socket) {
       const toolName = payload?.toolName || "";
       const toolArgs = payload?.toolArgs || {};
       const context = payload?.context;
+      console.log(`[WS] 收到服务端 mcp-call 请求: requestId=${requestId} tool=${toolName}`, toolArgs);
       emitter.emit("log", {
         level: "info",
         message: `[ws] received mcp-call: requestId=${requestId} tool=${toolName}`,
       });
+      const reportMcpFailure = (failure: unknown) => {
+        const result = failure as any;
+        const errorText =
+          result?.content?.find?.((item: any) => item?.type === "text")?.text ||
+          serializeError(failure);
+        const message = String(errorText || "客户端工具执行失败").replace(/\s+/g, " ").slice(0, 240);
+        console.error(`[WS] MCP 工具执行失败: tool=${toolName} requestId=${requestId}`, message);
+        emitter.emit("log", {
+          level: "error",
+          message: `[ws] mcp-call failed: requestId=${requestId} tool=${toolName}: ${message}`,
+        });
+        emitTransientWsToast(`mcp-failure:${toolName}:${message}`, {
+          color: "error",
+          icon: "mdi-alert-circle-outline",
+          message: `${toolName} 执行失败：${message}`,
+        });
+      };
 
       // 热搜类工具：立即返回"采集中"，后台异步执行，完成后推送结果
       if (toolName.startsWith("hotsearch_")) {
@@ -5433,12 +5451,14 @@ function bindSocketEvents(currentSocket: Socket) {
           try {
             const nativeApi = getNativeApi() as any;
             const result = await nativeApi.callMcpTool(toolName, toolArgs, context);
+            if (result?.isError) reportMcpFailure(result);
             socket?.emit("mcp-async-result", {
               requestId,
               toolName,
               result,
             });
           } catch (error) {
+            reportMcpFailure(error);
             socket?.emit("mcp-async-result", {
               requestId,
               toolName,
@@ -5458,11 +5478,13 @@ function bindSocketEvents(currentSocket: Socket) {
           throw new Error("当前环境未注入 MCP 工具执行能力");
         }
         const result = await nativeApi.callMcpTool(toolName, toolArgs, context);
+        if (result?.isError) reportMcpFailure(result);
         socket?.emit("mcp-result", {
           requestId,
           result,
         });
       } catch (error) {
+        reportMcpFailure(error);
         socket?.emit("mcp-result", {
           requestId,
           result: {

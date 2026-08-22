@@ -59,16 +59,17 @@ const searchDef: CapabilityDefinition = {
   description: '在 SVGRepo 搜索 50万+ 开源矢量图标与插画素材。',
   riskLevel: 'read',
   argsSchema: z.object({
-    keyword: z.string().describe('搜索关键词，如 cat, animal, tech, arrow, shopping'),
+    keyword: z.string().describe('搜索关键词，如 dog, cat, animal, tech'),
     page: z.number().optional().default(1),
     limit: z.number().optional().default(24),
-    style: z.enum(['all', 'monotone', 'multicolor', 'duotone', 'outlined', 'filled']).optional().default('all'),
+    style: z.string().optional().default('all'),
   }),
-  async handler(args: { keyword: string; page?: number; limit?: number; style?: any }) {
+  async handler(args: { keyword: string; page?: number; limit?: number; style?: string }) {
+    const cleanStyle = args.style && args.style.trim() && args.style !== 'all' ? args.style.trim() : undefined;
     const rawResult = await searchSvgrepo(args.keyword, {
       page: args.page ?? 1,
       limit: args.limit ?? 24,
-      style: args.style,
+      style: cleanStyle,
     });
     return normalizeSearchResult(rawResult);
   },
@@ -118,8 +119,11 @@ const collectDef: CapabilityDefinition = {
     });
     return {
       success: res.success,
-      localFilePath: res.localFilePath || null,
+      message: res.message || (res.success ? '已成功下载 SVGRepo 矢量图并上传入库' : res.error),
+      materialId: res.materialId || null,
       cosUrl: res.cosUrl || null,
+      localFilePath: res.localFilePath || null,
+      data: res.data || null,
       error: res.error || null,
     };
   },

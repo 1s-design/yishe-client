@@ -1206,6 +1206,13 @@ if (!gotTheLock) {
 }
 
 app.whenReady().then(() => {
+  // 确保全局 defaultSession 拥有本地直连白名单，防止本地 1520 设计服务与 WebSocket 通信被代理拦截
+  try {
+    session.defaultSession.setProxy({
+      proxyBypassRules: '<local>;localhost;127.0.0.1;1520;1519;1521;1522;api.1s.design',
+    }).catch(() => {});
+  } catch {}
+
   // 初始化默认工作目录（在创建窗口之前）
   initializeDefaultWorkspaceDirectory();
 
@@ -1650,10 +1657,20 @@ app.whenReady().then(() => {
   ipcMain.handle(
     "mcp:call-tool",
     async (_event, toolName: string, toolArgs: Record<string, any>, context?: { sessionId?: string; runId?: string }) => {
+      console.log(`[MCP Server] 🛠️ 收到工具调用指令: "${toolName}"`, {
+        toolArgs,
+        context,
+      });
       try {
         const { callMcpTool } = await getMcpServerModule();
-        return await callMcpTool(toolName, toolArgs || {}, context);
+        const result = await callMcpTool(toolName, toolArgs || {}, context);
+        console.log(`[MCP Server] ✅ 工具 "${toolName}" 执行完毕:`, {
+          isError: result?.isError,
+          contentLength: result?.content?.length,
+        });
+        return result;
       } catch (error: any) {
+        console.error(`[MCP Server] ❌ 工具 "${toolName}" 执行失败:`, error?.message || error);
         writeMainLog("ERROR", "MCP 工具执行失败", {
           toolName,
           error: error?.message,
