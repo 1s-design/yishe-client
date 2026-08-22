@@ -239,40 +239,30 @@ function parseSvgrepoHtml(html: string): { items: SvgrepoItem[]; total?: number;
 
 let cachedBuildId: string | null = null;
 let lastBuildIdFetch = 0;
+let pendingBuildIdPromise: Promise<string | null> | null = null;
 
 /**
  * 动态获取 SVGRepo Next.js buildId
- * 优先从 HTML 中提取，若遇到 Vercel Checkpoint 防护则通过后台无头窗口完成验证并提取
+ * 启动后台静默无头 Chromium 窗口完成 Vercel/Cloudflare 挑战并提取真实的 buildId 和会话凭证
  */
 export async function getSvgrepoBuildId(): Promise<string | null> {
   if (cachedBuildId && Date.now() - lastBuildIdFetch < 30 * 60 * 1000) {
     return cachedBuildId;
   }
 
-  const fetchFn = await getFetchImpl();
-  try {
-    const res = await fetchFn('https://www.svgrepo.com/', {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
-    if (res.ok) {
-      const html = await res.text();
-      const match = html.match(/"buildId"\s*:\s*"([^"]+)"/);
-      if (match && match[1]) {
-        cachedBuildId = match[1];
-        lastBuildIdFetch = Date.now();
-        return cachedBuildId;
-      }
-    }
-  } catch {}
+  if (pendingBuildIdPromise) {
+    return pendingBuildIdPromise;
+  }
 
-  // 若直接请求被拦截，尝试通过 Electron 后台窗口静默完成 Vercel 挑战并提取 buildId
-  try {
-    const electron = await import('electron');
-    const BrowserWindowClass = electron.BrowserWindow || (electron as any).default?.BrowserWindow;
-    if (BrowserWindowClass) {
+  pendingBuildIdPromise = (async () => {
+    try {
+      const electron = await import('electron');
+      const BrowserWindowClass = electron.BrowserWindow || (electron as any).default?.BrowserWindow;
+      if (!BrowserWindowClass) {
+        throw new Error('当前环境非 Electron 主进程，无法创建 BrowserWindow');
+      }
+
+      console.log('[SVGRepo] 启动后台无头窗口解析 buildId 并通过安全验证...');
       const win = new BrowserWindowClass({
         show: false,
         width: 800,
@@ -280,43 +270,55 @@ export async function getSvgrepoBuildId(): Promise<string | null> {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          webSecurity: true,
         },
       });
 
-      await win.loadURL('https://www.svgrepo.com/');
-      for (let i = 0; i < 15; i++) {
+      // 允许静默处理
+      win.webContents.setAudioMuted(true);
+      await win.loadURL(SVGREPO_SITE_URL);
+
+      // 轮询等待 Cloudflare/Vercel 挑战通过并注入 __NEXT_DATA__
+      for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         try {
-          const buildId = await win.webContents.executeJavaScript(`
+          const result = await win.webContents.executeJavaScript(`
             (() => {
               if (window.__NEXT_DATA__ && window.__NEXT_DATA__.buildId) {
                 return window.__NEXT_DATA__.buildId;
               }
-              const script = document.getElementById('__NEXT_DATA__');
-              if (script && script.textContent) {
+              const el = document.getElementById('__NEXT_DATA__');
+              if (el && el.textContent) {
                 try {
-                  const data = JSON.parse(script.textContent);
-                  return data.buildId || null;
+                  const parsed = JSON.parse(el.textContent);
+                  return parsed.buildId || null;
                 } catch (e) {}
               }
               return null;
             })()
           `);
-          if (buildId) {
-            cachedBuildId = buildId;
+
+          if (result && typeof result === 'string' && result.trim()) {
+            cachedBuildId = result.trim();
             lastBuildIdFetch = Date.now();
-            win.destroy();
-            return buildId;
+            console.log(`[SVGRepo] ✅ 成功获取最新 buildId: ${cachedBuildId}`);
+            try { win.destroy(); } catch {}
+            return cachedBuildId;
           }
         } catch {}
       }
-      win.destroy();
-    }
-  } catch (err) {
-    console.warn('[SVGRepo] 通过后台窗口获取 buildId 失败:', err);
-  }
 
-  return cachedBuildId;
+      try { win.destroy(); } catch {}
+      console.warn('[SVGRepo] 后台无头窗口等待 buildId 超时');
+    } catch (err: any) {
+      console.error('[SVGRepo] 获取 buildId 发生异常:', err?.message || String(err));
+    } finally {
+      pendingBuildIdPromise = null;
+    }
+    return cachedBuildId;
+  })();
+
+  return pendingBuildIdPromise;
 }
 
 /**
@@ -347,136 +349,103 @@ export async function searchSvgrepo(
     const fetchFn = await getFetchImpl();
     const cleanKeyword = keyword.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
 
-    // 优先尝试 Next.js Data API 接口
+    // 1. 获取并使用 Next.js buildId 请求纯净 JSON 数据接口
     const buildId = await getSvgrepoBuildId();
-    if (buildId) {
-      const dataUrl =
-        page > 1
-          ? `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}/${page}.json?term=${encodeURIComponent(cleanKeyword)}`
-          : `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`;
-
-      try {
-        const dataRes = await fetchFn(dataUrl, {
-          headers: {
-            'User-Agent': USER_AGENT,
-            'Accept': 'application/json,text/plain,*/*',
-            'Referer': 'https://www.svgrepo.com/',
-            'x-nextjs-data': '1',
-          },
-        });
-
-        if (dataRes.ok) {
-          const dataJson = await dataRes.json();
-          const rawVectors = dataJson?.pageProps?.vectors || dataJson?.pageProps?.items || [];
-          if (Array.isArray(rawVectors) && rawVectors.length > 0) {
-            const items: SvgrepoItem[] = rawVectors.map((raw: any) => {
-              const id = String(raw.id || raw.vectorId || raw.slug || '');
-              const slug = raw.slug || raw.name || `vector-${id}`;
-              const title = raw.title || raw.name || slug.replace(/-/g, ' ');
-              const svgUrl = raw.svgUrl || `https://www.svgrepo.com/show/${id}/${slug}.svg`;
-              const detailUrl = `https://www.svgrepo.com/svg/${id}/${slug}`;
-              return {
-                id,
-                name: sanitizeName(slug) || `svgrepo_${id}`,
-                title: title.replace(/SVG Vector/i, '').trim(),
-                description: `SVGRepo Vector — ${title}`,
-                image: svgUrl,
-                svgUrl,
-                thumbnail: svgUrl,
-                downloadUrl: `https://www.svgrepo.com/download/${id}/${slug}.svg`,
-                link: detailUrl,
-                url: detailUrl,
-                style: raw.style || 'monotone',
-                author: raw.author || raw.collection || 'SVGRepo Contributor',
-                license: raw.license || 'CC0 / MIT Open Source',
-                isFree: true,
-                tags: Array.isArray(raw.tags) ? raw.tags : [title],
-              };
-            });
-
-            const pagedItems = items.slice(0, limit);
-            const total = Number(dataJson?.pageProps?.total || dataJson?.pageProps?.count) || items.length;
-            const totalPages = Math.ceil(total / limit) || 1;
-
-            return {
-              success: true,
-              query: keyword,
-              count: pagedItems.length,
-              total,
-              totalPages,
-              items: pagedItems,
-              links: pagedItems.map((i) => i.svgUrl),
-              page,
-              nextPage: page < totalPages ? page + 1 : null,
-            };
-          }
-        }
-      } catch (nextApiErr) {
-        console.warn('[SVGRepo] Next.js Data API 请求失败，回退 HTML 页面解析:', nextApiErr);
-      }
+    if (!buildId) {
+      return {
+        success: false,
+        query: keyword,
+        count: 0,
+        items: [],
+        links: [],
+        page,
+        nextPage: null,
+        error: '无法通过 SVGRepo 源站安全验证获取 buildId，请检查网络连接',
+      };
     }
 
-    // 回退尝试直接请求 HTML 页面
-    const targetUrl =
+    // 支持第 1 页与后续分页接口格式
+    const dataUrl =
       page > 1
-        ? `https://www.svgrepo.com/vectors/${encodeURIComponent(cleanKeyword)}/${page}/`
-        : `https://www.svgrepo.com/vectors/${encodeURIComponent(cleanKeyword)}/`;
+        ? `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}/${page}.json?term=${encodeURIComponent(cleanKeyword)}&page=${page}`
+        : `https://www.svgrepo.com/_next/data/${buildId}/vectors/${encodeURIComponent(cleanKeyword)}.json?term=${encodeURIComponent(cleanKeyword)}`;
 
     const headers = {
       'User-Agent': USER_AGENT,
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8',
-      'Referer': 'https://www.svgrepo.com/',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'same-origin',
-      'Upgrade-Insecure-Requests': '1',
+      'Accept': 'application/json,text/plain,*/*',
+      'Referer': `https://www.svgrepo.com/vectors/${encodeURIComponent(cleanKeyword)}/`,
+      'x-nextjs-data': '1',
     };
 
-    const res = await fetchFn(targetUrl, { method: 'GET', headers });
+    const res = await fetchFn(dataUrl, { method: 'GET', headers });
     if (!res.ok) {
       return {
         success: false,
         query: keyword,
         count: 0,
-        total: 0,
         items: [],
         links: [],
         page,
         nextPage: null,
-        error: `SVGRepo 请求失败 (HTTP ${res.status}: ${res.statusText || '连接异常'})，请检查网络或代理`,
+        error: `SVGRepo 请求失败 (HTTP ${res.status}: ${res.statusText || '源站拒绝'})`,
       };
     }
 
-    const html = await res.text();
-    const { items, total, totalPages } = parseSvgrepoHtml(html);
+    const json = await res.json();
+    const rawVectors = json?.pageProps?.vectors || json?.pageProps?.items || json?.pageProps?.data || [];
 
-    if (items.length === 0) {
+    if (!Array.isArray(rawVectors) || rawVectors.length === 0) {
       return {
         success: false,
         query: keyword,
         count: 0,
-        total: 0,
         items: [],
         links: [],
         page,
         nextPage: null,
-        error: `SVGRepo 未匹配到关键词 "${keyword}" 的有效矢量图或触发了源站拦截`,
+        error: `SVGRepo 未搜索到关键词 "${keyword}" 的矢量图标`,
       };
     }
 
+    const items: SvgrepoItem[] = rawVectors.map((raw: any) => {
+      const id = String(raw.id || raw.vectorId || raw.slug || '');
+      const slug = raw.slug || raw.name || `vector-${id}`;
+      const title = raw.title || raw.name || slug.replace(/-/g, ' ');
+      const svgUrl = raw.svgUrl || `https://www.svgrepo.com/show/${id}/${slug}.svg`;
+      const detailUrl = `https://www.svgrepo.com/svg/${id}/${slug}`;
+      return {
+        id,
+        name: sanitizeName(slug) || `svgrepo_${id}`,
+        title: title.replace(/SVG Vector/i, '').trim(),
+        description: `SVGRepo Vector — ${title}`,
+        image: svgUrl,
+        svgUrl,
+        thumbnail: svgUrl,
+        downloadUrl: `https://www.svgrepo.com/download/${id}/${slug}.svg`,
+        link: detailUrl,
+        url: detailUrl,
+        style: raw.style || 'monotone',
+        author: raw.author || raw.collection || 'SVGRepo Contributor',
+        license: raw.license || 'CC0 / MIT Open Source',
+        isFree: true,
+        tags: Array.isArray(raw.tags) ? raw.tags : [title],
+      };
+    });
+
     const pagedItems = items.slice(0, limit);
+    const total = Number(json?.pageProps?.total || json?.pageProps?.count) || items.length;
+    const totalPages = Number(json?.pageProps?.totalPages) || Math.ceil(total / limit) || 1;
 
     return {
       success: true,
       query: keyword,
       count: pagedItems.length,
-      total: total || pagedItems.length,
-      totalPages: totalPages || 1,
+      total,
+      totalPages,
       items: pagedItems,
-      links: pagedItems.map(i => i.svgUrl),
+      links: pagedItems.map((i) => i.svgUrl),
       page,
-      nextPage: page < (totalPages || 1) ? page + 1 : null,
+      nextPage: page < totalPages ? page + 1 : null,
     };
   } catch (error: any) {
     return {
@@ -488,7 +457,7 @@ export async function searchSvgrepo(
       links: [],
       page,
       nextPage: null,
-      error: `SVGRepo 搜索异常: ${error?.message || String(error)}`,
+      error: `SVGRepo 检索异常: ${error?.message || String(error)}`,
     };
   }
 }
