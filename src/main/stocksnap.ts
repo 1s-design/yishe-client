@@ -320,20 +320,40 @@ export async function syncStockSnapToMaterialLibrary(
     }
   }
 
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
+
   const localFilePath = downloadResult.filePath
   try {
     const fileName = localFilePath.split('/').pop() || `stocksnap_${Date.now()}.jpg`
-    const cosKey = await generateCosKey({ category: 'stocksnap', filename: fileName })
-    const cosResult = await uploadFileToCos(localFilePath, cosKey)
-    if (!cosResult.ok || !cosResult.url) {
-      return { success: false, message: 'COS 上传失败' }
+    const title = metadata?.title || metadata?.name || fileName.replace(/\.(jpg|png|jpeg|webp)$/i, '')
+    const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
+      category: 'stocksnap',
+      group: 'stocksnap',
+      source: 'StockSnap',
+      originUrl: imageUrl,
+      suffix: 'jpg',
+      name: title,
+      nameEn: title,
+      keywords: metadata?.keywords || '',
+      meta: {
+        ...metadata,
+        source: 'stocksnap',
+        uploadedAt: new Date().toISOString(),
+      },
+    })
+
+    if (!materialResult.ok) {
+      return { success: false, message: materialResult.msg || '素材库保存失败' }
     }
 
     return {
       success: true,
       message: '已成功同步至素材库',
+      materialId: materialResult.materialId,
+      cosUrl: materialResult.materialUrl,
       data: {
-        cosUrl: cosResult.url,
+        materialId: materialResult.materialId,
+        cosUrl: materialResult.materialUrl,
         localFilePath,
       },
     }

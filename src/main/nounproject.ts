@@ -496,23 +496,42 @@ export async function syncNounProjectToMaterialLibrary(
 
   const localFilePath = dlResult.filePath;
 
-  // 2. 上传原图到用户个人的 COS 存储
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
+
+  // 2. 上传到素材库 (COS + sticker 表)
   try {
     const fileName = localFilePath.split('/').pop() || `nounproject_${Date.now()}.svg`;
-    const cosKey = await generateCosKey({ category: 'nounproject', filename: fileName });
-    const cosResult = await uploadFileToCos(localFilePath, cosKey);
+    const ext = fileName.split('.').pop() || 'svg';
+    const title = metadata?.title || metadata?.name || fileName.replace(/\.(svg|png|jpg)$/i, '');
+    const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
+      category: 'nounproject',
+      group: 'nounproject',
+      source: 'Noun Project',
+      originUrl: imageUrl,
+      suffix: ext,
+      name: title,
+      nameEn: title,
+      keywords: metadata?.keywords || '',
+      meta: {
+        ...metadata,
+        source: 'nounproject',
+        uploadedAt: new Date().toISOString(),
+      },
+    });
 
-    if (!cosResult.ok || !cosResult.url) {
-      return { success: false, error: 'msg' in cosResult ? (cosResult as any).msg : 'COS 上传失败' };
+    if (!materialResult.ok) {
+      return { success: false, error: materialResult.msg || '素材库保存失败' };
     }
 
     return {
       success: true,
-      message: '已成功下载素材并上传至个人 COS 存储',
+      message: '已成功下载素材并上传入库至素材库',
       localFilePath,
-      cosUrl: cosResult.url,
+      cosUrl: materialResult.materialUrl,
+      materialId: materialResult.materialId,
       data: {
-        cosUrl: cosResult.url,
+        materialId: materialResult.materialId,
+        cosUrl: materialResult.materialUrl,
         localFilePath,
         fileName,
         metadata: {
@@ -523,6 +542,6 @@ export async function syncNounProjectToMaterialLibrary(
       },
     };
   } catch (error: any) {
-    return { success: false, error: error?.message || '上传素材至个人 COS 存储失败' };
+    return { success: false, error: error?.message || '上传素材至素材库失败' };
   }
 }

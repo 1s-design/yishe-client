@@ -440,13 +440,25 @@ export async function downloadSvgrepoImage(
 }
 
 /**
- * 下载并上传至用户个人 COS 存储并落地入库
+ * 下载并上传至用户个人素材库并落地入库
  */
 export async function syncSvgrepoToMaterialLibrary(
-  _clientId: string,
-  data: { imageUrl: string; metadata?: Record<string, any> },
-): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; data?: any; error?: string }> {
-  const { imageUrl, metadata } = data;
+  workspaceDir: string,
+  options: {
+    imageUrl: string;
+    metadata?: Record<string, any>;
+  }
+): Promise<{
+  success: boolean;
+  message?: string;
+  localFilePath?: string;
+  cosUrl?: string;
+  materialId?: string;
+  error?: string;
+  data?: any;
+}> {
+  const { imageUrl, metadata } = options;
+
   if (!imageUrl) {
     return { success: false, error: '缺少图片 URL' };
   }
@@ -463,16 +475,30 @@ export async function syncSvgrepoToMaterialLibrary(
 
   try {
     const fileName = localFilePath.split('/').pop() || `svgrepo_${Date.now()}.svg`;
-    const cosKey = await generateCosKey({ category: 'svgrepo', filename: fileName });
-    const cosResult = await uploadFileToCos(localFilePath, cosKey);
+    const title = metadata?.title || metadata?.name || fileName.replace(/\.svg$/i, '');
+    const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
+      category: 'svgrepo',
+      group: 'svgrepo',
+      source: 'SVGRepo',
+      originUrl: imageUrl,
+      suffix: 'svg',
+      name: title,
+      nameEn: title,
+      keywords: metadata?.keywords || '',
+      meta: {
+        ...metadata,
+        source: 'svgrepo',
+        uploadedAt: new Date().toISOString(),
+      },
+    });
 
-    if (!cosResult.ok || !cosResult.url) {
-      return { success: false, error: 'msg' in cosResult ? (cosResult as any).msg : 'COS 上传失败' };
+    if (!materialResult.ok) {
+      return { success: false, error: materialResult.msg || '素材库保存失败' };
     }
 
     return {
       success: true,
-      message: '已成功下载 SVGRepo 矢量图并上传至个人 COS 存储',
+      message: '已成功下载 SVGRepo 矢量图并上传入库至素材库',
       localFilePath,
       cosUrl: cosResult.url,
       data: {

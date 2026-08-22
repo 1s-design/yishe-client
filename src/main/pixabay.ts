@@ -295,17 +295,36 @@ export async function syncPixabayToMaterialLibrary(
     const localFilePath = join(outputDir, fileName)
     fs.writeFileSync(localFilePath, buffer)
 
-    const cosKey = await generateCosKey({ category: 'pixabay', filename: fileName })
-    const cosResult = await uploadFileToCos(localFilePath, cosKey)
-    if (!cosResult.ok || !cosResult.url) {
-      return { success: false, message: 'COS 上传失败' }
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
+
+    const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
+      category: 'pixabay',
+      group: 'pixabay',
+      source: 'Pixabay',
+      originUrl: imageUrl,
+      suffix: 'jpg',
+      name: title,
+      nameEn: title,
+      keywords: metadata?.keywords || '',
+      meta: {
+        ...metadata,
+        source: 'pixabay',
+        uploadedAt: new Date().toISOString(),
+      },
+    })
+
+    if (!materialResult.ok) {
+      return { success: false, message: materialResult.msg || '素材库保存失败' }
     }
 
     return {
       success: true,
       message: '已成功同步至素材库',
+      materialId: materialResult.materialId,
+      cosUrl: materialResult.materialUrl,
       data: {
-        cosUrl: cosResult.url,
+        materialId: materialResult.materialId,
+        cosUrl: materialResult.materialUrl,
         localFilePath,
       },
     }

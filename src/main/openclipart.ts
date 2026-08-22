@@ -332,24 +332,42 @@ export async function syncOpenclipartToMaterialLibrary(
   const localFilePath = dlResult.filePath;
 
   // 2. 强制上传原图到用户个人的 COS 存储
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
+
   try {
     const isSvg = localFilePath.endsWith('.svg');
-    const ext = isSvg ? '.svg' : '.png';
-    const fileName = localFilePath.split('/').pop() || `openclipart_${Date.now()}${ext}`;
-    const cosKey = await generateCosKey({ category: 'openclipart', filename: fileName });
-    const cosResult = await uploadFileToCos(localFilePath, cosKey);
+    const ext = isSvg ? 'svg' : 'png';
+    const fileName = localFilePath.split('/').pop() || `openclipart_${Date.now()}.${ext}`;
+    const title = metadata?.title || metadata?.name || fileName.replace(/\.(svg|png)$/i, '');
+    const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
+      category: 'openclipart',
+      group: 'openclipart',
+      source: 'Openclipart',
+      originUrl: imageUrl,
+      suffix: ext,
+      name: title,
+      nameEn: title,
+      keywords: metadata?.keywords || '',
+      meta: {
+        ...metadata,
+        source: 'openclipart',
+        uploadedAt: new Date().toISOString(),
+      },
+    });
 
-    if (!cosResult.ok || !cosResult.url) {
-      return { success: false, error: 'msg' in cosResult ? (cosResult as any).msg : 'COS 上传失败' };
+    if (!materialResult.ok) {
+      return { success: false, error: materialResult.msg || '素材库保存失败' };
     }
 
     return {
       success: true,
-      message: '已成功下载素材并上传至个人 COS 存储',
+      message: '已成功下载素材并上传入库至素材库',
       localFilePath,
-      cosUrl: cosResult.url,
+      cosUrl: materialResult.materialUrl,
+      materialId: materialResult.materialId,
       data: {
-        cosUrl: cosResult.url,
+        materialId: materialResult.materialId,
+        cosUrl: materialResult.materialUrl,
         localFilePath,
         fileName,
         metadata: {
@@ -360,6 +378,6 @@ export async function syncOpenclipartToMaterialLibrary(
       },
     };
   } catch (error: any) {
-    return { success: false, error: error?.message || '上传素材至个人 COS 存储失败' };
+    return { success: false, error: error?.message || '上传素材至素材库失败' };
   }
 }

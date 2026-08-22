@@ -339,30 +339,48 @@ export async function syncKaboompicsToMaterialLibrary(
 
   const localFilePath = dlResult.filePath;
 
-  // 2. 强制上传原图到用户个人的 COS 存储
+import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary';
+
+  // 2. 上传到素材库 (COS + sticker 表)
   try {
     const fileName = localFilePath.split('/').pop() || `kaboompics_${Date.now()}.jpg`;
-    const cosKey = await generateCosKey({ category: 'kaboompics', filename: fileName });
-    const cosResult = await uploadFileToCos(localFilePath, cosKey);
+    const title = metadata?.title || metadata?.name || fileName.replace(/\.(jpg|png|jpeg|webp)$/i, '');
+    const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
+      category: 'kaboompics',
+      group: 'kaboompics',
+      source: 'Kaboompics',
+      originUrl: imageUrl,
+      suffix: 'jpg',
+      name: title,
+      nameEn: title,
+      keywords: metadata?.keywords || '',
+      meta: {
+        ...metadata,
+        source: 'kaboompics',
+        uploadedAt: new Date().toISOString(),
+      },
+    });
 
-    if (!cosResult.ok || !cosResult.url) {
-      return { success: false, error: 'msg' in cosResult ? (cosResult as any).msg : 'COS 上传失败' };
+    if (!materialResult.ok) {
+      return { success: false, error: materialResult.msg || '素材库保存失败' };
     }
 
     return {
       success: true,
-      message: '已成功下载原图并上传至个人 COS 存储',
+      message: '已成功下载原图并上传入库至素材库',
       localFilePath,
-      cosUrl: cosResult.url,
+      cosUrl: materialResult.materialUrl,
+      materialId: materialResult.materialId,
       data: {
-        cosUrl: cosResult.url,
+        materialId: materialResult.materialId,
+        cosUrl: materialResult.materialUrl,
         localFilePath,
       },
     };
   } catch (cosError: any) {
     return {
       success: false,
-      error: cosError?.message || '上传个人 COS 时发生错误',
+      error: cosError?.message || '上传素材库时发生错误',
     };
   }
 }
