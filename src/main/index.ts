@@ -6081,7 +6081,10 @@ ipcMain.handle("hotsearch:search", async (_e, p) => {
     const key = p?.key || p?.platform || "";
     const platform = getPlatform(key);
     if (!platform) throw new Error(`平台不存在: ${key}`);
-    const result = await hotSearchService.fetchPlatform(platform);
+    const overrideCtx: Record<string, any> = {};
+    if (p?.category) overrideCtx.category = p.category;
+    if (p?.keyword) overrideCtx.keyword = p.keyword;
+    const result = await hotSearchService.fetchPlatform(platform, overrideCtx);
     return { ok: true, data: result };
   } catch (e: any) {
     return { ok: false, msg: e?.message };

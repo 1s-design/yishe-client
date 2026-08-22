@@ -51,4 +51,6 @@ export interface FetchContext {
   userAgent: string
   timeout: number
   proxy?: { host: string; port: number; protocol?: string } | null
+  category?: string   // 分类频道，如 'homefeed.fashion_v2'
+  keyword?: string    // 搜索关键词（部分平台支持）
 }

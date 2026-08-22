@@ -4,8 +4,8 @@
  */
 
 import axios, { type AxiosRequestConfig } from "axios";
-import http from "http";
-import https from "https";
+import * as http from "http";
+import * as https from "https";
 import type { FetchContext } from "./types";
 
 // 延迟加载 proxy-agent

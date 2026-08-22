@@ -14,6 +14,7 @@ import ithome from './ithome'
 import baidu from './baidu'
 import tencentNews from './tencent_news'
 import tencentTech from './tencent_tech'
+import xiaohongshu from './xiaohongshu'
 
 // 国际新闻/趋势 (proxy)
 import googleTrends from './google-trends'
@@ -46,6 +47,7 @@ export const allPlatforms: PlatformModule[] = [
   baidu,
   tencentNews,
   tencentTech,
+  xiaohongshu,
   // 国际新闻/趋势 (proxy)
   googleTrends,
   hackernews,

@@ -13901,6 +13901,7 @@ const hotsearchConfig = [
   { key: "lobsters", label: "Lobsters" },
   { key: "tencent_news", label: "腾讯新闻" },
   { key: "tencent_tech", label: "腾讯科技" },
+  { key: "xiaohongshu", label: "小红书" },
 ];
 
 for (const cfg of hotsearchConfig) {

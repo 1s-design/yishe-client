@@ -104,7 +104,7 @@ class HotSearchService {
   /**
    * 采集单个平台（带重试）
    */
-  async fetchPlatform(platformModule: PlatformModule): Promise<PlatformResult> {
+  async fetchPlatform(platformModule: PlatformModule, overrideCtx?: Partial<FetchContext>): Promise<PlatformResult> {
     const { key, name, retryCount, timeout } = platformModule.config;
     const startTime = Date.now();
     this.progress[key] = { status: "fetching" };
@@ -113,6 +113,7 @@ class HotSearchService {
       userAgent: randomUA(),
       timeout,
       proxy: platformModule.config.environment === "proxy" ? SYSTEM_PROXY : null,
+      ...overrideCtx,
     };
     let lastError: string = "未知错误";
 
