@@ -263,8 +263,42 @@ async function fetchInBrowserContext(dataUrl: string): Promise<any> {
   });
   win.webContents.setAudioMuted(true);
 
+  // 将系统/主进程代理同步到 renderer session，否则 renderer 不走代理会被 Cloudflare TLS 拦截
+  const proxyServer =
+    process.env.ALL_PROXY ||
+    process.env.all_proxy ||
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy ||
+    null;
+
+  if (proxyServer) {
+    try {
+      await win.webContents.session.setProxy({ proxyRules: proxyServer });
+      console.log(`[SVGRepo] 已为无头窗口配置代理: ${proxyServer}`);
+    } catch (proxyErr) {
+      console.warn('[SVGRepo] 代理配置失败:', proxyErr);
+    }
+  } else {
+    // 尝试常见本地代理端口（Clash/V2ray 等常见软件）
+    const localProxyCandidates = [
+      'socks5://127.0.0.1:7890',
+      'socks5://127.0.0.1:1080',
+      'http://127.0.0.1:7890',
+      'http://127.0.0.1:8080',
+      'http://127.0.0.1:1087',
+    ];
+    // 直接设置最常见的 7890，如连接失败 Chromium 会自动回退 direct
+    try {
+      await win.webContents.session.setProxy({ proxyRules: 'socks5://127.0.0.1:7890' });
+      console.log('[SVGRepo] 已为无头窗口配置本地代理: socks5://127.0.0.1:7890');
+    } catch {}
+  }
+
   console.log('[SVGRepo] [Step 1] 启动无头窗口加载 SVGRepo 首页，完成 Cloudflare 验证...');
   win.loadURL(SVGREPO_SITE_URL).catch(() => {});
+
 
   // 等待首页通过 Cloudflare 验证并出现 __NEXT_DATA__（最多 20 秒）
   let buildId: string | null = cachedBuildId;
