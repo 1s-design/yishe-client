@@ -408,16 +408,50 @@ export async function downloadSvgrepoImage(
       'Accept': 'image/svg+xml,*/*',
     };
 
-    const res = await fetchFn(imageUrl, { headers });
-    let buffer: Buffer;
+    let buffer: Buffer | null = null;
 
     if (res.ok) {
-      const arrayBuffer = await res.arrayBuffer();
-      buffer = Buffer.from(arrayBuffer);
-    } else {
-      // 兜底生成纯净 SVG
+      const text = await res.text();
+      if (text.includes('<svg') && text.includes('</svg>')) {
+        buffer = Buffer.from(text, 'utf-8');
+      }
+    }
+
+    // 若原图下载受阻或未返回标准 SVG，通过高质量开源矢量引擎（按前缀轮询不同设计体系）动态获取该关键词的真实矢量
+    if (!buffer) {
+      const rawName = (options.filename || imageUrl.split('/').pop() || 'vector').replace(/\.svg$/i, '');
+      const cleanKeyword = rawName.toLowerCase()
+        .replace(/svgrepo|outline|solid|color|round|minimal|badge|flat|thin|duotone|line|square|circle|filled|gradient|simple|modern|classic|bold|geometric|symbol|_|-|\d+/g, ' ')
+        .trim().split(/\s+/)[0] || 'icon';
+
+      const prefixList = ['lucide', 'tabler', 'solar', 'ph', 'heroicons', 'carbon', 'feather', 'akar-icons', 'teenyicons', 'eva', 'radix-icons', 'bi', 'mdi'];
+      const hashIndex = Math.abs(rawName.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % prefixList.length;
+      const prefix = prefixList[hashIndex];
+
+      const candidateUrls = [
+        `https://api.iconify.design/${prefix}:${cleanKeyword}.svg`,
+        `https://api.iconify.design/lucide:${cleanKeyword}.svg`,
+        `https://api.iconify.design/tabler:${cleanKeyword}.svg`,
+        `https://api.iconify.design/mdi:${cleanKeyword}.svg`,
+      ];
+
+      for (const candUrl of candidateUrls) {
+        try {
+          const candRes = await fetchFn(candUrl, { headers: { 'User-Agent': USER_AGENT } });
+          if (candRes.ok) {
+            const candText = await candRes.text();
+            if (candText.includes('<svg') && candText.includes('</svg>')) {
+              buffer = Buffer.from(candText, 'utf-8');
+              break;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    if (!buffer) {
       const _safeTitle = (options.filename || 'svgrepo_vector').replace(/_/g, ' ');
-      const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="200" height="200" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`;
+      const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="200" height="200" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
       buffer = Buffer.from(fallbackSvg, 'utf-8');
     }
 
