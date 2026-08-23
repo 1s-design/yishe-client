@@ -65,6 +65,20 @@ function sanitizeName(str: string): string {
     .trim();
 }
 
+/**
+ * 将 Emoji 字符（如 🐈 / 🐱 / ❤️‍🔥）转为 Unicode 十六进制码点
+ * 供 Emojipedia CDN 资源路径精准寻址
+ */
+function emojiToHexCode(emojiStr: string): string {
+  if (!emojiStr) return '';
+  // 如果本身已经是 hex (如 1f408 或 1f431-200d-1f464) 直接返回
+  if (/^[0-9a-fA-F-]+$/.test(emojiStr)) return emojiStr.toLowerCase();
+  return Array.from(emojiStr)
+    .map((c) => c.codePointAt(0)?.toString(16).toLowerCase())
+    .filter(Boolean)
+    .join('-');
+}
+
 /** 获取 Node/Electron fetch 实现 */
 async function getFetchImpl() {
   if (net && typeof net.fetch === 'function') {
@@ -108,7 +122,8 @@ export async function searchEmojipedia(
   }
 
   const page = Math.max(Number(options.page) || 1, 1);
-  const limit = Math.min(Math.max(Number(options.limit || options.pageSize) || 20, 1), 100);
+  const rawLimit = Number(options.limit || options.pageSize);
+  const limit = rawLimit > 0 ? Math.min(rawLimit, 100) : 0;
   const _category = options.category || 'stickers';
   const platform = options.platform || '';
 
@@ -133,9 +148,8 @@ export async function searchEmojipedia(
     const items = parseEmojipediaHtml(html, platform);
 
     const total = items.length;
-    const totalPages = Math.ceil(total / limit);
-    const startIndex = (page - 1) * limit;
-    const pagedItems = items.slice(startIndex, startIndex + limit);
+    const pagedItems = limit > 0 ? items.slice((page - 1) * limit, (page - 1) * limit + limit) : items;
+    const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
 
     return {
       success: true,
@@ -189,19 +203,21 @@ function parseEmojipediaHtml(html: string, platformFilter: string): EmojipediaIt
       let rscMatch;
       while ((rscMatch = rscRegex.exec(html)) !== null) {
         const id = rscMatch[1];
-        const code = rscMatch[2];
+        const rawCode = rscMatch[2];
         const slug = rscMatch[3];
         const title = rscMatch[4];
         if (!slug || usedIds.has(slug)) continue;
         usedIds.add(slug);
 
-        const imageSrc = code
-          ? `https://em-content.zobj.net/source/apple/391/${slug}_${code.toLowerCase()}.png`
+        const hexCode = emojiToHexCode(rawCode);
+        const imageSrc = hexCode
+          ? `https://em-content.zobj.net/source/apple/391/${slug}_${hexCode}.png`
           : `https://em-content.zobj.net/source/apple/391/${slug}.png`;
 
         items.push(buildEmojipediaItem(slug, {
           id,
-          code,
+          code: rawCode,
+          emoji: rawCode,
           title,
           slug,
           image: imageSrc,
@@ -318,6 +334,36 @@ function getEmojipediaWorkspaceDir(): string {
 }
 
 /**
+ * 生成 Emojipedia 图片候选 CDN 下载地址列表
+ * 依次尝试 Apple最新版、无/有fe0f变体、历史Apple版本、Google、Microsoft、Twitter等源
+ */
+function generateEmojipediaFallbackUrls(primaryUrl: string): string[] {
+  const list: string[] = [primaryUrl];
+  const zobjMatch = primaryUrl.match(/https:\/\/em-content\.zobj\.net\/source\/([^\/]+)\/(\d+)\/([^\/]+)\.png/i);
+  if (zobjMatch) {
+    const [, vendor, version, fileSlug] = zobjMatch;
+    // 1. fe0f 变体互转
+    if (fileSlug.includes('-fe0f')) {
+      list.push(primaryUrl.replace('-fe0f', ''));
+    } else {
+      const parts = fileSlug.split('_');
+      if (parts.length === 2) {
+        list.push(`https://em-content.zobj.net/source/${vendor}/${version}/${parts[0]}_${parts[1]}-fe0f.png`);
+      }
+    }
+    // 2. 尝试 Apple 早期版本以及 Google/Microsoft/Twitter 多平台 CDN 回退
+    list.push(
+      primaryUrl.replace('/source/apple/391/', '/source/apple/354/'),
+      primaryUrl.replace('/source/apple/391/', '/source/apple/325/'),
+      primaryUrl.replace('/source/apple/391/', '/source/google/387/'),
+      primaryUrl.replace('/source/apple/391/', '/source/microsoft/379/'),
+      primaryUrl.replace('/source/apple/391/', '/source/twitter/408/'),
+    );
+  }
+  return Array.from(new Set(list.filter(Boolean)));
+}
+
+/**
  * 下载 Emojipedia 图片到本地
  */
 export async function downloadEmojipediaItem(
@@ -328,39 +374,50 @@ export async function downloadEmojipediaItem(
     return { success: false, error: '缺少图片下载链接' };
   }
 
-  try {
-    const fetchFn = await getFetchImpl();
-    const headers = {
-      'User-Agent': USER_AGENT,
-      'Referer': 'https://emojipedia.org/',
-    };
+  const candidateUrls = generateEmojipediaFallbackUrls(imageUrl);
+  const fetchFn = await getFetchImpl();
+  const headers = {
+    'User-Agent': USER_AGENT,
+    'Referer': 'https://emojipedia.org/',
+  };
 
-    const res = await fetchFn(imageUrl, { headers });
-    if (!res.ok) {
-      throw new Error(`下载失败 HTTP ${res.status}: ${res.statusText}`);
+  let lastError = '';
+  for (const candidate of candidateUrls) {
+    try {
+      const res = await fetchFn(candidate, { headers });
+      if (!res.ok) {
+        lastError = `HTTP ${res.status}: ${res.statusText}`;
+        continue;
+      }
+
+      const arrayBuffer = await res.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      if (!buffer || buffer.length === 0) {
+        lastError = '返回数据为空';
+        continue;
+      }
+
+      const workspaceDir = getEmojipediaWorkspaceDir();
+      const saveDir = join(workspaceDir, 'emojipedia-downloads');
+      if (!fs.existsSync(saveDir)) {
+        fs.mkdirSync(saveDir, { recursive: true });
+      }
+
+      const ext = candidate.endsWith('.svg') ? '.svg' : candidate.endsWith('.png') ? '.png' : '.jpg';
+      const filename = options.filename
+        ? `${sanitizeName(options.filename)}${options.filename.endsWith(ext) ? '' : ext}`
+        : `emojipedia_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+
+      const filePath = join(saveDir, filename);
+      fs.writeFileSync(filePath, buffer);
+
+      return { success: true, filePath, filename };
+    } catch (err: any) {
+      lastError = err?.message || '网络请求异常';
     }
-
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    const workspaceDir = getEmojipediaWorkspaceDir();
-    const saveDir = join(workspaceDir, 'emojipedia-downloads');
-    if (!fs.existsSync(saveDir)) {
-      fs.mkdirSync(saveDir, { recursive: true });
-    }
-
-    const ext = imageUrl.endsWith('.svg') ? '.svg' : imageUrl.endsWith('.png') ? '.png' : '.jpg';
-    const filename = options.filename
-      ? `${sanitizeName(options.filename)}${options.filename.endsWith(ext) ? '' : ext}`
-      : `emojipedia_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
-
-    const filePath = join(saveDir, filename);
-    fs.writeFileSync(filePath, buffer);
-
-    return { success: true, filePath, filename };
-  } catch (error: any) {
-    return { success: false, error: error?.message || '下载过程中发生错误' };
   }
+
+  return { success: false, error: `下载失败: ${lastError || '所有候选CDN地址均不可用'}` };
 }
 
 /**

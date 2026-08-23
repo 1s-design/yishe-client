@@ -33,17 +33,18 @@ function normalizeSearchResult(result: {
 
 const searchDef: CapabilityDefinition = {
   name: 'search', namespace: 'emojipedia',
-  description: '在 Emojipedia 搜索 Emoji/Sticker 素材，支持多平台风格。',
+  description: '在 Emojipedia 搜索 Emoji/Sticker 高清贴纸素材。',
   riskLevel: 'read',
   argsSchema: z.object({
-    keyword: z.string().describe('搜索关键词，如 cat, heart, smile'),
-    page: z.number().optional().default(1), limit: z.number().optional().default(20),
-    category: z.string().optional().describe('分类: stickers, emojis'),
-    platform: z.string().optional().describe('平台: apple, google, samsung'),
+    keyword: z.string().describe('搜索关键词，如 cat, heart, fire, rocket'),
+    page: z.number().optional(),
+    limit: z.number().optional(),
+    category: z.string().optional(),
+    platform: z.string().optional(),
   }),
   async handler(args: { keyword: string; page?: number; limit?: number; category?: string; platform?: string }) {
     return normalizeSearchResult(await searchEmojipedia(args.keyword, {
-      page: args.page ?? 1, limit: args.limit ?? 20, category: args.category, platform: args.platform,
+      page: args.page, limit: args.limit, category: args.category, platform: args.platform,
     }));
   },
 };
