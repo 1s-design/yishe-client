@@ -17,15 +17,20 @@ const searchDef: CapabilityDefinition = {
   description: '在 Wallhaven 搜索 2K/4K/8K 顶级高清电脑与手机壁纸、插画和场景渲染图。',
   riskLevel: 'read',
   argsSchema: z.object({
-    keyword: z.string().describe('搜索关键词 (如 cyberpunk, anime, landscape, abstract)'),
+    keyword: z.string().optional().describe('搜索关键词 (如 cyberpunk, anime, landscape, abstract)'),
+    query: z.string().optional().describe('搜索关键词'),
     limit: z.number().optional().default(24).describe('最多返回结果数，最大 64'),
+    pageSize: z.number().optional().describe('每页数量'),
     page: z.number().optional().default(1).describe('页码'),
   }),
-  handler: async ({ keyword, limit, page }) => {
-    if (!keyword || !keyword.trim()) {
-      return { success: false, error: '缺少搜索关键词 keyword' };
+  handler: async (args: { keyword?: string; query?: string; limit?: number; pageSize?: number; page?: number }) => {
+    const keyword = (args.keyword || args.query || '').trim();
+    if (!keyword) {
+      return { success: false, error: '缺少搜索关键词 keyword/query' };
     }
-    const result = await searchWallhaven(keyword.trim(), { limit, page });
+    const limit = args.limit || args.pageSize || 24;
+    const page = args.page || 1;
+    const result = await searchWallhaven(keyword, { limit, page });
     return {
       success: result.success,
       data: result.success ? {
@@ -47,13 +52,16 @@ const downloadDef: CapabilityDefinition = {
   description: '下载单张 Wallhaven 4K 超清壁纸到本地临时路径。',
   riskLevel: 'write',
   argsSchema: z.object({
-    imageUrl: z.string().describe('Wallhaven 壁纸原图直链'),
+    imageUrl: z.string().optional().describe('Wallhaven 壁纸原图直链'),
+    image: z.string().optional().describe('图片直链'),
+    url: z.string().optional().describe('图片直链'),
     filename: z.string().optional().describe('自定义文件名'),
   }),
-  handler: async ({ imageUrl, filename }) => {
+  handler: async (args: { imageUrl?: string; image?: string; url?: string; filename?: string }) => {
+    const imageUrl = args.imageUrl || args.image || args.url || '';
     if (!imageUrl) return { success: false, error: '缺少 imageUrl' };
     const res = await downloadWallhavenImage(imageUrl, {
-      filename,
+      filename: args.filename,
       destDir: path.join(os.tmpdir(), 'wallhaven'),
     });
     return { success: res.success, data: { filePath: res.filePath }, error: res.error };
@@ -67,18 +75,32 @@ const collectDef: CapabilityDefinition = {
   riskLevel: 'write',
   argsSchema: z.object({
     keyword: z.string().optional().describe('搜索关键词（批量采集时使用）'),
+    query: z.string().optional().describe('搜索关键词'),
     maxCount: z.number().optional().default(10).describe('最多采集数量'),
+    limit: z.number().optional().describe('最多采集数量'),
     syncToMaterial: z.boolean().optional().default(true).describe('是否同步上传素材库'),
     imageUrl: z.string().optional().describe('单张壁纸直链（单图采集时使用）'),
+    image: z.string().optional().describe('图片直链'),
     title: z.string().optional().describe('素材标题'),
     metadata: z.record(z.string(), z.any()).optional().describe('关联元数据'),
   }),
-  handler: async ({ keyword, maxCount, syncToMaterial, imageUrl, title, metadata }) => {
+  handler: async (args: {
+    keyword?: string;
+    query?: string;
+    maxCount?: number;
+    limit?: number;
+    syncToMaterial?: boolean;
+    imageUrl?: string;
+    image?: string;
+    title?: string;
+    metadata?: Record<string, any>;
+  }) => {
+    const imageUrl = args.imageUrl || args.image;
     // 1. 单图精准入库模式
     if (imageUrl) {
       const syncRes = await syncWallhavenToMaterialLibrary(imageUrl, {
-        title,
-        ...(metadata || {}),
+        title: args.title,
+        ...(args.metadata || {}),
       });
       return {
         success: syncRes.success,
@@ -88,16 +110,18 @@ const collectDef: CapabilityDefinition = {
     }
 
     // 2. 批量搜索入库模式
-    if (!keyword || !keyword.trim()) {
+    const keyword = (args.keyword || args.query || '').trim();
+    if (!keyword) {
       return { success: false, error: '缺少搜索关键词 keyword 或 imageUrl' };
     }
 
-    const limit = Math.min(Math.max(Number(maxCount) || 10, 1), 50);
-    const searchRes = await searchWallhaven(keyword.trim(), { limit });
+    const limit = Math.min(Math.max(Number(args.maxCount) || Number(args.limit) || 10, 1), 50);
+    const searchRes = await searchWallhaven(keyword, { limit });
     if (!searchRes.success || !searchRes.items.length) {
       return { success: false, error: searchRes.error || '未检索到可用 Wallhaven 壁纸' };
     }
 
+    const syncToMaterial = args.syncToMaterial !== false;
     if (!syncToMaterial) {
       return {
         success: true,

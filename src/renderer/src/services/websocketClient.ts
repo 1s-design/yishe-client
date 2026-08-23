@@ -14130,15 +14130,35 @@ for (const cfg of imageEnginesConfig) {
       const action = command.action || "search";
 
       if (action === "search") {
-        const query = payload.query || payload.keyword || "";
-        const limit = payload.limit || payload.pageSize || 20;
-        const page = payload.page || 1;
-        const res = await nativeApi.executeCapability(cfg.key, "search", { query, limit, page });
+        const query = (payload.keyword || payload.query || "").trim();
+        const limit = Number(payload.limit) || Number(payload.pageSize) || 20;
+        const page = Number(payload.page) || 1;
+        const res = await nativeApi.executeCapability(cfg.key, "search", {
+          keyword: query,
+          query,
+          limit,
+          pageSize: limit,
+          page,
+        });
+        const isOk = res?.ok !== false && res?.success !== false;
         const realData = res?.data ?? res;
         const items = realData?.items ?? (Array.isArray(realData) ? realData : []);
         const count = realData?.count ?? items.length;
+        if (!isOk) {
+          return {
+            success: false,
+            message: res?.error || res?.message || `${cfg.label} 检索失败`,
+            data: {
+              successCount: 0,
+              failCount: 1,
+              items: [],
+              count: 0,
+              error: res?.error || res?.message,
+            },
+          };
+        }
         return {
-          success: res?.ok !== false && res?.success !== false,
+          success: true,
           message: `${cfg.label} 检索完成: 共 ${count} 条`,
           data: {
             successCount: count,
