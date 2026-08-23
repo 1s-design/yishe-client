@@ -42,11 +42,13 @@ const searchDef: CapabilityDefinition = {
     page: z.number().optional().default(1),
     limit: z.number().optional().default(20),
     style: z.enum(['color', 'black']).optional().describe('彩色或黑白风格'),
+    colorMode: z.enum(['color', 'black']).optional().describe('彩色或黑白风格'),
     group: z.string().optional().describe('按分组过滤'),
   }),
-  async handler(args: { keyword: string; page?: number; limit?: number; style?: 'color' | 'black'; group?: string }) {
+  async handler(args: { keyword: string; page?: number; limit?: number; style?: 'color' | 'black'; colorMode?: 'color' | 'black'; group?: string }) {
+    const activeStyle = args.colorMode || args.style || 'color';
     return normalizeSearchResult(await searchOpenMoji(args.keyword, {
-      page: args.page ?? 1, limit: args.limit ?? 20, style: args.style, group: args.group,
+      page: args.page ?? 1, limit: args.limit ?? 20, style: activeStyle, group: args.group,
     }));
   },
 };
@@ -57,10 +59,13 @@ const downloadDef: CapabilityDefinition = {
   riskLevel: 'write',
   argsSchema: z.object({
     imageUrl: z.string().describe('SVG/PNG 下载地址'),
-    filename: z.string().optional(), style: z.enum(['color', 'black']).optional(),
+    filename: z.string().optional(),
+    style: z.enum(['color', 'black']).optional(),
+    colorMode: z.enum(['color', 'black']).optional(),
   }),
-  async handler(args: { imageUrl: string; filename?: string; style?: 'color' | 'black' }) {
-    const res = await downloadOpenMojiEmoji(args.imageUrl, { filename: args.filename, style: args.style });
+  async handler(args: { imageUrl: string; filename?: string; style?: 'color' | 'black'; colorMode?: 'color' | 'black' }) {
+    const activeStyle = args.colorMode || args.style;
+    const res = await downloadOpenMojiEmoji(args.imageUrl, { filename: args.filename, style: activeStyle });
     return { success: res.success, filePath: res.filePath || null, filename: res.filename || null, error: res.error || null };
   },
 };
@@ -74,9 +79,11 @@ const collectDef: CapabilityDefinition = {
     title: z.string().optional(), metadata: z.record(z.string(), z.any()).optional(),
   }),
   async handler(args: { imageUrl: string; title?: string; metadata?: Record<string, any> }) {
+    console.log('[OpenMoji Capability] collect 收到调用:', JSON.stringify(args, null, 2));
     const res = await syncOpenMojiToMaterialLibrary('local', {
       imageUrl: args.imageUrl, metadata: { title: args.title, ...(args.metadata || {}) },
     });
+    console.log('[OpenMoji Capability] collect 返回结果:', JSON.stringify(res, null, 2));
     return { success: res.success, localFilePath: res.localFilePath || null, cosUrl: res.cosUrl || null, error: res.error || null };
   },
 };

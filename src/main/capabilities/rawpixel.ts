@@ -12,6 +12,7 @@ function normalizeSearchResult(result: {
   success: boolean;
   query: string;
   count: number;
+  total?: number;
   items: RawpixelPhoto[];
   links: string[];
   page: number;
@@ -26,6 +27,7 @@ function normalizeSearchResult(result: {
     data: {
       query: result.query,
       count: result.count,
+      total: result.total || result.count,
       page: result.page,
       nextPage: result.nextPage,
       items: result.items,
@@ -43,13 +45,23 @@ const searchDef: CapabilityDefinition = {
   argsSchema: z.object({
     keyword: z.string().describe('搜索关键词，如 cat, vintage, art'),
     page: z.number().optional().default(1),
-    limit: z.number().optional().default(25),
+    limit: z.number().optional().default(20),
+    pageSize: z.number().optional().default(20),
+    maxCount: z.number().optional(),
     sort: z.string().optional().default('curated'),
   }),
-  handler: async (args: { keyword: string; page?: number; limit?: number; sort?: string }) => {
+  handler: async (args: {
+    keyword: string;
+    page?: number;
+    limit?: number;
+    pageSize?: number;
+    maxCount?: number;
+    sort?: string;
+  }) => {
+    const limit = args.maxCount || args.limit || args.pageSize || 20;
     const res = await searchRawpixel(args.keyword, {
       page: args.page,
-      limit: args.limit,
+      limit,
       sort: args.sort,
     });
     return normalizeSearchResult(res);
@@ -63,7 +75,7 @@ const downloadDef: CapabilityDefinition = {
   description: '从 Rawpixel 下载原图到本地缓存目录。',
   riskLevel: 'write',
   argsSchema: z.object({
-    imageUrl: z.string().url().describe('Rawpixel 图片 URL'),
+    imageUrl: z.string().describe('Rawpixel 图片 URL'),
     filename: z.string().optional().describe('自定义文件名'),
   }),
   handler: async (args: { imageUrl: string; filename?: string }) => {
@@ -75,6 +87,7 @@ const downloadDef: CapabilityDefinition = {
       success: true,
       data: {
         filePath: res.filePath,
+        filename: res.filename,
       },
     };
   },
@@ -84,16 +97,46 @@ const downloadDef: CapabilityDefinition = {
 const collectDef: CapabilityDefinition = {
   name: 'collect',
   namespace: 'rawpixel',
-  description: '批量搜索 Rawpixel 并将高清原图转存上传至 COS 与素材库。',
+  description: '将 Rawpixel 图片转存上传至 COS 与素材库（支持单素材入库与批量搜索入库）。',
   riskLevel: 'write',
   argsSchema: z.object({
-    keyword: z.string().describe('搜索关键词'),
-    maxCount: z.number().optional().default(10).describe('最多转存图片张数 (1-50)'),
+    imageUrl: z.string().optional().describe('单张图片下载直链'),
+    title: z.string().optional().describe('图片标题'),
+    metadata: z.record(z.string(), z.any()).optional().describe('附加元数据'),
+    keyword: z.string().optional().describe('批量搜索关键词'),
+    maxCount: z.number().optional().default(10).describe('批量采集最多张数 (1-50)'),
     sort: z.string().optional().default('curated'),
   }),
-  handler: async (args: { keyword: string; maxCount?: number; sort?: string }) => {
+  handler: async (args: {
+    imageUrl?: string;
+    title?: string;
+    metadata?: Record<string, any>;
+    keyword?: string;
+    maxCount?: number;
+    sort?: string;
+  }) => {
+    // 模式 1：单素材精准转存入库
+    if (args.imageUrl) {
+      const syncRes = await syncRawpixelToMaterialLibrary(args.imageUrl, {
+        title: args.title,
+        ...(args.metadata || {}),
+      });
+      return {
+        success: syncRes.success,
+        message: syncRes.message,
+        data: syncRes.data,
+        error: syncRes.success ? undefined : syncRes.message,
+      };
+    }
+
+    // 模式 2：根据关键词批量检索并转存入库
+    const keyword = (args.keyword || '').trim();
+    if (!keyword) {
+      return { success: false, error: '缺少 imageUrl 或 keyword 参数' };
+    }
+
     const maxCount = Math.min(Math.max(args.maxCount || 10, 1), 50);
-    const searchRes = await searchRawpixel(args.keyword, { limit: maxCount, page: 1, sort: args.sort });
+    const searchRes = await searchRawpixel(keyword, { limit: maxCount, page: 1, sort: args.sort });
     if (!searchRes.success || !searchRes.items.length) {
       return { success: false, error: searchRes.error || '未检索到可转存的 Rawpixel 图片' };
     }
@@ -111,6 +154,7 @@ const collectDef: CapabilityDefinition = {
           width: item.width,
           height: item.height,
           id: item.id,
+          tags: item.tags,
         });
         if (syncRes.success) {
           successCount++;
@@ -124,13 +168,14 @@ const collectDef: CapabilityDefinition = {
     }
 
     return {
-      success: true,
+      success: successCount > 0,
       data: {
         successCount,
         failCount,
         images: syncedImages,
         items: searchRes.items,
       },
+      error: successCount === 0 ? '所有图片转存失败' : undefined,
     };
   },
 };

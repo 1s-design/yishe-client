@@ -44,6 +44,7 @@ interface PixabaySearchOptions {
   page?: number
   limit?: number
   pageSize?: number
+  apiKey?: string
 }
 
 function sanitizeName(str: string): string {
@@ -86,138 +87,188 @@ export async function searchPixabay(
 
   const page = Math.max(Number(options.page) || 1, 1)
   const limit = Math.min(Math.max(Number(options.limit) || Number(options.pageSize) || 20, 1), 100)
+  const apiKey = options.apiKey || process.env.PIXABAY_API_KEY || ''
 
-  try {
-    const searchUrl = `https://pixabay.com/zh/photos/search/${encodeURIComponent(keyword)}/?pagi=${page}`
-    
-    let html = ''
-    const fetchFn = (typeof session !== 'undefined' && session?.defaultSession?.fetch)
-      ? session.defaultSession.fetch.bind(session.defaultSession)
-      : fetch;
+  const items: PixabayPhoto[] = []
+  const seen = new Set<string>()
 
-    const res = await fetchFn(searchUrl, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Referer': 'https://pixabay.com/',
-      },
-    }).catch(() => null);
+  // 1. 如果配置了 Pixabay 官方 API Key，优先使用官方 API (最稳定，免 Cloudflare 拦截)
+  if (apiKey) {
+    try {
+      const apiUrl = `https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(keyword)}&image_type=photo&per_page=${limit}&page=${page}`
+      const apiRes = await fetch(apiUrl, {
+        headers: { 'User-Agent': USER_AGENT }
+      })
+      if (apiRes.ok) {
+        const apiData: any = await apiRes.json()
+        for (const p of (apiData?.hits || [])) {
+          const id = String(p.id)
+          if (seen.has(id)) continue
+          seen.add(id)
 
-    if (res && res.ok) {
-      html = await res.text();
-    }
-
-    const items: PixabayPhoto[] = [];
-    const seen = new Set<string>();
-
-    // 1. 解析 HTML 中的内嵌 JSON 数据
-    if (html) {
-      const jsonMatches = html.match(/<script[^>]*>(.*?)<\/script>/gs) || [];
-      for (const scriptText of jsonMatches) {
-        if (scriptText.includes('largeImageURL') || scriptText.includes('webformatURL') || scriptText.includes('pageURL')) {
-          try {
-            const rawJson = scriptText.replace(/<script[^>]*>/, '').replace(/<\/script>/, '').trim();
-            const photoMatches = rawJson.match(/\{[^{}]*"(?:largeImageURL|webformatURL|previewURL)"[^{}]*\}/g) || [];
-            for (const matchStr of photoMatches) {
-              try {
-                const p = JSON.parse(matchStr);
-                const id = String(p.id || p.id_hash || Date.now());
-                if (seen.has(id)) continue;
-                seen.add(id);
-
-                const origImage = p.largeImageURL || p.fullHDURL || p.webformatURL || '';
-                const thumbImage = p.previewURL || p.webformatURL || origImage;
-                const author = p.user || p.user_id || 'Pixabay Contributor';
-                const title = p.tags || `${keyword} photo by ${author}`;
-
-                if (origImage) {
-                  items.push({
-                    id,
-                    title,
-                    description: p.tags || title,
-                    image: origImage,
-                    thumbnail: thumbImage,
-                    link: p.pageURL || `https://pixabay.com/photos/${id}/`,
-                    url: p.pageURL || `https://pixabay.com/photos/${id}/`,
-                    width: p.imageWidth || p.webformatWidth || null,
-                    height: p.imageHeight || p.webformatHeight || null,
-                    author,
-                    tags: p.tags || '',
-                  });
-                }
-              } catch {}
-            }
-          } catch {}
-        }
-      }
-
-      // 2. 提取 cdn.pixabay.com 图片链接与 ID
-      if (items.length === 0) {
-        const cdnRegex = /https:\/\/cdn\.pixabay\.com\/photo\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/\d{2}\/([a-zA-Z0-9_-]+)__([34]80|\d+)\.(jpg|png|jpeg|webp)/g;
-        let match: RegExpExecArray | null;
-        while ((match = cdnRegex.exec(html)) !== null) {
-          const rawUrl = match[0];
-          const filename = match[1];
-          const resolution = match[2];
-
-          const id = filename;
-          if (seen.has(id)) continue;
-          seen.add(id);
-
-          const highResUrl = rawUrl.replace(`__${resolution}.`, '_1280.');
-          const thumbUrl = rawUrl.replace(`__${resolution}.`, '_340.');
-          const title = `${keyword} - ${filename.replace(/[-_]/g, ' ')}`;
+          const origImage = p.largeImageURL || p.fullHDURL || p.webformatURL
+          if (!origImage) continue
 
           items.push({
             id,
-            title,
-            description: `Pixabay photo ${filename}`,
-            image: highResUrl,
-            thumbnail: thumbUrl,
-            link: `https://pixabay.com/zh/photos/${id}/`,
-            url: `https://pixabay.com/zh/photos/${id}/`,
-            author: 'Pixabay Contributor',
-            tags: keyword,
-          });
+            title: p.tags || `${keyword} by ${p.user || 'Pixabay'}`,
+            description: p.tags || `${keyword} photo`,
+            image: origImage,
+            thumbnail: p.previewURL || p.webformatURL || origImage,
+            link: p.pageURL || `https://pixabay.com/photos/${id}/`,
+            url: p.pageURL || `https://pixabay.com/photos/${id}/`,
+            width: p.imageWidth || null,
+            height: p.imageHeight || null,
+            author: p.user || 'Pixabay Contributor',
+            tags: p.tags || keyword,
+          })
         }
       }
+    } catch (apiErr: any) {
+      console.warn('[Pixabay] Official API request failed, falling back to web scraping:', apiErr?.message)
     }
+  }
 
-    // 3. 兜底保障策略
-    if (items.length === 0) {
-      try {
-        const fallbackRes = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(keyword)}&page_size=${limit}`);
-        if (fallbackRes.ok) {
-          const fallbackData: any = await fallbackRes.json();
-          for (const item of (fallbackData?.results || [])) {
-            items.push({
-              id: `pixabay_${item.id}`,
-              title: item.title || `${keyword} HD Photo`,
-              description: `Pixabay / Open HD Photo: ${item.title || keyword}`,
-              image: item.url,
-              thumbnail: item.thumbnail || item.url,
-              link: item.foreign_landing_url || item.url,
-              url: item.foreign_landing_url || item.url,
-              author: item.creator || 'Pixabay Contributor',
-              tags: keyword,
-            });
+  // 2. 网页直抓与内嵌 JSON 解析
+  if (items.length === 0) {
+    try {
+      const searchUrl = `https://pixabay.com/zh/photos/search/${encodeURIComponent(keyword)}/?pagi=${page}`
+      const fetchFn = (typeof session !== 'undefined' && session?.defaultSession?.fetch)
+        ? session.defaultSession.fetch.bind(session.defaultSession)
+        : fetch
+
+      const res = await fetchFn(searchUrl, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Referer': 'https://pixabay.com/',
+        },
+      }).catch(() => null)
+
+      let html = ''
+      if (res && res.ok) {
+        html = await res.text()
+      }
+
+      if (html) {
+        const jsonMatches = html.match(/<script[^>]*>(.*?)<\/script>/gs) || []
+        for (const scriptText of jsonMatches) {
+          if (scriptText.includes('largeImageURL') || scriptText.includes('webformatURL') || scriptText.includes('pageURL')) {
+            try {
+              const rawJson = scriptText.replace(/<script[^>]*>/, '').replace(/<\/script>/, '').trim()
+              const photoMatches = rawJson.match(/\{[^{}]*"(?:largeImageURL|webformatURL|previewURL)"[^{}]*\}/g) || []
+              for (const matchStr of photoMatches) {
+                try {
+                  const p = JSON.parse(matchStr)
+                  const id = String(p.id || p.id_hash || Date.now())
+                  if (seen.has(id)) continue
+                  seen.add(id)
+
+                  const origImage = p.largeImageURL || p.fullHDURL || p.webformatURL || ''
+                  const thumbImage = p.previewURL || p.webformatURL || origImage
+                  const author = p.user || p.user_id || 'Pixabay Contributor'
+                  const title = p.tags || `${keyword} photo by ${author}`
+
+                  if (origImage) {
+                    items.push({
+                      id,
+                      title,
+                      description: p.tags || title,
+                      image: origImage,
+                      thumbnail: thumbImage,
+                      link: p.pageURL || `https://pixabay.com/photos/${id}/`,
+                      url: p.pageURL || `https://pixabay.com/photos/${id}/`,
+                      width: p.imageWidth || p.webformatWidth || null,
+                      height: p.imageHeight || p.webformatHeight || null,
+                      author,
+                      tags: p.tags || '',
+                    })
+                  }
+                } catch {}
+              }
+            } catch {}
           }
         }
-      } catch {}
-    }
 
-    const finalItems = items.slice(0, limit);
-    return {
-      success: true,
-      query: keyword,
-      count: finalItems.length,
-      items: finalItems,
-      links: finalItems.map((f) => f.image).filter(Boolean),
-      page,
-      nextPage: finalItems.length > 0 ? page + 1 : null,
-    };
-  } catch (error: any) {
+        // 提取 CDN 直链
+        if (items.length === 0) {
+          const cdnRegex = /https:\/\/cdn\.pixabay\.com\/photo\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/\d{2}\/([a-zA-Z0-9_-]+)__([34]80|\d+)\.(jpg|png|jpeg|webp)/g
+          let match: RegExpExecArray | null
+          while ((match = cdnRegex.exec(html)) !== null) {
+            const rawUrl = match[0]
+            const filename = match[1]
+            const resolution = match[2]
+
+            const id = filename
+            if (seen.has(id)) continue
+            seen.add(id)
+
+            const highResUrl = rawUrl.replace(`__${resolution}.`, '_1280.')
+            const thumbUrl = rawUrl.replace(`__${resolution}.`, '_340.')
+            const title = `${keyword} - ${filename.replace(/[-_]/g, ' ')}`
+
+            items.push({
+              id,
+              title,
+              description: `Pixabay photo ${filename}`,
+              image: highResUrl,
+              thumbnail: thumbUrl,
+              link: `https://pixabay.com/zh/photos/${id}/`,
+              url: `https://pixabay.com/zh/photos/${id}/`,
+              author: 'Pixabay Contributor',
+              tags: keyword,
+            })
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Pixabay] Web scraping search failed:', err?.message)
+    }
+  }
+
+  // 3. 开放免费高分辨率图库自动降级与兜底策略 (带完整 User-Agent & 超时)
+  if (items.length === 0) {
+    try {
+      const fallbackUrl = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(keyword)}&page_size=${limit}&page=${page}`
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 8000)
+
+      const fallbackRes = await fetch(fallbackUrl, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Accept': 'application/json',
+        },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeoutId))
+
+      if (fallbackRes.ok) {
+        const fallbackData: any = await fallbackRes.json()
+        for (const item of (fallbackData?.results || [])) {
+          const id = `pixabay_${item.id}`
+          if (seen.has(id)) continue
+          seen.add(id)
+
+          items.push({
+            id,
+            title: item.title || `${keyword} HD Photo`,
+            description: `Pixabay / Open HD Photo: ${item.title || keyword}`,
+            image: item.url,
+            thumbnail: item.thumbnail || item.url,
+            link: item.foreign_landing_url || item.url,
+            url: item.foreign_landing_url || item.url,
+            author: item.creator || 'Pixabay Contributor',
+            tags: keyword,
+          })
+        }
+      }
+    } catch (fbErr: any) {
+      console.warn('[Pixabay] Fallback image search error:', fbErr?.message)
+    }
+  }
+
+  const finalItems = items.slice(0, limit)
+  if (finalItems.length === 0) {
     return {
       success: false,
       query: keyword,
@@ -226,8 +277,18 @@ export async function searchPixabay(
       links: [],
       page,
       nextPage: null,
-      error: error?.message || '搜索 Pixabay 失败',
-    };
+      error: '未检索到可用 Pixabay 图片 (受防爬或网络拦截影响，建议配置 PIXABAY_API_KEY 官方密钥)',
+    }
+  }
+
+  return {
+    success: true,
+    query: keyword,
+    count: finalItems.length,
+    items: finalItems,
+    links: finalItems.map((f) => f.image).filter(Boolean),
+    page,
+    nextPage: finalItems.length >= limit ? page + 1 : null,
   }
 }
 

@@ -69,16 +69,20 @@ export async function uploadToMaterialLibrary(
   payload: MaterialLibraryPayload,
 ): Promise<MaterialLibraryResult> {
   const category = payload?.category || "uncategorized";
+  console.log(`[MaterialLibrary] 准备入库: localPath=${localPath}, fileName=${fileName}, category=${category}`);
 
   // 1. 上传 COS
   const cosKey = await generateCosKey({ category, filename: fileName });
+  console.log(`[MaterialLibrary] 开始上传 COS: cosKey=${cosKey}`);
   const cosResult = await uploadFileToCos(localPath, cosKey);
   if (!cosResult.ok || !cosResult.url) {
+    console.error(`[MaterialLibrary] ❌ COS 上传失败:`, cosResult);
     return {
       ok: false,
       msg: "msg" in cosResult ? (cosResult.msg as string) : "COS 上传失败",
     };
   }
+  console.log(`[MaterialLibrary] ✅ COS 上传成功: url=${cosResult.url}, key=${cosResult.key}`);
 
   // 2. 入库 sticker/create
   try {
@@ -88,26 +92,37 @@ export async function uploadToMaterialLibrary(
     const token = serverToken || windowToken || "";
     const apiBase = (await getBackendApiBase()).replace(/\/+$/, "");
 
+    const clean4ByteEmoji = (s: any) =>
+      typeof s === "string" ? s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "").trim() : s;
+
     const name =
-      payload?.name ||
-      payload?.nameEn ||
-      fileName.replace(/\.(jpg|png|jpeg|webp)$/i, "");
+      clean4ByteEmoji(payload?.name) ||
+      clean4ByteEmoji(payload?.nameEn) ||
+      clean4ByteEmoji(fileName.replace(/\.(jpg|png|jpeg|webp|svg)$/i, "")) ||
+      `material_${Date.now()}`;
+    const nameEn = clean4ByteEmoji(payload?.nameEn) || name;
+    const description = clean4ByteEmoji(payload?.description || "");
+    const descriptionEn = clean4ByteEmoji(payload?.descriptionEn || payload?.description || "");
+    const keywords = clean4ByteEmoji(payload?.keywords || "");
+    const keywordsEn = clean4ByteEmoji(payload?.keywordsEn || payload?.keywords || "");
+    const group = clean4ByteEmoji(payload?.group || category);
+
     const postData = JSON.stringify({
       url: cosResult.url,
       key: cosResult.key,
       suffix: payload?.suffix || "jpg",
       originUrl: payload?.originUrl || "",
       source: payload?.source || "",
-      group: payload?.group || category,
+      group,
       isPublic: payload?.isPublic ?? true,
       isTexture: payload?.isTexture ?? false,
       isCustom: payload?.isCustom ?? false,
       name,
-      nameEn: payload?.nameEn || name,
-      description: payload?.description || "",
-      descriptionEn: payload?.descriptionEn || payload?.description || "",
-      keywords: payload?.keywords || "",
-      keywordsEn: payload?.keywordsEn || payload?.keywords || "",
+      nameEn,
+      description,
+      descriptionEn,
+      keywords,
+      keywordsEn,
       colorPalette: payload?.colorPalette || "",
       meta: {
         collectedAt: new Date().toISOString(),
@@ -116,6 +131,7 @@ export async function uploadToMaterialLibrary(
     });
 
     const apiUrl = new URL(`${apiBase}/sticker/create`);
+    console.log(`[MaterialLibrary] 发起 sticker/create 请求: ${apiUrl.toString()}, tokenPresent=${Boolean(token)}`);
     const options = {
       hostname: apiUrl.hostname,
       port: apiUrl.port || (apiUrl.protocol === "https:" ? 443 : 80),
@@ -139,32 +155,38 @@ export async function uploadToMaterialLibrary(
         });
         res.on("end", () => {
           try {
+            console.log(`[MaterialLibrary] sticker/create 响应状态码: ${res.statusCode}, 响应体: ${data.slice(0, 300)}`);
             if (res.statusCode && res.statusCode >= 400) {
-              resolve({ ok: false, msg: `HTTP ${res.statusCode}: 请求失败` });
+              console.error(`[MaterialLibrary] ❌ sticker/create 响应 HTTP ${res.statusCode}: ${data}`);
+              resolve({ ok: false, msg: `HTTP ${res.statusCode}: 请求失败 (${data || '无详情'})` });
               return;
             }
             const result = JSON.parse(data);
             // 后端 TransformInterceptor：{ code: 0, data, status: true }；data 即新建的 sticker 实体
             if (result.code === 0 && result.status === true) {
               const created = result.data && typeof result.data === "object" ? result.data : null;
+              console.log(`[MaterialLibrary] ✅ sticker 创建成功: materialId=${created?.id}, materialUrl=${created?.url}`);
               resolve({
                 ok: true,
                 materialId: created?.id || undefined,
                 materialUrl: created?.url || undefined,
               });
             } else {
+              console.error(`[MaterialLibrary] ❌ sticker 创建业务失败:`, result);
               resolve({
                 ok: false,
                 msg: result.message || result.msg || "素材库保存失败",
               });
             }
-          } catch (e) {
+          } catch (e: any) {
+            console.error(`[MaterialLibrary] ❌ sticker 响应解析异常: ${e?.message}`);
             resolve({ ok: false, msg: "素材库 API 响应解析失败" });
           }
         });
       });
 
       req.on("error", (err: Error) => {
+        console.error(`[MaterialLibrary] ❌ sticker API 请求网络异常: ${err.message}`);
         resolve({ ok: false, msg: `素材库 API 请求失败: ${err.message}` });
       });
 
@@ -172,6 +194,7 @@ export async function uploadToMaterialLibrary(
       req.end();
     });
   } catch (error: any) {
+    console.error(`[MaterialLibrary] ❌ 上传到素材库外层捕获异常: ${error?.message}`);
     return {
       ok: false,
       msg: `上传到素材库失败: ${error?.message || String(error)}`,

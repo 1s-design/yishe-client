@@ -92,211 +92,173 @@ export async function getNounProjectStatus() {
 /**
  * 解析 Noun Project 搜索结果 HTML（多策略解析）
  */
+/**
+ * 解析 Noun Project 搜索结果 HTML（精准解析真实 Icons 与 Photos 素材，过滤广告横幅）
+ */
 function parseNounProjectHtml(
   html: string,
   mediaType: 'photos' | 'icons',
 ): { items: NounProjectAsset[]; total: number; totalPages: number } {
   const items: NounProjectAsset[] = [];
-  let total = 0;
-  let totalPages = 1;
   const usedIds = new Set<string>();
+  const isPhoto = mediaType === 'photos';
 
   try {
-    // ─── 策略 1: 从 JSON-LD 结构化数据提取 ───
-    const jsonLdRegex = /<script\s+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi;
-    let jsonLdMatch: RegExpExecArray | null;
-    while ((jsonLdMatch = jsonLdRegex.exec(html)) !== null) {
-      try {
-        const data = JSON.parse(jsonLdMatch[1]);
-        const graph = data?.graph || data?.mainEntity || data;
-        const itemList = graph?.itemListElement || graph?.about || [];
-        const rawList = Array.isArray(itemList) ? itemList : [];
+    if (!isPhoto) {
+      // ─── Icons 模式: 解析 PNG 矢量图标 (优先从 static.thenounproject.com/png/ 提取) ───
+      const imgRegex =
+        /<img[^>]+src="([^"']*(?:static\.thenounproject\.com|cdn\.thenounproject\.com)[^"']*)"[^>]*alt="([^"']*)"[^>]*>/gi;
+      let m: RegExpExecArray | null;
 
-        for (const raw of rawList) {
-          const item = raw?.item || raw;
-          const url = item?.url || item?.['@id'] || '';
-          const name = item?.name || item?.headline || '';
-          const image = item?.image || item?.thumbnailUrl || '';
-
-          const idMatch = url.match(/\/(?:term|icon|photo)\/(\d+)/i) || url.match(/(\d+)/);
-          if (!idMatch || !name) continue;
-
-          const id = idMatch[1];
-          if (usedIds.has(id)) continue;
-          usedIds.add(id);
-
-          const asset = buildNounProjectAsset(id, name, image, mediaType);
-          items.push(asset);
+      while ((m = imgRegex.exec(html)) !== null) {
+        const src = m[1];
+        const rawAlt = m[2] || '';
+        // 排除非图标 UI 元素与广告横幅
+        if (
+          src.includes('/web-images/') ||
+          rawAlt.includes('Try Out Our Easy Icon Editor') ||
+          rawAlt.includes('Icon Editor') ||
+          rawAlt.includes('QuickView')
+        ) {
+          continue;
         }
-      } catch {
-        // JSON-LD 解析失败，继续下一个
-      }
-    }
 
-    // ─── 策略 2: 从 <img> 标签提取（Next.js 渲染的预览图） ───
-    if (items.length === 0) {
-      const imgRegex = /<img[^>]+src="([^"]*(?:static\.thenounproject\.com|cdn\.thenounproject\.com|tnp\.dnjs)[^"]*)"[^>]*alt="([^"]*)"[^>]*>/gi;
-      let imgMatch: RegExpExecArray | null;
-
-      while ((imgMatch = imgRegex.exec(html)) !== null) {
-        const src = imgMatch[1];
-        const alt = imgMatch[2] || 'Noun Project Asset';
-
-        // 提取 ID: /png/8422832-200.png 或 /photo/123456/... 或 /icon/123456/...
-        const idMatch = src.match(/png\/(\d+)-(?:200|512)\.png/i) || src.match(/\/(?:photo|icon|tnp)\/(\d+)/i) || src.match(/(\d{5,})/);
+        const idMatch =
+          src.match(/png\/(\d+)-(?:200|512)\.png/i) ||
+          src.match(/\/(?:photo|icon|tnp)\/(\d+)/i) ||
+          src.match(/(\d{5,})/);
         if (!idMatch) continue;
 
         const id = idMatch[1];
         if (usedIds.has(id)) continue;
         usedIds.add(id);
 
-        const title = alt.replace(/&#039;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"');
-        const asset = buildNounProjectAsset(id, title, src, mediaType);
-        items.push(asset);
+        const cleanTitle = rawAlt
+          .replace(/\s+(?:icon|icons)$/i, '')
+          .replace(/&#039;/g, "'")
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .trim();
+        const title =
+          cleanTitle.length > 0
+            ? cleanTitle.replace(/\b\w/g, (c) => c.toUpperCase())
+            : `Noun Project Icon ${id}`;
+
+        const png512Url = `https://static.thenounproject.com/png/${id}-512.png`;
+        const png200Url = `https://static.thenounproject.com/png/${id}-200.png`;
+        const svgUrl = `https://static.thenounproject.com/svg/${id}.svg`;
+        const link = `https://thenounproject.com/icon/${id}/`;
+
+        items.push({
+          id,
+          name: sanitizeName(title) || `nounproject_${id}`,
+          title,
+          image: png512Url,
+          svgUrl,
+          pngUrl: png512Url,
+          thumbnail: png200Url,
+          downloadUrl: png512Url,
+          link,
+          url: link,
+          format: 'png',
+          author: 'Noun Project Community',
+          license: 'Creative Commons (Attribution required)',
+          isFree: true,
+          tags: title,
+        });
       }
-    }
 
-    // ─── 策略 3: 从 <a> 详情页链接提取（/icon/cat-8422832/） ───
-    if (items.length === 0) {
-      const linkRegex = /href="(\/(?:icon|term|photo)\/([a-z0-9_-]+)-(\d+)\/?)"/gi;
-      let linkMatch: RegExpExecArray | null;
+      // 如果未通过 img 匹配到，回退匹配详情链接 a href="/icon/slug-12345/"
+      if (items.length === 0) {
+        const linkRegex = /href="(\/(?:icon|term)\/([a-z0-9_-]+)-(\d+)\/?)"/gi;
+        let linkMatch: RegExpExecArray | null;
+        while ((linkMatch = linkRegex.exec(html)) !== null) {
+          const slug = linkMatch[2];
+          const id = linkMatch[3];
+          if (usedIds.has(id)) continue;
+          usedIds.add(id);
 
-      while ((linkMatch = linkRegex.exec(html)) !== null) {
-        const slug = linkMatch[2];
-        const id = linkMatch[3];
+          const title = slug.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+          const png512Url = `https://static.thenounproject.com/png/${id}-512.png`;
+          const png200Url = `https://static.thenounproject.com/png/${id}-200.png`;
+          const link = `https://thenounproject.com/icon/${id}/`;
 
+          items.push({
+            id,
+            name: sanitizeName(title) || `nounproject_${id}`,
+            title,
+            image: png512Url,
+            thumbnail: png200Url,
+            downloadUrl: png512Url,
+            link,
+            url: link,
+            format: 'png',
+            author: 'Noun Project Community',
+            license: 'Creative Commons (Attribution required)',
+            isFree: true,
+            tags: title,
+          });
+        }
+      }
+    } else {
+      // ─── Photos 模式: 解析高质量摄影图片 ───
+      const imgRegex =
+        /<img[^>]+src="([^"']*(?:thumbnails\.production\.thenounproject\.com|photos\.production\.thenounproject\.com)[^"']*)"[^>]*alt="([^"']*)"[^>]*>/gi;
+      let m: RegExpExecArray | null;
+
+      while ((m = imgRegex.exec(html)) !== null) {
+        const src = m[1];
+        const rawAlt = m[2] || '';
+        if (src.includes('/web-images/')) continue;
+
+        const idMatch =
+          src.match(/photos\/([a-zA-Z0-9-]+)\.(?:jpg|jpeg|png)/i) ||
+          src.match(/([a-zA-Z0-9-]{36})/i);
+        const id = idMatch ? idMatch[1] : `photo_${items.length}`;
         if (usedIds.has(id)) continue;
         usedIds.add(id);
 
-        const title = slug.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
-        const thumbSrc = `https://static.thenounproject.com/png/${id}-200.png`;
-        const asset = buildNounProjectAsset(id, title, thumbSrc, mediaType);
-        items.push(asset);
+        const cleanTitle = rawAlt
+          .replace(/&#039;/g, "'")
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .trim();
+        const title = cleanTitle.length > 0 ? cleanTitle : `Noun Project Photo ${id}`;
+
+        const link = `https://thenounproject.com/photo/${id}/`;
+
+        items.push({
+          id,
+          name: sanitizeName(title) || `nounproject_${id}`,
+          title,
+          image: src,
+          thumbnail: src,
+          downloadUrl: src,
+          link,
+          url: link,
+          format: 'jpg',
+          author: 'Noun Project Contributor',
+          license: 'Royalty-free / Creative Commons',
+          isFree: true,
+          tags: title,
+        });
       }
-    }
-
-    // ─── 策略 4: 从 Next.js __NEXT_DATA__ 提取 ───
-    if (items.length === 0) {
-      const nextDataMatch = html.match(/<script\s+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
-      if (nextDataMatch) {
-        try {
-          const nextData = JSON.parse(nextDataMatch[1]);
-          const pageProps = nextData?.props?.pageProps || {};
-          const rawItems: any[] =
-            pageProps?.items ||
-            pageProps?.assets ||
-            pageProps?.searchResults ||
-            pageProps?.data ||
-            [];
-          const rawTotal = pageProps?.total || pageProps?.count || rawItems.length;
-
-          if (rawItems.length > 0) {
-            total = rawTotal || rawItems.length;
-            for (const raw of rawItems) {
-              const id = String(raw?.id || raw?.assetId || raw?.slug || '');
-              const rawTitle = raw?.title || raw?.name || raw?.term || raw?.description || '';
-              if (!id || usedIds.has(id)) continue;
-              usedIds.add(id);
-
-              const title = rawTitle.replace(/&#039;/g, "'").replace(/&amp;/g, '&');
-              const thumbSrc =
-                raw?.previewUrl ||
-                raw?.thumbnailUrl ||
-                raw?.image ||
-                raw?.svgUrl ||
-                raw?.iconUrl ||
-                '';
-
-              const asset = buildNounProjectAsset(id, title, thumbSrc, mediaType);
-              if (raw?.author || raw?.creator) {
-                asset.author = raw.author || raw.creator;
-              }
-              if (raw?.license) {
-                asset.license = raw.license;
-              }
-              items.push(asset);
-            }
-          }
-        } catch {
-          console.warn('[NounProject Parser] __NEXT_DATA__ 解析失败，尝试其他解析方式');
-        }
-      }
-    }
-
-    // 提取总数
-    const totalMatch = html.match(/([\d,]+)\s*(?:results|items|icons|photos)/i);
-    if (totalMatch) {
-      total = parseInt(totalMatch[1].replace(/,/g, ''), 10) || items.length;
-    }
-
-    // 检查分页
-    const pagesMatch = html.match(/Page\s+(\d+)\s+of\s+(\d+)/i);
-    if (pagesMatch) {
-      totalPages = parseInt(pagesMatch[2], 10) || 1;
-    } else if (total > items.length) {
-      totalPages = Math.ceil(total / 20);
     }
   } catch (err) {
     console.error('[NounProject Parser Error]', err);
   }
 
+  // 提取总数
+  let total = items.length;
+  const totalMatch = html.match(/([\d,]+)\s*(?:results|items|icons|photos)/i);
+  if (totalMatch) {
+    total = parseInt(totalMatch[1].replace(/,/g, ''), 10) || items.length;
+  }
+
   return {
     items,
-    total: total || items.length,
-    totalPages,
-  };
-}
-
-/**
- * 根据 ID 构建 NounProjectAsset 对象
- */
-function buildNounProjectAsset(
-  id: string,
-  title: string,
-  thumbSrc: string,
-  mediaType: 'photos' | 'icons',
-): NounProjectAsset {
-  const cleanTitle =
-    title
-      .replace(/&#039;/g, "'")
-      .replace(/&amp;/g, '&')
-      .replace(/&quot;/g, '"')
-      .replace(/^\s*-\s*Noun Project\s*$/i, '') || `Noun Project ${id}`;
-
-  const isPhoto = mediaType === 'photos';
-  const png200Url = `https://static.thenounproject.com/png/${id}-200.png`;
-  const pngUrl = `https://static.thenounproject.com/png/${id}-200.png`;
-  const svgUrl = `https://static.thenounproject.com/svg/${id}.svg`;
-  const photoUrl = `https://static.thenounproject.com/photo/${id}.jpg`;
-
-  const thumbnail = thumbSrc.startsWith('http')
-    ? thumbSrc
-    : thumbSrc.startsWith('/')
-      ? `https://thenounproject.com${thumbSrc}`
-      : isPhoto
-        ? photoUrl
-        : png200Url;
-
-  const image = isPhoto ? (thumbnail || photoUrl) : png200Url;
-  const link = `https://thenounproject.com/${isPhoto ? 'photo' : 'icon'}/${id}/`;
-  const downloadUrl = isPhoto ? image : png200Url;
-
-  return {
-    id,
-    name: sanitizeName(cleanTitle) || `nounproject_${id}`,
-    title: cleanTitle,
-    image,
-    svgUrl: svgUrl,
-    pngUrl: pngUrl,
-    thumbnail,
-    downloadUrl,
-    link,
-    url: link,
-    format: isPhoto ? 'jpg' : 'png',
-    author: 'Noun Project Community',
-    license: 'Creative Commons / Royalty-free (varies by asset)',
-    isFree: true,
-    tags: cleanTitle,
+    total: Math.max(total, items.length),
+    totalPages: Math.max(1, Math.ceil(items.length / 20)),
   };
 }
 
@@ -323,7 +285,7 @@ export async function searchNounProject(
 
   const page = Math.max(Number(options.page) || 1, 1);
   const limit = Math.min(Math.max(Number(options.limit || options.pageSize) || 20, 1), 100);
-  const mediaType = options.mediaType || 'icons';
+  const mediaType = (options.mediaType || 'icons').toLowerCase().includes('photo') ? 'photos' : 'icons';
 
   try {
     const fetchFn = await getFetchImpl();
@@ -332,17 +294,40 @@ export async function searchNounProject(
 
     const headers = {
       'User-Agent': USER_AGENT,
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Upgrade-Insecure-Requests': '1',
       'Referer': 'https://thenounproject.com/',
     };
 
-    const res = await fetchFn(targetUrl, { headers });
-    if (!res.ok) {
-      throw new Error(`Noun Project HTTP 错误: ${res.status} ${res.statusText}`);
+    let html = '';
+    let lastError = '';
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetchFn(targetUrl, { headers });
+        if (!res.ok) {
+          lastError = `Noun Project HTTP 错误: ${res.status} ${res.statusText}`;
+          continue;
+        }
+        html = await res.text();
+        if (html && html.length > 0) break;
+      } catch (err: any) {
+        lastError = err?.message || '网络连接异常';
+        console.warn(`[Noun Project Search] 第 ${attempt} 次搜索请求失败: ${lastError}，准备重试...`);
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, 600 * attempt));
+        }
+      }
     }
 
-    const html = await res.text();
+    if (!html) {
+      throw new Error(lastError || '未能获取到 Noun Project 页面内容');
+    }
+
     const { items, total, totalPages } = parseNounProjectHtml(html, mediaType);
 
     // 分页处理
@@ -403,6 +388,71 @@ function getNounProjectWorkspaceDir(): string {
 }
 
 /**
+ * 三级网络安全下载（Electron net.fetch -> global fetch -> native https.get），有效应对代理与 TLS 阻断
+ */
+async function fetchBinaryWithFallback(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const fetchers: Array<() => Promise<{ buffer: Buffer; contentType: string }>> = [
+    async () => {
+      const fetchFn = await getFetchImpl();
+      const res = await fetchFn(url, { headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const arrayBuffer = await res.arrayBuffer();
+      const buf = Buffer.from(arrayBuffer);
+      if (!buf || buf.length === 0) throw new Error('返回数据为空');
+      return { buffer: buf, contentType: res.headers.get('content-type') || '' };
+    },
+    async () => {
+      if (typeof globalThis.fetch === 'function') {
+        const res = await globalThis.fetch(url, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        const arrayBuffer = await res.arrayBuffer();
+        const buf = Buffer.from(arrayBuffer);
+        if (!buf || buf.length === 0) throw new Error('返回数据为空');
+        return { buffer: buf, contentType: res.headers.get('content-type') || '' };
+      }
+      throw new Error('global fetch unavailable');
+    },
+    async () => {
+      return new Promise<{ buffer: Buffer; contentType: string }>((resolve, reject) => {
+        const https = require('https');
+        const req = https.get(url, { headers }, (res: any) => {
+          if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+            return reject(new Error(`HTTP ${res.statusCode}`));
+          }
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const buf = Buffer.concat(chunks);
+            if (buf.length === 0) return reject(new Error('数据为空'));
+            resolve({ buffer: buf, contentType: res.headers['content-type'] || '' });
+          });
+        });
+        req.on('error', (err: any) => reject(err));
+        req.setTimeout(8000, () => {
+          req.destroy();
+          reject(new Error('下载超时'));
+        });
+      });
+    },
+  ];
+
+  for (const fn of fetchers) {
+    try {
+      const result = await fn();
+      if (result && result.buffer && result.buffer.length > 0) {
+        return result;
+      }
+    } catch {
+      // 尝试下一个网络下载通道
+    }
+  }
+  return null;
+}
+
+/**
  * 下载 The Noun Project 素材（SVG/PNG/JPG）到本地
  */
 export async function downloadNounProjectAsset(
@@ -413,21 +463,55 @@ export async function downloadNounProjectAsset(
     return { success: false, error: '缺少素材下载链接' };
   }
 
-  try {
-    const fetchFn = await getFetchImpl();
-    const headers = {
-      'User-Agent': USER_AGENT,
-      'Referer': 'https://thenounproject.com/',
-    };
+  console.log(`[Noun Project Download] 正在下载素材: ${imageUrl}`);
+  const headers = {
+    'User-Agent': USER_AGENT,
+    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Sec-Fetch-Dest': 'image',
+    'Sec-Fetch-Mode': 'no-cors',
+    'Sec-Fetch-Site': 'cross-site',
+    'Referer': 'https://thenounproject.com/',
+  };
 
-    const res = await fetchFn(imageUrl, { headers });
-    if (!res.ok) {
-      throw new Error(`下载失败 HTTP ${res.status}: ${res.statusText}`);
+  let buffer: Buffer | null = null;
+  let finalContentType = '';
+
+  // 尝试的主地址和候选回退地址 (如 512px 回退到 200px，800x800 回退到 0x450)
+  const candidateUrls = [imageUrl];
+  if (imageUrl.includes('-512.png')) {
+    candidateUrls.push(imageUrl.replace('-512.png', '-200.png'));
+  } else if (imageUrl.includes('800x800')) {
+    candidateUrls.push(imageUrl.replace('800x800', '0x450'));
+  } else if (imageUrl.includes('.svg')) {
+    const idMatch = imageUrl.match(/\/(\d+)\.svg/);
+    if (idMatch) {
+      candidateUrls.push(`https://static.thenounproject.com/png/${idMatch[1]}-512.png`);
+      candidateUrls.push(`https://static.thenounproject.com/png/${idMatch[1]}-200.png`);
     }
+  }
 
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+  for (const url of candidateUrls) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const fetched = await fetchBinaryWithFallback(url, headers);
+      if (fetched && fetched.buffer && fetched.buffer.length > 0) {
+        buffer = fetched.buffer;
+        finalContentType = fetched.contentType;
+        break;
+      }
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 400 * attempt));
+      }
+    }
+    if (buffer && buffer.length > 0) break;
+  }
 
+  if (!buffer || buffer.length === 0) {
+    console.error(`[Noun Project Download] ❌ 下载素材失败: ${imageUrl}`);
+    return { success: false, error: `下载素材失败: ${imageUrl}` };
+  }
+
+  try {
     const workspaceDir = getNounProjectWorkspaceDir();
     let saveDir = join(workspaceDir, 'nounproject-downloads');
     try {
@@ -441,18 +525,17 @@ export async function downloadNounProjectAsset(
       }
     }
 
-    // 精确判断文件格式（优先魔数嗅探）
-    const contentType = res.headers.get('content-type') || '';
-    let ext = '.svg';
+    // 精确判断文件格式
+    let ext = '.png';
     const isPng = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
     const isJpg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
     const isSvg = buffer.toString('utf-8', 0, 100).toLowerCase().includes('<svg');
 
-    if (isPng || contentType.includes('png') || imageUrl.includes('.png')) {
+    if (isPng || finalContentType.includes('png') || imageUrl.includes('.png')) {
       ext = '.png';
-    } else if (isJpg || contentType.includes('jpeg') || contentType.includes('jpg') || imageUrl.includes('.jpg')) {
+    } else if (isJpg || finalContentType.includes('jpeg') || finalContentType.includes('jpg') || imageUrl.includes('.jpg')) {
       ext = '.jpg';
-    } else if (isSvg || contentType.includes('svg') || imageUrl.includes('.svg')) {
+    } else if (isSvg || finalContentType.includes('svg') || imageUrl.includes('.svg')) {
       ext = '.svg';
     } else if (options.format === 'png') {
       ext = '.png';
@@ -467,10 +550,12 @@ export async function downloadNounProjectAsset(
 
     const filePath = join(saveDir, filename);
     fs.writeFileSync(filePath, buffer);
+    console.log(`[Noun Project Download] ✅ 素材已保存: ${filePath} (${buffer.length} 字节)`);
 
     return { success: true, filePath, filename };
   } catch (error: any) {
-    return { success: false, error: error?.message || '下载素材过程中发生错误' };
+    console.error(`[Noun Project Download] ❌ 写入文件失败: ${error?.message}`);
+    return { success: false, error: error?.message || '写入本地文件失败' };
   }
 }
 
@@ -480,8 +565,9 @@ export async function downloadNounProjectAsset(
 export async function syncNounProjectToMaterialLibrary(
   _clientId: string,
   data: { imageUrl: string; metadata?: Record<string, any> },
-): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; data?: any; error?: string }> {
+): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; materialId?: string; data?: any; error?: string }> {
   const { imageUrl, metadata } = data;
+  console.log(`[Noun Project Collect] 开始入库: imageUrl=${imageUrl}, title=${metadata?.title || metadata?.name}`);
   if (!imageUrl) {
     return { success: false, error: '缺少素材 URL' };
   }
@@ -492,17 +578,19 @@ export async function syncNounProjectToMaterialLibrary(
   });
 
   if (!dlResult.success || !dlResult.filePath) {
+    console.error(`[Noun Project Collect] ❌ 下载素材失败: ${dlResult.error}`);
     return { success: false, error: dlResult.error || '下载素材失败' };
   }
 
   const localFilePath = dlResult.filePath;
 
-
   // 2. 上传到素材库 (COS + sticker 表)
   try {
-    const fileName = localFilePath.split('/').pop() || `nounproject_${Date.now()}.svg`;
-    const ext = fileName.split('.').pop() || 'svg';
+    const fileName = localFilePath.split('/').pop() || `nounproject_${Date.now()}.png`;
+    const ext = fileName.split('.').pop() || 'png';
     const title = metadata?.title || metadata?.name || fileName.replace(/\.(svg|png|jpg)$/i, '');
+    console.log(`[Noun Project Collect] 上传素材库: fileName=${fileName}, title=${title}`);
+
     const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
       category: 'nounproject',
       group: 'nounproject',
@@ -520,8 +608,11 @@ export async function syncNounProjectToMaterialLibrary(
     });
 
     if (!materialResult.ok) {
+      console.error(`[Noun Project Collect] ❌ 素材库保存失败: ${materialResult.msg}`);
       return { success: false, error: materialResult.msg || '素材库保存失败' };
     }
+
+    console.log(`[Noun Project Collect] ✅ 成功入库: materialId=${materialResult.materialId}, cosUrl=${materialResult.materialUrl}`);
 
     return {
       success: true,
@@ -542,6 +633,7 @@ export async function syncNounProjectToMaterialLibrary(
       },
     };
   } catch (error: any) {
+    console.error(`[Noun Project Collect] ❌ 异常: ${error?.message}`);
     return { success: false, error: error?.message || '上传素材至素材库失败' };
   }
 }

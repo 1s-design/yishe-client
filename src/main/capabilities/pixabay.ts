@@ -49,12 +49,13 @@ const searchDef: CapabilityDefinition = {
     keyword: z.string().describe('搜索关键词 (如 cat, hi, nature)'),
     limit: z.number().optional().default(20).describe('最多返回结果数，最大 100'),
     page: z.number().optional().default(1).describe('页码'),
+    apiKey: z.string().optional().describe('Pixabay 官方 API Key（可选，免费申请可免防爬拦截）'),
   }),
-  handler: async ({ keyword, limit, page }) => {
+  handler: async ({ keyword, limit, page, apiKey }) => {
     if (!keyword || !keyword.trim()) {
       return { success: false, error: '缺少搜索关键词 keyword' };
     }
-    const result = await searchPixabay(keyword.trim(), { limit, page });
+    const result = await searchPixabay(keyword.trim(), { limit, page, apiKey });
     return normalizeSearchResult(result);
   },
 };
@@ -97,13 +98,14 @@ const collectDef: CapabilityDefinition = {
     keyword: z.string().describe('搜索关键词'),
     maxCount: z.number().optional().default(10).describe('最多采集数量'),
     syncToMaterial: z.boolean().optional().default(true).describe('是否同步上传素材库'),
+    apiKey: z.string().optional().describe('Pixabay 官方 API Key（可选）'),
   }),
-  handler: async ({ keyword, maxCount, syncToMaterial }) => {
+  handler: async ({ keyword, maxCount, syncToMaterial, apiKey }) => {
     if (!keyword || !keyword.trim()) {
       return { success: false, error: '缺少搜索关键词' };
     }
     const limit = Math.min(Math.max(Number(maxCount) || 10, 1), 50);
-    const searchRes = await searchPixabay(keyword.trim(), { limit });
+    const searchRes = await searchPixabay(keyword.trim(), { limit, apiKey });
     if (!searchRes.success || !searchRes.items.length) {
       return { success: false, error: searchRes.error || '未检索到可用 Pixabay 图片' };
     }

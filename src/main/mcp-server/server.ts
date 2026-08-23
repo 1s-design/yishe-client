@@ -407,6 +407,11 @@ export class McpServerManager {
             args,
             context,
           );
+          if (!result.success) {
+            console.error(`[MCP Server] ❌ 工具 "${toolName}" 执行失败:`, result);
+          } else {
+            console.log(`[MCP Server] ✅ 工具 "${toolName}" 执行成功:`, result);
+          }
           return {
             content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
             isError: !result.success,

@@ -63,22 +63,30 @@ const searchDef: CapabilityDefinition = {
     keyword: z.string().describe('搜索关键词，如 cat, app, flower, banner'),
     page: z.number().optional().default(1),
     limit: z.number().optional().default(20),
-    mediaType: z.enum(['photos', 'icons']).optional().describe('搜索模式：photos 或 icons'),
+    maxCount: z.number().optional().default(20),
+    pageSize: z.number().optional().default(20),
+    mediaType: z.string().optional().describe('搜索模式：photos 或 icons'),
     color: z.string().optional().describe('可选颜色筛选'),
   }),
   async handler(args: {
     keyword: string;
     page?: number;
     limit?: number;
-    mediaType?: 'photos' | 'icons';
+    maxCount?: number;
+    pageSize?: number;
+    mediaType?: string;
     color?: string;
   }) {
+    console.log('[Noun Project Capability] search 收到调用:', JSON.stringify(args));
+    const limit = args.limit || args.maxCount || args.pageSize || 20;
+    const mediaType = (args.mediaType || 'icons').toLowerCase().includes('photo') ? 'photos' : 'icons';
     const rawResult = await searchNounProject(args.keyword, {
       page: args.page ?? 1,
-      limit: args.limit ?? 20,
-      mediaType: args.mediaType ?? 'icons',
+      limit,
+      mediaType,
       color: args.color,
     });
+    console.log(`[Noun Project Capability] search 完成，获取 ${rawResult.items?.length || 0} 条结果`);
     return normalizeSearchResult(rawResult);
   },
 };
@@ -92,12 +100,13 @@ const downloadDef: CapabilityDefinition = {
   argsSchema: z.object({
     imageUrl: z.string().describe('素材下载地址（SVG/PNG/JPG）'),
     filename: z.string().optional().describe('自定义保存文件名'),
-    format: z.enum(['svg', 'png', 'jpg']).optional().describe('保存格式偏好'),
+    format: z.string().optional().describe('保存格式偏好 (svg, png, jpg)'),
   }),
-  async handler(args: { imageUrl: string; filename?: string; format?: 'svg' | 'png' | 'jpg' }) {
+  async handler(args: { imageUrl: string; filename?: string; format?: string }) {
+    console.log('[Noun Project Capability] download 收到调用:', args.imageUrl);
     const res = await downloadNounProjectAsset(args.imageUrl, {
       filename: args.filename,
-      format: args.format,
+      format: args.format as any,
     });
     return {
       success: res.success,
@@ -120,6 +129,7 @@ const collectDef: CapabilityDefinition = {
     metadata: z.record(z.string(), z.any()).optional().describe('关联元数据'),
   }),
   async handler(args: { imageUrl: string; title?: string; metadata?: Record<string, any> }) {
+    console.log('[Noun Project Capability] collect 收到调用:', JSON.stringify(args, null, 2));
     const res = await syncNounProjectToMaterialLibrary('local', {
       imageUrl: args.imageUrl,
       metadata: {
@@ -127,6 +137,7 @@ const collectDef: CapabilityDefinition = {
         ...(args.metadata || {}),
       },
     });
+    console.log('[Noun Project Capability] collect 返回结果:', JSON.stringify(res, null, 2));
     return {
       success: res.success,
       localFilePath: res.localFilePath || null,

@@ -34,7 +34,7 @@ export interface VecteezyAsset {
   license?: string;
   isFree?: boolean;
   format?: 'svg' | 'png' | 'jpg';
-  mediaType?: 'photos' | 'png' | 'vector';
+  mediaType?: 'photos' | 'png' | 'vector' | 'svg';
   tags?: string;
 }
 
@@ -55,7 +55,7 @@ interface VecteezySearchOptions {
   page?: number;
   limit?: number;
   pageSize?: number;
-  mediaType?: 'photos' | 'png' | 'vector';
+  mediaType?: 'photos' | 'png' | 'vector' | 'svg' | string;
 }
 
 function sanitizeName(str: string): string {
@@ -209,7 +209,9 @@ function parseVecteezyHtml(html: string, mediaType: string): { items: VecteezyAs
  */
 function buildVecteezyAsset(id: string, title: string, thumbSrc: string, mediaType: string, raw?: any): VecteezyAsset {
   const detailUrl = `https://www.vecteezy.com/free-${mediaType}/${id}`;
-  const _ext = mediaType === 'vector' ? '.svg' : mediaType === 'png' ? '.png' : '.jpg';
+  const isSvg = mediaType === 'svg' || mediaType === 'vector';
+  const isPng = mediaType === 'png';
+  const ext = isSvg ? 'svg' : isPng ? 'png' : 'jpg';
 
   return {
     id,
@@ -217,9 +219,9 @@ function buildVecteezyAsset(id: string, title: string, thumbSrc: string, mediaTy
     title: title.length > 0 ? title : `Vecteezy ${mediaType}`,
     description: `Vecteezy Stock Media — ${title} (Free License with attribution)`,
     image: thumbSrc,
-    svgUrl: mediaType === 'vector' ? thumbSrc : undefined,
-    pngUrl: mediaType === 'png' ? thumbSrc : undefined,
-    jpgUrl: mediaType === 'photos' ? thumbSrc : undefined,
+    svgUrl: isSvg ? thumbSrc : undefined,
+    pngUrl: isPng ? thumbSrc : undefined,
+    jpgUrl: !isSvg && !isPng ? thumbSrc : undefined,
     thumbnail: thumbSrc,
     downloadUrl: thumbSrc,
     link: detailUrl,
@@ -229,10 +231,18 @@ function buildVecteezyAsset(id: string, title: string, thumbSrc: string, mediaTy
     author: raw?.author || raw?.user || 'Vecteezy Contributor',
     license: 'Vecteezy Free License (attribution required)',
     isFree: true,
-    format: mediaType === 'vector' ? 'svg' : mediaType === 'png' ? 'png' : 'jpg',
+    format: ext,
     mediaType: mediaType as any,
     tags: title,
   };
+}
+
+function normalizeMediaType(type?: string): 'photos' | 'png' | 'vector' | 'svg' {
+  const t = (type || '').toLowerCase().trim();
+  if (t === 'svg' || t === 'svgs' || t.includes('svg')) return 'svg';
+  if (t === 'vector' || t === 'vectors' || t.includes('vector') || t.includes('矢量') || t.includes('插画')) return 'vector';
+  if (t === 'png' || t === 'pngs' || t.includes('png') || t.includes('透明')) return 'png';
+  return 'photos'; // default
 }
 
 /**
@@ -258,7 +268,7 @@ export async function searchVecteezy(
 
   const page = Math.max(Number(options.page) || 1, 1);
   const limit = Math.min(Math.max(Number(options.limit || options.pageSize) || 20, 1), 100);
-  const mediaType = options.mediaType || 'photos';
+  const mediaType = normalizeMediaType(options.mediaType);
 
   try {
     const fetchFn = await getFetchImpl();
@@ -340,21 +350,45 @@ export async function downloadVecteezyAsset(
     return { success: false, error: '缺少图片下载链接' };
   }
 
-  try {
-    const fetchFn = await getFetchImpl();
-    const headers = {
-      'User-Agent': USER_AGENT,
-      'Referer': 'https://www.vecteezy.com/',
-    };
+  console.log(`[Vecteezy Download] 正在下载素材: ${imageUrl}`);
+  const fetchFn = await getFetchImpl();
+  const headers = {
+    'User-Agent': USER_AGENT,
+    'Referer': 'https://www.vecteezy.com/',
+  };
 
-    const res = await fetchFn(imageUrl, { headers });
-    if (!res.ok) {
-      throw new Error(`下载失败 HTTP ${res.status}: ${res.statusText}`);
+  let buffer: Buffer | null = null;
+  let lastError = '';
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetchFn(imageUrl, { headers });
+      if (!res.ok) {
+        lastError = `HTTP ${res.status}: ${res.statusText}`;
+        continue;
+      }
+
+      const arrayBuffer = await res.arrayBuffer();
+      const buf = Buffer.from(arrayBuffer);
+      if (buf && buf.length > 0) {
+        buffer = buf;
+        break;
+      }
+    } catch (err: any) {
+      lastError = err?.message || '网络连接异常';
+      console.warn(`[Vecteezy Download] 第 ${attempt} 次下载失败: ${lastError}，正在重试...`);
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 600 * attempt));
+      }
     }
+  }
 
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+  if (!buffer || buffer.length === 0) {
+    console.error(`[Vecteezy Download] ❌ 下载失败: ${imageUrl} - ${lastError}`);
+    return { success: false, error: `下载失败: ${lastError || '未获取到数据'}` };
+  }
 
+  try {
     const workspaceDir = getVecteezyWorkspaceDir();
     const saveDir = join(workspaceDir, 'vecteezy-downloads');
     if (!fs.existsSync(saveDir)) {
@@ -368,10 +402,12 @@ export async function downloadVecteezyAsset(
 
     const filePath = join(saveDir, filename);
     fs.writeFileSync(filePath, buffer);
+    console.log(`[Vecteezy Download] ✅ 素材已保存: ${filePath} (${buffer.length} 字节)`);
 
     return { success: true, filePath, filename };
   } catch (error: any) {
-    return { success: false, error: error?.message || '下载图片过程中发生错误' };
+    console.error(`[Vecteezy Download] ❌ 写入文件失败: ${error?.message}`);
+    return { success: false, error: error?.message || '写入本地文件失败' };
   }
 }
 
@@ -381,8 +417,9 @@ export async function downloadVecteezyAsset(
 export async function syncVecteezyToMaterialLibrary(
   _clientId: string,
   data: { imageUrl: string; metadata?: Record<string, any> },
-): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; data?: any; error?: string }> {
+): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; materialId?: string; data?: any; error?: string }> {
   const { imageUrl, metadata } = data;
+  console.log(`[Vecteezy Collect] 开始入库: imageUrl=${imageUrl}, title=${metadata?.title || metadata?.name}`);
   if (!imageUrl) {
     return { success: false, error: '缺少图片 URL' };
   }
@@ -394,17 +431,19 @@ export async function syncVecteezyToMaterialLibrary(
   });
 
   if (!dlResult.success || !dlResult.filePath) {
+    console.error(`[Vecteezy Collect] ❌ 下载素材失败: ${dlResult.error}`);
     return { success: false, error: dlResult.error || '下载素材失败' };
   }
 
   const localFilePath = dlResult.filePath;
-
 
   // 2. 上传到素材库 (COS + sticker 表)
   try {
     const fileName = localFilePath.split('/').pop() || `vecteezy_${Date.now()}.jpg`;
     const ext = fileName.split('.').pop() || 'jpg';
     const title = metadata?.title || metadata?.name || fileName.replace(/\.(svg|png|jpg|jpeg)$/i, '');
+    console.log(`[Vecteezy Collect] 上传素材库: fileName=${fileName}, title=${title}`);
+
     const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
       category: 'vecteezy',
       group: 'vecteezy',
@@ -413,7 +452,7 @@ export async function syncVecteezyToMaterialLibrary(
       suffix: ext,
       name: title,
       nameEn: title,
-      keywords: metadata?.keywords || '',
+      keywords: metadata?.keywords || metadata?.tags || '',
       meta: {
         ...metadata,
         source: 'vecteezy',
@@ -422,8 +461,11 @@ export async function syncVecteezyToMaterialLibrary(
     });
 
     if (!materialResult.ok) {
+      console.error(`[Vecteezy Collect] ❌ 素材库保存失败: ${materialResult.msg}`);
       return { success: false, error: materialResult.msg || '素材库保存失败' };
     }
+
+    console.log(`[Vecteezy Collect] ✅ 成功入库: materialId=${materialResult.materialId}, cosUrl=${materialResult.materialUrl}`);
 
     return {
       success: true,
@@ -444,6 +486,7 @@ export async function syncVecteezyToMaterialLibrary(
       },
     };
   } catch (error: any) {
+    console.error(`[Vecteezy Collect] ❌ 异常: ${error?.message}`);
     return { success: false, error: error?.message || '上传素材至素材库失败' };
   }
 }

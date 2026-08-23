@@ -67,14 +67,19 @@ const searchDef: CapabilityDefinition = {
     keyword: z.string().describe('搜索关键词，如 cat, nature, business'),
     page: z.number().optional().default(1),
     limit: z.number().optional().default(20),
-    mediaType: z.enum(['photos', 'png', 'vector']).optional().describe('素材类型'),
+    maxCount: z.number().optional().default(20),
+    pageSize: z.number().optional().default(20),
+    mediaType: z.string().optional().describe('素材类型 (photos, png, vector)'),
   }),
-  async handler(args: { keyword: string; page?: number; limit?: number; mediaType?: 'photos' | 'png' | 'vector' }) {
+  async handler(args: { keyword: string; page?: number; limit?: number; maxCount?: number; pageSize?: number; mediaType?: string }) {
+    console.log('[Vecteezy Capability] search 收到调用:', JSON.stringify(args));
+    const limit = args.limit || args.maxCount || args.pageSize || 20;
     const rawResult = await searchVecteezy(args.keyword, {
       page: args.page ?? 1,
-      limit: args.limit ?? 20,
-      mediaType: args.mediaType || 'photos',
+      limit,
+      mediaType: (args.mediaType as any) || 'photos',
     });
+    console.log(`[Vecteezy Capability] search 完成，获取 ${rawResult.items?.length || 0} 条结果`);
     return normalizeSearchResult(rawResult);
   },
 };
@@ -88,12 +93,13 @@ const downloadDef: CapabilityDefinition = {
   argsSchema: z.object({
     imageUrl: z.string().describe('素材下载地址'),
     filename: z.string().optional().describe('自定义保存文件名'),
-    format: z.enum(['svg', 'png', 'jpg']).optional().describe('保存格式'),
+    format: z.string().optional().describe('保存格式 (svg, png, jpg)'),
   }),
-  async handler(args: { imageUrl: string; filename?: string; format?: 'svg' | 'png' | 'jpg' }) {
+  async handler(args: { imageUrl: string; filename?: string; format?: string }) {
+    console.log('[Vecteezy Capability] download 收到调用:', args.imageUrl);
     const res = await downloadVecteezyAsset(args.imageUrl, {
       filename: args.filename,
-      format: args.format,
+      format: args.format as any,
     });
     return {
       success: res.success,
@@ -116,6 +122,7 @@ const collectDef: CapabilityDefinition = {
     metadata: z.record(z.string(), z.any()).optional().describe('关联元数据'),
   }),
   async handler(args: { imageUrl: string; title?: string; metadata?: Record<string, any> }) {
+    console.log('[Vecteezy Capability] collect 收到调用:', JSON.stringify(args, null, 2));
     const res = await syncVecteezyToMaterialLibrary('local', {
       imageUrl: args.imageUrl,
       metadata: {
@@ -123,6 +130,7 @@ const collectDef: CapabilityDefinition = {
         ...(args.metadata || {}),
       },
     });
+    console.log('[Vecteezy Capability] collect 返回结果:', JSON.stringify(res, null, 2));
     return {
       success: res.success,
       localFilePath: res.localFilePath || null,

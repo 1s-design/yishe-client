@@ -27,8 +27,9 @@ export interface GoogleIcon {
   downloadUrl: string;
   link: string; // 原详情页
   url: string;
+  iconSet?: 'symbols' | 'icons';
   group?: string; // category
-  style?: string; // outlined, rounded, sharp, two-tone
+  style?: string; // outlined, rounded, sharp, two-tone, filled
   tags?: string[];
   author?: string;
   license?: string;
@@ -54,7 +55,10 @@ interface GoogleIconsSearchOptions {
   page?: number;
   limit?: number;
   pageSize?: number;
-  style?: 'outlined' | 'rounded' | 'sharp' | 'two-tone'; // Icon category
+  maxCount?: number;
+  iconSet?: 'symbols' | 'icons' | 'all';
+  set?: 'symbols' | 'icons' | 'all';
+  style?: string; // outlined, rounded, sharp, two-tone, filled
   size?: number; // 20, 24, 40, 48
 }
 
@@ -81,12 +85,12 @@ export async function getGoogleIconsStatus() {
   return {
     key: 'google-icons',
     pluginKey: 'google-icons',
-    label: 'Google Material Icons',
+    label: 'Google Material Icons / Symbols',
     connected: site.ok,
     available: site.ok,
     status: site.ok ? 'connected' : 'error',
     state: site.ok ? 'idle' : 'offline',
-    message: site.ok ? 'Google Icons 可用' : `Google Icons 无法连接: ${site.error || '超时'}`,
+    message: site.ok ? 'Google Icons & Symbols 可用' : `Google Icons 无法连接: ${site.error || '超时'}`,
     lastCheckedAt: new Date().toISOString(),
     supportedCommands: ['search', 'download', 'sync', 'collect', 'refreshRuntime'],
   };
@@ -96,7 +100,7 @@ let cachedGoogleIconsData: any[] | null = null;
 let lastGoogleIconsFetchedAt = 0;
 
 /**
- * 搜索 Google Material Icons
+ * 搜索 Google Material Icons / Symbols
  * 使用 Google 官方元数据接口 https://fonts.google.com/metadata/icons
  */
 export async function searchGoogleIcons(
@@ -112,7 +116,8 @@ export async function searchGoogleIcons(
   }
 
   const page = Math.max(Number(options.page) || 1, 1);
-  const limit = Math.min(Math.max(Number(options.limit || options.pageSize) || 20, 1), 100);
+  const limit = Math.min(Math.max(Number(options.limit || options.maxCount || options.pageSize) || 20, 1), 100);
+  const iconSet = options.iconSet || options.set || 'symbols';
   const style = options.style || 'outlined';
   const size = options.size || 24;
 
@@ -149,8 +154,7 @@ export async function searchGoogleIcons(
 
     const items: GoogleIcon[] = matchedRaw.map((ic: any) => {
       const name = ic.name;
-      const _version = ic._version || 1;
-      return buildGoogleIcon(name, ic, style, size);
+      return buildGoogleIcon(name, ic, style, size, iconSet);
     });
 
     const total = items.length;
@@ -173,101 +177,96 @@ export async function searchGoogleIcons(
     return {
       success: false, query: keyword, count: 0, total: 0,
       items: [], links: [], page, nextPage: null,
-      error: error?.message || '搜索 Google Icons 发生异常',
+      error: error?.message || '搜索 Google Icons/Symbols 发生异常',
     };
   }
 }
 
 /**
- * 解析 Google Icons 搜索结果 HTML
+ * 构建 GoogleIcon 对象 (通过单一下拉风格自适应解析 Symbols M3 或 Icons M2)
  */
-function _parseGoogleIconsHtml(html: string, style: string, size: number): GoogleIcon[] {
-  const items: GoogleIcon[] = [];
-  const usedNames = new Set<string>();
+function buildGoogleIcon(
+  name: string,
+  raw: any | null,
+  style: string = 'symbols_outlined',
+  size: number = 24,
+  iconSet?: string,
+): GoogleIcon {
+  const s = (style || '').toLowerCase();
+  const setParam = (iconSet || '').toLowerCase();
 
-  try {
-    // Strategy 1: 从 __NEXT_DATA__ 或 script 标签中提取数据
-    const nextDataMatch = html.match(/<script[^>]*>(\s*window\.__Tags\s*=\s*(\[.*?\]);?\s*)<\/script>/is) ||
-      html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
-    
-    if (nextDataMatch) {
-      try {
-        const data = JSON.parse(nextDataMatch[1]);
-        const icons: any[] = Array.isArray(data) ? data : data?.props?.pageProps?.icons || [];
-        for (const icon of icons) {
-          const name = icon.name || icon.id || '';
-          if (!name || usedNames.has(name)) continue;
-          usedNames.add(name);
-          items.push(buildGoogleIcon(name, icon, style, size));
-        }
-      } catch (e) {
-        console.warn('[Google Icons Parser] JSON parse failed:', e);
-      }
+  // 判断是否属于经典 Material Icons (M2)
+  const isClassicIcons =
+    s.startsWith('icons_') ||
+    s.startsWith('icon_') ||
+    setParam === 'icons' ||
+    s.includes('two_tone') ||
+    s.includes('twotone') ||
+    s.includes('two-tone');
+
+  let svgUrl = '';
+  let pngUrl = '';
+  let detailUrl = '';
+  let effectiveSet: 'symbols' | 'icons' = isClassicIcons ? 'icons' : 'symbols';
+  let effectiveStyleName = 'Outlined';
+
+  if (!isClassicIcons) {
+    // Material Symbols (新版 M3)
+    let symbolStyle = 'materialsymbolsoutlined';
+    if (s.includes('round')) {
+      symbolStyle = 'materialsymbolsrounded';
+      effectiveStyleName = 'Rounded';
+    } else if (s.includes('sharp')) {
+      symbolStyle = 'materialsymbolssharp';
+      effectiveStyleName = 'Sharp';
+    } else {
+      symbolStyle = 'materialsymbolsoutlined';
+      effectiveStyleName = 'Outlined';
     }
 
-    // Strategy 2: 从 HTML 结构中解析图标卡片
-    if (items.length === 0) {
-      // Google Icons 页面结构: div[class*="icon"] 包含图标名称
-      const iconCardRegex = /<div[^>]*class="[^"]*(?:icon|Icon)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
-      let cardMatch;
-      
-      while ((cardMatch = iconCardRegex.exec(html)) !== null) {
-        const cardHtml = cardMatch[0];
-        
-        // 尝试提取图标名称
-        const nameMatch = cardHtml.match(/(?:data-icon-name|aria-label|data-name)="([^"]+)"/i) ||
-          cardHtml.match(/<span[^>]*>([a-z][a-z0-9_]+)<\/span>/i);
-        
-        if (!nameMatch) continue;
-        const name = nameMatch[1].trim();
-        if (!name || usedNames.has(name) || name.length < 2) continue;
-        if (!/^[a-z][a-z0-9_]*$/.test(name)) continue;
-        
-        usedNames.add(name);
-        items.push(buildGoogleIcon(name, null, style, size));
-      }
+    const isFill = s.includes('fill');
+    const fillPath = isFill ? 'fill1' : 'default';
+    if (isFill) {
+      effectiveStyleName += ' (Filled)';
     }
 
-    // Strategy 3: 如果还是没结果，尝试从 img/src 提取
-    if (items.length === 0) {
-      const imgRegex = /<img[^>]+src="([^"]*(?:gstatic|googleapis)[^"]*material[^"]*)"[^>]*>/gi;
-      let imgMatch;
-      
-      while ((imgMatch = imgRegex.exec(html)) !== null) {
-        const src = imgMatch[1];
-        const nameMatch = src.match(/\/([a-z][a-z0-9_]+)\//);
-        if (!nameMatch) continue;
-        const name = nameMatch[1];
-        if (usedNames.has(name)) continue;
-        usedNames.add(name);
-        items.push(buildGoogleIcon(name, null, style, size));
-      }
+    svgUrl = `https://fonts.gstatic.com/s/i/short-term/release/${symbolStyle}/${name}/${fillPath}/${size}px.svg`;
+    pngUrl = `https://fonts.gstatic.com/s/i/short-term/release/${symbolStyle}/${name}/${fillPath}/${size}px.png`;
+    detailUrl = `https://fonts.google.com/icons?icon.query=${name}&icon.set=Material+Symbols`;
+  } else {
+    // Classic Material Icons (经典旧版 M2)
+    let iconStyle = 'materialicons';
+    if (s.includes('outline')) {
+      iconStyle = 'materialiconsoutlined';
+      effectiveStyleName = 'Outlined';
+    } else if (s.includes('round')) {
+      iconStyle = 'materialiconsround';
+      effectiveStyleName = 'Round';
+    } else if (s.includes('sharp')) {
+      iconStyle = 'materialiconssharp';
+      effectiveStyleName = 'Sharp';
+    } else if (s.includes('tone') || s.includes('two')) {
+      iconStyle = 'materialiconstwotone';
+      effectiveStyleName = 'Two-Tone';
+    } else {
+      iconStyle = 'materialicons';
+      effectiveStyleName = 'Filled';
     }
-  } catch (err) {
-    console.error('[Google Icons Parser Error]', err);
+
+    const version = raw?.version || 1;
+    svgUrl = `https://fonts.gstatic.com/s/i/${iconStyle}/${name}/v${version}/${size}px.svg`;
+    pngUrl = `https://fonts.gstatic.com/s/i/${iconStyle}/${name}/v${version}/${size}px.png`;
+    detailUrl = `https://fonts.google.com/icons?icon.query=${name}&icon.set=Material+Icons`;
   }
 
-  return items;
-}
-
-/**
- * 构建 GoogleIcon 对象
- */
-function buildGoogleIcon(name: string, raw: any | null, style: string, size: number): GoogleIcon {
-  // Google Material Icons SVG URL 模式
-  // 彩色 SVG: https://fonts.gstatic.com/s/i/materialicons/{name}/v1/24px.svg
-  // 或通过 Material Symbols
-  const svgUrl = `https://fonts.gstatic.com/s/i/materialicons/${name}/v1/${size}px.svg`;
-  const pngUrl = `https://fonts.gstatic.com/s/i/materialicons/${name}/v1/${size}px.png`;
-  const detailUrl = `https://fonts.google.com/icons?icon.query=${name}&icon.set=Material+Icons`;
-
   const displayName = name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const setTitle = effectiveSet === 'symbols' ? 'Material Symbols' : 'Material Icons';
 
   return {
-    id: name,
+    id: `${name}_${effectiveSet}_${style || 'symbols_outlined'}`,
     name,
     title: displayName,
-    description: `Google Material Icon — ${displayName} (${style})`,
+    description: `Google ${setTitle} — ${displayName} (${effectiveStyleName})`,
     image: svgUrl,
     svgUrl,
     pngUrl,
@@ -275,8 +274,9 @@ function buildGoogleIcon(name: string, raw: any | null, style: string, size: num
     downloadUrl: svgUrl,
     link: detailUrl,
     url: detailUrl,
+    iconSet: effectiveSet,
     group: raw?.group || raw?.category || '',
-    style,
+    style: effectiveStyleName,
     tags: Array.isArray(raw?.tags)
       ? raw.tags
       : typeof raw?.tags === 'string'
@@ -320,61 +320,88 @@ export async function downloadGoogleIcon(
     return { success: false, error: '缺少图片下载链接' };
   }
 
-  try {
-    const fetchFn = await getFetchImpl();
-    const headers = {
-      'User-Agent': USER_AGENT,
-      'Referer': 'https://fonts.google.com/',
-    };
+  console.log(`[Google Icons Download] 正在下载: ${imageUrl}`);
+  const fetchFn = await getFetchImpl();
+  const headers = {
+    'User-Agent': USER_AGENT,
+    'Referer': 'https://fonts.google.com/',
+  };
 
-    const res = await fetchFn(imageUrl, { headers });
-    if (!res.ok) {
-      throw new Error(`下载失败 HTTP ${res.status}: ${res.statusText}`);
+  let buffer: Buffer | null = null;
+  let lastError = '';
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetchFn(imageUrl, { headers });
+      if (!res.ok) {
+        lastError = `HTTP ${res.status}: ${res.statusText}`;
+        continue;
+      }
+
+      const arrayBuffer = await res.arrayBuffer();
+      const buf = Buffer.from(arrayBuffer);
+      if (buf && buf.length > 0) {
+        buffer = buf;
+        break;
+      }
+    } catch (err: any) {
+      lastError = err?.message || '网络连接异常';
+      console.warn(`[Google Icons Download] 第 ${attempt} 次尝试失败: ${lastError}，准备重试...`);
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 600 * attempt));
+      }
     }
+  }
 
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+  if (!buffer || buffer.length === 0) {
+    console.error(`[Google Icons Download] ❌ 下载失败: ${imageUrl} - ${lastError}`);
+    return { success: false, error: `下载失败: ${lastError || '未获取到数据'}` };
+  }
 
+  try {
     const workspaceDir = getGoogleIconsWorkspaceDir();
     const saveDir = join(workspaceDir, 'googleicons-downloads');
     if (!fs.existsSync(saveDir)) {
       fs.mkdirSync(saveDir, { recursive: true });
     }
 
-    const ext = imageUrl.endsWith('.svg') || imageUrl.includes('/materialicons/') ? '.svg' : '.png';
+    const ext = imageUrl.endsWith('.svg') || imageUrl.includes('/materialicons') || imageUrl.includes('/materialsymbols') ? '.svg' : '.png';
     const filename = options.filename
       ? `${sanitizeName(options.filename)}${options.filename.endsWith(ext) ? '' : ext}`
       : `googleicon_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
 
     const filePath = join(saveDir, filename);
     fs.writeFileSync(filePath, buffer);
+    console.log(`[Google Icons Download] ✅ 文件已保存: ${filePath} (${buffer.length} 字节)`);
 
     return { success: true, filePath, filename };
   } catch (error: any) {
-    return { success: false, error: error?.message || '下载过程中发生错误' };
+    console.error(`[Google Icons Download] ❌ 写入文件失败: ${error?.message}`);
+    return { success: false, error: error?.message || '写入本地文件异常' };
   }
 }
 
 /**
  * 下载并上传至用户个人 COS 存储
  */
-
 export async function syncGoogleIconsToMaterialLibrary(
   _clientId: string,
   data: { imageUrl: string; metadata?: Record<string, any> },
 ): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; materialId?: string; data?: any; error?: string }> {
   const { imageUrl, metadata } = data;
+  console.log(`[Google Icons Collect] 开始入库: imageUrl=${imageUrl}, name=${metadata?.name || metadata?.title}`);
   if (!imageUrl) {
     return { success: false, error: '缺少图片 URL' };
   }
 
   // 1. 下载原图到本地
   const dlResult = await downloadGoogleIcon(imageUrl, {
-    filename: metadata?.title || metadata?.name,
+    filename: metadata?.name || metadata?.title,
     style: metadata?.style,
   });
 
   if (!dlResult.success || !dlResult.filePath) {
+    console.error(`[Google Icons Collect] ❌ 下载素材失败: ${dlResult.error}`);
     return { success: false, error: dlResult.error || '下载素材失败' };
   }
 
@@ -383,7 +410,8 @@ export async function syncGoogleIconsToMaterialLibrary(
   // 2. 上传到素材库 (COS + sticker 表)
   try {
     const fileName = localFilePath.split('/').pop() || `googleicon_${Date.now()}.svg`;
-    const title = metadata?.title || metadata?.name || fileName.replace(/\.svg$/i, '');
+    const title = metadata?.name || metadata?.title || fileName.replace(/\.svg$/i, '');
+    console.log(`[Google Icons Collect] 上传素材库: fileName=${fileName}, title=${title}`);
     const materialResult = await uploadToMaterialLibraryShared(localFilePath, fileName, {
       category: 'googleicons',
       group: 'googleicons',
@@ -392,7 +420,7 @@ export async function syncGoogleIconsToMaterialLibrary(
       suffix: 'svg',
       name: title,
       nameEn: title,
-      keywords: metadata?.keywords || '',
+      keywords: Array.isArray(metadata?.tags) ? metadata.tags.join(', ') : (metadata?.keywords || ''),
       meta: {
         ...metadata,
         source: 'google-icons',
@@ -401,8 +429,11 @@ export async function syncGoogleIconsToMaterialLibrary(
     });
 
     if (!materialResult.ok) {
+      console.error(`[Google Icons Collect] ❌ 素材库保存失败: ${materialResult.msg}`);
       return { success: false, error: materialResult.msg || '素材库保存失败' };
     }
+
+    console.log(`[Google Icons Collect] ✅ 成功入库: materialId=${materialResult.materialId}, cosUrl=${materialResult.materialUrl}`);
 
     return {
       success: true,
@@ -423,6 +454,7 @@ export async function syncGoogleIconsToMaterialLibrary(
       },
     };
   } catch (error: any) {
+    console.error(`[Google Icons Collect] ❌ 异常: ${error?.message}`);
     return { success: false, error: error?.message || '上传素材至素材库失败' };
   }
 }
