@@ -194,10 +194,16 @@ async function getWorkspaceDirFromStore(): Promise<string> {
     const ElectronStore = (await import('electron-store')).default;
     const StoreConstructor = (ElectronStore as any).default || ElectronStore;
     const store = new StoreConstructor({ defaults: { workspaceDirectory: '' } });
-    return ((store as any).get('workspaceDirectory', '') as string) || '';
-  } catch {
-    return '';
-  }
+    const dir = ((store as any).get('workspaceDirectory', '') as string) || '';
+    if (dir && typeof dir === 'string' && dir.trim()) return dir.trim();
+  } catch {}
+  try {
+    const { app } = await import('electron');
+    if (app && typeof app.getPath === 'function') {
+      return app.getPath('userData');
+    }
+  } catch {}
+  return path.join(os.tmpdir(), 'yishe-workspace');
 }
 
 export function registerWikimediaCapabilities(): void {

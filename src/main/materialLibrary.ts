@@ -95,24 +95,25 @@ export async function uploadToMaterialLibrary(
     const clean4ByteEmoji = (s: any) =>
       typeof s === "string" ? s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "").trim() : s;
 
-    const name =
+    const name = (
       clean4ByteEmoji(payload?.name) ||
       clean4ByteEmoji(payload?.nameEn) ||
       clean4ByteEmoji(fileName.replace(/\.(jpg|png|jpeg|webp|svg)$/i, "")) ||
-      `material_${Date.now()}`;
-    const nameEn = clean4ByteEmoji(payload?.nameEn) || name;
-    const description = clean4ByteEmoji(payload?.description || "");
-    const descriptionEn = clean4ByteEmoji(payload?.descriptionEn || payload?.description || "");
-    const keywords = clean4ByteEmoji(payload?.keywords || "");
-    const keywordsEn = clean4ByteEmoji(payload?.keywordsEn || payload?.keywords || "");
-    const group = clean4ByteEmoji(payload?.group || category);
+      `material_${Date.now()}`
+    ).slice(0, 500);
+    const nameEn = (clean4ByteEmoji(payload?.nameEn) || name).slice(0, 500);
+    const description = clean4ByteEmoji(payload?.description || "").slice(0, 990);
+    const descriptionEn = clean4ByteEmoji(payload?.descriptionEn || payload?.description || "").slice(0, 990);
+    const keywords = clean4ByteEmoji(payload?.keywords || "").slice(0, 990);
+    const keywordsEn = clean4ByteEmoji(payload?.keywordsEn || payload?.keywords || "").slice(0, 990);
+    const group = clean4ByteEmoji(payload?.group || category).slice(0, 500);
 
     const postData = JSON.stringify({
       url: cosResult.url,
       key: cosResult.key,
       suffix: payload?.suffix || "jpg",
-      originUrl: payload?.originUrl || "",
-      source: payload?.source || "",
+      originUrl: (payload?.originUrl || "").slice(0, 1000),
+      source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
       group,
       isPublic: payload?.isPublic ?? true,
       isTexture: payload?.isTexture ?? false,

@@ -134,7 +134,7 @@ async function fetchSearchPage(opts: {
     gsrsort: 'relevance',
     prop: 'imageinfo',
     iiprop: 'url|size|mime|extmetadata',
-    iiurlwidth: '400',
+    iiurlwidth: '2048',
     iilimit: String(opts.pageSize),
   })
   params.delete('utilityProps')
@@ -151,7 +151,7 @@ async function fetchSearchPage(opts: {
     'gsrsort=relevance',
     'prop=imageinfo',
     'iiprop=url|size|mime|extmetadata',
-    'iiurlwidth=400',
+    'iiurlwidth=2048',
     `iilimit=${opts.pageSize}`,
     ...(opts.offset != null ? [`gsroffset=${opts.offset}`] : []),
   ].join('&')
@@ -200,8 +200,11 @@ function normalizeFile(page: any): WikimediaFile | null {
   const ii = page?.imageinfo?.[0]
   if (!id || !ii || !ii.url) return null
 
-  const image = stripUtm(ii.url)
-  const thumbnail = ii.thumburl ? stripUtm(ii.thumburl) : image
+  // 优先使用 2048px 高清 Web 转码图，避免直接下载 50MB~100MB 印刷级超大原图导致网络阻塞超时
+  const rawUrl = stripUtm(ii.url)
+  const thumbUrl = ii.thumburl ? stripUtm(ii.thumburl) : rawUrl
+  const image = (ii.thumburl && Number(ii.width) > 2048) ? thumbUrl : rawUrl
+  const thumbnail = thumbUrl
   const ext = ii.extmetadata || {}
 
   return {
@@ -302,7 +305,7 @@ export async function syncWikimediaToMaterialLibrary(options: {
 
     const materialResult = await uploadToMaterialLibrary(filePath, fileName, undefined, metadata)
     return {
-      ok: true,
+      ok: materialResult.ok,
       filePath,
       fileName,
       fileSize: size,
