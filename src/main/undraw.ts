@@ -396,7 +396,7 @@ export async function downloadUndrawImage(
 export async function syncUndrawToMaterialLibrary(
   _clientId: string,
   data: { imageUrl: string; metadata?: Record<string, any> },
-): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; data?: any; error?: string }> {
+): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; materialId?: string; data?: any; error?: string }> {
   const { imageUrl, metadata } = data;
   if (!imageUrl) {
     return { success: false, error: '缺少图片 URL' };

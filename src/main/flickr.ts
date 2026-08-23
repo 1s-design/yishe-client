@@ -1,6 +1,6 @@
 /**
  * Flickr 自由版权与摄影社区图搜与采集能力
- * 基于 Flickr 开放检索接口实现，无需申请个人 API Key，支持自由商用图搜
+ * 基于 Flickr 开放公共 Feed 接口实现，无需申请 API Key，自动提取高清 _b.jpg 原图
  */
 import fs from 'fs'
 import { join } from 'path'
@@ -11,7 +11,6 @@ import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './mate
 const FLICKR_SITE = 'https://www.flickr.com/'
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-const PUBLIC_FLICKR_API_KEY = '71f9cf728373b9bb88ef1132c3f8f172'
 
 export interface FlickrPhoto {
   id: string
@@ -63,7 +62,7 @@ export async function getFlickrStatus() {
 
 export async function searchFlickr(
   query: string,
-  options: { page?: number; limit?: number; pageSize?: number; apiKey?: string } = {}
+  options: { page?: number; limit?: number; pageSize?: number } = {}
 ): Promise<FlickrSearchResult> {
   const keyword = (query || '').trim()
   if (!keyword) {
@@ -72,10 +71,9 @@ export async function searchFlickr(
 
   const page = Math.max(Number(options.page) || 1, 1)
   const limit = Math.min(Math.max(Number(options.limit) || Number(options.pageSize) || 20, 1), 60)
-  const apiKey = options.apiKey || process.env.FLICKR_API_KEY || PUBLIC_FLICKR_API_KEY
 
   try {
-    const url = `https://api.flickr.com/services/rest/?method=flickr.photos.search&text=${encodeURIComponent(keyword)}&format=json&nojsoncallback=1&extras=url_l,url_o,url_c,url_z,url_m,owner_name,description,tags&per_page=${limit}&page=${page}&api_key=${apiKey}`
+    const url = `https://www.flickr.com/services/feeds/photos_public.gne?tags=${encodeURIComponent(keyword)}&format=json&nojsoncallback=1`
 
     const res = await fetch(url, {
       headers: {
@@ -88,34 +86,38 @@ export async function searchFlickr(
       throw new Error(`Flickr 接口返回 HTTP ${res.status}`)
     }
 
-    const data: any = await res.json()
-    const rawList = Array.isArray(data?.photos?.photo) ? data.photos.photo : []
+    const text = await res.text()
+    let clean = text.trim()
+    if (clean.startsWith('jsonFlickrFeed(')) {
+      clean = clean.slice(15, -1)
+    }
+    const data: any = JSON.parse(clean)
+    const rawList = Array.isArray(data?.items) ? data.items : []
     const items: FlickrPhoto[] = []
     const seen = new Set<string>()
 
     for (const item of rawList) {
-      const imgUrl = item.url_o || item.url_l || item.url_c || item.url_z || item.url_m
-      if (!imgUrl || !/^https?:\/\//i.test(imgUrl)) continue
-      if (seen.has(imgUrl)) continue
-      seen.add(imgUrl)
+      const mediaM = item.media?.m
+      if (!mediaM || !/^https?:\/\//i.test(mediaM)) continue
+      // 将 _m.jpg 升级为 1024px 高清 _b.jpg
+      const fullImg = mediaM.replace(/_m\.(jpg|png|jpeg|webp)/i, '_b.$1')
+      if (seen.has(fullImg)) continue
+      seen.add(fullImg)
 
-      const id = String(item.id || items.length + 1)
-      const author = item.ownername || 'Flickr Photographer'
+      const id = String(item.link?.split('/').filter(Boolean).pop() || items.length + 1)
+      const author = item.author ? item.author.replace(/nobody@flickr\.com \("?(.*?)"?\)/, '$1') : 'Flickr Photographer'
       const title = sanitizeName(item.title || `${keyword} by ${author}`).slice(0, 100)
-      const thumb = item.url_m || item.url_z || imgUrl
-
-      const desc = typeof item.description === 'object' ? item.description?._content : item.description || title
 
       items.push({
         id,
         title,
-        description: desc || title,
-        image: imgUrl,
-        thumbnail: thumb,
-        link: `https://www.flickr.com/photos/${item.owner}/${id}`,
-        url: `https://www.flickr.com/photos/${item.owner}/${id}`,
-        width: Number(item.width_l || item.width_o || item.width_c || item.width_z) || null,
-        height: Number(item.height_l || item.height_o || item.height_c || item.height_z) || null,
+        description: item.description || title,
+        image: fullImg,
+        thumbnail: mediaM,
+        link: item.link || fullImg,
+        url: item.link || fullImg,
+        width: 1024,
+        height: 768,
         author,
         tags: item.tags || keyword,
       })

@@ -1,6 +1,6 @@
 /**
  * 搜狗图片搜索与采集能力 (Sogou Images)
- * 基于搜狗图片 PC 异步搜索接口，无需 API Key，中文与表情包素材丰富
+ * 基于搜狗图片网页与初始状态解析，无需 API Key，中文与表情包素材丰富
  */
 import fs from 'fs'
 import { join } from 'path'
@@ -71,24 +71,41 @@ export async function searchSogou(
 
   const page = Math.max(Number(options.page) || 1, 1)
   const limit = Math.min(Math.max(Number(options.limit) || Number(options.pageSize) || 20, 1), 60)
-  const start = (page - 1) * limit
 
   try {
-    const url = `https://pic.sogou.com/napi/pc/searchList?mode=1&start=${start}&xml_len=${limit}&query=${encodeURIComponent(keyword)}`
-    const res = await fetch(url, {
+    const pageUrl = `https://pic.sogou.com/pics?query=${encodeURIComponent(keyword)}`
+    const pageRes = await fetch(pageUrl, {
       headers: {
         'User-Agent': USER_AGENT,
-        'Referer': 'https://pic.sogou.com/pics?query=' + encodeURIComponent(keyword),
-        'Accept': 'application/json',
-      }
+        'Referer': 'https://pic.sogou.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
     })
 
-    if (!res.ok) {
-      throw new Error(`搜狗图片接口返回 HTTP ${res.status}`)
+    if (!pageRes.ok) {
+      throw new Error(`搜狗图片页面响应 HTTP ${pageRes.status}`)
     }
 
-    const data: any = await res.json()
-    const rawList = Array.isArray(data?.data?.items) ? data.data.items : []
+    const html = await pageRes.text()
+    const scriptMatch = html.match(/<script>window\.__INITIAL_STATE__=([\s\S]*?)<\/script>/)
+    let rawList: any[] = []
+
+    if (scriptMatch) {
+      let raw = scriptMatch[1].trim()
+      const fnIndex = raw.indexOf(';(')
+      if (fnIndex !== -1) raw = raw.slice(0, fnIndex)
+      try {
+        const data = JSON.parse(raw)
+        const sl = data?.searchList?.searchList || data?.searchList?.items
+        if (Array.isArray(sl)) {
+          rawList = sl
+        } else if (sl && Array.isArray(sl.items)) {
+          rawList = sl.items
+        }
+      } catch {}
+    }
+
     const items: SogouPhoto[] = []
     const seen = new Set<string>()
 
@@ -111,7 +128,7 @@ export async function searchSogou(
         url: item.pageUrl || imgUrl,
         width: Number(item.width) || null,
         height: Number(item.height) || null,
-        author: item.source || 'Sogou Images',
+        author: item.ch_site_name || item.source || 'Sogou Images',
         tags: keyword,
       })
       if (items.length >= limit) break

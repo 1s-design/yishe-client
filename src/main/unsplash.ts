@@ -1,12 +1,13 @@
 /**
  * Unsplash 顶级美学与商业摄影图搜与采集能力
- * 基于 Unsplash 网页开放检索接口，无需 API Key，直连高质量原图
+ * 支持官方 API Key 及免 Key 自由图搜双模式，直取高质量原图
  */
 import fs from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
 import { checkSiteAvailability } from './siteAvailability'
 import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
+import { searchDuckDuckGo } from './duckduckgo'
 
 const UNSPLASH_SITE = 'https://unsplash.com/'
 const USER_AGENT =
@@ -63,7 +64,7 @@ export async function getUnsplashStatus() {
 
 export async function searchUnsplash(
   query: string,
-  options: { page?: number; limit?: number; pageSize?: number } = {}
+  options: { page?: number; limit?: number; pageSize?: number; apiKey?: string } = {}
 ): Promise<UnsplashSearchResult> {
   const keyword = (query || '').trim()
   if (!keyword) {
@@ -72,73 +73,94 @@ export async function searchUnsplash(
 
   const page = Math.max(Number(options.page) || 1, 1)
   const limit = Math.min(Math.max(Number(options.limit) || Number(options.pageSize) || 20, 1), 50)
+  const apiKey = options.apiKey || process.env.UNSPLASH_ACCESS_KEY
 
-  try {
-    const url = `https://unsplash.com/napi/search/photos?query=${encodeURIComponent(keyword)}&per_page=${limit}&page=${page}`
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Referer': 'https://unsplash.com/s/photos/' + encodeURIComponent(keyword),
-        'Accept': 'application/json',
-      }
-    })
-
-    if (!res.ok) {
-      throw new Error(`Unsplash 接口返回 HTTP ${res.status}`)
-    }
-
-    const data: any = await res.json()
-    const rawList = Array.isArray(data?.results) ? data.results : []
-    const items: UnsplashPhoto[] = []
-    const seen = new Set<string>()
-
-    for (const item of rawList) {
-      const imgUrl = item.urls?.full || item.urls?.regular || item.urls?.raw
-      if (!imgUrl || !/^https?:\/\//i.test(imgUrl)) continue
-      if (seen.has(imgUrl)) continue
-      seen.add(imgUrl)
-
-      const id = String(item.id || items.length + 1)
-      const author = item.user?.name || item.user?.username || 'Unsplash Photographer'
-      const title = sanitizeName(item.alt_description || item.description || `${keyword} by ${author}`).slice(0, 100)
-
-      items.push({
-        id,
-        title,
-        description: item.description || item.alt_description || title,
-        image: imgUrl,
-        thumbnail: item.urls?.small || item.urls?.thumb || imgUrl,
-        link: item.links?.html || `https://unsplash.com/photos/${id}`,
-        url: item.links?.html || `https://unsplash.com/photos/${id}`,
-        width: Number(item.width) || null,
-        height: Number(item.height) || null,
-        author,
-        tags: keyword,
-        color: item.color || undefined,
+  // 1. 如果配置了官方 API Key，走官方接口
+  if (apiKey) {
+    try {
+      const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(keyword)}&per_page=${limit}&page=${page}`
+      const res = await fetch(url, {
+        headers: {
+          'Authorization': `Client-ID ${apiKey}`,
+          'Accept': 'application/json',
+        }
       })
-      if (items.length >= limit) break
-    }
+      if (res.ok) {
+        const data: any = await res.json()
+        const rawList = Array.isArray(data?.results) ? data.results : []
+        const items: UnsplashPhoto[] = []
+        for (const item of rawList) {
+          const imgUrl = item.urls?.full || item.urls?.regular || item.urls?.raw
+          if (!imgUrl) continue
+          const id = String(item.id || items.length + 1)
+          const author = item.user?.name || item.user?.username || 'Unsplash Photographer'
+          const title = sanitizeName(item.alt_description || item.description || `${keyword} by ${author}`).slice(0, 100)
+          items.push({
+            id,
+            title,
+            description: item.description || item.alt_description || title,
+            image: imgUrl,
+            thumbnail: item.urls?.small || item.urls?.thumb || imgUrl,
+            link: item.links?.html || `https://unsplash.com/photos/${id}`,
+            url: item.links?.html || `https://unsplash.com/photos/${id}`,
+            width: Number(item.width) || null,
+            height: Number(item.height) || null,
+            author,
+            tags: keyword,
+            color: item.color || undefined,
+          })
+        }
+        return {
+          success: true,
+          query: keyword,
+          count: items.length,
+          items,
+          links: items.map((i) => i.image),
+          page,
+          nextPage: items.length >= limit ? page + 1 : null,
+        }
+      }
+    } catch {}
+  }
 
-    return {
-      success: true,
-      query: keyword,
-      count: items.length,
-      items,
-      links: items.map((i) => i.image),
-      page,
-      nextPage: items.length >= limit ? page + 1 : null,
+  // 2. 免 Key 模式：基于 site:unsplash.com 引擎搜索
+  try {
+    const ddgRes = await searchDuckDuckGo(`site:unsplash.com ${keyword}`, { limit, page })
+    if (ddgRes.success && ddgRes.items.length > 0) {
+      const items: UnsplashPhoto[] = ddgRes.items.map((it, idx) => ({
+        id: `unsplash_${page}_${idx + 1}`,
+        title: it.title,
+        description: it.description || it.title,
+        image: it.image,
+        thumbnail: it.thumbnail || it.image,
+        link: it.link || it.url,
+        url: it.url,
+        width: it.width,
+        height: it.height,
+        author: 'Unsplash Community',
+        tags: keyword,
+      }))
+      return {
+        success: true,
+        query: keyword,
+        count: items.length,
+        items,
+        links: items.map((i) => i.image),
+        page,
+        nextPage: items.length >= limit ? page + 1 : null,
+      }
     }
-  } catch (error: any) {
-    return {
-      success: false,
-      query: keyword,
-      count: 0,
-      items: [],
-      links: [],
-      page,
-      nextPage: null,
-      error: error?.message || 'Unsplash 搜索失败',
-    }
+  } catch {}
+
+  return {
+    success: false,
+    query: keyword,
+    count: 0,
+    items: [],
+    links: [],
+    page,
+    nextPage: null,
+    error: '未能检索到可用 Unsplash 摄影素材',
   }
 }
 

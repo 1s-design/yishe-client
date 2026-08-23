@@ -394,17 +394,18 @@ export async function downloadIconifyIcon(
  */
 export async function syncIconifyToMaterialLibrary(
   _clientId: string,
-  data: { iconUrl: string; metadata?: Record<string, any> }
+  data: { iconUrl?: string; imageUrl?: string; metadata?: Record<string, any> }
 ): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; materialId?: string; data?: any; error?: string }> {
-  const { iconUrl, metadata } = data;
+  const iconUrl = data.iconUrl || data.imageUrl || '';
+  const metadata = data.metadata;
 
   if (!iconUrl) {
     return { success: false, error: '缺少图标 URL' };
   }
 
   // 1. 下载图标
-  const dlResult = await downloadIconifySvg(iconUrl, {
-    iconName: metadata?.name || metadata?.title,
+  const dlResult = await downloadIconifyIcon(iconUrl, {
+    filename: metadata?.name || metadata?.title,
   });
 
   if (!dlResult.success || !dlResult.filePath) {

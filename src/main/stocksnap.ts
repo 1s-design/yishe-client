@@ -308,10 +308,10 @@ export async function downloadStockSnapImage(
  */
 export async function syncStockSnapToMaterialLibrary(
   imageUrl: string,
-  metadata: Record<string, any> = {}
-): Promise<{ success: boolean; message: string; data?: any }> {
+  metadata?: Record<string, any>
+): Promise<{ success: boolean; message: string; materialId?: string; cosUrl?: string; data?: any }> {
   const downloadResult = await downloadStockSnapImage(imageUrl, {
-    filename: metadata.title ? `${sanitizeName(metadata.title)}` : undefined,
+    filename: metadata?.title ? `${sanitizeName(metadata.title)}` : undefined,
   })
 
   if (!downloadResult.success || !downloadResult.filePath) {

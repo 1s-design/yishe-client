@@ -328,7 +328,7 @@ export async function downloadPixabayImage(
 export async function syncPixabayToMaterialLibrary(
   imageUrl: string,
   metadata?: Record<string, any>
-): Promise<{ success: boolean; message: string; data?: any }> {
+): Promise<{ success: boolean; message: string; materialId?: string; cosUrl?: string; data?: any }> {
   if (!imageUrl) {
     return { success: false, message: '缺少图片 URL' }
   }

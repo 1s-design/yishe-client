@@ -14066,6 +14066,132 @@ for (const cfg of hotsearchConfig) {
     },
   });
 }
+// ══════════════════════════════════════════════════════════════
+// 10大图片搜索引擎服务注册 (百度, 必应, DDG, 搜狗, 360, Wallhaven, Unsplash, Flickr, GoogleImages, Yandex)
+// ══════════════════════════════════════════════════════════════
+
+const imageEnginesConfig = [
+  { key: "baidu", label: "百度图片搜索", endpoint: "https://image.baidu.com/" },
+  { key: "bing", label: "必应图片搜索", endpoint: "https://www.bing.com/images/" },
+  { key: "duckduckgo", label: "DuckDuckGo 图搜", endpoint: "https://duckduckgo.com/" },
+  { key: "sogou", label: "搜狗图片搜索", endpoint: "https://pic.sogou.com/" },
+  { key: "so", label: "360 图片搜索", endpoint: "https://image.so.com/" },
+  { key: "wallhaven", label: "Wallhaven 4K壁纸", endpoint: "https://wallhaven.cc/" },
+  { key: "unsplash", label: "Unsplash 摄影图库", endpoint: "https://unsplash.com/" },
+  { key: "flickr", label: "Flickr 摄影社区", endpoint: "https://www.flickr.com/" },
+  { key: "googleimages", label: "谷歌图片搜索", endpoint: "https://www.google.com/imghp" },
+  { key: "yandex", label: "Yandex 艺术壁纸", endpoint: "https://yandex.com/images/" },
+];
+
+for (const cfg of imageEnginesConfig) {
+  registerLocalService({
+    key: cfg.key,
+    pluginKey: cfg.key,
+    label: cfg.label,
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi) {
+        return {
+          label: cfg.label,
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: `未注入桌面端 ${cfg.label} 能力`,
+          endpoint: cfg.endpoint,
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+      return {
+        label: cfg.label,
+        connected: true,
+        available: true,
+        status: "connected",
+        state: "idle",
+        busy: false,
+        message: `${cfg.label} 可用`,
+        endpoint: cfg.endpoint,
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health", "search", "download", "sync", "collect"],
+        details: { siteAvailable: true, runtime: "desktop" },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.executeCapability) {
+        throw new Error(`当前环境未注入桌面端能力调度器`);
+      }
+      const payload = command.payload || {};
+      const action = command.action || "search";
+
+      if (action === "search") {
+        const query = payload.query || payload.keyword || "";
+        const limit = payload.limit || payload.pageSize || 20;
+        const page = payload.page || 1;
+        const res = await nativeApi.executeCapability(cfg.key, "search", { query, limit, page });
+        const realData = res?.data ?? res;
+        const items = realData?.items ?? (Array.isArray(realData) ? realData : []);
+        const count = realData?.count ?? items.length;
+        return {
+          success: res?.ok !== false && res?.success !== false,
+          message: `${cfg.label} 检索完成: 共 ${count} 条`,
+          data: {
+            successCount: count,
+            failCount: 0,
+            items,
+            count,
+            page,
+            query,
+            total: realData?.total || count,
+            raw: realData,
+          },
+        };
+      }
+
+      if (action === "sync" || action === "collect") {
+        const imageUrl = payload.imageUrl || payload.image;
+        if (imageUrl) {
+          const res = await nativeApi.executeCapability(cfg.key, "collect", {
+            imageUrl,
+            metadata: payload.metadata || payload,
+          });
+          return {
+            success: res?.ok !== false && res?.success !== false,
+            message: res?.message || (res?.ok ? "已同步到素材库" : "同步失败"),
+            data: res,
+          };
+        }
+        const query = payload.query || payload.keyword || "";
+        const maxCount = payload.maxCount || payload.limit || 10;
+        const res = await nativeApi.executeCapability(cfg.key, "collect", { query, maxCount });
+        return {
+          success: res?.ok !== false && res?.success !== false,
+          message: `${cfg.label} 批量采集完成`,
+          data: res,
+        };
+      }
+
+      if (action === "download") {
+        const imageUrl = payload.imageUrl || payload.image;
+        const filename = payload.filename;
+        const res = await nativeApi.executeCapability(cfg.key, "download", { imageUrl, filename });
+        return {
+          success: res?.ok !== false && res?.success !== false,
+          message: res?.ok ? "下载完成" : res?.error || "下载失败",
+          data: res,
+        };
+      }
+
+      throw new Error(`不支持的操作: ${action}`);
+    },
+  });
+}
+
 
 function emitClientInfo() {
   if (!socket || !socket.connected) return;

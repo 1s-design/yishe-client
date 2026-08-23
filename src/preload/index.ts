@@ -834,6 +834,8 @@ const api = {
       ipcRenderer.removeAllListeners("agent:stream:error");
     },
   },
+  executeCapability: (namespace: string, name: string, args?: any) =>
+    ipcRenderer.invoke("capability:execute", { namespace, name, args }),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

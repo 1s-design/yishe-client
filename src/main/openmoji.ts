@@ -355,7 +355,7 @@ export async function downloadOpenMojiEmoji(
 export async function syncOpenMojiToMaterialLibrary(
   _clientId: string,
   data: { imageUrl: string; metadata?: Record<string, any> },
-): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; data?: any; error?: string }> {
+): Promise<{ success: boolean; message?: string; localFilePath?: string; cosUrl?: string; materialId?: string; data?: any; error?: string }> {
   const { imageUrl, metadata } = data;
   console.log(`[OpenMoji Collect] 开始处理入库: imageUrl=${imageUrl}, title=${metadata?.title || metadata?.name}`);
 

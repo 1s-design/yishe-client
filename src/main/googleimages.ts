@@ -1,12 +1,13 @@
 /**
  * 谷歌图片搜索与采集能力 (Google Images)
- * 基于 Google 图片搜索页面解析实现，无需商业 API Key，全球综合检索
+ * 支持 Google 官方 Custom Search API 及通用全球图片解析，获取高清原图直链
  */
 import fs from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
 import { checkSiteAvailability } from './siteAvailability'
 import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
+import { searchDuckDuckGo } from './duckduckgo'
 
 const GOOGLE_IMAGES_SITE = 'https://www.google.com/imghp'
 const USER_AGENT =
@@ -62,7 +63,7 @@ export async function getGoogleImagesStatus() {
 
 export async function searchGoogleImages(
   query: string,
-  options: { page?: number; limit?: number; pageSize?: number } = {}
+  options: { page?: number; limit?: number; pageSize?: number; apiKey?: string; cx?: string } = {}
 ): Promise<GoogleImageSearchResult> {
   const keyword = (query || '').trim()
   if (!keyword) {
@@ -70,113 +71,83 @@ export async function searchGoogleImages(
   }
 
   const page = Math.max(Number(options.page) || 1, 1)
-  const limit = Math.min(Math.max(Number(options.limit) || Number(options.pageSize) || 20, 1), 60)
+  const limit = Math.min(Math.max(Number(options.limit) || Number(options.pageSize) || 20, 1), 50)
+  const apiKey = options.apiKey || process.env.GOOGLE_API_KEY
+  const cx = options.cx || process.env.GOOGLE_CX
 
+  // 1. 如果配置了 Google Custom Search API Key + CX
+  if (apiKey && cx) {
+    try {
+      const startIndex = (page - 1) * limit + 1
+      const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(keyword)}&searchType=image&num=${limit}&start=${startIndex}`
+      const res = await fetch(url)
+      if (res.ok) {
+        const data: any = await res.json()
+        const rawList = Array.isArray(data?.items) ? data.items : []
+        const items: GoogleImagePhoto[] = rawList.map((item, idx) => ({
+          id: String(startIndex + idx),
+          title: sanitizeName(item.title || keyword).slice(0, 100),
+          description: item.snippet || item.title || keyword,
+          image: item.link,
+          thumbnail: item.image?.thumbnailLink || item.link,
+          link: item.image?.contextLink || item.link,
+          url: item.image?.contextLink || item.link,
+          width: item.image?.width || null,
+          height: item.image?.height || null,
+          author: item.displayLink || 'Google Search',
+          tags: keyword,
+        }))
+        return {
+          success: true,
+          query: keyword,
+          count: items.length,
+          items,
+          links: items.map((i) => i.image),
+          page,
+          nextPage: items.length >= limit ? page + 1 : null,
+        }
+      }
+    } catch {}
+  }
+
+  // 2. 免 Key 模式：基于轻量免拦截引擎检索全球图库
   try {
-    const url = `https://www.google.com/search?q=${encodeURIComponent(keyword)}&tbm=isch&udm=2&hl=en&ijn=${page - 1}`
-
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8',
-      },
-    })
-
-    if (!res.ok) {
-      throw new Error(`Google Images 响应 HTTP ${res.status}`)
-    }
-
-    const html = await res.text()
-    const items: GoogleImagePhoto[] = []
-    const seen = new Set<string>()
-
-    // 1. 解析 Google Images 内嵌数据 [["https://...", width, height], ...]
-    const regex = /\["(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^"]*)?)",\s*(\d+),\s*(\d+)\]/gi
-    let match: RegExpExecArray | null
-    while ((match = regex.exec(html)) !== null) {
-      const imgUrl = match[1].replace(/\\u003d/g, '=').replace(/\\u0026/g, '&')
-      const width = Number(match[2]) || null
-      const height = Number(match[3]) || null
-
-      if (!imgUrl || seen.has(imgUrl)) continue
-      if (imgUrl.includes('gstatic.com') || imgUrl.includes('google.com')) continue
-      seen.add(imgUrl)
-
-      const id = String(items.length + 1)
-      const title = `${keyword}_${id}`
-
-      items.push({
-        id,
-        title,
-        description: title,
-        image: imgUrl,
-        thumbnail: imgUrl,
-        link: imgUrl,
-        url: imgUrl,
-        width,
-        height,
-        author: 'Google Images',
+    const ddgRes = await searchDuckDuckGo(keyword, { limit, page })
+    if (ddgRes.success && ddgRes.items.length > 0) {
+      const items: GoogleImagePhoto[] = ddgRes.items.map((it, idx) => ({
+        id: `google_${page}_${idx + 1}`,
+        title: it.title,
+        description: it.description || it.title,
+        image: it.image,
+        thumbnail: it.thumbnail || it.image,
+        link: it.link || it.url,
+        url: it.url,
+        width: it.width,
+        height: it.height,
+        author: it.author || 'Web Images',
         tags: keyword,
-      })
-      if (items.length >= limit) break
-    }
-
-    // 2. 如果未能通过正则提取到外链大图，尝试提取加密 JSON 数据
-    if (items.length === 0) {
-      const scriptMatches = html.match(/AF_initDataCallback\s*\(\s*\{.*?key:\s*'ds:1'.*?data:\s*function\(\)\s*\{\s*return\s*(\[.*?\])\s*\}\s*\}\s*\)\s*;/gs) || []
-      for (const scriptText of scriptMatches) {
-        try {
-          const jsonStrMatch = scriptText.match(/return\s*(\[.*\])\s*\}\s*\}\s*\)\s*;/s)
-          if (jsonStrMatch && jsonStrMatch[1]) {
-            const parsedData = JSON.parse(jsonStrMatch[1])
-            const gridItems = parsedData?.[31]?.[0]?.[12]?.[2] || []
-            for (const g of gridItems) {
-              const info = g?.[1]
-              const orig = info?.[3]?.[0]
-              const thumb = info?.[2]?.[0]
-              const title = info?.[9]?.['2003']?.[3] || keyword
-              if (orig && !seen.has(orig)) {
-                seen.add(orig)
-                items.push({
-                  id: String(items.length + 1),
-                  title: sanitizeName(title).slice(0, 100),
-                  description: title,
-                  image: orig,
-                  thumbnail: thumb || orig,
-                  link: orig,
-                  url: orig,
-                  author: 'Google Images',
-                  tags: keyword,
-                })
-                if (items.length >= limit) break
-              }
-            }
-          }
-        } catch {}
+      }))
+      return {
+        success: true,
+        query: keyword,
+        count: items.length,
+        items,
+        links: items.map((i) => i.image),
+        page,
+        nextPage: items.length >= limit ? page + 1 : null,
       }
     }
+  } catch {}
 
-    return {
-      success: true,
-      query: keyword,
-      count: items.length,
-      items,
-      links: items.map((i) => i.image),
-      page,
-      nextPage: items.length >= limit ? page + 1 : null,
-    }
-  } catch (error: any) {
-    return {
-      success: false,
-      query: keyword,
-      count: 0,
-      items: [],
-      links: [],
-      page,
-      nextPage: null,
-      error: error?.message || 'Google 图片搜索失败',
-    }
+  return {
+    success: false,
+    query: keyword,
+    count: 0,
+    items: [],
+    links: [],
+    page,
+    nextPage: null,
+    error: 'Google 图片搜索失败',
   }
 }
 

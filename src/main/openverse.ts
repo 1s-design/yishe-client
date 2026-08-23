@@ -279,11 +279,14 @@ export async function downloadOpenverseImage(
  * 同步 Openverse 图片至素材库 (支持 COS 上传)
  */
 export async function syncOpenverseToMaterialLibrary(
-  imageUrl: string,
-  metadata: Record<string, any> = {}
-): Promise<{ success: boolean; message: string; data?: any }> {
+  clientIdOrUrl: string,
+  dataOrMetadata?: any
+): Promise<{ success: boolean; message: string; materialId?: string; cosUrl?: string; data?: any }> {
+  const imageUrl = typeof dataOrMetadata?.imageUrl === 'string' ? dataOrMetadata.imageUrl : clientIdOrUrl
+  const metadata = (typeof dataOrMetadata?.imageUrl === 'string' ? dataOrMetadata.metadata : dataOrMetadata) || {}
+
   const downloadResult = await downloadOpenverseImage(imageUrl, {
-    filename: metadata.title ? `${sanitizeName(metadata.title)}` : undefined,
+    filename: metadata?.title ? `${sanitizeName(metadata.title)}` : undefined,
   })
 
   if (!downloadResult.success || !downloadResult.filePath) {

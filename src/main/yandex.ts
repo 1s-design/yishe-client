@@ -1,6 +1,6 @@
 /**
  * Yandex 图片搜索与采集能力 (Yandex Images)
- * 基于 Yandex 高清图搜页面与结构化数据解析，插画、二次元与欧美无水印大图首选
+ * 基于 Yandex 网页解析与高清原图直链提取，插画、二次元与欧美无水印大图首选
  */
 import fs from 'fs'
 import { join } from 'path'
@@ -79,7 +79,7 @@ export async function searchYandex(
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
       },
     })
 
@@ -91,44 +91,27 @@ export async function searchYandex(
     const items: YandexPhoto[] = []
     const seen = new Set<string>()
 
-    // 解析 data-bem 中的 serp-item
-    const bemMatches = html.match(/data-bem='(\{"serp-item":\{.*?\})'/g) || []
-    for (const matchStr of bemMatches) {
+    // 1. 通过 img_url 查询参数提取原图大图直链
+    const imgUrlMatches = html.match(/img_url=([^&"'\s]+)/g) || []
+    for (const m of imgUrlMatches) {
       try {
-        const rawJsonStr = matchStr.slice(10, -1).replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-        const data = JSON.parse(rawJsonStr)
-        const item = data['serp-item']
-        if (!item) continue
+        const rawUrl = decodeURIComponent(m.slice(8))
+        if (!/^https?:\/\//i.test(rawUrl)) continue
+        if (seen.has(rawUrl)) continue
+        seen.add(rawUrl)
 
-        const previews = Array.isArray(item.preview) ? item.preview : []
-        const dups = Array.isArray(item.dups) ? item.dups : []
-
-        // 优先从 dups 或 preview 中提取最大尺寸原图
-        const origObj = dups[0] || previews[0]
-        const origUrl = origObj?.url
-        if (!origUrl || !/^https?:\/\//i.test(origUrl)) continue
-        if (seen.has(origUrl)) continue
-        seen.add(origUrl)
-
-        const thumbObj = previews[previews.length - 1] || previews[0]
-        const thumbUrl = thumbObj?.url || origUrl
-
-        const id = String(item.reqid || items.length + 1)
-        const title = sanitizeName(item.snippet?.title || `${keyword}_${id}`).slice(0, 100)
-        const width = Number(origObj?.w || item.preview?.[0]?.w) || null
-        const height = Number(origObj?.h || item.preview?.[0]?.h) || null
+        const id = String(items.length + 1)
+        const title = `${keyword}_${id}`
 
         items.push({
           id,
           title,
-          description: item.snippet?.text || title,
-          image: origUrl,
-          thumbnail: thumbUrl,
-          link: item.snippet?.url || origUrl,
-          url: item.snippet?.url || origUrl,
-          width,
-          height,
-          author: item.snippet?.domain || 'Yandex Images',
+          description: title,
+          image: rawUrl,
+          thumbnail: rawUrl,
+          link: rawUrl,
+          url: rawUrl,
+          author: 'Yandex Images',
           tags: keyword,
         })
         if (items.length >= limit) break

@@ -26,6 +26,7 @@ export interface CapabilityCallContext {
   contextId?: string;
   idempotencyKey?: string;
   signal?: AbortSignal;
+  source?: string;
 }
 
 /** 能力定义 */

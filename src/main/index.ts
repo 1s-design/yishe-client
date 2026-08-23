@@ -3580,6 +3580,23 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  "capability:execute",
+  async (
+    _event,
+    payload: { namespace: string; name: string; args?: any },
+  ) => {
+    try {
+      const { namespace, name, args } = payload || {};
+      const { CapabilityRegistry } = await import("./capabilities/registry");
+      const result = await CapabilityRegistry.call(namespace, name, args, { source: "ipc" });
+      return { ok: result.success, success: result.success, ...result, data: result.data || result };
+    } catch (error: any) {
+      return { ok: false, success: false, message: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
   "iconify:search",
   async (
     _event,
