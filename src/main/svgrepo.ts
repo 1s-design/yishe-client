@@ -53,7 +53,7 @@ const SVGREPO_STYLE_ALIASES: Record<string, (typeof SVGREPO_STYLE_VALUES)[number
   sharp: "sharp",
 };
 const SVGREPO_NETWORK_ERROR_PATTERN =
-  /ERR_(?:CONNECTION_(?:CLOSED|RESET|REFUSED|TIMED_OUT)|PROXY_CONNECTION_FAILED|NAME_NOT_RESOLVED|TUNNEL_CONNECTION_FAILED|SOCKS_CONNECTION_FAILED)|(?:ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket hang up)/i;
+  /ERR_(?:CONNECTION_(?:CLOSED|RESET|REFUSED|TIMED_OUT)|PROXY_CONNECTION_FAILED|NAME_NOT_RESOLVED|TUNNEL_CONNECTION_FAILED|SOCKS_CONNECTION_FAILED)|(?:ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket hang up)|(?:Timeout|timed out).*?(?:exceeded|navigation)/i;
 
 function isNetworkError(error: unknown): boolean {
   return SVGREPO_NETWORK_ERROR_PATTERN.test(
@@ -635,7 +635,8 @@ async function searchInBrowserContextAttempt(
     console.log(`[SVGRepo] [Step 1] 导航至目标搜索页: ${targetUrl}`);
     await pageInstance.goto(targetUrl, {
       waitUntil: "domcontentloaded",
-      timeout: 20_000,
+      // 首次启动受管 Chrome/代理建立连接可能较慢；超时后由外层自动切换下一条网络路由。
+      timeout: 30_000,
     });
 
     console.log(

@@ -549,6 +549,24 @@ const emitter = mitt<WebsocketEvents>();
 const localServiceHandlers = new Map<string, LocalServiceHandler>();
 registerBuiltInLocalServices();
 
+// 热搜、资讯和素材采集是一次性调用，不是需要驻留监控的本地服务。
+// 仅对具有生命周期的基础设施上报 runtime，避免重启时批量探测拖慢客户端调度。
+const RUNTIME_REPORTING_SERVICE_KEYS = new Set([
+  "ps-automation",
+  "browser-automation",
+  "uploader",
+  "image-processing",
+  "video-template",
+  "file-download",
+  "client-log",
+  "mcp-server",
+  "local-service",
+]);
+
+function shouldReportServiceRuntime(serviceKey: string): boolean {
+  return RUNTIME_REPORTING_SERVICE_KEYS.has(normalizePluginKey(serviceKey));
+}
+
 const WS_CLIENT_INFO_REFRESH_MS = 60_000;
 const WS_SERVICE_RUNTIME_REFRESH_MS = 20_000;
 const WS_TRANSIENT_TOAST_DEBOUNCE_MS = 15_000;
@@ -2652,6 +2670,9 @@ async function emitServiceRuntime(
 
 async function syncServiceRuntime(serviceKey: string) {
   const pluginKey = normalizePluginKey(serviceKey);
+  if (!shouldReportServiceRuntime(pluginKey)) {
+    return null;
+  }
   const handler = localServiceHandlers.get(pluginKey);
   if (!handler?.getRuntime) {
     return null;
@@ -4904,9 +4925,9 @@ async function ensureConnectionFresh(reason: string) {
   emitClientInfo();
   emitPsAutomationStatus();
   void Promise.all(
-    Array.from(localServiceHandlers.keys()).map((key) =>
-      syncServiceRuntime(key),
-    ),
+    Array.from(localServiceHandlers.keys())
+      .filter(shouldReportServiceRuntime)
+      .map((key) => syncServiceRuntime(key)),
   );
 }
 
@@ -5091,9 +5112,9 @@ function bindSocketEvents(currentSocket: Socket) {
     emitClientInfo();
     emitPsAutomationStatus();
     void Promise.all(
-      Array.from(localServiceHandlers.keys()).map((key) =>
-        syncServiceRuntime(key),
-      ),
+      Array.from(localServiceHandlers.keys())
+        .filter(shouldReportServiceRuntime)
+        .map((key) => syncServiceRuntime(key)),
     );
     startUploaderRuntimeSyncLoop();
     startPhotoshopRuntimeSyncLoop();
@@ -5407,6 +5428,22 @@ function bindSocketEvents(currentSocket: Socket) {
       const toolArgs = payload?.toolArgs || {};
       const context = payload?.context;
       console.log(`[WS] 收到服务端 mcp-call 请求: requestId=${requestId} tool=${toolName}`, toolArgs);
+      // 先回执，再执行耗时工具；服务端可据此区分“消息未到客户端”和“工具正在执行”。
+      if (requestId) {
+        socket?.emit("mcp-ack", { requestId, toolName });
+      }
+      // 这是客户端真正收到工具消息的落盘日志，不依赖 DevTools 控制台，便于排查“服务端已发但客户端无反应”。
+      void getNativeApi()?.writeClientLog?.({
+        level: "INFO",
+        module: "mcp-client",
+        message: "客户端收到 MCP 工具调用",
+        context: {
+          requestId,
+          toolName,
+          toolArgKeys: Object.keys(toolArgs || {}),
+          context,
+        },
+      });
       emitter.emit("log", {
         level: "info",
         message: `[ws] received mcp-call: requestId=${requestId} tool=${toolName}`,
@@ -5416,6 +5453,16 @@ function bindSocketEvents(currentSocket: Socket) {
           color: "info",
           icon: "mdi-vector-square",
           message: "SVGRepo 采集任务已开始，正在启动浏览器环境…",
+        });
+      }
+      if (toolName.startsWith("googleArt_")) {
+        emitTransientWsToast(`mcp-start:${requestId}`, {
+          color: "info",
+          icon: "mdi-palette-outline",
+          message:
+            toolName === "googleArt_collect"
+              ? "Google Arts 正在拼接高清作品并入库…"
+              : "Google Arts 采集任务已开始，正在查询作品与分辨率…",
         });
       }
       const reportMcpFailure = (failure: unknown) => {
@@ -5458,6 +5505,12 @@ function bindSocketEvents(currentSocket: Socket) {
           try {
             const nativeApi = getNativeApi() as any;
             const result = await nativeApi.callMcpTool(toolName, toolArgs, context);
+            void nativeApi.writeClientLog?.({
+              level: result?.isError ? "ERROR" : "INFO",
+              module: "mcp-client",
+              message: result?.isError ? "MCP 异步工具执行返回错误" : "MCP 异步工具执行完成",
+              context: { requestId, toolName, isError: !!result?.isError },
+            });
             if (result?.isError) reportMcpFailure(result);
             socket?.emit("mcp-async-result", {
               requestId,
@@ -5485,6 +5538,12 @@ function bindSocketEvents(currentSocket: Socket) {
           throw new Error("当前环境未注入 MCP 工具执行能力");
         }
         const result = await nativeApi.callMcpTool(toolName, toolArgs, context);
+        void nativeApi.writeClientLog?.({
+          level: result?.isError ? "ERROR" : "INFO",
+          module: "mcp-client",
+          message: result?.isError ? "MCP 工具执行返回错误" : "MCP 工具执行完成",
+          context: { requestId, toolName, isError: !!result?.isError },
+        });
         if (result?.isError) reportMcpFailure(result);
         socket?.emit("mcp-result", {
           requestId,

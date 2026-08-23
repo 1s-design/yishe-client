@@ -1661,11 +1661,21 @@ app.whenReady().then(() => {
         toolArgs,
         context,
       });
+      writeMainLog("INFO", "MCP 工具开始执行", {
+        toolName,
+        toolArgKeys: Object.keys(toolArgs || {}),
+        context,
+      });
       try {
         const { callMcpTool } = await getMcpServerModule();
         const result = await callMcpTool(toolName, toolArgs || {}, context);
         console.log(`[MCP Server] ✅ 工具 "${toolName}" 执行完毕:`, {
           isError: result?.isError,
+          contentLength: result?.content?.length,
+        });
+        writeMainLog(result?.isError ? "ERROR" : "INFO", "MCP 工具执行完成", {
+          toolName,
+          isError: !!result?.isError,
           contentLength: result?.content?.length,
         });
         return result;
