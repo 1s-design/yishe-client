@@ -24,13 +24,17 @@ const searchDef: CapabilityDefinition = {
     page: z.number().optional().default(1).describe('页码'),
   }),
   handler: async (args: { keyword?: string; query?: string; limit?: number; pageSize?: number; page?: number }) => {
+    console.log(`[BaiduCapability] search handler 被调用: args=`, args)
     const keyword = (args.keyword || args.query || '').trim();
     if (!keyword) {
+      console.warn(`[BaiduCapability] 缺少搜索关键词`)
       return { success: false, error: '缺少搜索关键词 keyword/query' };
     }
     const limit = args.limit || args.pageSize || 20;
     const page = args.page || 1;
+    console.log(`[BaiduCapability] 调用 searchBaidu: keyword=${keyword}, limit=${limit}, page=${page}`)
     const result = await searchBaidu(keyword, { limit, page });
+    console.log(`[BaiduCapability] searchBaidu 返回: success=${result.success}, count=${result.count}, error=${result.error}`)
     return {
       success: result.success,
       data: result.success ? {

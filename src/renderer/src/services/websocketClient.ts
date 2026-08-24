@@ -14161,6 +14161,7 @@ for (const cfg of imageEnginesConfig) {
           success: true,
           message: `${cfg.label} 检索完成: 共 ${count} 条`,
           data: {
+            success: true,
             successCount: count,
             failCount: 0,
             items,
@@ -14168,6 +14169,8 @@ for (const cfg of imageEnginesConfig) {
             page,
             query,
             total: realData?.total || count,
+            links: realData?.links || [],
+            nextPage: realData?.nextPage || null,
             raw: realData,
           },
         };

@@ -39,8 +39,10 @@ class CapabilityRegistryImpl {
     context?: CapabilityCallContext,
   ): Promise<CapabilityResult<T>> {
     const key = `${namespace}.${name}`;
+    console.log(`[CapabilityRegistry] call: ${key}, args=`, args)
     const capability = this.capabilities.get(key);
     if (!capability) {
+      console.error(`[CapabilityRegistry] 能力不存在: ${key}, 已注册的能力:`, Array.from(this.capabilities.keys()))
       return { success: false, error: `能力不存在: ${key}` };
     }
 
@@ -48,13 +50,19 @@ class CapabilityRegistryImpl {
       // 参数校验
       const parsed = capability.argsSchema.safeParse(args);
       if (!parsed.success) {
+        const errorMsg = `参数校验失败: ${parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`
+        console.error(`[CapabilityRegistry] ${key} ${errorMsg}`)
         return {
           success: false,
-          error: `参数校验失败: ${parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+          error: errorMsg,
         };
       }
-      return await capability.handler(parsed.data, context);
+      console.log(`[CapabilityRegistry] ${key} 参数校验通过, 执行 handler`)
+      const result = await capability.handler(parsed.data, context);
+      console.log(`[CapabilityRegistry] ${key} handler 执行完成: success=${result.success}, hasData=${!!result.data}, error=${result.error}`)
+      return result;
     } catch (error: any) {
+      console.error(`[CapabilityRegistry] ${key} handler 异常:`, error)
       return { success: false, error: error?.message || String(error) };
     }
   }

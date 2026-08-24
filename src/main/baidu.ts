@@ -65,7 +65,9 @@ export async function searchBaidu(
   options: { page?: number; limit?: number; pageSize?: number } = {}
 ): Promise<BaiduSearchResult> {
   const keyword = (query || '').trim()
+  console.log(`[Baidu] searchBaidu 开始: keyword=${keyword}, options=`, options)
   if (!keyword) {
+    console.warn(`[Baidu] searchBaidu 缺少搜索关键词`)
     return { success: false, query: '', count: 0, items: [], links: [], page: 1, nextPage: null, error: '缺少搜索关键词' }
   }
 
@@ -75,6 +77,7 @@ export async function searchBaidu(
 
   try {
     const url = `https://image.baidu.com/search/acjson?tn=resultjson_com&logid=${Date.now()}&ipn=rj&ct=201326592&is=&fp=result&queryWord=${encodeURIComponent(keyword)}&cl=2&lm=-1&ie=utf-8&oe=utf-8&adpicid=&st=-1&z=&ic=0&hd=&latest=&copyright=&word=${encodeURIComponent(keyword)}&s=&se=&tab=&width=&height=&face=0&istype=2&qc=&nc=1&fr=&expermode=&nojc=&isAsync=&pn=${pn}&rn=${limit}&gsm=${Date.now().toString(16)}`
+    console.log(`[Baidu] 请求 URL: ${url}`)
 
     const res = await fetch(url, {
       headers: {
@@ -85,20 +88,27 @@ export async function searchBaidu(
       },
     })
 
+    console.log(`[Baidu] HTTP 响应状态: ${res.status} ${res.statusText}`)
+
     if (!res.ok) {
       throw new Error(`百度图片接口响应 HTTP ${res.status}`)
     }
 
     const jsonText = await res.text()
+    console.log(`[Baidu] 响应体长度: ${jsonText.length} 字符, 前200字符: ${jsonText.slice(0, 200)}`)
+
     let data: any
     try {
       data = JSON.parse(jsonText)
-    } catch {
+      console.log(`[Baidu] JSON 解析成功, data.data 长度: ${data?.data?.length || 0}`)
+    } catch (parseErr: any) {
+      console.warn(`[Baidu] JSON 解析失败, 尝试修复: ${parseErr?.message}`)
       const sanitized = jsonText.replace(/'/g, '"').replace(/\\'/g, "'")
       data = JSON.parse(sanitized)
     }
 
     const rawList = Array.isArray(data?.data) ? data.data : []
+    console.log(`[Baidu] rawList 长度: ${rawList.length}`)
     const items: BaiduPhoto[] = []
     const seen = new Set<string>()
 
@@ -127,6 +137,7 @@ export async function searchBaidu(
       if (items.length >= limit) break
     }
 
+    console.log(`[Baidu] 搜索完成: 成功提取 ${items.length} 条图片`)
     return {
       success: true,
       query: keyword,
@@ -137,6 +148,7 @@ export async function searchBaidu(
       nextPage: items.length >= limit ? page + 1 : null,
     }
   } catch (error: any) {
+    console.error(`[Baidu] 搜索异常: ${error?.message || error}`, error)
     return {
       success: false,
       query: keyword,
