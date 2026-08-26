@@ -31,6 +31,19 @@ import lobsters from './lobsters'
 // 电商平台 (proxy)
 import ebayTrending from './ebay-trending'
 import shopifyTrending from './shopify-trending'
+import aliexpressPopular from './aliexpress-popular'
+import amazonBestSellers from './amazon-best-sellers'
+import etsyTrending from './etsy-trending'
+
+// 国内电商/生活 (direct)
+import huxiu from './huxiu'
+import jdHot from './jd-hot'
+import pddHot from './pdd-hot'
+import sspai from './sspai'
+
+// 新增电商趋势节点
+import dangdangBestsellers from './dangdang-bestsellers'
+import manmanbuyDeals from './manmanbuy-deals'
 
 export const allPlatforms: PlatformModule[] = [
   // 国内平台 (direct)
@@ -62,6 +75,17 @@ export const allPlatforms: PlatformModule[] = [
   // 电商平台 (proxy)
   ebayTrending,
   shopifyTrending,
+  aliexpressPopular,
+  amazonBestSellers,
+  etsyTrending,
+  // 国内电商/生活 (direct)
+  huxiu,
+  jdHot,
+  pddHot,
+  sspai,
+  // 新增电商趋势
+  dangdangBestsellers,
+  manmanbuyDeals,
 ]
 
 export function getPlatform(key: string): PlatformModule | undefined {
