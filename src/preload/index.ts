@@ -836,6 +836,15 @@ const api = {
   },
   executeCapability: (namespace: string, name: string, args?: any) =>
     ipcRenderer.invoke("capability:execute", { namespace, name, args }),
+  // 自动更新
+  onUpdateStatus: (callback: (status: any) => void) => {
+    const listener = (_event: any, status: any) => callback(status);
+    ipcRenderer.on("app:update-status", listener);
+    return () => ipcRenderer.removeListener("app:update-status", listener);
+  },
+  updateDownload: () => ipcRenderer.invoke("app:update-download"),
+  updateInstall: () => ipcRenderer.invoke("app:update-install"),
+  getUpdateStatus: () => ipcRenderer.invoke("app:update-status"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

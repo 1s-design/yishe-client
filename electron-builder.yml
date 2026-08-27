@@ -45,6 +45,10 @@ extraResources:
     to: resources/remotion
     filter:
       - "**/*"
+  - from: resources/browser-agent
+    to: resources/browser-agent
+    filter:
+      - "yishe-browser-agent*"
 generateUpdatesFilesForAllChannels: false
 win:
   target:

@@ -25,6 +25,7 @@ import Dashboard, {
 } from "./views/Dashboard.vue";
 import Settings from "./views/Settings.vue";
 import Agent from "./views/Agent.vue";
+import UpdateNotification from "./components/UpdateNotification.vue";
 
 type ServiceStatusTone = "success" | "warning" | "danger" | "muted";
 
@@ -1587,6 +1588,9 @@ onBeforeUnmount(() => {
         </div>
       </el-dialog>
     </template>
+
+    <!-- 自动更新通知 -->
+    <UpdateNotification />
   </div>
 </template>
 

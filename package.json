@@ -25,10 +25,11 @@
     "dev:win": "chcp 65001 && electron-vite dev",
     "build": " electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:unpack": "npm run prepare:plugins:win && npm run prepare:ps:env && npm run prepare:ps:win && npm run prepare:remotion:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --dir",
-    "build:win": "npm run prepare:plugins:win && npm run prepare:ps:env && npm run prepare:ps:win && npm run prepare:remotion:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --win",
-    "build:mac": "npm run prepare:plugins:mac && npm run prepare:remotion && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --mac",
-    "build:linux": "npm run prepare:plugins:linux && npm run prepare:remotion && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --linux"
+    "prepare:browser-agent": "node scripts/prepare-browser-agent.mjs",
+    "build:unpack": "npm run prepare:plugins:win && npm run prepare:ps:env && npm run prepare:ps:win && npm run prepare:browser-agent && npm run prepare:remotion:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --dir",
+    "build:win": "npm run prepare:plugins:win && npm run prepare:ps:env && npm run prepare:ps:win && npm run prepare:browser-agent && npm run prepare:remotion:win && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --win",
+    "build:mac": "npm run prepare:plugins:mac && npm run prepare:browser-agent && npm run prepare:remotion && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --mac",
+    "build:linux": "npm run prepare:plugins:linux && npm run prepare:browser-agent && npm run prepare:remotion && npm run build && cross-env ELECTRON_CACHE=.cache/electron ELECTRON_BUILDER_CACHE=.cache/electron-builder electron-builder --linux"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.10.50",

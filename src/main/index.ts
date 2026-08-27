@@ -588,7 +588,7 @@ function shouldForceTrayMode(): boolean {
   return app.isPackaged;
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const createdAt = Date.now();
   let hasShownMainWindow = false;
   const showMainWindow = (reason: string) => {
@@ -1738,10 +1738,39 @@ app.whenReady().then(() => {
     }
   });
 
-  createWindow();
+  return mainWindow;
+}
+
+function startApp(): void {
+  const mainWindow = createWindow();
 
   // 创建系统托盘
   createTray();
+
+  // 初始化自动更新（窗口创建后，仅生产环境生效）
+  import("./auto-updater").then(({ initAutoUpdater, checkForUpdates, startDownload, quitAndInstall, getUpdateInfo }) => {
+    initAutoUpdater(mainWindow);
+    // 延迟 5 秒检查更新，避免影响启动速度
+    setTimeout(() => {
+      checkForUpdates();
+    }, 5000);
+
+    // 渲染进程请求：开始下载更新
+    ipcMain.handle("app:update-download", async () => {
+      await startDownload();
+      return getUpdateInfo();
+    });
+
+    // 渲染进程请求：退出并安装
+    ipcMain.handle("app:update-install", () => {
+      quitAndInstall();
+    });
+
+    // 渲染进程请求：获取当前更新状态
+    ipcMain.handle("app:update-status", () => {
+      return getUpdateInfo();
+    });
+  });
 
   schedulePostWindowStartupTasks();
 
@@ -1766,6 +1795,9 @@ app.whenReady().then(() => {
   powerMonitor.on("unlock-screen", () => {
     sendAppRuntimeEvent("screen-unlocked");
   });
+
+  // 启动应用主逻辑
+  startApp();
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common

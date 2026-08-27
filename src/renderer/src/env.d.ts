@@ -439,6 +439,11 @@ interface Window {
       onToolStart(callback: (data: any) => void): () => void;
       removeAllListeners(): void;
     };
+    // 自动更新
+    onUpdateStatus(callback: (status: any) => void): () => void;
+    updateDownload(): Promise<void>;
+    updateInstall(): Promise<void>;
+    getUpdateStatus(): Promise<any>;
   };
 }
 
