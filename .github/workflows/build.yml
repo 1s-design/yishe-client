@@ -138,8 +138,8 @@ jobs:
           rm -rf release "$RUNNER_TEMP/electron-cache" "$RUNNER_TEMP/electron-builder-cache"
           mkdir -p "$RUNNER_TEMP/electron-cache" "$RUNNER_TEMP/electron-builder-cache"
 
-      - name: Package Electron app
-        run: npx electron-builder ${{ matrix.build_args }} --publish always
+      - name: Package Electron app (no publish)
+        run: npx electron-builder ${{ matrix.build_args }} --publish never
         env:
           GH_TOKEN: ${{ secrets.github_token }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
@@ -147,7 +147,7 @@ jobs:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
-      - name: List release artifacts
+      - name: List release artifacts (debug)
         shell: bash
         run: |
           echo "=== release/ directory ==="
@@ -155,45 +155,46 @@ jobs:
           echo "=== yml files ==="
           find release -name "*.yml" 2>/dev/null || echo "(no yml files)"
 
-  # electron-builder 会附带 latest*.yml、blockmap 等；修剪多余文件但保留 yml（自动更新需要）
-  prune-release-assets:
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.cos_platform }}
+          path: |
+            release/yishe-client.*
+            release/latest*.yml
+          if-no-files-found: error
+          retention-days: 1
+
+  # 构建完成后统一发布，确保 yml 文件和安装包一起上传
+  publish-release:
     needs: [check-version, build]
     if: success() && needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Remove extra release assets
-        uses: actions/github-script@v7
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
         with:
-          script: |
-            const keep = new Set([
-              'yishe-client.exe',
-              'yishe-client.dmg',
-              'latest.yml',
-              'latest-mac.yml',
-            ]);
-            const tag = `v${{ needs.check-version.outputs.version }}`;
+          name: build-mac
+          path: release/mac
 
-            let release;
-            try {
-              const res = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag,
-              });
-              release = res.data;
-            } catch (e) {
-              core.warning(`未找到 tag ${tag} 的 release，跳过修剪：${e.message}`);
-              return;
-            }
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-windows
+          path: release/windows
 
-            const assets = release.assets || [];
-            for (const asset of assets) {
-              if (keep.has(asset.name)) continue;
-              await github.rest.repos.deleteReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                asset_id: asset.id,
-              });
-              core.info(`已删除 release 附加文件: ${asset.name}`);
-            }
-
+      - name: Create Release and upload all assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: v${{ needs.check-version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            release/mac/yishe-client.dmg
+            release/mac/latest*.yml
+            release/windows/yishe-client.exe
+            release/windows/latest*.yml
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.github_token }}
