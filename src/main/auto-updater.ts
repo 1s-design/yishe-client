@@ -94,6 +94,9 @@ export function initAutoUpdater(window: BrowserWindow): void {
   });
 }
 
+/** 检查更新超时时间（毫秒） */
+const CHECK_TIMEOUT = 15000;
+
 /**
  * 检查更新（启动时调用，仅生产环境）
  */
@@ -107,12 +110,23 @@ export async function checkForUpdates(): Promise<void> {
   try {
     currentUpdateInfo = { state: "checking" };
     sendUpdateToRenderer(currentUpdateInfo);
-    await autoUpdater.checkForUpdates();
+    // 超时控制：避免网络问题时一直卡在"检查中"
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("timeout")), CHECK_TIMEOUT);
+    });
+    await Promise.race([autoUpdater.checkForUpdates(), timeoutPromise]);
   } catch (error) {
-    currentUpdateInfo = {
-      state: "error",
-      error: error instanceof Error ? error.message : "检查更新失败",
-    };
+    if ((error as Error)?.message === "timeout") {
+      currentUpdateInfo = {
+        state: "error",
+        error: "检查超时，请稍后重试",
+      };
+    } else {
+      currentUpdateInfo = {
+        state: "error",
+        error: error instanceof Error ? error.message : "检查更新失败",
+      };
+    }
     sendUpdateToRenderer(currentUpdateInfo);
   }
 }

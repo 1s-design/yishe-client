@@ -36,7 +36,7 @@ interface ExtensionConnectionStatus {
 
 const { showToast } = useToast();
 const appVersion = ref("");
-const updateStatus = ref<{ state: string; version?: string; progress?: number }>({ state: "idle" });
+const updateStatus = ref<{ state: string; version?: string; progress?: number; error?: string }>({ state: "idle" });
 const serverStatus = ref(false);
 const isLoggedIn = ref(false);
 const userInfo = ref<UserInfo | null>(null);
@@ -1160,16 +1160,24 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
           ? "下载完成，重启后生效"
           : updateStatus.value.state === "checking"
             ? "正在检查更新..."
-            : "已是最新版本",
+            : updateStatus.value.state === "error"
+              ? updateStatus.value.error || "检查失败"
+              : "已是最新版本",
     icon: "mdi-tag-outline",
-    tone: updateStatus.value.state === "available" ? "warning" : "muted",
+    tone: updateStatus.value.state === "available"
+      ? "warning"
+      : updateStatus.value.state === "error"
+        ? "danger"
+        : "muted",
     actions: updateStatus.value.state === "available"
       ? [{ key: "check-update", label: "更新", icon: "mdi-download" }]
       : updateStatus.value.state === "downloaded"
         ? [{ key: "check-update", label: "重启", icon: "mdi-restart" }]
-        : !import.meta.env.PROD
-          ? []
-          : [{ key: "check-update", label: "检查更新", icon: "mdi-refresh" }],
+        : updateStatus.value.state === "error"
+          ? [{ key: "check-update", label: "重试", icon: "mdi-refresh" }]
+          : !import.meta.env.PROD
+            ? []
+            : [{ key: "check-update", label: "检查更新", icon: "mdi-refresh" }],
   },
   {
     key: "ws",
