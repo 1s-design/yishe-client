@@ -36,6 +36,7 @@ interface ExtensionConnectionStatus {
 
 const { showToast } = useToast();
 const appVersion = ref("");
+const updateStatus = ref<{ state: string; version?: string; progress?: number }>({ state: "idle" });
 const serverStatus = ref(false);
 const isLoggedIn = ref(false);
 const userInfo = ref<UserInfo | null>(null);
@@ -1089,6 +1090,19 @@ function handleDashboardCardAction(key: string) {
     void refreshVideoTemplateFromDashboard();
     return;
   }
+  if (key === "check-update") {
+    const nativeApi = getNativeApi();
+    if (updateStatus.value.state === "downloaded") {
+      nativeApi?.updateInstall?.();
+    } else if (updateStatus.value.state === "available") {
+      nativeApi?.updateDownload?.();
+    } else {
+      // 手动检查更新
+      updateStatus.value = { state: "checking" };
+      nativeApi?.getUpdateStatus?.();
+    }
+    return;
+  }
   if (key === "browser-automation-toggle") {
     if (uploaderServiceStatus.value === "running") {
       void closeBrowserAutomationFromDashboard();
@@ -1134,6 +1148,29 @@ const serviceModeLabel = computed(() =>
 );
 
 const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
+  {
+    key: "version",
+    title: "客户端版本",
+    value: appVersion.value || "获取中...",
+    description: updateStatus.value.state === "available"
+      ? `发现新版本 ${updateStatus.value.version}，建议更新`
+      : updateStatus.value.state === "downloading"
+        ? `下载中 ${updateStatus.value.progress || 0}%`
+        : updateStatus.value.state === "downloaded"
+          ? "下载完成，重启后生效"
+          : updateStatus.value.state === "checking"
+            ? "正在检查更新..."
+            : "已是最新版本",
+    icon: "mdi-tag-outline",
+    tone: updateStatus.value.state === "available" ? "warning" : "muted",
+    actions: updateStatus.value.state === "available"
+      ? [{ key: "check-update", label: "更新", icon: "mdi-download" }]
+      : updateStatus.value.state === "downloaded"
+        ? [{ key: "check-update", label: "重启", icon: "mdi-restart" }]
+        : !import.meta.env.PROD
+          ? []
+          : [{ key: "check-update", label: "检查更新", icon: "mdi-refresh" }],
+  },
   {
     key: "ws",
     title: "远程连接",
@@ -1397,6 +1434,13 @@ onMounted(() => {
       (import.meta.env.VITE_APP_VERSION as string | undefined) || "web";
     appVersion.value = fallbackVersion;
     websocketClient.updateClientInfo({ appVersion: fallbackVersion });
+  }
+
+  // 监听自动更新状态
+  if (typeof nativeApi?.onUpdateStatus === "function") {
+    nativeApi.onUpdateStatus((status: { state: string; version?: string; progress?: number }) => {
+      updateStatus.value = status;
+    });
   }
 
   if (typeof nativeApi?.getWorkspaceDirectory === "function") {
