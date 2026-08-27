@@ -588,7 +588,7 @@ function shouldForceTrayMode(): boolean {
   return app.isPackaged;
 }
 
-function createWindow(): BrowserWindow {
+function createWindow(): void {
   const createdAt = Date.now();
   let hasShownMainWindow = false;
   const showMainWindow = (reason: string) => {
@@ -1132,6 +1132,7 @@ function schedulePostWindowStartupTasks() {
         });
       });
   }, 2500);
+
 }
 
 // This method will be called when Electron has finished
@@ -1738,18 +1739,14 @@ app.whenReady().then(() => {
     }
   });
 
-  return mainWindow;
-}
-
-function startApp(): void {
-  const mainWindow = createWindow();
+  createWindow();
 
   // 创建系统托盘
   createTray();
 
   // 初始化自动更新（窗口创建后，仅生产环境生效）
   import("./auto-updater").then(({ initAutoUpdater, checkForUpdates, startDownload, quitAndInstall, getUpdateInfo }) => {
-    initAutoUpdater(mainWindow);
+    initAutoUpdater(mainWindow!);
     // 延迟 5 秒检查更新，避免影响启动速度
     setTimeout(() => {
       checkForUpdates();
@@ -1795,9 +1792,6 @@ function startApp(): void {
   powerMonitor.on("unlock-screen", () => {
     sendAppRuntimeEvent("screen-unlocked");
   });
-
-  // 启动应用主逻辑
-  startApp();
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common
