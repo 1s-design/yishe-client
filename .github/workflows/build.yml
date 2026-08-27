@@ -154,7 +154,9 @@ jobs:
           name: v${{ needs.check-version.outputs.version }}
           draft: false
           prerelease: false
-          files: ${{ matrix.artifact_path }}
+          files: |
+            ${{ matrix.artifact_path }}
+            release/latest*.yml
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.github_token }}
@@ -172,6 +174,8 @@ jobs:
             const keep = new Set([
               'yishe-client.exe',
               'yishe-client.dmg',
+              'latest.yml',
+              'latest-mac.yml',
             ]);
             const tag = `v${{ needs.check-version.outputs.version }}`;
 
