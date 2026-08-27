@@ -147,6 +147,14 @@ jobs:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
+      - name: List release artifacts
+        shell: bash
+        run: |
+          echo "=== release/ directory ==="
+          ls -la release/ 2>/dev/null || echo "(release/ not found)"
+          echo "=== yml files ==="
+          find release -name "*.yml" 2>/dev/null || echo "(no yml files)"
+
   # electron-builder 会附带 latest*.yml、blockmap 等；修剪多余文件但保留 yml（自动更新需要）
   prune-release-assets:
     needs: [check-version, build]
