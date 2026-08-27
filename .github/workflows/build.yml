@@ -250,16 +250,19 @@ jobs:
           fi
 
           # 测速：上传 1MB 匿名探测（仅测 TCP+TLS 握手+上行带宽）
+          # 使用临时文件避免 base64|head 管道产生 SIGPIPE (Broken pipe)
           echo ""
           echo "=== 上传带宽测速（1MB 测试文件）==="
           SPEED_KEY="_gha_speedtest/$(date +%s).bin"
-          SPEED_BODY=$(head -c 1048576 /dev/urandom | base64 | head -c 1048576)
+          SPEED_FILE=$(mktemp)
+          head -c 1048576 /dev/urandom > "$SPEED_FILE"
           START_MS=$(date +%s%3N)
           SPEED_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
             -X PUT \
             -H "Content-Type: application/octet-stream" \
-            --data-binary "$SPEED_BODY" \
+            --data-binary @"$SPEED_FILE" \
             "${ENDPOINT}/${SPEED_KEY}" || echo "000")
+          rm -f "$SPEED_FILE"
           END_MS=$(date +%s%3N)
           ELAPSED_MS=$((END_MS - START_MS))
           if [[ "$SPEED_CODE" == "000" ]]; then
