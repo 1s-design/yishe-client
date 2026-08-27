@@ -79,6 +79,29 @@
           >
             登录
           </el-button>
+
+          <!-- 分割线 -->
+          <div class="login-divider">
+            <span class="login-divider__line" />
+            <span class="login-divider__text">或</span>
+            <span class="login-divider__line" />
+          </div>
+
+          <!-- 一键授权登录 -->
+          <el-button
+            class="login-oauth-btn"
+            :loading="oauthLoading"
+            @click="handleOAuthLogin"
+          >
+            <span class="login-oauth-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                <polyline points="10 17 15 12 10 7" />
+                <line x1="15" y1="12" x2="3" y2="12" />
+              </svg>
+            </span>
+            一键授权登录
+          </el-button>
         </el-form>
       </div>
 
@@ -92,6 +115,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { login } from "../api/auth";
 import { getApiBaseByMode, getServiceMode } from "../config/api";
 import { updateApiBaseUrl } from "../api/request";
+import { openAuthorizePage } from "../api/oauth";
 import loginIllustration from "../assets/login/mondrian-composition.jpg";
 import loginIllustrationNoII from "../assets/login/mondrian-composition-no-ii.jpg";
 import girlWithAPearlEarring from "../assets/login/girl-with-a-pearl-earring.jpg";
@@ -100,6 +124,7 @@ import solitaryTree from "../assets/login/solitary-tree.jpg";
 const emit = defineEmits<{ (e: "login-success"): void }>();
 
 const loading = ref(false);
+const oauthLoading = ref(false);
 const errorMessage = ref("");
 const appIconSrc = new URL("../assets/icon.png", import.meta.url).href;
 const loginIllustrations = [
@@ -147,6 +172,19 @@ async function handleLogin() {
       : message || "登录失败，请重试";
   } finally {
     loading.value = false;
+  }
+}
+
+/** 一键授权登录 */
+async function handleOAuthLogin() {
+  oauthLoading.value = true;
+  try {
+    // 打开浏览器跳转到授权页面
+    openAuthorizePage();
+  } catch (error: any) {
+    errorMessage.value = error?.message || "打开授权页面失败";
+  } finally {
+    oauthLoading.value = false;
   }
 }
 </script>
@@ -303,6 +341,54 @@ async function handleLogin() {
 .login-submit.is-disabled:hover {
   background: var(--theme-surface-muted) !important;
   color: var(--theme-text-soft) !important;
+}
+
+/* 分割线 */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+}
+
+.login-divider__line {
+  flex: 1;
+  height: 1px;
+  background: var(--theme-border);
+}
+
+.login-divider__text {
+  font-size: 11px;
+  color: var(--theme-text-soft);
+}
+
+/* 一键授权登录按钮 */
+.login-oauth-btn {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--theme-border) !important;
+  border-radius: 8px;
+  background: var(--theme-surface) !important;
+  color: var(--theme-text) !important;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.login-oauth-btn:hover {
+  border-color: var(--theme-text) !important;
+  background: var(--theme-surface-muted) !important;
+}
+
+.login-oauth-icon {
+  display: flex;
+  align-items: center;
+  color: var(--theme-text-muted);
 }
 
 .login-footer {
