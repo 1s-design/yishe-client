@@ -71,7 +71,7 @@ win:
         - yishe-ps-windows.exe
         - ps-automation/yishe-ps-windows.exe
 nsis:
-  oneClick: true
+  oneClick: false
   allowToChangeInstallationDirectory: true
   differentialPackage: false
 mac:
