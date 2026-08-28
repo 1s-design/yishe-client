@@ -1099,7 +1099,7 @@ function handleDashboardCardAction(key: string) {
     } else {
       // 手动检查更新
       updateStatus.value = { state: "checking" };
-      nativeApi?.getUpdateStatus?.();
+      nativeApi?.checkForUpdates?.();
     }
     return;
   }

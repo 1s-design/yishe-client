@@ -52,7 +52,9 @@ extraResources:
 generateUpdatesFilesForAllChannels: false
 win:
   target:
-    - portable
+    - target: nsis
+      arch:
+        - x64
   icon: build/icon.ico
   executableName: yishe-client
   artifactName: yishe-client.${ext}
@@ -69,11 +71,14 @@ win:
         - yishe-ps-windows.exe
         - ps-automation/yishe-ps-windows.exe
 nsis:
+  oneClick: true
+  allowToChangeInstallationDirectory: true
   differentialPackage: false
 mac:
   category: public.app-category.utilities
   target:
     - dmg
+    - zip
   icon: build/icon.icns
   executableName: yishe-client
   binaries:
@@ -97,7 +102,6 @@ dmg:
   title: yishe-client
   icon: build/icon.icns
   artifactName: yishe-client.${ext}
-  writeUpdateInfo: false
 linux:
   target:
     - target: AppImage
@@ -126,7 +130,7 @@ linux:
     Keywords: yishe;client;
 npmRebuild: false
 publish:
-  provider: github
-  releaseType: release
+  provider: generic
+  url: https://gh-proxy.com/https://github.com/1s-design/yishe-client/releases/latest/download/
 electronDownload:
   mirror: https://github.com/electron/electron/releases/download/

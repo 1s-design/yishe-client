@@ -1763,6 +1763,11 @@ app.whenReady().then(() => {
       quitAndInstall();
     });
 
+    // 渲染进程请求：检查更新
+    ipcMain.handle("app:check-for-updates", async () => {
+      return await checkForUpdates();
+    });
+
     // 渲染进程请求：获取当前更新状态
     ipcMain.handle("app:update-status", () => {
       return getUpdateInfo();

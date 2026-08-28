@@ -443,6 +443,7 @@ interface Window {
     onUpdateStatus(callback: (status: any) => void): () => void;
     updateDownload(): Promise<void>;
     updateInstall(): Promise<void>;
+    checkForUpdates(): Promise<any>;
     getUpdateStatus(): Promise<any>;
   };
 }

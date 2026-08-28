@@ -844,6 +844,7 @@ const api = {
   },
   updateDownload: () => ipcRenderer.invoke("app:update-download"),
   updateInstall: () => ipcRenderer.invoke("app:update-install"),
+  checkForUpdates: () => ipcRenderer.invoke("app:check-for-updates"),
   getUpdateStatus: () => ipcRenderer.invoke("app:update-status"),
 };
 

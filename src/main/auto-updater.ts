@@ -34,19 +34,32 @@ let mainWindow: BrowserWindow | null = null;
 let currentUpdateInfo: UpdateInfo = { state: "idle" };
 let isAutoCheckEnabled = true;
 
+/** 检查更新超时时间（毫秒） */
+const CHECK_TIMEOUT = 30000;
+
 /**
  * 初始化自动更新
  */
 export function initAutoUpdater(window: BrowserWindow): void {
   mainWindow = window;
 
-  // 配置：启动时自动检查
-  autoUpdater.autoDownload = false; // 不自动下载，等用户确认
+  // 设置 logger 方便排查
+  autoUpdater.logger = console;
+
+  // 配置更新源：使用 generic 模式 + gh-proxy.com 加速
+  autoUpdater.setFeedURL({
+    provider: "generic",
+    url: "https://gh-proxy.com/https://github.com/1s-design/yishe-client/releases/latest/download/",
+  });
+
+  // 配置：启动时不自动下载，等用户确认
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true; // 退出时自动安装（下载完成后）
   autoUpdater.allowDowngrade = false;
 
   // 检查到更新可用
   autoUpdater.on("update-available", (info) => {
+    console.log("[AutoUpdater] 发现新版本:", info.version);
     currentUpdateInfo = {
       state: "available",
       version: info.version,
@@ -57,7 +70,8 @@ export function initAutoUpdater(window: BrowserWindow): void {
   });
 
   // 没有可用更新
-  autoUpdater.on("update-not-available", () => {
+  autoUpdater.on("update-not-available", (info) => {
+    console.log("[AutoUpdater] 已是最新版本:", info?.version || "");
     currentUpdateInfo = { state: "not-available" };
     sendUpdateToRenderer(currentUpdateInfo);
   });
@@ -74,6 +88,7 @@ export function initAutoUpdater(window: BrowserWindow): void {
 
   // 下载完成
   autoUpdater.on("update-downloaded", (info) => {
+    console.log("[AutoUpdater] 更新下载完成:", info.version);
     currentUpdateInfo = {
       ...currentUpdateInfo,
       state: "downloaded",
@@ -86,6 +101,7 @@ export function initAutoUpdater(window: BrowserWindow): void {
 
   // 错误
   autoUpdater.on("error", (error) => {
+    console.error("[AutoUpdater] 更新过程出错:", error);
     currentUpdateInfo = {
       state: "error",
       error: error?.message || "更新出错",
@@ -94,20 +110,20 @@ export function initAutoUpdater(window: BrowserWindow): void {
   });
 }
 
-/** 检查更新超时时间（毫秒） */
-const CHECK_TIMEOUT = 15000;
-
 /**
- * 检查更新（启动时调用，仅生产环境）
+ * 检查更新（启动或用户手动点击时调用）
  */
-export async function checkForUpdates(): Promise<void> {
-  if (!isAutoCheckEnabled) return;
+export async function checkForUpdates(): Promise<UpdateInfo> {
+  if (!isAutoCheckEnabled) return currentUpdateInfo;
   // 开发环境不检查更新
   if (!app.isPackaged) {
+    console.log("[AutoUpdater] 开发环境跳过检查更新");
     currentUpdateInfo = { state: "not-available" };
-    return;
+    sendUpdateToRenderer(currentUpdateInfo);
+    return currentUpdateInfo;
   }
   try {
+    console.log("[AutoUpdater] 开始检查更新...");
     currentUpdateInfo = { state: "checking" };
     sendUpdateToRenderer(currentUpdateInfo);
     // 超时控制：避免网络问题时一直卡在"检查中"
@@ -116,10 +132,11 @@ export async function checkForUpdates(): Promise<void> {
     });
     await Promise.race([autoUpdater.checkForUpdates(), timeoutPromise]);
   } catch (error) {
+    console.error("[AutoUpdater] 检查更新异常:", error);
     if ((error as Error)?.message === "timeout") {
       currentUpdateInfo = {
         state: "error",
-        error: "检查超时，请稍后重试",
+        error: "检查超时，请检查网络连接",
       };
     } else {
       currentUpdateInfo = {
@@ -129,6 +146,7 @@ export async function checkForUpdates(): Promise<void> {
     }
     sendUpdateToRenderer(currentUpdateInfo);
   }
+  return currentUpdateInfo;
 }
 
 /**
