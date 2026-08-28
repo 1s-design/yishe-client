@@ -67,7 +67,8 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
-
+    permissions:
+      contents: write
     strategy:
       max-parallel: 1
       matrix:
@@ -138,66 +139,11 @@ jobs:
           rm -rf release "$RUNNER_TEMP/electron-cache" "$RUNNER_TEMP/electron-builder-cache"
           mkdir -p "$RUNNER_TEMP/electron-cache" "$RUNNER_TEMP/electron-builder-cache"
 
-      - name: Package Electron app (no publish)
-        run: npx electron-builder ${{ matrix.build_args }} --publish never
+      - name: Package Electron app
+        run: npx electron-builder ${{ matrix.build_args }} --publish always
         env:
           GH_TOKEN: ${{ secrets.github_token }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
           ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
-
-      - name: List release artifacts (debug)
-        shell: bash
-        run: |
-          echo "=== release/ directory ==="
-          ls -la release/ 2>/dev/null || echo "(release/ not found)"
-          echo "=== yml files ==="
-          find release -name "*.yml" 2>/dev/null || echo "(no yml files)"
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ matrix.cos_platform }}
-          path: |
-            release/yishe-client.*
-            release/latest*.yml
-          if-no-files-found: error
-          retention-days: 1
-
-  # 构建完成后统一发布，确保 yml 文件和安装包一起上传
-  publish-release:
-    needs: [check-version, build]
-    if: success() && needs.check-version.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      actions: read
-    steps:
-      - name: Download macOS artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-mac
-          path: release/mac
-
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-windows
-          path: release/windows
-
-      - name: Create Release and upload all assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.check-version.outputs.version }}
-          name: v${{ needs.check-version.outputs.version }}
-          draft: false
-          prerelease: false
-          files: |
-            release/mac/yishe-client.dmg
-            release/mac/latest*.yml
-            release/windows/yishe-client.exe
-            release/windows/latest*.yml
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.github_token }}
