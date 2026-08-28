@@ -140,10 +140,50 @@ jobs:
           mkdir -p "$RUNNER_TEMP/electron-cache" "$RUNNER_TEMP/electron-builder-cache"
 
       - name: Package Electron app
-        run: npx electron-builder ${{ matrix.build_args }} --publish always
+        run: npx electron-builder ${{ matrix.build_args }} --publish never
         env:
           GH_TOKEN: ${{ secrets.github_token }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.csc_identity_auto_discovery }}
           ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ runner.os }}
+          path: release/
+          retention-days: 1
+
+  publish:
+    needs: [check-version, build]
+    if: success() && needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-macOS
+          path: release/mac
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-Windows
+          path: release/windows
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: v${{ needs.check-version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            release/mac/*
+            release/windows/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.github_token }}
