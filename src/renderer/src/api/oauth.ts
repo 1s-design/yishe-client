@@ -41,7 +41,7 @@ function getRedirectUri(): string {
   return 'https://admin.1s.design/oauth/callback'
 }
 
-/** 生成授权 URL */
+/** 生成授权 URL（yishe-admin 使用 hash 路由） */
 export function buildAuthorizeUrl(state?: string): string {
   const baseUrl = getAuthorizeBaseUrl()
   const redirectUri = getRedirectUri()
@@ -54,7 +54,8 @@ export function buildAuthorizeUrl(state?: string): string {
   if (state) {
     params.set('state', state)
   }
-  return `${baseUrl}/oauth/authorize?${params.toString()}`
+  // hash 路由：/#/oauth/authorize?...
+  return `${baseUrl}/#/oauth/authorize?${params.toString()}`
 }
 
 /** 打开授权页面 */
