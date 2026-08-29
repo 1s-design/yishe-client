@@ -1,5 +1,44 @@
+/**
+ * 豆瓣热门平台模块
+ *
+ * 注意：核心采集逻辑已迁移至服务端能力定义（hotsearch-douban.capability.ts）
+ * 本模块作为兼容层，通过 DynamicCapabilityManager 从服务端拉取最新脚本执行。
+ *
+ * 支持 executionMode：
+ * - server: 服务端直接执行（默认）
+ * - client: 客户端本地执行
+ */
+
 import type { PlatformModule } from '../types'
-import axios from 'axios'
+import { DynamicCapabilityManager } from '../../mcp-server/dynamic-capability-manager'
+import axios from 'axios';
+
+/**
+ * 通过服务端执行（server 模式）
+ */
+async function executeViaServer(params: Record<string, any>): Promise<any> {
+  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const endpoint = `${serverUrl}/api/workflow/node-capabilities/hotsearch_douban/execute`;
+
+  let authHeader = 'Bearer 1sdesign';
+  try {
+    const { getTokenValue } = await import('../../server');
+    const clientToken = getTokenValue?.();
+    if (clientToken) {
+      authHeader = `Bearer ${clientToken}`;
+    }
+  } catch { /* fallback */ }
+
+  const res = await axios.post(endpoint, {
+    params: params || {},
+  }, {
+    timeout: 15000,
+    headers: { authorization: authHeader },
+  });
+
+  const body = res.data;
+  return body?.data?.data || body?.data || body;
+}
 
 const douban: PlatformModule = {
   config: {
@@ -13,22 +52,27 @@ const douban: PlatformModule = {
   },
 
   async fetch(ctx) {
-    const { data } = await axios.get('https://m.douban.com/rexxar/api/v2/search/hots?ck=', {
-      timeout: ctx.timeout,
-      headers: {
-        'User-Agent': ctx.userAgent,
-        'Referer': 'https://m.douban.com/',
-        'Accept': 'application/json, text/plain, */*',
-      },
-    })
+    const executionMode = (ctx as any)?.executionMode || 'server';
+    const maxCount = (ctx as any)?.maxCount || this.config.maxItems;
 
-    const list = Array.isArray(data?.gallery_topics) ? data.gallery_topics : []
-    return list.slice(0, this.config.maxItems).map((item: any, index: number) => ({
-      rank: index + 1,
-      title: item.title || item.name || '未知',
-      hot: item.read_count ? `${(item.read_count / 10000).toFixed(1)}万` : '',
-      url: item.url || undefined,
-    }))
+    let result: any;
+
+    if (executionMode === 'client') {
+      result = await DynamicCapabilityManager.executeCapability('hotsearch_douban', { maxCount });
+    } else {
+      result = await executeViaServer({ maxCount });
+    }
+
+    if (result && Array.isArray(result.items)) {
+      return result.items.map((item: any) => ({
+        rank: item.rank,
+        title: item.title,
+        hot: item.hot,
+        url: item.url,
+      }));
+    }
+
+    return [];
   },
 }
 

@@ -1,5 +1,44 @@
+/**
+ * 今日头条热搜平台模块
+ *
+ * 注意：核心采集逻辑已迁移至服务端能力定义（hotsearch-toutiao.capability.ts）
+ * 本模块作为兼容层，通过 DynamicCapabilityManager 从服务端拉取最新脚本执行。
+ *
+ * 支持 executionMode：
+ * - server: 服务端直接执行（默认）
+ * - client: 客户端本地执行
+ */
+
 import type { PlatformModule } from '../types'
-import axios from 'axios'
+import { DynamicCapabilityManager } from '../../mcp-server/dynamic-capability-manager'
+import axios from 'axios';
+
+/**
+ * 通过服务端执行（server 模式）
+ */
+async function executeViaServer(params: Record<string, any>): Promise<any> {
+  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const endpoint = `${serverUrl}/api/workflow/node-capabilities/hotsearch_toutiao/execute`;
+
+  let authHeader = 'Bearer 1sdesign';
+  try {
+    const { getTokenValue } = await import('../../server');
+    const clientToken = getTokenValue?.();
+    if (clientToken) {
+      authHeader = `Bearer ${clientToken}`;
+    }
+  } catch { /* fallback */ }
+
+  const res = await axios.post(endpoint, {
+    params: params || {},
+  }, {
+    timeout: 15000,
+    headers: { authorization: authHeader },
+  });
+
+  const body = res.data;
+  return body?.data?.data || body?.data || body;
+}
 
 const toutiao: PlatformModule = {
   config: {
@@ -13,28 +52,28 @@ const toutiao: PlatformModule = {
   },
 
   async fetch(ctx) {
-    const { data } = await axios.get(
-      'https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc&_signature=_02B4Z6wo00d01uZ8GWAAAIDDz3iHH3KJrErmWB3AANEo4eBSpe-2Jfe9R-.N8hsm2L3TJLUZ0SWUoOwDqNk3r3Kdk4SHDvLuX9UB8I.YXoCkKBDJl9GGqFQRg1CtjnvMjNw0q1W2jBz4V3JF48',
-      {
-        timeout: ctx.timeout,
-        headers: {
-          'User-Agent': ctx.userAgent,
-          'Referer': 'https://www.toutiao.com/',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-origin',
-        },
-      },
-    )
+    const executionMode = (ctx as any)?.executionMode || 'server';
+    const maxCount = (ctx as any)?.maxCount || this.config.maxItems;
 
-    const list = Array.isArray(data?.data) ? data.data : []
-    return list.slice(0, this.config.maxItems).map((item: any, index: number) => ({
-      rank: index + 1,
-      title: item.Title || '未知',
-      hot: item.HotValue || '',
-      url: item.Url || undefined,
-      tag: item.LabelDesc || undefined,
-    }))
+    let result: any;
+
+    if (executionMode === 'client') {
+      result = await DynamicCapabilityManager.executeCapability('hotsearch_toutiao', { maxCount });
+    } else {
+      result = await executeViaServer({ maxCount });
+    }
+
+    if (result && Array.isArray(result.items)) {
+      return result.items.map((item: any) => ({
+        rank: item.rank,
+        title: item.title,
+        hot: item.hot,
+        tag: item.tag,
+        url: item.url,
+      }));
+    }
+
+    return [];
   },
 }
 

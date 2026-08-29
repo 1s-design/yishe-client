@@ -96,24 +96,39 @@ async function executeViaServer(type: string, params: Record<string, any>): Prom
  * - server: 通过服务端执行（默认）
  * - client: 通过客户端本地执行（DynamicCapabilityManager）
  */
+// 支持双模式执行的平台列表
+const DUAL_MODE_PLATFORMS = ['douyin', 'weibo', 'bilibili', 'zhihu', 'toutiao', 'douban', 'v2ex'];
+
+// 平台 key → capability type 映射
+const PLATFORM_TO_CAPABILITY: Record<string, string> = {
+  douyin: 'hotsearch_douyin',
+  weibo: 'hotsearch_weibo',
+  bilibili: 'hotsearch_bilibili',
+  zhihu: 'hotsearch_zhihu',
+  toutiao: 'hotsearch_toutiao',
+  douban: 'hotsearch_douban',
+  v2ex: 'hotsearch_v2ex',
+};
+
 export async function executePlatformCollect(
   platformKey: string,
   executionMode: string = 'server',
   maxCount: number = 20,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
-    // 抖音平台：支持 executionMode 选择
-    if (platformKey === 'douyin') {
-      console.log(`[MCP] 🎯 抖音平台采集，执行模式: ${executionMode}`);
+    // 支持双模式执行的平台
+    if (DUAL_MODE_PLATFORMS.includes(platformKey)) {
+      console.log(`[MCP] 🎯 ${platformKey} 平台采集，执行模式: ${executionMode}`);
 
       let result: any;
+      const capabilityType = PLATFORM_TO_CAPABILITY[platformKey];
 
       if (executionMode === 'client') {
         // 客户端执行模式：从服务端拉取脚本，在客户端本地执行
-        result = await DynamicCapabilityManager.executeCapability('hotsearch_douyin', { maxCount });
+        result = await DynamicCapabilityManager.executeCapability(capabilityType, { maxCount });
       } else {
         // 服务端执行模式（默认）：调用服务端执行接口
-        result = await executeViaServer('hotsearch_douyin', { maxCount });
+        result = await executeViaServer(capabilityType, { maxCount });
       }
 
       return {
