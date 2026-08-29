@@ -120,6 +120,10 @@ import loginIllustration from "../assets/login/mondrian-composition.jpg";
 import loginIllustrationNoII from "../assets/login/mondrian-composition-no-ii.jpg";
 import girlWithAPearlEarring from "../assets/login/girl-with-a-pearl-earring.jpg";
 import solitaryTree from "../assets/login/solitary-tree.jpg";
+import lamuTown from "../assets/login/lamu-town.jpg";
+import peacockAndPeonies from "../assets/login/peacock-and-peonies.jpg";
+import chineseLandscape1 from "../assets/login/chinese-landscape-art-1.jpg";
+import chineseLandscape2 from "../assets/login/chinese-landscape-art-2.jpg";
 
 const emit = defineEmits<{ (e: "login-success"): void }>();
 
@@ -127,13 +131,18 @@ const loading = ref(false);
 const oauthLoading = ref(false);
 const errorMessage = ref("");
 const appIconSrc = new URL("../assets/icon.png", import.meta.url).href;
+
 const loginIllustrations = [
   loginIllustration,
   loginIllustrationNoII,
   girlWithAPearlEarring,
   solitaryTree,
+  lamuTown,
+  peacockAndPeonies,
+  chineseLandscape1,
+  chineseLandscape2,
 ];
-const activeIllustration = ref(0);
+const activeIllustration = ref(Math.floor(Math.random() * loginIllustrations.length));
 let illustrationTimer: number | null = null;
 const form = reactive({ account: "", password: "" });
 const formValid = computed(
@@ -143,8 +152,11 @@ const formValid = computed(
 onMounted(() => {
   updateApiBaseUrl(getApiBaseByMode(getServiceMode()));
   illustrationTimer = window.setInterval(() => {
-    activeIllustration.value =
-      (activeIllustration.value + 1) % loginIllustrations.length;
+    let next = Math.floor(Math.random() * loginIllustrations.length);
+    if (next === activeIllustration.value && loginIllustrations.length > 1) {
+      next = (next + 1) % loginIllustrations.length;
+    }
+    activeIllustration.value = next;
   }, 8000);
 });
 
@@ -405,8 +417,9 @@ async function handleOAuthLogin() {
   min-width: 0;
   z-index: 1;
   overflow: hidden;
-  border-top-right-radius: clamp(10px, 1.2vw, 16px);
-  border-bottom-right-radius: clamp(10px, 1.2vw, 16px);
+  border-top-right-radius: clamp(6px, 0.8vw, 10px);
+  border-bottom-right-radius: clamp(6px, 0.8vw, 10px);
+  corner-shape: squircle;
   background: var(--theme-surface);
   box-shadow: var(--theme-shadow-md);
 }
