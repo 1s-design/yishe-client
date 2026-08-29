@@ -36,7 +36,15 @@ interface ExtensionConnectionStatus {
 
 const { showToast } = useToast();
 const appVersion = ref("");
-const updateStatus = ref<{ state: string; version?: string; progress?: number; error?: string }>({ state: "idle" });
+const updateStatus = ref<{
+  state: string;
+  version?: string;
+  currentVersion?: string;
+  progress?: number;
+  error?: string;
+  releaseUrl?: string;
+  isDev?: boolean;
+}>({ state: "idle" });
 const serverStatus = ref(false);
 const isLoggedIn = ref(false);
 const userInfo = ref<UserInfo | null>(null);
@@ -1095,7 +1103,12 @@ function handleDashboardCardAction(key: string) {
     if (updateStatus.value.state === "downloaded") {
       nativeApi?.updateInstall?.();
     } else if (updateStatus.value.state === "available") {
-      nativeApi?.updateDownload?.();
+      if (updateStatus.value.isDev && updateStatus.value.releaseUrl) {
+        const url = updateStatus.value.releaseUrl;
+        nativeApi?.openExternal?.(url) || window.open(url, "_blank");
+      } else {
+        nativeApi?.updateDownload?.();
+      }
     } else {
       // 手动检查更新
       updateStatus.value = { state: "checking" };
@@ -1153,7 +1166,9 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
     title: "客户端版本",
     value: appVersion.value || "获取中...",
     description: updateStatus.value.state === "available"
-      ? `发现新版本 ${updateStatus.value.version}，建议更新`
+      ? (updateStatus.value.isDev
+          ? `发现线上新版本 ${updateStatus.value.version} (开发环境)`
+          : `发现新版本 ${updateStatus.value.version}，建议更新`)
       : updateStatus.value.state === "downloading"
         ? `下载中 ${updateStatus.value.progress || 0}%`
         : updateStatus.value.state === "downloaded"
@@ -1162,22 +1177,28 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
             ? "正在检查更新..."
             : updateStatus.value.state === "error"
               ? updateStatus.value.error || "检查失败"
-              : "已是最新版本",
+              : updateStatus.value.state === "not-available"
+                ? (updateStatus.value.isDev
+                    ? `已是最新版本 (v${updateStatus.value.version || appVersion.value}) [开发版]`
+                    : `当前已是最新版本 (v${appVersion.value})`)
+                : "点击检查更新",
     icon: "mdi-tag-outline",
     tone: updateStatus.value.state === "available"
       ? "warning"
       : updateStatus.value.state === "error"
         ? "danger"
-        : "muted",
+        : updateStatus.value.state === "downloaded"
+          ? "success"
+          : "muted",
     actions: updateStatus.value.state === "available"
-      ? [{ key: "check-update", label: "更新", icon: "mdi-download" }]
+      ? (updateStatus.value.isDev
+          ? [{ key: "check-update", label: "查看发布", icon: "mdi-open-in-new" }]
+          : [{ key: "check-update", label: "更新", icon: "mdi-download" }])
       : updateStatus.value.state === "downloaded"
         ? [{ key: "check-update", label: "重启", icon: "mdi-restart" }]
         : updateStatus.value.state === "error"
           ? [{ key: "check-update", label: "重试", icon: "mdi-refresh" }]
-          : !import.meta.env.PROD
-            ? []
-            : [{ key: "check-update", label: "检查更新", icon: "mdi-refresh" }],
+          : [{ key: "check-update", label: "检查更新", icon: "mdi-refresh" }],
   },
   {
     key: "ws",

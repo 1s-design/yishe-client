@@ -10,7 +10,7 @@
             发现新版本 {{ updateInfo.version }}
           </div>
           <div class="update-notification__hint">
-            {{ downloading ? `下载中 ${progress}%` : "点击下载更新" }}
+            {{ updateInfo.isDev ? "开发环境：点击打开发布页面" : (downloading ? `下载中 ${progress}%` : "点击下载更新") }}
           </div>
           <div v-if="downloading" class="update-notification__progress">
             <div class="update-notification__progress-bar" :style="{ width: `${progress}%` }" />
@@ -28,8 +28,11 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 interface UpdateInfo {
   state: string;
   version?: string;
+  currentVersion?: string;
   progress?: number;
   error?: string;
+  releaseUrl?: string;
+  isDev?: boolean;
 }
 
 const visible = ref(false);
@@ -64,6 +67,11 @@ onUnmounted(() => {
 });
 
 async function handleDownload() {
+  if (updateInfo.value.isDev) {
+    const targetUrl = updateInfo.value.releaseUrl || "https://github.com/1s-design/yishe-client/releases/latest";
+    window.api?.openExternal?.(targetUrl) || window.open(targetUrl, "_blank");
+    return;
+  }
   if (downloading.value) return;
   downloading.value = true;
   await window.api.updateDownload();

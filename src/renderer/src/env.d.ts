@@ -29,6 +29,7 @@ interface Window {
     showMainWindow(): Promise<void>;
     confirmExit(): Promise<"tray" | "quit" | "cancel">;
     getAppVersion(): Promise<string>;
+    openExternal(url: string): Promise<void>;
     saveToken(token: string): Promise<boolean>;
     getToken(): Promise<string | undefined>;
     isTokenExist(): Promise<boolean>;
