@@ -3,8 +3,6 @@
  * 为每个平台生成独立的采集工具
  */
 
-// import { z } from 'zod';
-
 // 平台配置映射
 const PLATFORM_CONFIGS: Record<string, { name: string; description: string; environment: string }> = {
   weibo: { name: '微博', description: '采集微博热搜榜', environment: 'direct' },
@@ -49,14 +47,90 @@ export function getPlatformToolDefinitions() {
   }));
 }
 
+import { DynamicCapabilityManager } from '../dynamic-capability-manager';
+import axios from 'axios';
+
+/**
+ * 通过服务端执行节点能力（server 模式）
+ */
+async function executeViaServer(type: string, params: Record<string, any>): Promise<any> {
+  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const endpoint = `${serverUrl}/api/workflow/node-capabilities/${type}/execute`;
+
+  console.log(`[MCP] 🔄 通过服务端执行节点能力: ${type} -> ${endpoint}`);
+
+  // 使用客户端统一的 token（如果已登录），否则使用内置 super token
+  let authHeader = 'Bearer 1sdesign';
+  try {
+    const { getTokenValue } = await import('../server');
+    const clientToken = getTokenValue?.();
+    if (clientToken) {
+      authHeader = `Bearer ${clientToken}`;
+    }
+  } catch {
+    // 无法导入 getTokenValue 时使用内置 token
+  }
+
+  const res = await axios.post(endpoint, {
+    params: params || {},
+  }, {
+    timeout: 15000,
+    headers: {
+      authorization: authHeader,
+    },
+  });
+
+  const body = res.data;
+  const result = body?.data?.data || body?.data || body;
+
+  if (!result) {
+    throw new Error(`服务端执行返回数据无效: ${JSON.stringify(body)}`);
+  }
+
+  return result;
+}
+
 /**
  * 执行单平台采集（同步返回结果）
+ * 支持 executionMode 参数：
+ * - server: 通过服务端执行（默认）
+ * - client: 通过客户端本地执行（DynamicCapabilityManager）
  */
 export async function executePlatformCollect(
   platformKey: string,
-  _reportToServer: boolean = false
+  executionMode: string = 'server',
+  maxCount: number = 20,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
+    // 抖音平台：支持 executionMode 选择
+    if (platformKey === 'douyin') {
+      console.log(`[MCP] 🎯 抖音平台采集，执行模式: ${executionMode}`);
+
+      let result: any;
+
+      if (executionMode === 'client') {
+        // 客户端执行模式：从服务端拉取脚本，在客户端本地执行
+        result = await DynamicCapabilityManager.executeCapability('hotsearch_douyin', { maxCount });
+      } else {
+        // 服务端执行模式（默认）：调用服务端执行接口
+        result = await executeViaServer('hotsearch_douyin', { maxCount });
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            source: executionMode === 'client' ? 'client_dynamic_capability' : 'server_direct',
+            executionMode,
+            ...result,
+          }, null, 2),
+        }],
+        isError: false,
+      };
+    }
+
+    // 其他平台：保持原有逻辑
     const { hotSearchService } = await import('../../hotsearch/hotsearch.service');
     const result = await hotSearchService.fetchAll([platformKey]);
 
@@ -69,7 +143,7 @@ export async function executePlatformCollect(
           platform: platformKey,
           name: PLATFORM_CONFIGS[platformKey]?.name || platformKey,
           itemCount: platformResult?.items?.length ?? 0,
-          items: platformResult?.items?.slice(0, 10) ?? [],
+          items: platformResult?.items?.slice(0, maxCount) ?? [],
           duration: platformResult?.duration,
           error: platformResult?.error,
           fetchedAt: (result as any).fetchedAt,
@@ -85,6 +159,7 @@ export async function executePlatformCollect(
         text: JSON.stringify({
           success: false,
           platform: platformKey,
+          executionMode,
           error: error?.message || String(error),
         }, null, 2),
       }],
@@ -98,7 +173,7 @@ export async function executePlatformCollect(
  */
 export function executeAllPlatformCollect(
   platformKeys?: string[],
-  _reportToServer: boolean = false
+  _reportToServer: boolean = false,
 ): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
   // 后台异步执行采集，不阻塞 MCP 响应
   (async () => {

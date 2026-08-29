@@ -6159,6 +6159,9 @@ ipcMain.handle("hotsearch:search", async (_e, p) => {
     const overrideCtx: Record<string, any> = {};
     if (p?.category) overrideCtx.category = p.category;
     if (p?.keyword) overrideCtx.keyword = p.keyword;
+    // 支持 executionMode 参数（server/client），默认 server
+    if (p?.executionMode) overrideCtx.executionMode = p.executionMode;
+    if (p?.maxCount) overrideCtx.maxCount = p.maxCount;
     const result = await hotSearchService.fetchPlatform(platform, overrideCtx);
     return { ok: true, data: result };
   } catch (e: any) {

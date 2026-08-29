@@ -181,17 +181,34 @@ export class McpServerManager {
       const platforms = getAllPlatformConfigs();
       for (const [key, config] of Object.entries(platforms)) {
         const toolName = `hotsearch_${key}`;
+        // 抖音平台支持 executionMode 参数
+        const isDouyin = key === 'douyin';
         this.registerTool(server, {
           name: toolName,
-          description: config.description,
+          description: config.description + (isDouyin ? ' 支持 executionMode 参数选择服务端/客户端执行。' : ''),
           zodShape: {
             reportToServer: z.boolean().optional().describe('是否上报到服务端，默认 true'),
+            ...(isDouyin ? {
+              executionMode: z.enum(['server', 'client']).optional().describe('执行模式：server（服务端执行，默认）或 client（客户端执行）'),
+              maxCount: z.number().optional().describe('获取数量，默认 20'),
+            } : {}),
           },
-          inputSchema: { reportToServer: { type: 'boolean', optional: true } },
+          inputSchema: {
+            reportToServer: { type: 'boolean', optional: true },
+            ...(isDouyin ? {
+              executionMode: { type: 'string', optional: true, description: 'server（默认）或 client' },
+              maxCount: { type: 'number', optional: true },
+            } : {}),
+          },
           category: 'hotsearch',
           capability: { key: 'platform_hotsearch', label: '平台热搜采集', description: '采集指定平台的热搜数据。' },
           actions: [{ key, label: `${key} 热搜采集`, description: config.description }],
-          handler: async (args) => executePlatformCollect(key, args.reportToServer ?? true),
+          handler: async (args) => {
+            if (isDouyin) {
+              return executePlatformCollect(key, args.executionMode || 'server', args.maxCount || 20);
+            }
+            return executePlatformCollect(key, 'server', 20);
+          },
         });
       }
 

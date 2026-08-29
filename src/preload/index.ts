@@ -663,7 +663,7 @@ const api = {
   getCoinmarketcapStatus: () => ipcRenderer.invoke("coinmarketcap:status"),
   // 热搜采集 API 导出
   hotsearchStatus: () => ipcRenderer.invoke("hotsearch:status"),
-  hotsearchSearch: (payload: { key?: string; platform?: string }) =>
+  hotsearchSearch: (payload: { key?: string; platform?: string; executionMode?: string; maxCount?: number }) =>
     ipcRenderer.invoke("hotsearch:search", payload),
   // nounproject API 导出
   searchNounProject: (payload: {
