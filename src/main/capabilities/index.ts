@@ -14,6 +14,7 @@ import { registerWikimediaCapabilities } from "./wikimedia";
 import { registerPexelsCapabilities } from "./pexels";
 import { registerPixabayCapabilities } from "./pixabay";
 import { registerRawpixelCapabilities } from "./rawpixel";
+import { registerDouyinJingxuanCapabilities } from "./douyin-jingxuan";
 import { registerStockSnapCapabilities } from "./stocksnap";
 import { registerOpenverseCapabilities } from "./openverse";
 import { registerKaboompicsCapabilities } from "./kaboompics";
@@ -99,6 +100,7 @@ export function registerAllCapabilities(): void {
   registerPexelsCapabilities();
   registerPixabayCapabilities();
   registerRawpixelCapabilities();
+  registerDouyinJingxuanCapabilities();
   registerStockSnapCapabilities();
   registerOpenverseCapabilities();
   registerKaboompicsCapabilities();
