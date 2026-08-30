@@ -1,10 +1,44 @@
 /**
- * IT之家 热门文章
- * 数据源：HTML 解析（国内直连）
+ * IT之家热门平台模块
+ *
+ * 注意：核心采集逻辑已迁移至服务端能力定义（hotsearch-ithome.capability.ts）
+ * 本模块作为兼容层，通过 DynamicCapabilityManager 从服务端拉取最新脚本执行。
+ *
+ * 支持 executionMode：
+ * - server: 服务端直接执行（默认）
+ * - client: 客户端本地执行
  */
 
 import type { PlatformModule } from '../types'
-import { createHttpClient } from '../http'
+import { DynamicCapabilityManager } from '../../mcp-server/dynamic-capability-manager'
+import axios from 'axios';
+
+/**
+ * 通过服务端执行（server 模式）
+ */
+async function executeViaServer(params: Record<string, any>): Promise<any> {
+  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const endpoint = `${serverUrl}/api/workflow/node-capabilities/hotsearch_ithome/execute`;
+
+  let authHeader = 'Bearer 1sdesign';
+  try {
+    const { getTokenValue } = await import('../../server');
+    const clientToken = getTokenValue?.();
+    if (clientToken) {
+      authHeader = `Bearer ${clientToken}`;
+    }
+  } catch { /* fallback */ }
+
+  const res = await axios.post(endpoint, {
+    params: params || {},
+  }, {
+    timeout: 15000,
+    headers: { authorization: authHeader },
+  });
+
+  const body = res.data;
+  return body?.data?.data || body?.data || body;
+}
 
 const ithome: PlatformModule = {
   config: {
@@ -18,58 +52,27 @@ const ithome: PlatformModule = {
   },
 
   async fetch(ctx) {
-    const http = createHttpClient(ctx)
-    const { data: html } = await http.get('https://www.ithome.com/', {
-      headers: {
-        'Accept': 'text/html',
-      },
-    })
+    const executionMode = (ctx as any)?.executionMode || 'server';
+    const maxCount = (ctx as any)?.maxCount || this.config.maxItems;
 
-    const items: { rank: number; title: string; hot: string; url: string }[] = []
+    let result: any;
 
-    // Parse hot article links from the homepage
-    const articleRegex = /<a[^>]*href="(https?:\/\/www\.ithome\.com\/\d+\/\d+\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi
-    let match: RegExpExecArray | null
-    const seen = new Set<string>()
-
-    while ((match = articleRegex.exec(String(html))) && items.length < this.config.maxItems) {
-      const title = match[2].replace(/<[^>]+>/g, '').trim()
-      const url = match[1]
-      if (title && title.length > 4 && !seen.has(url)) {
-        seen.add(url)
-        items.push({
-          rank: items.length + 1,
-          title,
-          hot: '',
-          url,
-        })
-      }
+    if (executionMode === 'client') {
+      result = await DynamicCapabilityManager.executeCapability('hotsearch_ithome', { maxCount });
+    } else {
+      result = await executeViaServer({ maxCount });
     }
 
-    // Fallback: try the hot list page
-    if (items.length === 0) {
-      try {
-        const { data: hotHtml } = await http.get('https://www.ithome.com/top/', {
-          headers: { 'Accept': 'text/html' },
-        })
-        const hotRegex = /<a[^>]*href="(https?:\/\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi
-        while ((match = hotRegex.exec(String(hotHtml))) && items.length < this.config.maxItems) {
-          const title = match[2].replace(/<[^>]+>/g, '').trim()
-          if (title && title.length > 4 && match[1].includes('ithome.com')) {
-            items.push({
-              rank: items.length + 1,
-              title,
-              hot: '',
-              url: match[1],
-            })
-          }
-        }
-      } catch {
-        // ignore fallback failure
-      }
+    if (result && Array.isArray(result.items)) {
+      return result.items.map((item: any) => ({
+        rank: item.rank,
+        title: item.title,
+        hot: item.hot,
+        url: item.url,
+      }));
     }
 
-    return items.slice(0, this.config.maxItems)
+    return [];
   },
 }
 

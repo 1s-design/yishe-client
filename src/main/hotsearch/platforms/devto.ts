@@ -1,10 +1,44 @@
 /**
- * Dev.to 热门文章
- * 数据源：公开 API（无需代理）
+ * Dev.to 热门文章平台模块
+ *
+ * 注意：核心采集逻辑已迁移至服务端能力定义（hotsearch-devto.capability.ts）
+ * 本模块作为兼容层，通过 DynamicCapabilityManager 从服务端拉取最新脚本执行。
+ *
+ * 支持 executionMode：
+ * - server: 服务端直接执行（默认）
+ * - client: 客户端本地执行
  */
 
 import type { PlatformModule } from '../types'
-import { createHttpClient } from '../http'
+import { DynamicCapabilityManager } from '../../mcp-server/dynamic-capability-manager'
+import axios from 'axios';
+
+/**
+ * 通过服务端执行（server 模式）
+ */
+async function executeViaServer(params: Record<string, any>): Promise<any> {
+  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const endpoint = `${serverUrl}/api/workflow/node-capabilities/hotsearch_devto/execute`;
+
+  let authHeader = 'Bearer 1sdesign';
+  try {
+    const { getTokenValue } = await import('../../server');
+    const clientToken = getTokenValue?.();
+    if (clientToken) {
+      authHeader = `Bearer ${clientToken}`;
+    }
+  } catch { /* fallback */ }
+
+  const res = await axios.post(endpoint, {
+    params: params || {},
+  }, {
+    timeout: 15000,
+    headers: { authorization: authHeader },
+  });
+
+  const body = res.data;
+  return body?.data?.data || body?.data || body;
+}
 
 const devto: PlatformModule = {
   config: {
@@ -18,18 +52,28 @@ const devto: PlatformModule = {
   },
 
   async fetch(ctx) {
-    const http = createHttpClient(ctx)
-    const { data } = await http.get('https://dev.to/api/articles', {
-      params: { top: 1, per_page: this.config.maxItems },
-    })
+    const executionMode = (ctx as any)?.executionMode || 'server';
+    const maxCount = (ctx as any)?.maxCount || this.config.maxItems;
 
-    return (data || []).map((article: any, i: number) => ({
-      rank: i + 1,
-      title: article.title || '未知',
-      hot: article.public_reactions_count || article.positive_reactions_count || 0,
-      url: article.url || article.canonical_url,
-      subtitle: article.tag_list?.slice(0, 3).join(', '),
-    }))
+    let result: any;
+
+    if (executionMode === 'client') {
+      result = await DynamicCapabilityManager.executeCapability('hotsearch_devto', { maxCount });
+    } else {
+      result = await executeViaServer({ maxCount });
+    }
+
+    if (result && Array.isArray(result.items)) {
+      return result.items.map((item: any) => ({
+        rank: item.rank,
+        title: item.title,
+        hot: item.hot,
+        url: item.url,
+        subtitle: item.subtitle,
+      }));
+    }
+
+    return [];
   },
 }
 

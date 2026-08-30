@@ -1,5 +1,44 @@
+/**
+ * 快手热搜平台模块
+ *
+ * 注意：核心采集逻辑已迁移至服务端能力定义（hotsearch-kuaishou.capability.ts）
+ * 本模块作为兼容层，通过 DynamicCapabilityManager 从服务端拉取最新脚本执行。
+ *
+ * 支持 executionMode：
+ * - server: 服务端直接执行（默认）
+ * - client: 客户端本地执行
+ */
+
 import type { PlatformModule } from '../types'
-import axios from 'axios'
+import { DynamicCapabilityManager } from '../../mcp-server/dynamic-capability-manager'
+import axios from 'axios';
+
+/**
+ * 通过服务端执行（server 模式）
+ */
+async function executeViaServer(params: Record<string, any>): Promise<any> {
+  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const endpoint = `${serverUrl}/api/workflow/node-capabilities/hotsearch_kuaishou/execute`;
+
+  let authHeader = 'Bearer 1sdesign';
+  try {
+    const { getTokenValue } = await import('../../server');
+    const clientToken = getTokenValue?.();
+    if (clientToken) {
+      authHeader = `Bearer ${clientToken}`;
+    }
+  } catch { /* fallback */ }
+
+  const res = await axios.post(endpoint, {
+    params: params || {},
+  }, {
+    timeout: 15000,
+    headers: { authorization: authHeader },
+  });
+
+  const body = res.data;
+  return body?.data?.data || body?.data || body;
+}
 
 const kuaishou: PlatformModule = {
   config: {
@@ -13,36 +52,26 @@ const kuaishou: PlatformModule = {
   },
 
   async fetch(ctx) {
-    const { data: html } = await axios.get('https://www.kuaishou.com/?isHome=1', {
-      timeout: ctx.timeout,
-      responseType: 'text',
-      headers: {
-        'User-Agent': ctx.userAgent,
-        'Referer': 'https://www.kuaishou.com/',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    })
+    const executionMode = (ctx as any)?.executionMode || 'server';
+    const maxCount = (ctx as any)?.maxCount || this.config.maxItems;
 
-    const items: { rank: number; title: string; hot: string }[] = []
-    const itemRegex = /"VisionHotRankItem:([^"]+)":\s*({[^}]*"rank":[^}]*"id":[^}]*"name":[^}]*"hotValue":[^}]*})/g
-    let match: RegExpExecArray | null
+    let result: any;
 
-    while ((match = itemRegex.exec(String(html || '')))) {
-      const jsonText = match[2]
-      const rankMatch = jsonText.match(/"rank":\s*(\d+)/)
-      const nameMatch = jsonText.match(/"name":\s*"([^"]+)"/)
-      const hotMatch = jsonText.match(/"hotValue":\s*"([^"]+)"/)
-      if (!rankMatch || !nameMatch) continue
-
-      items.push({
-        rank: Number(rankMatch[1]) + 1,
-        title: nameMatch[1],
-        hot: hotMatch ? hotMatch[1] : '',
-      })
+    if (executionMode === 'client') {
+      result = await DynamicCapabilityManager.executeCapability('hotsearch_kuaishou', { maxCount });
+    } else {
+      result = await executeViaServer({ maxCount });
     }
 
-    items.sort((a, b) => a.rank - b.rank)
-    return items.slice(0, this.config.maxItems)
+    if (result && Array.isArray(result.items)) {
+      return result.items.map((item: any) => ({
+        rank: item.rank,
+        title: item.title,
+        hot: item.hot,
+      }));
+    }
+
+    return [];
   },
 }
 

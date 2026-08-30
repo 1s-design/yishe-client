@@ -1,10 +1,44 @@
 /**
- * 百度热搜
- * 数据源：百度热搜页面嵌入的 JSON 数据 (<!--s-data:{...}-->)
+ * 百度热搜平台模块
+ *
+ * 注意：核心采集逻辑已迁移至服务端能力定义（hotsearch-baidu.capability.ts）
+ * 本模块作为兼容层，通过 DynamicCapabilityManager 从服务端拉取最新脚本执行。
+ *
+ * 支持 executionMode：
+ * - server: 服务端直接执行（默认）
+ * - client: 客户端本地执行
  */
 
 import type { PlatformModule } from '../types'
-import axios from 'axios'
+import { DynamicCapabilityManager } from '../../mcp-server/dynamic-capability-manager'
+import axios from 'axios';
+
+/**
+ * 通过服务端执行（server 模式）
+ */
+async function executeViaServer(params: Record<string, any>): Promise<any> {
+  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const endpoint = `${serverUrl}/api/workflow/node-capabilities/hotsearch_baidu/execute`;
+
+  let authHeader = 'Bearer 1sdesign';
+  try {
+    const { getTokenValue } = await import('../../server');
+    const clientToken = getTokenValue?.();
+    if (clientToken) {
+      authHeader = `Bearer ${clientToken}`;
+    }
+  } catch { /* fallback */ }
+
+  const res = await axios.post(endpoint, {
+    params: params || {},
+  }, {
+    timeout: 15000,
+    headers: { authorization: authHeader },
+  });
+
+  const body = res.data;
+  return body?.data?.data || body?.data || body;
+}
 
 const baidu: PlatformModule = {
   config: {
@@ -18,31 +52,29 @@ const baidu: PlatformModule = {
   },
 
   async fetch(ctx) {
-    const { data: html } = await axios.get('https://top.baidu.com/board?tab=realtime', {
-      timeout: ctx.timeout,
-      responseType: 'text',
-      headers: {
-        'User-Agent': ctx.userAgent,
-        'Referer': 'https://top.baidu.com/',
-        'Accept': 'text/html,application/xhtml+xml',
-      },
-    })
+    const executionMode = (ctx as any)?.executionMode || 'server';
+    const maxCount = (ctx as any)?.maxCount || this.config.maxItems;
 
-    // 百度热搜数据嵌入在 HTML 注释 <!--s-data:{...}--> 中
-    const match = String(html).match(/<!--s-data:(\{[\s\S]*?)-->/)
-    if (!match) return []
+    let result: any;
 
-    const json = JSON.parse(match[1])
-    const content = json?.data?.cards?.[0]?.content || []
+    if (executionMode === 'client') {
+      result = await DynamicCapabilityManager.executeCapability('hotsearch_baidu', { maxCount });
+    } else {
+      result = await executeViaServer({ maxCount });
+    }
 
-    return content.slice(0, this.config.maxItems).map((item: any, index: number) => ({
-      rank: index + 1,
-      title: item.word || item.query || '未知',
-      hot: item.hotScore || '',
-      url: item.rawUrl || item.url || `https://www.baidu.com/s?wd=${encodeURIComponent(item.word || '')}`,
-      desc: item.desc || undefined,
-      tag: item.hotTag === '3' ? '热' : item.hotTag === '1' ? '新' : undefined,
-    }))
+    if (result && Array.isArray(result.items)) {
+      return result.items.map((item: any) => ({
+        rank: item.rank,
+        title: item.title,
+        hot: item.hot,
+        url: item.url,
+        desc: item.desc,
+        tag: item.tag,
+      }));
+    }
+
+    return [];
   },
 }
 

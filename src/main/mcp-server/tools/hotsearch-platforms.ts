@@ -18,6 +18,10 @@ const PLATFORM_CONFIGS: Record<string, { name: string; description: string; envi
   github: { name: 'GitHub', description: '采集GitHub Trending项目', environment: 'direct' },
   wikipedia: { name: '维基百科', description: '采集维基百科今日热点', environment: 'direct' },
   devto: { name: 'Dev.to', description: '采集Dev.to热门文章', environment: 'direct' },
+  baidu: { name: '百度', description: '采集百度热搜榜', environment: 'direct' },
+  kuaishou: { name: '快手', description: '采集快手热搜', environment: 'direct' },
+  xiaohongshu: { name: '小红书', description: '采集小红书热门内容', environment: 'direct' },
+  jd_hot: { name: '京东', description: '采集京东热搜', environment: 'direct' },
   google_trends: { name: 'Google Trends', description: '采集Google趋势热搜', environment: 'proxy' },
   hackernews: { name: 'Hacker News', description: '采集Hacker News热门帖子', environment: 'proxy' },
   bbc_news: { name: 'BBC News', description: '采集BBC新闻热点', environment: 'proxy' },
@@ -97,7 +101,7 @@ async function executeViaServer(type: string, params: Record<string, any>): Prom
  * - client: 通过客户端本地执行（DynamicCapabilityManager）
  */
 // 支持双模式执行的平台列表
-const DUAL_MODE_PLATFORMS = ['douyin', 'weibo', 'bilibili', 'zhihu', 'toutiao', 'douban', 'v2ex'];
+const DUAL_MODE_PLATFORMS = ['douyin', 'weibo', 'bilibili', 'zhihu', 'toutiao', 'douban', 'v2ex', 'baidu', 'kuaishou', 'github', 'xiaohongshu', 'ithome', 'jd_hot', 'devto'];
 
 // 平台 key → capability type 映射
 const PLATFORM_TO_CAPABILITY: Record<string, string> = {
@@ -108,6 +112,13 @@ const PLATFORM_TO_CAPABILITY: Record<string, string> = {
   toutiao: 'hotsearch_toutiao',
   douban: 'hotsearch_douban',
   v2ex: 'hotsearch_v2ex',
+  baidu: 'hotsearch_baidu',
+  kuaishou: 'hotsearch_kuaishou',
+  github: 'hotsearch_github',
+  xiaohongshu: 'hotsearch_xiaohongshu',
+  ithome: 'hotsearch_ithome',
+  jd_hot: 'hotsearch_jd_hot',
+  devto: 'hotsearch_devto',
 };
 
 export async function executePlatformCollect(
