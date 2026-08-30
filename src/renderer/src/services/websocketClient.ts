@@ -561,6 +561,7 @@ const RUNTIME_REPORTING_SERVICE_KEYS = new Set([
   "client-log",
   "mcp-server",
   "local-service",
+  "douyin_jingxuan",
 ]);
 
 function shouldReportServiceRuntime(serviceKey: string): boolean {
@@ -14066,6 +14067,105 @@ for (const cfg of hotsearchConfig) {
     },
   });
 }
+
+// ══════════════════════════════════════════════════════════════
+// 抖音精选视频采集服务注册
+// ══════════════════════════════════════════════════════════════
+
+registerLocalService({
+  key: "douyin_jingxuan",
+  pluginKey: "douyin_jingxuan",
+  label: "抖音精选获取首页推荐内容",
+  getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+    const nativeApi = getNativeApi() as any;
+    if (!nativeApi) {
+      return {
+        label: "抖音精选获取首页推荐内容",
+        connected: false,
+        available: false,
+        status: "disconnected",
+        state: "offline",
+        busy: false,
+        message: "未注入桌面端抖音精选采集能力",
+        endpoint: "",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health"],
+        details: { runtime: "browser" },
+      } as Partial<ClientServiceStatus>;
+    }
+    return {
+      label: "抖音精选获取首页推荐内容",
+      connected: true,
+      available: true,
+      status: "connected",
+      state: "idle",
+      busy: false,
+      message: "抖音精选采集服务可用",
+      endpoint: "",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+      supportedCommands: ["refreshRuntime", "health", "search", "status"],
+      details: { runtime: "desktop" },
+    } as Partial<ClientServiceStatus>;
+  },
+  execute: async (command) => {
+    const nativeApi = getNativeApi() as any;
+    if (!nativeApi?.executeCapability) {
+      throw new Error("当前环境未注入桌面端能力调度器");
+    }
+    const payload = command.payload || {};
+    const action = command.action || "search";
+
+    if (action === "search") {
+      const res = await nativeApi.executeCapability("douyin_jingxuan", "search", {
+        category: payload.category || "全部",
+        limit: payload.limit || payload.maxCount || 20,
+        maxCount: payload.maxCount || payload.limit || 20,
+        page: payload.page || 1,
+      });
+      const isOk = res?.ok !== false && res?.success !== false;
+      if (!isOk) {
+        return {
+          success: false,
+          message: res?.error || res?.message || "抖音精选采集失败",
+          data: { successCount: 0, failCount: 1, items: [], error: res?.error || res?.message },
+        };
+      }
+      const realData = res?.data?.data || res?.data || res || {};
+      const items = realData?.items || [];
+      const count = realData?.count ?? items.length;
+      return {
+        success: true,
+        message: `抖音精选采集完成: 共 ${count} 条`,
+        data: {
+          success: true,
+          successCount: count,
+          failCount: 0,
+          items,
+          count,
+          page: realData?.page || 1,
+          nextPage: realData?.nextPage || null,
+          category: realData?.category || payload.category || "全部",
+          total: realData?.total || count,
+          raw: realData,
+        },
+      };
+    }
+
+    if (action === "status") {
+      const res = await nativeApi.executeCapability("douyin_jingxuan", "status", {});
+      return {
+        success: res?.ok !== false && res?.success !== false,
+        message: res?.ok ? "抖音精选服务状态正常" : res?.message || "状态查询失败",
+        data: res?.data ?? res,
+      };
+    }
+
+    throw new Error(`不支持的操作: ${action}`);
+  },
+});
+
 // ══════════════════════════════════════════════════════════════
 // 10大图片搜索引擎服务注册 (百度, 必应, DDG, 搜狗, 360, Wallhaven, Unsplash, Flickr, GoogleImages, Yandex)
 // ══════════════════════════════════════════════════════════════
