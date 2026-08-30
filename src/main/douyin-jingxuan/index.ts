@@ -204,6 +204,7 @@ function parseVideoCard(card: Element): DouyinVideo | null {
         : "",
       duration,
       playCount,
+      hot: playCount, // 用于前端热度显示
       author,
       authorId: author,
       date,
@@ -380,6 +381,7 @@ async function searchInBrowserContext(
               : "",
             duration,
             playCount,
+            hot: playCount, // 用于前端热度显示
             author,
             authorId: author,
             date,
