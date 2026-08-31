@@ -287,16 +287,25 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
 
     const mainWindow = BrowserWindow.getAllWindows()[0]
 
+    // 扁平化页面模板
+    const page = (icon: string, title: string, desc: string) => `
+      <html>
+      <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+      <body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+        <div style="text-align:center;color:#333;">
+          <div style="font-size:32px;margin-bottom:12px;">${icon}</div>
+          <div style="font-size:14px;font-weight:500;color:#111;margin-bottom:6px;">${title}</div>
+          <div style="font-size:12px;color:#888;">${desc}</div>
+        </div>
+      </body>
+      </html>
+    `
+
     if (error) {
-      // 用户拒绝授权
       if (mainWindow) {
         mainWindow.webContents.send('oauth:error', error === 'access_denied' ? '授权被拒绝' : error)
       }
-      res.status(200).send(`
-        <html><body style="font-family:sans-serif;text-align:center;padding:40px;">
-          <h2>授权被拒绝</h2><p>您可以关闭此窗口回到应用。</p>
-        </body></html>
-      `)
+      res.status(200).send(page('✕', '授权被拒绝', '您可以关闭此窗口回到应用'))
       return
     }
 
@@ -304,11 +313,7 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       if (mainWindow) {
         mainWindow.webContents.send('oauth:error', '未收到 token')
       }
-      res.status(400).send(`
-        <html><body style="font-family:sans-serif;text-align:center;padding:40px;">
-          <h2>授权失败</h2><p>未收到有效的 token。</p>
-        </body></html>
-      `)
+      res.status(400).send(page('!', '授权失败', '未收到有效的 token'))
       return
     }
 
@@ -317,11 +322,7 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       mainWindow.webContents.send('oauth:token', token)
     }
 
-    res.status(200).send(`
-      <html><body style="font-family:sans-serif;text-align:center;padding:40px;">
-        <h2>✓ 登录成功</h2><p>您可以关闭此窗口回到应用。</p>
-      </body></html>
-    `)
+    res.status(200).send(page('✓', '登录成功', '您可以关闭此窗口回到应用'))
   })
 
   // ── Agent HTTP API ────────────────────────────────────────
