@@ -23,7 +23,7 @@ function getAuthorizeBaseUrl(): string {
   if (apiBase.includes('localhost')) {
     return 'http://localhost:1521'
   }
-  return 'https://admin.1s.design'
+  return 'http://admin.1s.design'
 }
 
 /** 获取回调地址（指向本地服务器） */
