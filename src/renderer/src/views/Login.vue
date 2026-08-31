@@ -90,10 +90,16 @@
           <!-- 一键授权登录 -->
           <el-button
             class="login-oauth-btn"
-            :loading="oauthLoading"
+            :class="{ 'is-loading-text': oauthLoading }"
             @click="oauthLoading ? handleCancelOAuth() : handleOAuthLogin()"
           >
-            <span class="login-oauth-icon" aria-hidden="true">
+            <span v-if="oauthLoading" class="login-oauth-spinner" aria-hidden="true">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+                <circle cx="10" cy="10" r="8" stroke-opacity="0.25" />
+                <path d="M10 2a8 8 0 0 1 8 8" stroke-linecap="round" />
+              </svg>
+            </span>
+            <span v-else class="login-oauth-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
                 <polyline points="10 17 15 12 10 7" />
@@ -408,10 +414,19 @@ function handleCancelOAuth() {
   background: var(--theme-surface-muted) !important;
 }
 
-.login-oauth-icon {
+.login-oauth-icon,
+.login-oauth-spinner {
   display: flex;
   align-items: center;
   color: var(--theme-text-muted);
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .login-footer {
