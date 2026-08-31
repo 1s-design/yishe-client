@@ -91,7 +91,7 @@
           <el-button
             class="login-oauth-btn"
             :loading="oauthLoading"
-            @click="handleOAuthLogin"
+            @click="oauthLoading ? handleCancelOAuth() : handleOAuthLogin()"
           >
             <span class="login-oauth-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -100,7 +100,7 @@
                 <line x1="15" y1="12" x2="3" y2="12" />
               </svg>
             </span>
-            一键授权登录
+            {{ oauthLoading ? '取消授权' : '一键授权登录' }}
           </el-button>
         </el-form>
       </div>
@@ -130,6 +130,7 @@ const emit = defineEmits<{ (e: "login-success"): void }>();
 const loading = ref(false);
 const oauthLoading = ref(false);
 const errorMessage = ref("");
+let currentOAuth: { cancel: () => void } | null = null
 const appIconSrc = new URL("../assets/icon.png", import.meta.url).href;
 
 const loginIllustrations = [
@@ -190,16 +191,24 @@ async function handleLogin() {
 /** 一键授权登录 */
 async function handleOAuthLogin() {
   oauthLoading.value = true;
+  const { promise, cancel } = oauthLogin();
+  currentOAuth = { cancel };
   try {
-    // 打开浏览器跳转到授权页面，等待回调
-    await oauthLogin();
-    // 登录成功，触发父组件事件
+    await promise;
     emit("login-success");
   } catch (error: any) {
     errorMessage.value = error?.message || "授权登录失败";
   } finally {
     oauthLoading.value = false;
+    currentOAuth = null;
   }
+}
+
+/** 取消授权 */
+function handleCancelOAuth() {
+  currentOAuth?.cancel();
+  oauthLoading.value = false;
+  currentOAuth = null;
 }
 </script>
 

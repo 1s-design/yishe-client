@@ -57,8 +57,11 @@ export function openAuthorizePage(): void {
 }
 
 /** 一键授权登录（打开浏览器 + 等待本地回调） */
-export function oauthLogin(): Promise<string> {
-  return new Promise((resolve, reject) => {
+export function oauthLogin(): { promise: Promise<string>; cancel: () => void } {
+  let settled = false
+  let cleanup: (() => void) | null = null
+
+  const promise = new Promise<string>((resolve, reject) => {
     const url = buildAuthorizeUrl()
     console.log('[OAuth] 打开授权页面:', url)
 
@@ -69,32 +72,43 @@ export function oauthLogin(): Promise<string> {
       window.open(url, '_blank')
     }
 
-    // 监听主进程通过 IPC 发送的 token
     const handleToken = (token: string) => {
-      cleanup()
+      if (settled) return
+      settled = true
+      cleanup?.()
       saveTokenToClient(token)
       resolve(token)
     }
 
     const handleError = (error: string) => {
-      cleanup()
+      if (settled) return
+      settled = true
+      cleanup?.()
       reject(new Error(error))
     }
 
-    const cleanup = () => {
+    cleanup = () => {
       window.api?.offOAuthToken?.(handleToken)
       window.api?.offOAuthError?.(handleError)
       if (timeoutId) clearTimeout(timeoutId)
     }
 
-    // 注册 IPC 监听
     window.api?.onOAuthToken?.(handleToken)
     window.api?.onOAuthError?.(handleError)
 
-    // 2 分钟超时
     const timeoutId = setTimeout(() => {
-      cleanup()
+      if (settled) return
+      settled = true
+      cleanup?.()
       reject(new Error('授权超时，请重试'))
     }, 120_000)
   })
+
+  const cancel = () => {
+    if (settled) return
+    settled = true
+    cleanup?.()
+  }
+
+  return { promise, cancel }
 }
