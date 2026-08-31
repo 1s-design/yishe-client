@@ -277,6 +277,53 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
     res.send("Yishe Client Server Running");
   });
 
+  // ── OAuth 回调 ───────────────────────────────────────────
+  // 接收 admin 授权后带回的 token
+  app.get("/oauth/callback", (req, res) => {
+    const token = req.query.token as string
+    const error = req.query.error as string
+
+    console.log('[OAuth] 收到回调:', { hasToken: !!token, error })
+
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+
+    if (error) {
+      // 用户拒绝授权
+      if (mainWindow) {
+        mainWindow.webContents.send('oauth:error', error === 'access_denied' ? '授权被拒绝' : error)
+      }
+      res.status(200).send(`
+        <html><body style="font-family:sans-serif;text-align:center;padding:40px;">
+          <h2>授权被拒绝</h2><p>您可以关闭此窗口回到应用。</p>
+        </body></html>
+      `)
+      return
+    }
+
+    if (!token) {
+      if (mainWindow) {
+        mainWindow.webContents.send('oauth:error', '未收到 token')
+      }
+      res.status(400).send(`
+        <html><body style="font-family:sans-serif;text-align:center;padding:40px;">
+          <h2>授权失败</h2><p>未收到有效的 token。</p>
+        </body></html>
+      `)
+      return
+    }
+
+    // 发送 token 到渲染进程
+    if (mainWindow) {
+      mainWindow.webContents.send('oauth:token', token)
+    }
+
+    res.status(200).send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:40px;">
+        <h2>✓ 登录成功</h2><p>您可以关闭此窗口回到应用。</p>
+      </body></html>
+    `)
+  })
+
   // ── Agent HTTP API ────────────────────────────────────────
   // 初始化会话存储
   sessionStore.load();

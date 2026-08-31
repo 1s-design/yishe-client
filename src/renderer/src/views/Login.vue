@@ -115,7 +115,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { login } from "../api/auth";
 import { getApiBaseByMode, getServiceMode } from "../config/api";
 import { updateApiBaseUrl } from "../api/request";
-import { openAuthorizePage } from "../api/oauth";
+import { oauthLogin } from "../api/oauth";
 import loginIllustration from "../assets/login/mondrian-composition.jpg";
 import loginIllustrationNoII from "../assets/login/mondrian-composition-no-ii.jpg";
 import girlWithAPearlEarring from "../assets/login/girl-with-a-pearl-earring.jpg";
@@ -191,10 +191,12 @@ async function handleLogin() {
 async function handleOAuthLogin() {
   oauthLoading.value = true;
   try {
-    // 打开浏览器跳转到授权页面
-    openAuthorizePage();
+    // 打开浏览器跳转到授权页面，等待回调
+    await oauthLogin();
+    // 登录成功，触发父组件事件
+    emit("login-success");
   } catch (error: any) {
-    errorMessage.value = error?.message || "打开授权页面失败";
+    errorMessage.value = error?.message || "授权登录失败";
   } finally {
     oauthLoading.value = false;
   }

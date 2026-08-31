@@ -46,6 +46,19 @@ const api = {
       callback(status),
     );
   },
+  // OAuth 一键授权登录
+  onOAuthToken: (callback: (token: string) => void) => {
+    ipcRenderer.on("oauth:token", (_event, token) => callback(token));
+  },
+  offOAuthToken: (callback: (token: string) => void) => {
+    ipcRenderer.removeListener("oauth:token", (_event, token) => callback(token));
+  },
+  onOAuthError: (callback: (error: string) => void) => {
+    ipcRenderer.on("oauth:error", (_event, error) => callback(error));
+  },
+  offOAuthError: (callback: (error: string) => void) => {
+    ipcRenderer.removeListener("oauth:error", (_event, error) => callback(error));
+  },
   // 工作目录相关方法
   selectWorkspaceDirectory: () =>
     ipcRenderer.invoke("select-workspace-directory"),
