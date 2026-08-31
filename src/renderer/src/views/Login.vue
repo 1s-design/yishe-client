@@ -94,10 +94,9 @@
             @click="oauthLoading ? handleCancelOAuth() : handleOAuthLogin()"
           >
             <span v-if="oauthLoading" class="login-oauth-spinner" aria-hidden="true">
-              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="spin">
-                <circle cx="10" cy="10" r="8" stroke-opacity="0.25" />
-                <path d="M10 2a8 8 0 0 1 8 8" stroke-linecap="round" />
-              </svg>
+              <span class="dot" />
+              <span class="dot" />
+              <span class="dot" />
             </span>
             <span v-else class="login-oauth-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -421,12 +420,29 @@ function handleCancelOAuth() {
   color: var(--theme-text-muted);
 }
 
-.spin {
-  animation: spin 0.8s linear infinite;
+.login-oauth-spinner {
+  gap: 3px;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.login-oauth-spinner .dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+
+.login-oauth-spinner .dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.login-oauth-spinner .dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
 }
 
 .login-footer {
