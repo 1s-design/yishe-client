@@ -91,10 +91,10 @@ export function oauthLogin(): Promise<string> {
     window.api?.onOAuthToken?.(handleToken)
     window.api?.onOAuthError?.(handleError)
 
-    // 10 分钟超时
+    // 2 分钟超时
     const timeoutId = setTimeout(() => {
       cleanup()
-      reject(new Error('授权超时'))
-    }, 600_000)
+      reject(new Error('授权超时，请重试'))
+    }, 120_000)
   })
 }
