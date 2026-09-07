@@ -44,6 +44,7 @@ const updateStatus = ref<{
   error?: string;
   releaseUrl?: string;
   isDev?: boolean;
+  isManualDownload?: boolean;
 }>({ state: "idle" });
 const serverStatus = ref(false);
 const isLoggedIn = ref(false);
@@ -1102,18 +1103,53 @@ function handleDashboardCardAction(key: string) {
     const nativeApi = getNativeApi();
     if (updateStatus.value.state === "downloaded") {
       nativeApi?.updateInstall?.();
-    } else if (updateStatus.value.state === "available") {
-      if (updateStatus.value.isDev && updateStatus.value.releaseUrl) {
+      return;
+    }
+    if (updateStatus.value.state === "available") {
+      const isManual =
+        Boolean(updateStatus.value.isDev || updateStatus.value.isManualDownload) ||
+        (typeof navigator !== "undefined" && /macintosh|mac os x/i.test(navigator.userAgent));
+      if (isManual && updateStatus.value.releaseUrl) {
         const url = updateStatus.value.releaseUrl;
         nativeApi?.openExternal?.(url) || window.open(url, "_blank");
       } else {
         nativeApi?.updateDownload?.();
       }
-    } else {
-      // 手动检查更新
-      updateStatus.value = { state: "checking" };
-      nativeApi?.checkForUpdates?.();
+      return;
     }
+
+    // 手动检查更新
+    updateStatus.value = { state: "checking" };
+    showToast({
+      color: "info",
+      message: "正在检查客户端新版本...",
+    });
+    void nativeApi
+      ?.checkForUpdates?.()
+      .then((res: any) => {
+        if (res?.state === "not-available") {
+          showToast({
+            color: "success",
+            message: `当前已是最新版本 (${res.currentVersion || res.version || appVersion.value || "最新"})`,
+          });
+        } else if (res?.state === "available") {
+          showToast({
+            color: "success",
+            message: `发现新版本 ${res.version}，已弹出更新提示卡片`,
+          });
+        } else if (res?.state === "error") {
+          showToast({
+            color: "warning",
+            message: `检查更新失败: ${res.error || "网络连接异常"}`,
+          });
+        }
+      })
+      .catch((error: any) => {
+        showToast({
+          color: "warning",
+          message: `检查更新异常: ${error?.message || "网络异常"}`,
+        });
+      });
     return;
   }
   if (key === "browser-automation-toggle") {
