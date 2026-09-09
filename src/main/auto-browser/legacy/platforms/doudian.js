@@ -2218,37 +2218,83 @@ export async function publishToDoudian(publishInfo = {}) {
     let mainImageActionReady = false;
     if (titleFilled) {
       try {
+        const mainImageField = page.locator(MAIN_IMAGE_FIELD_SELECTOR);
+        await mainImageField
+          .first()
+          .waitFor({ timeout: 10000, state: "attached" })
+          .catch(() => undefined);
+        await mainImageField
+          .first()
+          .scrollIntoViewIfNeeded()
+          .catch(() => undefined);
+
+        // 尝试触发引导或展开操作（如页面存在该按钮则尝试交互，非致命）
         const guiderSelector = "#material-button-guider";
         const actionSelector =
           '[attr-field-id="主图"] [class*="hoverBottomWrapper"] [class*=index-module_actionAfter]';
-        logger.info(`抖店商品主图逻辑：准备展开主图操作区，模式=${hoverMode}`);
-        await triggerHover(page, guiderSelector, hoverMode, "抖店商品主图逻辑");
 
-        const actionLocator = page.locator(actionSelector).nth(1);
-        await actionLocator.waitFor({ timeout: 5000, state: "visible" });
-        await actionLocator.scrollIntoViewIfNeeded().catch(() => undefined);
-        await page.waitForTimeout(200);
-        await clickWithFallback(
-          actionLocator,
-          () =>
-            page.evaluate(
-              ({ selector, index }) => {
-                const target = document.querySelectorAll(selector)?.[index];
-                if (!(target instanceof HTMLElement)) return false;
-                target.click();
-                return true;
-              },
-              { selector: actionSelector, index: 1 },
-            ),
-          `抖店商品主图逻辑：已点击主图操作按钮 locator(${actionSelector}).nth(1)`,
-          `抖店商品主图逻辑：已使用JS点击主图操作按钮 document.querySelectorAll('${actionSelector}')[1]`,
-        );
-        mainImageActionReady = true;
+        const guiderCount = await page.locator(guiderSelector).count().catch(() => 0);
+        if (guiderCount > 0) {
+          logger.info(
+            `抖店商品主图逻辑：发现引导元素 ${guiderSelector}，准备触发 hover，模式=${hoverMode}`,
+          );
+          await triggerHover(page, guiderSelector, hoverMode, "抖店商品主图逻辑").catch(
+            () => undefined,
+          );
+        }
+
+        const actionLocator = page.locator(actionSelector);
+        const actionCount = await actionLocator.count().catch(() => 0);
+        if (actionCount > 1) {
+          logger.info(
+            `抖店商品主图逻辑：检测到 ${actionCount} 个主图操作项，尝试点击第 2 项`,
+          );
+          const targetAction = actionLocator.nth(1);
+          const isVisible = await targetAction.isVisible().catch(() => false);
+          if (isVisible) {
+            await clickWithFallback(
+              targetAction,
+              () =>
+                page.evaluate(
+                  ({ selector, index }) => {
+                    const target = document.querySelectorAll(selector)?.[index];
+                    if (!(target instanceof HTMLElement)) return false;
+                    target.click();
+                    return true;
+                  },
+                  { selector: actionSelector, index: 1 },
+                ),
+              `抖店商品主图逻辑：已点击主图操作按钮 locator(${actionSelector}).nth(1)`,
+              `抖店商品主图逻辑：已使用JS点击主图操作按钮 document.querySelectorAll('${actionSelector}')[1]`,
+            ).catch(() => undefined);
+          }
+        }
+
+        // 只要主图区域容器或主图文件输入框存在，主图区域即视为准备就绪
+        const hasField =
+          (await page.locator(MAIN_IMAGE_FIELD_SELECTOR).count().catch(() => 0)) > 0;
+        const hasInput =
+          (await page
+            .locator(`${MAIN_IMAGE_FIELD_SELECTOR} input[type="file"]`)
+            .count()
+            .catch(() => 0)) > 0;
+
+        if (hasField || hasInput) {
+          mainImageActionReady = true;
+          logger.info("抖店商品主图逻辑：主图区域已准备就绪");
+        } else {
+          logger.warn("抖店商品主图逻辑：未检测到主图区域容器或文件输入框");
+        }
         await page.waitForTimeout(500);
       } catch (error) {
         logger.warn(
-          `抖店商品主图逻辑：展开主图操作区失败: ${error?.message || error}`,
+          `抖店商品主图逻辑：检查主图操作区发生异常（降级处理）: ${error?.message || error}`,
         );
+        const hasField =
+          (await page.locator(MAIN_IMAGE_FIELD_SELECTOR).count().catch(() => 0)) > 0;
+        if (hasField) {
+          mainImageActionReady = true;
+        }
       }
     }
 
