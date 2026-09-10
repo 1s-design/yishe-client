@@ -443,41 +443,64 @@ async function fillPddProductTitle(page, title) {
   );
 }
 
-async function fillPddSkuCodes(page, skuCodes) {
-  if (!Array.isArray(skuCodes) || !skuCodes.length) {
+async function fillPddSkuCodes(page, skuCodes, fallbackCode) {
+  // 如果 skuCodes 为空但有 fallbackCode，先用 fallbackCode 填满
+  let codes = Array.isArray(skuCodes) && skuCodes.length ? skuCodes : [];
+  if (!codes.length && fallbackCode) {
+    // 先查找有多少个 SKU 输入框，再用 fallbackCode 填满
+    const inputCount = await getPddSkuCodeInputCount(page);
+    if (inputCount > 0) {
+      codes = Array(inputCount).fill(fallbackCode);
+      logger.info(`${PLATFORM_NAME}使用 fallback 编码填充`, {
+        fallbackCode,
+        inputCount,
+      });
+    }
+  }
+
+  if (!codes.length) {
     logger.info(`${PLATFORM_NAME}未提供 SKU 编码，跳过填写`);
     return { filled: 0, total: 0 };
   }
 
-  logger.info(`${PLATFORM_NAME}开始通过 JS 填写 SKU 编码`, {
-    skuCodeCount: skuCodes.length,
-    skuCodes,
+  logger.info(`${PLATFORM_NAME}开始通过规格编码列填写 SKU 编码`, {
+    skuCodeCount: codes.length,
+    skuCodes: codes,
   });
 
   // 遍历所有 frame（包括 iframe）
   const frames = [page, ...page.frames()];
-  let totalResult = { found: 0, filled: 0, total: skuCodes.length };
+  let totalResult = { found: 0, filled: 0, total: codes.length };
 
   for (const frame of frames) {
-    const result = await frame.evaluate((codes) => {
+    const result = await frame.evaluate((codesArg) => {
       const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      const allInputs = document.querySelectorAll('input');
-      const matchedInputs = [];
-      for (const input of allInputs) {
-        if (input.value === 'SKU-PLACEHOLDER') {
-          matchedInputs.push(input);
-        }
+
+      // 1. 找到「规格编码」列表头
+      const headers = Array.from(document.querySelectorAll('thead th'));
+      const colIndex = headers.findIndex((th) =>
+        th.textContent.trim().includes('规格编码'),
+      );
+
+      if (colIndex === -1) {
+        return { found: 0, filled: 0, error: '未找到规格编码列表头' };
       }
+
+      // 2. 取该列所有 input（nth-child 从 1 开始）
+      const matchedInputs = Array.from(
+        document.querySelectorAll(`tbody tr td:nth-child(${colIndex + 1}) input`),
+      );
 
       if (!matchedInputs.length) {
-        return { found: 0, filled: 0 };
+        return { found: 0, filled: 0, error: '规格编码列无输入框' };
       }
 
-      const fillCount = Math.min(matchedInputs.length, codes.length);
+      // 3. 逐行填入编码
+      const fillCount = Math.min(matchedInputs.length, codesArg.length);
       let filled = 0;
 
       for (let i = 0; i < fillCount; i += 1) {
-        const code = String(codes[i] || '').trim();
+        const code = String(codesArg[i] || '').trim();
         if (!code) continue;
 
         const input = matchedInputs[i];
@@ -490,19 +513,43 @@ async function fillPddSkuCodes(page, skuCodes) {
       }
 
       return { found: matchedInputs.length, filled };
-    }, skuCodes);
+    }, codes);
 
     totalResult.found += result.found;
     totalResult.filled += result.filled;
 
     if (result.found > 0) {
-      logger.info(`${PLATFORM_NAME}frame 中找到 SKU-PLACEHOLDER`, result);
+      logger.info(`${PLATFORM_NAME}frame 中找到规格编码列`, {
+        found: result.found,
+        filled: result.filled,
+      });
       break;
+    }
+
+    if (result.error) {
+      logger.warn(`${PLATFORM_NAME}规格编码列查找失败`, { error: result.error });
     }
   }
 
   logger.info(`${PLATFORM_NAME}SKU 编码填写结果`, totalResult);
-  return { filled: totalResult.filled, total: skuCodes.length };
+  return { filled: totalResult.filled, total: codes.length };
+}
+
+// 获取 SKU 编码输入框数量（用于 fallback 填充）
+async function getPddSkuCodeInputCount(page) {
+  const frames = [page, ...page.frames()];
+  for (const frame of frames) {
+    const count = await frame.evaluate(() => {
+      const headers = Array.from(document.querySelectorAll('thead th'));
+      const colIndex = headers.findIndex((th) =>
+        th.textContent.trim().includes('规格编码'),
+      );
+      if (colIndex === -1) return 0;
+      return document.querySelectorAll(`tbody tr td:nth-child(${colIndex + 1}) input`).length;
+    });
+    if (count > 0) return count;
+  }
+  return 0;
 }
 
 async function submitPddProduct(page) {
@@ -1262,7 +1309,7 @@ export async function publishToPdd(publishInfo = {}) {
       }
       return stickerCode || '';
     });
-    const skuCodeResult = await fillPddSkuCodes(page, skuCodes);
+    const skuCodeResult = await fillPddSkuCodes(page, skuCodes, stickerCode);
 
     const filledTitle = await fillPddProductTitle(page, title);
     const submitted = await submitPddProduct(page);
