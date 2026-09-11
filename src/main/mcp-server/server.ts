@@ -232,13 +232,15 @@ export class McpServerManager {
         name: 'hupu_post_search',
         description: '搜索虎扑论坛帖子，支持关键词搜索、多种排序方式。自动提取结构化数据。',
         zodShape: {
-          keyword: z.string().describe('搜索关键词'),
+          keyword: z.string().optional().describe('搜索关键词；留空则直接获取虎扑热门推荐帖子'),
+          category: z.string().optional().describe('专区分类，如 all, all-gambia, all-nba 等'),
           maxCount: z.number().optional().describe('获取数量，默认 20'),
           sortby: z.string().optional().describe('排序方式，默认 general'),
           page: z.number().optional().describe('页码，默认 1'),
         },
         inputSchema: {
-          keyword: { type: 'string' },
+          keyword: { type: 'string', optional: true },
+          category: { type: 'string', optional: true },
           maxCount: { type: 'number', optional: true },
           sortby: { type: 'string', optional: true },
           page: { type: 'number', optional: true },
