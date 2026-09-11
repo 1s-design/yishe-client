@@ -27,6 +27,13 @@ import { URL } from "url";
 import { setupAgentIpc } from "./agent/agent-ipc";
 import { clearActiveAgentConfig } from "./agent/agent-config";
 import {
+  initAutoUpdater,
+  checkForUpdates,
+  startDownload,
+  quitAndInstall,
+  getUpdateInfo,
+} from "./auto-updater";
+import {
   getGoogleArtZooms,
   syncGoogleArtToMaterialLibrary,
   getGoogleArtStatus,
@@ -1744,34 +1751,64 @@ app.whenReady().then(() => {
   // 创建系统托盘
   createTray();
 
-  // 初始化自动更新（窗口创建后，仅生产环境生效）
-  import("./auto-updater").then(({ initAutoUpdater, checkForUpdates, startDownload, quitAndInstall, getUpdateInfo }) => {
+  // 初始化自动更新
+  try {
     initAutoUpdater(mainWindow!);
-    // 延迟 5 秒检查更新，避免影响启动速度
-    setTimeout(() => {
-      checkForUpdates();
-    }, 5000);
+  } catch (error) {
+    console.error("[AutoUpdater] initAutoUpdater 失败:", error);
+  }
 
-    // 渲染进程请求：开始下载更新
-    ipcMain.handle("app:update-download", async () => {
+  // 延迟 5 秒检查更新，避免影响启动速度
+  setTimeout(() => {
+    checkForUpdates().catch((err) => {
+      console.warn("[AutoUpdater] 启动自动检查更新失败:", err);
+    });
+  }, 5000);
+
+  // 渲染进程请求：开始下载更新
+  ipcMain.handle("app:update-download", async () => {
+    try {
       await startDownload();
       return getUpdateInfo();
-    });
+    } catch (error) {
+      console.error("[AutoUpdater] app:update-download 失败:", error);
+      return {
+        state: "error",
+        error: error instanceof Error ? error.message : "下载失败",
+      };
+    }
+  });
 
-    // 渲染进程请求：退出并安装
-    ipcMain.handle("app:update-install", () => {
+  // 渲染进程请求：退出并安装
+  ipcMain.handle("app:update-install", () => {
+    try {
       quitAndInstall();
-    });
+    } catch (error) {
+      console.error("[AutoUpdater] app:update-install 失败:", error);
+    }
+  });
 
-    // 渲染进程请求：检查更新
-    ipcMain.handle("app:check-for-updates", async () => {
+  // 渲染进程请求：检查更新
+  ipcMain.handle("app:check-for-updates", async () => {
+    try {
       return await checkForUpdates();
-    });
+    } catch (error) {
+      console.error("[AutoUpdater] app:check-for-updates 失败:", error);
+      return {
+        state: "error",
+        error: error instanceof Error ? error.message : "检查更新失败",
+      };
+    }
+  });
 
-    // 渲染进程请求：获取当前更新状态
-    ipcMain.handle("app:update-status", () => {
+  // 渲染进程请求：获取当前更新状态
+  ipcMain.handle("app:update-status", () => {
+    try {
       return getUpdateInfo();
-    });
+    } catch (error) {
+      console.error("[AutoUpdater] app:update-status 失败:", error);
+      return { state: "idle" };
+    }
   });
 
   schedulePostWindowStartupTasks();

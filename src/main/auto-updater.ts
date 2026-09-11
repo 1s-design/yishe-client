@@ -1,18 +1,25 @@
 /**
- * 自动更新模块
+ * 客户端自更新模块 (Auto Updater)
  *
- * 流程：
- * 1. 启动时检查更新（静默，不打扰用户）
- * 2. 发现新版本 → 通知用户（IPC → 渲染进程）
- * 3. 用户点击"更新" → Windows 环境自动下载（显示进度），Mac/开发环境引导浏览器下载
- * 4. 下载完成 → 提示用户重启安装
+ * 核心设计：
+ * 1. 极速多源版本检测：优先请求腾讯云 COS latest.yml（毫秒级直连返回最新版本），备选后台接口与 GitHub 镜像。
+ * 2. Windows 平台：基于 electron-updater NSIS 机制直连腾讯云 COS，实现后台静默下载、进度条、一键重启更新。
+ * 3. macOS 平台：绕开苹果 99 美元开发者证书与公证限制，内置原生热更新流水线（应用内后台流式下载 DMG -> 静默挂载 -> 覆盖替换 /Applications/yishe-client.app -> 清除隔离属性 -> 自动重启）。
+ * 4. 健壮容错：所有 IPC 操作受严格 try-catch 保护，永不向上抛出导致渲染层 invoke 拒绝的未捕获异常。
  */
 
-import { autoUpdater, type ProgressInfo } from "electron-updater";
 import { BrowserWindow, app, dialog, shell } from "electron";
 import axios from "axios";
+import fs from "fs";
+import path from "path";
+import { spawn } from "child_process";
+interface ProgressInfo {
+  percent: number;
+  bytesPerSecond: number;
+  transferred?: number;
+  total?: number;
+}
 
-// 更新状态
 export type UpdateState =
   | "idle"
   | "checking"
@@ -31,9 +38,10 @@ export interface UpdateInfo {
   releaseUrl?: string;
   downloadUrl?: string;
   progress?: number; // 0-100
+  speed?: number; // 字节/秒
   error?: string;
   isDev?: boolean;
-  isManualDownload?: boolean; // 是否走外部浏览器/手动下载替换（Mac 或 兜底查询）
+  isManualDownload?: boolean;
 }
 
 export interface RemoteReleaseInfo {
@@ -46,15 +54,39 @@ export interface RemoteReleaseInfo {
 
 let mainWindow: BrowserWindow | null = null;
 let currentUpdateInfo: UpdateInfo = { state: "idle" };
-let isAutoCheckEnabled = true;
+const isAutoCheckEnabled = true;
 
-/** 检查更新超时时间（毫秒） */
-const CHECK_TIMEOUT = 15000;
+// 腾讯云 COS 资源发布地址（国内高带宽直连）
+const COS_BASE_URL =
+  "https://yishe-storage-1257307499.cos.ap-beijing.myqcloud.com/yishe-client/";
+const COS_LATEST_YML_URL = `${COS_BASE_URL}latest.yml`;
+const COS_WIN_URL = `${COS_BASE_URL}yishe-client.exe`;
+const COS_MAC_URL = `${COS_BASE_URL}yishe-client.dmg`;
+const BACKEND_DOWNLOAD_API = "https://api.1s.design/api/system-config/downloads";
 const GITHUB_REPO = "1s-design/yishe-client";
 const RELEASE_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
 
-/** 语义化版本比对: v1 > v2 返回 1, v1 < v2 返回 -1, 相等返回 0 */
-function compareSemver(v1: string, v2: string): number {
+let downloadedPackagePath: string | null = null;
+let isDownloading = false;
+let downloadAbortController: AbortController | null = null;
+
+// 动态载入 electron-updater（仅 Windows 平台按需加载，避免在 macOS 环境触发 Squirrel.Mac 初始化异常）
+let electronUpdaterModule: typeof import("electron-updater") | null = null;
+function getElectronUpdater(): typeof import("electron-updater") | null {
+  if (!electronUpdaterModule && process.platform === "win32") {
+    try {
+      electronUpdaterModule = require("electron-updater");
+    } catch (e) {
+      console.warn("[AutoUpdater] 加载 electron-updater 模块失败:", e);
+    }
+  }
+  return electronUpdaterModule;
+}
+
+/**
+ * 语义化版本比对: v1 > v2 返回 1, v1 < v2 返回 -1, 相等返回 0
+ */
+export function compareSemver(v1: string, v2: string): number {
   const clean1 = (v1 || "").replace(/^v/, "").trim();
   const clean2 = (v2 || "").replace(/^v/, "").trim();
   const p1 = clean1.split(".").map((n) => parseInt(n, 10) || 0);
@@ -70,7 +102,7 @@ function compareSemver(v1: string, v2: string): number {
 }
 
 /**
- * 多源并发/回退查询线上最新版本信息（防代理与CDN强缓存）
+ * 多源并发/回退查询线上最新版本信息
  */
 export async function fetchRemoteLatestRelease(): Promise<RemoteReleaseInfo | null> {
   const timestamp = Date.now();
@@ -80,51 +112,65 @@ export async function fetchRemoteLatestRelease(): Promise<RemoteReleaseInfo | nu
     Pragma: "no-cache",
   };
 
-  // 1. 尝试直接请求 GitHub Releases API
+  // 1. 优先尝试腾讯云 COS latest.yml（国内毫秒级响应，与发布产物严格对齐）
   try {
-    const res = await axios.get(
-      `https://api.github.com/repos/${GITHUB_REPO}/releases/latest?_t=${timestamp}`,
-      { headers, timeout: 5000 }
-    );
-    if (res.data && res.data.tag_name) {
-      const version = String(res.data.tag_name).replace(/^v/, "").trim();
-      return {
-        version,
-        releaseDate: res.data.published_at,
-        releaseNotes: typeof res.data.body === "string" ? res.data.body : undefined,
-        releaseUrl: res.data.html_url || RELEASE_PAGE_URL,
-      };
+    const res = await axios.get(`${COS_LATEST_YML_URL}?_t=${timestamp}`, {
+      headers,
+      timeout: 3500,
+    });
+    if (typeof res.data === "string" && res.data.includes("version:")) {
+      const match = res.data.match(/version:\s*([^\s\r\n]+)/);
+      if (match && match[1]) {
+        const version = match[1].replace(/['"]/g, "").trim();
+        const dateMatch = res.data.match(/releaseDate:\s*['"]?([^'"\r\n]+)/);
+        const downloadUrl =
+          process.platform === "darwin" ? COS_MAC_URL : COS_WIN_URL;
+        return {
+          version,
+          releaseDate: dateMatch ? dateMatch[1].replace(/['"]/g, "").trim() : undefined,
+          releaseUrl: RELEASE_PAGE_URL,
+          downloadUrl,
+        };
+      }
     }
   } catch (e) {
-    console.warn("[AutoUpdater] GitHub API 查询失败，尝试备用镜像源:", (e as Error).message);
+    console.warn("[AutoUpdater] 腾讯云 COS latest.yml 查询失败，尝试备用源:", (e as Error).message);
   }
 
-  // 2. 尝试多镜像源（ghproxy, gh-proxy, raw 等候选）
-  const channelFile = process.platform === "darwin" ? "latest-mac.yml" : "latest.yml";
+  // 2. 备选源：GitHub 镜像 / API
   const candidateUrls = [
-    `https://ghproxy.net/https://github.com/${GITHUB_REPO}/releases/latest/download/${channelFile}?_t=${timestamp}`,
-    `https://gh-proxy.com/https://github.com/${GITHUB_REPO}/releases/latest/download/${channelFile}?_t=${timestamp}`,
-    `https://raw.githubusercontent.com/${GITHUB_REPO}/main/package.json?_t=${timestamp}`,
+    `https://ghproxy.net/https://github.com/${GITHUB_REPO}/releases/latest/download/latest.yml?_t=${timestamp}`,
+    `https://gh-proxy.com/https://github.com/${GITHUB_REPO}/releases/latest/download/latest.yml?_t=${timestamp}`,
+    `https://api.github.com/repos/${GITHUB_REPO}/releases/latest?_t=${timestamp}`,
     `https://ghproxy.net/https://raw.githubusercontent.com/${GITHUB_REPO}/main/package.json?_t=${timestamp}`,
     `https://gh-proxy.com/https://raw.githubusercontent.com/${GITHUB_REPO}/main/package.json?_t=${timestamp}`,
   ];
 
   for (const url of candidateUrls) {
     try {
-      const res = await axios.get(url, { headers, timeout: 4500 });
+      const res = await axios.get(url, { headers, timeout: 4000 });
       if (typeof res.data === "string" && res.data.includes("version:")) {
         const match = res.data.match(/version:\s*([^\s\r\n]+)/);
         if (match && match[1]) {
-          const version = match[1].replace(/['"]/g, "").trim();
           return {
-            version,
+            version: match[1].replace(/['"]/g, "").trim(),
             releaseUrl: RELEASE_PAGE_URL,
+            downloadUrl: process.platform === "darwin" ? COS_MAC_URL : COS_WIN_URL,
           };
         }
+      } else if (res.data && res.data.tag_name) {
+        return {
+          version: String(res.data.tag_name).replace(/^v/, "").trim(),
+          releaseDate: res.data.published_at,
+          releaseNotes: typeof res.data.body === "string" ? res.data.body : undefined,
+          releaseUrl: res.data.html_url || RELEASE_PAGE_URL,
+          downloadUrl: process.platform === "darwin" ? COS_MAC_URL : COS_WIN_URL,
+        };
       } else if (res.data && typeof res.data === "object" && res.data.version) {
         return {
           version: String(res.data.version).replace(/^v/, "").trim(),
           releaseUrl: RELEASE_PAGE_URL,
+          downloadUrl: process.platform === "darwin" ? COS_MAC_URL : COS_WIN_URL,
         };
       }
     } catch {
@@ -141,270 +187,390 @@ export async function fetchRemoteLatestRelease(): Promise<RemoteReleaseInfo | nu
 export function initAutoUpdater(window: BrowserWindow): void {
   mainWindow = window;
 
-  // 设置 logger 方便排查
-  autoUpdater.logger = console;
+  // 仅在 Windows 生产环境初始化 electron-updater 的原生监听
+  if (process.platform === "win32" && app.isPackaged) {
+    try {
+      const updater = getElectronUpdater()?.autoUpdater;
+      if (updater) {
+        updater.logger = console;
+        (updater as any).isAddNoCacheQuery = true;
+        updater.setFeedURL({
+          provider: "generic",
+          url: COS_BASE_URL,
+        });
+        updater.autoDownload = false;
+        updater.autoInstallOnAppQuit = true;
+        updater.allowDowngrade = false;
 
-  // 启用 electron-updater 内置防缓存查询
-  (autoUpdater as any).isAddNoCacheQuery = true;
+        updater.on("update-available", (info) => {
+          console.log("[AutoUpdater] Windows electron-updater 发现新版本:", info.version);
+          currentUpdateInfo = {
+            state: "available",
+            version: info.version,
+            currentVersion: app.getVersion(),
+            releaseDate: info.releaseDate,
+            releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : undefined,
+            releaseUrl: RELEASE_PAGE_URL,
+            downloadUrl: COS_WIN_URL,
+            isDev: false,
+            isManualDownload: false,
+          };
+          sendUpdateToRenderer(currentUpdateInfo);
+        });
 
-  // 配置更新源：使用 generic 模式 + ghproxy.net / gh-proxy.com 加速
-  autoUpdater.setFeedURL({
-    provider: "generic",
-    url: `https://ghproxy.net/https://github.com/${GITHUB_REPO}/releases/latest/download/`,
-  });
+        updater.on("update-not-available", (info) => {
+          console.log("[AutoUpdater] Windows electron-updater 已是最新版本:", info?.version || "");
+          currentUpdateInfo = {
+            state: "not-available",
+            version: info?.version || app.getVersion(),
+            currentVersion: app.getVersion(),
+            isDev: false,
+            isManualDownload: false,
+          };
+          sendUpdateToRenderer(currentUpdateInfo);
+        });
 
-  // 配置：启动时不自动下载，等用户确认
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true; // 退出时自动安装（下载完成后）
-  autoUpdater.allowDowngrade = false;
+        updater.on("download-progress", (progress: ProgressInfo) => {
+          currentUpdateInfo = {
+            ...currentUpdateInfo,
+            state: "downloading",
+            progress: Math.round(progress.percent),
+            speed: progress.bytesPerSecond,
+          };
+          sendUpdateToRenderer(currentUpdateInfo);
+        });
 
-  // 检查到更新可用
-  autoUpdater.on("update-available", (info) => {
-    console.log("[AutoUpdater] 发现新版本:", info.version);
-    const isDarwin = process.platform === "darwin";
-    currentUpdateInfo = {
-      state: "available",
-      version: info.version,
-      currentVersion: app.getVersion(),
-      releaseDate: info.releaseDate,
-      releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : undefined,
-      releaseUrl: RELEASE_PAGE_URL,
-      isDev: false,
-      isManualDownload: isDarwin, // Mac 平台未配置官方开发者证书时走手动下载引导
-    };
-    sendUpdateToRenderer(currentUpdateInfo);
-  });
+        updater.on("update-downloaded", (info) => {
+          console.log("[AutoUpdater] Windows electron-updater 下载完成:", info.version);
+          currentUpdateInfo = {
+            ...currentUpdateInfo,
+            state: "downloaded",
+            progress: 100,
+          };
+          sendUpdateToRenderer(currentUpdateInfo);
+          showRestartDialog();
+        });
 
-  // 没有可用更新
-  autoUpdater.on("update-not-available", (info) => {
-    console.log("[AutoUpdater] 已是最新版本:", info?.version || "");
-    currentUpdateInfo = {
-      state: "not-available",
-      version: info?.version || app.getVersion(),
-      currentVersion: app.getVersion(),
-      isDev: false,
-      isManualDownload: false,
-    };
-    sendUpdateToRenderer(currentUpdateInfo);
-  });
-
-  // 开始下载
-  autoUpdater.on("download-progress", (progress: ProgressInfo) => {
-    currentUpdateInfo = {
-      ...currentUpdateInfo,
-      state: "downloading",
-      progress: Math.round(progress.percent),
-    };
-    sendUpdateToRenderer(currentUpdateInfo);
-  });
-
-  // 下载完成
-  autoUpdater.on("update-downloaded", (info) => {
-    console.log("[AutoUpdater] 更新下载完成:", info.version);
-    currentUpdateInfo = {
-      ...currentUpdateInfo,
-      state: "downloaded",
-      progress: 100,
-    };
-    sendUpdateToRenderer(currentUpdateInfo);
-    // 提示用户重启安装
-    showRestartDialog();
-  });
-
-  // 错误
-  autoUpdater.on("error", (error) => {
-    console.error("[AutoUpdater] 更新过程出错:", error);
-    currentUpdateInfo = {
-      state: "error",
-      error: error?.message || "更新出错",
-      currentVersion: app.getVersion(),
-      releaseUrl: RELEASE_PAGE_URL,
-      isManualDownload: true,
-    };
-    sendUpdateToRenderer(currentUpdateInfo);
-  });
+        updater.on("error", (error) => {
+          console.warn("[AutoUpdater] Windows electron-updater 告警:", error?.message);
+        });
+      }
+    } catch (err) {
+      console.warn("[AutoUpdater] 初始化 Windows autoUpdater 异常:", err);
+    }
+  }
 }
 
 /**
- * 检查更新（启动或用户手动点击时调用）
+ * 检查更新（供启动自动触发或渲染进程手动点击触发）
  */
 export async function checkForUpdates(): Promise<UpdateInfo> {
   if (!isAutoCheckEnabled) return currentUpdateInfo;
 
+  const localVersion = app.getVersion();
   currentUpdateInfo = {
     state: "checking",
-    currentVersion: app.getVersion(),
+    currentVersion: localVersion,
   };
   sendUpdateToRenderer(currentUpdateInfo);
 
-  const localVersion = app.getVersion();
-
-  // 1. 开发环境：直接通过 HTTP 查询最新发布版本
-  if (!app.isPackaged) {
-    console.log("[AutoUpdater] 当前为开发环境，正在远程查询最新版本...");
-    try {
-      const remoteInfo = await fetchRemoteLatestRelease();
-      if (remoteInfo && compareSemver(remoteInfo.version, localVersion) > 0) {
-        currentUpdateInfo = {
-          state: "available",
-          version: remoteInfo.version,
-          currentVersion: localVersion,
-          releaseDate: remoteInfo.releaseDate,
-          releaseNotes: remoteInfo.releaseNotes,
-          releaseUrl: remoteInfo.releaseUrl || RELEASE_PAGE_URL,
-          isDev: true,
-          isManualDownload: true,
-        };
-      } else {
-        currentUpdateInfo = {
-          state: "not-available",
-          version: remoteInfo?.version || localVersion,
-          currentVersion: localVersion,
-          isDev: true,
-          isManualDownload: false,
-        };
-      }
-    } catch (error) {
-      currentUpdateInfo = {
-        state: "error",
-        error: error instanceof Error ? error.message : "远程查询失败",
-        currentVersion: localVersion,
-        isDev: true,
-      };
-    }
-    sendUpdateToRenderer(currentUpdateInfo);
-    return currentUpdateInfo;
-  }
-
-  // 2. macOS 生产环境：由于未公证和自签名限制，直接采用快速版本比对并引导手动下载
-  if (process.platform === "darwin") {
-    console.log("[AutoUpdater] macOS 平台开始查询最新版本...");
-    try {
-      const remoteInfo = await fetchRemoteLatestRelease();
-      if (remoteInfo && compareSemver(remoteInfo.version, localVersion) > 0) {
-        currentUpdateInfo = {
-          state: "available",
-          version: remoteInfo.version,
-          currentVersion: localVersion,
-          releaseDate: remoteInfo.releaseDate,
-          releaseNotes: remoteInfo.releaseNotes,
-          releaseUrl: remoteInfo.releaseUrl || RELEASE_PAGE_URL,
-          isDev: false,
-          isManualDownload: true,
-        };
-      } else {
-        currentUpdateInfo = {
-          state: "not-available",
-          version: remoteInfo?.version || localVersion,
-          currentVersion: localVersion,
-          isDev: false,
-          isManualDownload: false,
-        };
-      }
-    } catch (error) {
-      currentUpdateInfo = {
-        state: "error",
-        error: error instanceof Error ? error.message : "检查更新失败",
-        currentVersion: localVersion,
-        releaseUrl: RELEASE_PAGE_URL,
-      };
-    }
-    sendUpdateToRenderer(currentUpdateInfo);
-    return currentUpdateInfo;
-  }
-
-  // 3. Windows 生产环境：执行标准 electron-updater 检查
   try {
-    console.log("[AutoUpdater] Windows 环境开始检查更新...");
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("timeout")), CHECK_TIMEOUT);
-    });
-    await Promise.race([autoUpdater.checkForUpdates(), timeoutPromise]);
-  } catch (error) {
-    console.error("[AutoUpdater] electron-updater 检查异常，启动 HTTP 兜底查询:", error);
+    const remoteInfo = await fetchRemoteLatestRelease();
 
-    try {
-      const remoteInfo = await fetchRemoteLatestRelease();
-      if (remoteInfo && compareSemver(remoteInfo.version, localVersion) > 0) {
-        currentUpdateInfo = {
-          state: "available",
-          version: remoteInfo.version,
-          currentVersion: localVersion,
-          releaseDate: remoteInfo.releaseDate,
-          releaseNotes: remoteInfo.releaseNotes,
-          releaseUrl: remoteInfo.releaseUrl || RELEASE_PAGE_URL,
-          isDev: false,
-          isManualDownload: true, // 兜底模式标记为手动下载，避免调用空的 downloadUpdate() 报错
-        };
-        sendUpdateToRenderer(currentUpdateInfo);
-        return currentUpdateInfo;
-      }
-    } catch {
-      // 忽略兜底查询错误
-    }
-
-    if ((error as Error)?.message === "timeout") {
+    if (remoteInfo && compareSemver(remoteInfo.version, localVersion) > 0) {
+      console.log(`[AutoUpdater] 发现新版本: 本地=${localVersion}, 远程=${remoteInfo.version}`);
       currentUpdateInfo = {
-        state: "error",
-        error: "检查超时，请检查网络连接",
+        state: "available",
+        version: remoteInfo.version,
         currentVersion: localVersion,
-        releaseUrl: RELEASE_PAGE_URL,
+        releaseDate: remoteInfo.releaseDate,
+        releaseNotes: remoteInfo.releaseNotes,
+        releaseUrl: remoteInfo.releaseUrl || RELEASE_PAGE_URL,
+        downloadUrl: remoteInfo.downloadUrl || (process.platform === "darwin" ? COS_MAC_URL : COS_WIN_URL),
+        isDev: !app.isPackaged,
+        isManualDownload: false,
       };
     } else {
+      console.log(`[AutoUpdater] 已是最新版本: ${localVersion}`);
       currentUpdateInfo = {
-        state: "error",
-        error: error instanceof Error ? error.message : "检查更新失败",
+        state: "not-available",
+        version: remoteInfo?.version || localVersion,
         currentVersion: localVersion,
-        releaseUrl: RELEASE_PAGE_URL,
+        isDev: !app.isPackaged,
+        isManualDownload: false,
       };
     }
-    sendUpdateToRenderer(currentUpdateInfo);
+  } catch (error) {
+    console.error("[AutoUpdater] 检查更新失败:", error);
+    currentUpdateInfo = {
+      state: "error",
+      error: error instanceof Error ? error.message : "检查更新失败，请重试",
+      currentVersion: localVersion,
+      releaseUrl: RELEASE_PAGE_URL,
+      isManualDownload: true,
+    };
   }
 
+  sendUpdateToRenderer(currentUpdateInfo);
   return currentUpdateInfo;
+}
+
+/**
+ * 流式下载大文件并提供平滑进度
+ */
+async function downloadFileWithProgress(
+  url: string,
+  destPath: string,
+  onProgress: (percent: number, speedBytesPerSec: number) => void
+): Promise<void> {
+  downloadAbortController = new AbortController();
+  const response = await axios({
+    url,
+    method: "GET",
+    responseType: "stream",
+    signal: downloadAbortController.signal,
+    headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
+  });
+
+  const totalLength = parseInt(response.headers["content-length"] || "0", 10);
+  let downloadedLength = 0;
+  let lastTime = Date.now();
+  let lastDownloaded = 0;
+
+  const writer = fs.createWriteStream(destPath);
+
+  response.data.on("data", (chunk: Buffer) => {
+    downloadedLength += chunk.length;
+    const now = Date.now();
+    if (now - lastTime >= 200 || downloadedLength === totalLength) {
+      const percent = totalLength > 0 ? Math.round((downloadedLength / totalLength) * 100) : 0;
+      const speed = ((downloadedLength - lastDownloaded) / ((now - lastTime) / 1000)) || 0;
+      lastTime = now;
+      lastDownloaded = downloadedLength;
+      onProgress(Math.min(percent, 100), Math.round(speed));
+    }
+  });
+
+  return new Promise<void>((resolve, reject) => {
+    response.data.pipe(writer);
+    writer.on("finish", () => {
+      writer.close();
+      resolve();
+    });
+    writer.on("error", (err) => {
+      fs.unlink(destPath, () => {});
+      reject(err);
+    });
+    response.data.on("error", (err: any) => {
+      fs.unlink(destPath, () => {});
+      reject(err);
+    });
+  });
 }
 
 /**
  * 用户确认后开始下载
  */
 export async function startDownload(): Promise<void> {
-  if (currentUpdateInfo.state !== "available") return;
+  if (currentUpdateInfo.state !== "available" && currentUpdateInfo.state !== "error") {
+    return;
+  }
+  if (isDownloading) return;
 
   const targetUrl =
     currentUpdateInfo.downloadUrl ||
-    currentUpdateInfo.releaseUrl ||
-    RELEASE_PAGE_URL;
+    (process.platform === "darwin" ? COS_MAC_URL : COS_WIN_URL);
 
-  // 开发环境、Mac 平台或被标记为手动下载的环境直接在浏览器打开下载地址
-  if (
-    !app.isPackaged ||
-    currentUpdateInfo.isDev ||
-    currentUpdateInfo.isManualDownload ||
-    process.platform === "darwin"
-  ) {
-    await shell.openExternal(targetUrl);
-    return;
+  // 1. Windows 生产打包环境优先尝试 electron-updater
+  if (process.platform === "win32" && app.isPackaged) {
+    const updater = getElectronUpdater()?.autoUpdater;
+    if (updater) {
+      try {
+        isDownloading = true;
+        currentUpdateInfo = {
+          ...currentUpdateInfo,
+          state: "downloading",
+          progress: 0,
+        };
+        sendUpdateToRenderer(currentUpdateInfo);
+        await updater.downloadUpdate();
+        return;
+      } catch (err) {
+        console.warn("[AutoUpdater] electron-updater 下载失败，降级使用内置流式下载:", err);
+      }
+    }
   }
 
+  // 2. macOS 生产环境 / 开发环境 / Windows 降级下载：流式下载至本地临时目录
   try {
-    await autoUpdater.downloadUpdate();
-  } catch (error) {
-    console.error("[AutoUpdater] 自动下载失败，已自动回退为在浏览器打开下载页面:", error);
+    isDownloading = true;
     currentUpdateInfo = {
       ...currentUpdateInfo,
-      isManualDownload: true,
-      error: "自动下载未完成，已为您打开下载页面",
+      state: "downloading",
+      progress: 0,
     };
     sendUpdateToRenderer(currentUpdateInfo);
-    await shell.openExternal(targetUrl);
+
+    const ext = process.platform === "darwin" ? ".dmg" : ".exe";
+    const tempDir = app.getPath("temp");
+    const targetFile = path.join(tempDir, `yishe-update-${Date.now()}${ext}`);
+
+    console.log(`[AutoUpdater] 开始从 ${targetUrl} 下载更新包至 ${targetFile}...`);
+
+    await downloadFileWithProgress(targetUrl, targetFile, (percent, speed) => {
+      currentUpdateInfo = {
+        ...currentUpdateInfo,
+        state: "downloading",
+        progress: percent,
+        speed,
+      };
+      sendUpdateToRenderer(currentUpdateInfo);
+    });
+
+    downloadedPackagePath = targetFile;
+    isDownloading = false;
+
+    console.log(`[AutoUpdater] 更新包下载成功: ${targetFile}`);
+
+    currentUpdateInfo = {
+      ...currentUpdateInfo,
+      state: "downloaded",
+      progress: 100,
+    };
+    sendUpdateToRenderer(currentUpdateInfo);
+
+    showRestartDialog();
+  } catch (error) {
+    isDownloading = false;
+    console.error("[AutoUpdater] 下载更新包异常:", error);
+    currentUpdateInfo = {
+      ...currentUpdateInfo,
+      state: "error",
+      error: error instanceof Error ? error.message : "下载失败，请检查网络后重试",
+      isManualDownload: true,
+    };
+    sendUpdateToRenderer(currentUpdateInfo);
   }
+}
+
+/**
+ * macOS 平台：执行静默热更新替换并自动重启新版
+ */
+function installMacUpdateAndRestart(dmgPath: string): void {
+  // 获取当前正在运行的 .app 路径（例如 /Applications/yishe-client.app）
+  const appPath = process.execPath.replace(/\/Contents\/MacOS\/[^/]+$/, "");
+  const pid = process.pid;
+
+  console.log(`[AutoUpdater] 准备执行 macOS 自动热更新: appPath=${appPath}, dmgPath=${dmgPath}`);
+
+  const scriptContent = `#!/bin/bash
+# 1. 等待当前客户端进程退出
+while kill -0 ${pid} 2>/dev/null; do
+  sleep 0.5
+done
+
+# 2. 创建临时挂载目录并静默挂载 DMG
+MOUNT_DIR=$(mktemp -d /tmp/yishe_dmg_XXXXXX)
+hdiutil attach "${dmgPath}" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+
+# 3. 查找挂载盘里的新应用
+NEW_APP=$(find "$MOUNT_DIR" -maxdepth 1 -name "*.app" -print -quit)
+
+if [ -n "$NEW_APP" ] && [ -d "$NEW_APP" ]; then
+  # 替换目标 app
+  rm -rf "${appPath}"
+  cp -R "$NEW_APP" "${appPath}"
+  # 移除 Mac 隔离属性（杜绝出现"文件已损坏"提示）
+  xattr -cr "${appPath}" 2>/dev/null || true
+fi
+
+# 4. 卸载 DMG 并清理临时文件
+hdiutil detach "$MOUNT_DIR" -force -quiet || true
+rm -rf "$MOUNT_DIR" 2>/dev/null || true
+rm -f "${dmgPath}" 2>/dev/null || true
+
+# 5. 重新启动新版本客户端
+open -n "${appPath}"
+`;
+
+  const scriptPath = path.join(app.getPath("temp"), `yishe_mac_updater_${Date.now()}.sh`);
+  fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
+
+  const child = spawn("/bin/bash", [scriptPath], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  // 退出当前应用，由后台脚本完成替换并重启
+  app.exit(0);
 }
 
 /**
  * 退出并安装更新
  */
 export function quitAndInstall(): void {
-  autoUpdater.quitAndInstall(false, true);
+  // 1. Windows 生产打包且通过 electron-updater 下载
+  if (process.platform === "win32" && app.isPackaged) {
+    const updater = getElectronUpdater()?.autoUpdater;
+    if (updater && currentUpdateInfo.state === "downloaded" && !downloadedPackagePath) {
+      try {
+        updater.quitAndInstall(false, true);
+        return;
+      } catch (e) {
+        console.warn("[AutoUpdater] autoUpdater.quitAndInstall 失败，尝试本地安装包:", e);
+      }
+    }
+  }
+
+  // 2. Windows 本地独立下载好的 exe
+  if (process.platform === "win32" && downloadedPackagePath && fs.existsSync(downloadedPackagePath)) {
+    try {
+      const child = spawn(downloadedPackagePath, [], {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+      app.exit(0);
+      return;
+    } catch (e) {
+      console.error("[AutoUpdater] 启动更新安装包失败:", e);
+    }
+  }
+
+  // 3. macOS 平台安装并重启
+  if (process.platform === "darwin" && downloadedPackagePath && fs.existsSync(downloadedPackagePath)) {
+    if (!app.isPackaged) {
+      // 开发环境下，提示已下载，不覆盖开发工程
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        dialog.showMessageBox(mainWindow, {
+          type: "info",
+          title: "开发环境更新提示",
+          message: `macOS 更新包已成功下载至:\n${downloadedPackagePath}`,
+          detail: "开发环境下不执行实际应用替换。在打包生成的生产环境（.app）中，点击重启将自动静默挂载 DMG 并无缝覆盖更新重启。",
+          buttons: ["好的"],
+        });
+      }
+      return;
+    }
+
+    // 生产环境：启动后台替换 Shell 脚本并退出
+    installMacUpdateAndRestart(downloadedPackagePath);
+    return;
+  }
+
+  // 兜底提示
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "更新提示",
+      message: "未检测到可安装的离线更新包，请重新点击下载更新。",
+      buttons: ["确定"],
+    });
+  }
 }
 
 /**
@@ -424,7 +590,7 @@ function sendUpdateToRenderer(info: UpdateInfo): void {
 }
 
 /**
- * 显示重启对话框（主进程原生对话框，单选明确）
+ * 显示重启对话框（主进程原生对话框）
  */
 function showRestartDialog(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -433,7 +599,7 @@ function showRestartDialog(): void {
       type: "info",
       title: "更新已就绪",
       message: `新版本 ${currentUpdateInfo.version || ""} 已下载完成`,
-      detail: "是否立即重启应用以安装更新？",
+      detail: "是否立即重启应用以完成更新？",
       buttons: ["稍后重启", "立即重启"],
       defaultId: 1,
       cancelId: 0,

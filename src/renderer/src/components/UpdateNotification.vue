@@ -32,6 +32,7 @@ interface UpdateInfo {
   progress?: number;
   error?: string;
   releaseUrl?: string;
+  downloadUrl?: string;
   isDev?: boolean;
   isManualDownload?: boolean;
 }
@@ -41,11 +42,10 @@ const updateInfo = ref<UpdateInfo>({ state: "idle" });
 const downloading = ref(false);
 const dismissed = ref(false);
 
-const isMac = typeof navigator !== "undefined" && /macintosh|mac os x/i.test(navigator.userAgent);
 const progress = computed(() => updateInfo.value.progress || 0);
 const isDownloaded = computed(() => updateInfo.value.state === "downloaded");
 const isManual = computed(
-  () => Boolean(updateInfo.value.isDev || updateInfo.value.isManualDownload || isMac)
+  () => Boolean(updateInfo.value.isManualDownload)
 );
 
 const emojiIcon = computed(() => {
@@ -75,10 +75,10 @@ const hintText = computed(() => {
     return `下载进度 ${progress.value}%`;
   }
   if (updateInfo.value.state === "error") {
-    return updateInfo.value.error || "自动更新异常，点击前往手动下载";
+    return updateInfo.value.error || "自动更新异常，点击重试或前往手动下载";
   }
   if (isManual.value) {
-    return isMac ? "点击在浏览器下载最新 Mac 安装包 (dmg)" : "点击前往浏览器下载最新版本";
+    return "点击前往下载最新版本";
   }
   return "点击开始自动下载更新";
 });
@@ -126,13 +126,13 @@ async function handleClick() {
     return;
   }
 
-  // 2. 手动/外部下载引导（Mac 平台或开发模式或兜底模式）
-  if (isManual.value || updateInfo.value.state === "error") {
+  // 2. 若发生错误或要求手动模式，才打开外部浏览器
+  if (isManual.value || (updateInfo.value.state === "error" && !updateInfo.value.downloadUrl)) {
     window.api?.openExternal?.(targetUrl) || window.open(targetUrl, "_blank");
     return;
   }
 
-  // 3. Windows 自动下载
+  // 3. 应用内自动下载
   if (downloading.value) return;
   downloading.value = true;
   await window.api.updateDownload();

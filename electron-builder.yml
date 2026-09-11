@@ -131,6 +131,6 @@ linux:
 npmRebuild: false
 publish:
   provider: generic
-  url: https://gh-proxy.com/https://github.com/1s-design/yishe-client/releases/latest/download/
+  url: https://yishe-storage-1257307499.cos.ap-beijing.myqcloud.com/yishe-client/
 electronDownload:
   mirror: https://github.com/electron/electron/releases/download/
