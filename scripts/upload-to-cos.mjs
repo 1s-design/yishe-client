@@ -139,15 +139,11 @@ function discoverArtifacts() {
     path.resolve('release'),
   ];
 
+  // 严格精简发布清单：仅上传 3 个核心必要文件，彻底剔除无用的 zip (240MB+)、blockmap 与冗余清单
   const targetFilenames = [
-    'latest.yml',
-    'latest-mac.yml',
-    'yishe-client.exe',
-    'yishe-client.dmg',
-    'yishe-client.zip',
-    'yishe-client.exe.blockmap',
-    'yishe-client.dmg.blockmap',
-    'yishe-client.zip.blockmap',
+    'latest.yml',        // Windows 客户端自动检测升级元数据清单 (300B)
+    'yishe-client.exe',  // Windows 客户端安装程序 (198MB)
+    'yishe-client.dmg',  // macOS 客户端安装程序 (246MB)
   ];
 
   const discovered = new Map();
@@ -300,61 +296,6 @@ async function uploadSingleFile(cos, fileName, fileInfo) {
   }
 }
 
-// 服务端快速创建 alias 副本 (latest.exe, latest.dmg)
-async function createServerSideAliases(cos, uploadedFiles) {
-  const aliases = [
-    { src: 'yishe-client.exe', target: 'latest.exe' },
-    { src: 'yishe-client.dmg', target: 'latest.dmg' },
-  ];
-
-  console.log('\n--------------------------------------------------------------------------------');
-  console.log('📋 创建服务端极速别名副本 (latest.exe / latest.dmg，免流量瞬间生成)...');
-  console.log('--------------------------------------------------------------------------------');
-
-  const createdAliases = [];
-
-  for (const { src, target } of aliases) {
-    if (!uploadedFiles.has(src)) continue;
-
-    const sourceKey = `${REMOTE_PATH}/${src}`;
-    const targetKey = `${REMOTE_PATH}/${target}`;
-    const copySource = `${BUCKET}.cos.${REGION}.myqcloud.com/${sourceKey}`;
-
-    try {
-      const t0 = Date.now();
-      await new Promise((resolve, reject) => {
-        cos.sliceCopyFile(
-          {
-            Bucket: BUCKET,
-            Region: REGION,
-            Key: targetKey,
-            CopySource: copySource,
-          },
-          (err, data) => {
-            if (err) return reject(err);
-            resolve(data);
-          }
-        );
-      });
-      const cost = Date.now() - t0;
-      const targetUrl = `https://${BUCKET}.cos.${REGION}.myqcloud.com/${targetKey}`;
-      console.log(`  ✅ 别名生成成功: ${target} (源: ${src}, 耗时: ${cost}ms)`);
-      console.log(`     URL: ${targetUrl}`);
-      createdAliases.push({
-        fileName: target + ' (别名)',
-        size: uploadedFiles.get(src).size,
-        elapsed: cost / 1000,
-        url: targetUrl,
-        success: true,
-      });
-    } catch (err) {
-      console.warn(`  ⚠️ 别名 ${target} 创建失败 (不影响主程序包使用): ${err.message}`);
-    }
-  }
-
-  return createdAliases;
-}
-
 // 主执行函数
 async function main() {
   printHeader();
@@ -386,10 +327,7 @@ async function main() {
     }
   }
 
-  // 服务端生成固定 latest.exe / latest.dmg 别名
-  const aliasResults = await createServerSideAliases(cos, artifacts);
-  const allResults = [...uploadResults, ...aliasResults];
-
+  const allResults = uploadResults;
   const overallElapsed = (Date.now() - overallStartTime) / 1000;
   const totalUploadedBytes = uploadResults.reduce((acc, cur) => acc + (cur.size || 0), 0);
 
