@@ -173,7 +173,7 @@ jobs:
           cache: "npm"
 
       - name: Install COS SDK
-        run: npm install cos-nodejs-sdk-v5 --no-save
+        run: npm install cos-nodejs-sdk-v5 --no-save --legacy-peer-deps
 
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
