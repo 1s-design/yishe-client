@@ -15,6 +15,7 @@ on:
       - scripts/download-latest-plugins.mjs
       - scripts/prepare-ps-env.mjs
       - scripts/prepare-ps-binary.mjs
+      - scripts/upload-to-cos.mjs
       - .github/workflows/build.yml
   workflow_dispatch:
 
@@ -162,6 +163,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install COS SDK
+        run: npm install cos-nodejs-sdk-v5 --no-save
+
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
@@ -187,3 +200,18 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.github_token }}
+
+      - name: Upload packages to Tencent COS (Multipart Chunked)
+        shell: bash
+        timeout-minutes: 15
+        continue-on-error: true
+        env:
+          TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          COS_REMOTE_PATH: "yishe-client"
+          COS_SLICE_SIZE: "5242880" # 5MB 分片
+          COS_ASYNC_LIMIT: "3"       # 3 分片并发
+        run: |
+          node scripts/upload-to-cos.mjs
