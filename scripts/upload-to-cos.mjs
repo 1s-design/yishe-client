@@ -22,9 +22,9 @@ const BUCKET = process.env.TENCENT_COS_BUCKET || process.env.COS_BUCKET;
 const REGION = process.env.TENCENT_COS_REGION || process.env.COS_REGION;
 const REMOTE_PATH = (process.env.COS_REMOTE_PATH || 'yishe-client').replace(/^\/+|\/+$/g, '');
 
-// 分片大小：默认 5MB（大文件推荐 5MB~10MB），分片并发数：默认 3
-const SLICE_SIZE = parseInt(process.env.COS_SLICE_SIZE, 10) || 5 * 1024 * 1024;
-const ASYNC_LIMIT = parseInt(process.env.COS_ASYNC_LIMIT, 10) || 3;
+// 分片大小：跨洋网络推荐 2MB（丢包恢复极快），分片并发数：推荐 8 并发
+const SLICE_SIZE = parseInt(process.env.COS_SLICE_SIZE, 10) || 2 * 1024 * 1024;
+const ASYNC_LIMIT = parseInt(process.env.COS_ASYNC_LIMIT, 10) || 8;
 const RETRY_LIMIT = 3;
 
 function printHeader() {
@@ -95,12 +95,17 @@ async function probeConnectivity() {
       (res) => {
         const elapsed = Date.now() - startTime;
         console.log(`  - 响应状态码: HTTP ${res.statusCode} (耗时: ${elapsed}ms)`);
-        // HTTP 200, 403 (未签名鉴权被拒), 404 均代表 DNS 解析正常且网络完全可达
-        if (res.statusCode >= 200 && res.statusCode < 500) {
-          console.log('  ✅ COS Endpoint 网络通畅，DNS 与 TLS 握手正常');
+        if (res.statusCode === 403 || res.statusCode === 200) {
+          console.log(`  ✅ COS Endpoint 网络通畅且存储桶存在 (HTTP ${res.statusCode})`);
+          resolve(true);
+        } else if (res.statusCode === 404) {
+          console.warn(`  ⚠️ 连通探测返回 HTTP 404：腾讯云提示存储桶不存在！`);
+          console.warn(`  👉 请重点核对：`);
+          console.warn(`     1) BUCKET 是否漏填了 10 位 APPID 后缀 (格式如: yishe-storage-1257307499)`);
+          console.warn(`     2) REGION 是否与 Bucket 真实地域匹配 (如 ap-beijing / ap-guangzhou)`);
           resolve(true);
         } else {
-          console.warn(`  ⚠️ 响应状态码异常 (HTTP ${res.statusCode})，但仍将尝试上传`);
+          console.warn(`  ⚠️ 响应状态码: HTTP ${res.statusCode}，仍将尝试上传`);
           resolve(true);
         }
       }

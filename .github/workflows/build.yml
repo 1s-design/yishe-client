@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload packages to Tencent COS (Multipart Chunked)
         shell: bash
-        timeout-minutes: 15
+        timeout-minutes: 40
         continue-on-error: true
         env:
           TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
@@ -211,7 +211,7 @@ jobs:
           TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
           TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
           COS_REMOTE_PATH: "yishe-client"
-          COS_SLICE_SIZE: "5242880" # 5MB 分片
-          COS_ASYNC_LIMIT: "3"       # 3 分片并发
+          COS_SLICE_SIZE: "2097152" # 2MB 分片（抗丢包、单片极速重试）
+          COS_ASYNC_LIMIT: "8"       # 8 分片高并发（压满多路带宽）
         run: |
           node scripts/upload-to-cos.mjs
