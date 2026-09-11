@@ -15,6 +15,7 @@ import {
   executePlatformCollect,
   executeAllPlatformCollect,
 } from './tools/hotsearch-platforms';
+import { DynamicCapabilityManager } from './dynamic-capability-manager';
 import { getTokenValue } from '../server';
 import { writeClientLog } from '../clientLogger';
 import { listOperationDefinitions } from '../image-tool/legacy/operation-registry.js';
@@ -224,6 +225,34 @@ export class McpServerManager {
         category: 'hotsearch',
         capability: { key: 'platform_hotsearch', label: '全平台热搜采集', description: '并发采集所有启用平台热搜。' },
         handler: async (args) => executeAllPlatformCollect(args.platforms, args.reportToServer ?? true),
+      });
+
+      // 注册虎扑动态节点能力 MCP 工具
+      this.registerTool(server, {
+        name: 'hupu_post_search',
+        description: '搜索虎扑论坛帖子，支持关键词搜索、多种排序方式。自动提取结构化数据。',
+        zodShape: {
+          keyword: z.string().describe('搜索关键词'),
+          maxCount: z.number().optional().describe('获取数量，默认 20'),
+          sortby: z.string().optional().describe('排序方式，默认 general'),
+          page: z.number().optional().describe('页码，默认 1'),
+        },
+        inputSchema: {
+          keyword: { type: 'string' },
+          maxCount: { type: 'number', optional: true },
+          sortby: { type: 'string', optional: true },
+          page: { type: 'number', optional: true },
+        },
+        category: 'hupu',
+        capability: { key: 'hupu_post_search', label: '虎扑帖子搜索', description: '搜索虎扑论坛帖子' },
+        actions: [{ key: 'search', label: '虎扑帖子搜索', description: '搜索虎扑论坛帖子' }],
+        handler: async (args, ctx) => {
+          const result = await DynamicCapabilityManager.executeCapability('hupu_post_search', args, ctx as any);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            isError: false,
+          };
+        },
       });
 
       // 注册 AI 图片处理 MCP 工具
@@ -760,6 +789,21 @@ export class McpServerManager {
       }
     }
     if (!tool) {
+      // 尝试作为动态节点能力由 DynamicCapabilityManager 本地拉取执行（支持所有服务端已注册的动态能力）
+      try {
+        const dynamicResult = await DynamicCapabilityManager.executeCapability(
+          canonicalName,
+          toolArgs,
+          context as any,
+        );
+        return {
+          content: [{ type: 'text', text: JSON.stringify(dynamicResult, null, 2) }],
+          isError: false,
+        };
+      } catch (dynamicErr: any) {
+        // 如果不是动态能力则继续常规 Tool not found 处理
+      }
+
       return {
         content: [{ type: 'text', text: `Tool not found: ${toolName}` }],
         isError: true,
