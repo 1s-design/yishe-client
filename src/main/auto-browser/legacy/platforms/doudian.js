@@ -2677,7 +2677,19 @@ export async function publishToDoudian(publishInfo = {}) {
       const inputCount = await stockInputs.count();
       for (let i = 0; i < inputCount; i += 1) {
         const sku = skuConfig[i];
-        if (!sku || sku.stock === undefined || sku.stock === null) {
+        if (!sku) {
+          logger.info(`抖店库存逻辑：SKU ${i + 1} 未设置，跳过`);
+          continue;
+        }
+        let stockToFill;
+        if (sku.stock !== undefined && sku.stock !== null) {
+          stockToFill = sku.stock;
+        } else if (sku.stockMin !== undefined && sku.stockMax !== undefined) {
+          const min = Math.floor(sku.stockMin);
+          const max = Math.floor(sku.stockMax);
+          stockToFill = Math.floor(Math.random() * (max - min + 1)) + min;
+          logger.info(`抖店库存逻辑：SKU ${i + 1} 随机库存 ${min}-${max} → ${stockToFill}`);
+        } else {
           logger.info(`抖店库存逻辑：SKU ${i + 1} 未设置库存，跳过`);
           continue;
         }
@@ -2687,9 +2699,9 @@ export async function publishToDoudian(publishInfo = {}) {
           await input.scrollIntoViewIfNeeded().catch(() => undefined);
           await input.click({ clickCount: 3 }).catch(() => undefined);
           await input.fill("").catch(() => undefined);
-          await input.fill(String(sku.stock));
+          await input.fill(String(stockToFill));
           stockFilledCount += 1;
-          logger.info(`抖店库存逻辑：SKU ${i + 1} 库存已填写 = ${sku.stock}`);
+          logger.info(`抖店库存逻辑：SKU ${i + 1} 库存已填写 = ${stockToFill}`);
         } catch (error) {
           logger.warn(`抖店库存逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
         }
