@@ -2224,8 +2224,9 @@ export async function publishToDoudian(publishInfo = {}) {
       }
     }
 
-    // 填写短标题（导购短标题）
-    if (shortTitle) {
+    // 填写短标题（导购短标题），抖店要求至少 12 个字符
+    const DOUDIAN_SHORT_TITLE_MIN_LEN = 12;
+    if (shortTitle && [...shortTitle].length >= DOUDIAN_SHORT_TITLE_MIN_LEN) {
       logger.info(`抖店准备填写短标题: ${shortTitle}`);
       try {
         const shortTitleInput = page.locator('[dropdownclassname="auto-dropdown-id-导购短标题"]').first();
