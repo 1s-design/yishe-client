@@ -2243,6 +2243,16 @@ type DownloadManifest = Record<string, DownloadManifestEntry>;
 
 const downloadInFlight = new Map<string, Promise<any>>();
 
+/** 解析 urlA|urlB 随机语法，返回选中的单个 URL */
+function resolveRandomUrl(input: string): string {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+  const parts = raw.split("|").map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0];
+  return parts[Math.floor(Math.random() * parts.length)];
+}
+
 function normalizeDownloadUrl(url: string): string {
   return new URL(String(url || "").trim()).toString();
 }
@@ -2410,9 +2420,12 @@ ipcMain.handle("download-file", async (_event, url: string) => {
         };
       }
 
+      // 解析 urlA|urlB 随机语法，选取一个候选 URL
+      const resolvedUrl = resolveRandomUrl(url);
+
       let parsedUrl: URL;
       try {
-        parsedUrl = new URL(url);
+        parsedUrl = new URL(resolvedUrl);
       } catch (error) {
         return {
           success: false,
@@ -2420,7 +2433,7 @@ ipcMain.handle("download-file", async (_event, url: string) => {
           error: "INVALID_URL_FORMAT",
         };
       }
-      const normalizedUrl = normalizeDownloadUrl(url);
+      const normalizedUrl = normalizeDownloadUrl(resolvedUrl);
       const cacheKey = buildDownloadCacheKey(normalizedUrl);
 
       // 创建 files 目录
@@ -2455,7 +2468,7 @@ ipcMain.handle("download-file", async (_event, url: string) => {
         );
 
         // 使用 fetch 下载文件，参考 yishe-admin 的实现
-        const response = await fetch(url, {
+        const response = await fetch(resolvedUrl, {
           method: "GET",
           headers: {
             "User-Agent":
