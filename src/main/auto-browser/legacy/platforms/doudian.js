@@ -2118,6 +2118,11 @@ export async function publishToDoudian(publishInfo = {}) {
     const stockValue = String(
       settings.stock ?? publishInfo.stock ?? publishInfo.data?.stock ?? "",
     ).trim();
+    const skuConfig = Array.isArray(settings.skuConfig)
+      ? settings.skuConfig
+      : Array.isArray(publishInfo.skuConfig)
+        ? publishInfo.skuConfig
+        : [];
     const hoverMode = normalizeHoverMode(
       settings.materialHoverMode ??
         settings.hoverMode ??
@@ -2609,8 +2614,19 @@ export async function publishToDoudian(publishInfo = {}) {
     }
 
     let productCodeFilledCount = 0;
-    if (!productCode && !skuCodes.length) {
-      logger.info("抖店商家编码逻辑：productCode 为空且无 skuCodes，跳过填写");
+    // 根据 skuConfig 自动生成商家编码：stickerCode-vendorProductCode 或 stickerCode
+    const skuProductCodes = skuConfig.length > 0
+      ? skuConfig.map((sku) => {
+          const vendorProductCode = String(sku?.vendorProductCode || "").trim();
+          if (vendorProductCode && stickerCode) {
+            return `${stickerCode}-${vendorProductCode}`;
+          }
+          return stickerCode || productCode || '';
+        })
+      : [];
+    const hasAnyCode = skuProductCodes.some(Boolean) || skuCodes.length > 0 || productCode;
+    if (!hasAnyCode) {
+      logger.info("抖店商家编码逻辑：无商家编码，跳过填写");
     } else {
       try {
         const productCodeSelector =
@@ -2618,11 +2634,13 @@ export async function publishToDoudian(publishInfo = {}) {
         const productCodeInputs = page.locator(productCodeSelector);
         const inputCount = await productCodeInputs.count();
         logger.info(
-          `抖店商家编码逻辑：准备填写商家编码，inputCount=${inputCount}, productCode=${productCode}, skuCodes=${JSON.stringify(skuCodes)}`,
+          `抖店商家编码逻辑：准备填写商家编码，inputCount=${inputCount}`,
         );
 
         for (let index = 0; index < inputCount; index += 1) {
-          const code = skuCodes[index] || productCode;
+          const code = skuConfig.length > 0
+            ? skuProductCodes[index]
+            : skuCodes[index] || productCode;
           if (!code) continue;
           const input = productCodeInputs.nth(index);
           await input.waitFor({ timeout: 5000, state: "visible" });
@@ -2638,12 +2656,45 @@ export async function publishToDoudian(publishInfo = {}) {
       }
     }
 
-    const productCodeFilled = !productCode || productCodeFilledCount > 0;
+    const productCodeFilled = productCodeFilledCount > 0;
 
     let stockFilledCount = 0;
-    if (!stockValue) {
-      logger.info("抖店库存逻辑：stock 为空，跳过填写");
-    } else {
+    if (skuConfig.length > 0) {
+      // 按 SKU 逐个填写库存
+      logger.info(`抖店库存逻辑：使用 SKU 配置，共 ${skuConfig.length} 项`);
+      const stockSelectorList = [
+        'input[placeholder="请输入库存"]',
+        'input[type="text"][placeholder="请输入库存"]',
+        'input[type="number"][placeholder="请输入库存"]',
+        'td.attr-column-field_stock input[type="text"]',
+        'td.attr-column-field_stock input[type="number"]',
+        'td.attr-column-field_stock input:not([type])',
+        'td[class*="attr-column-field_stock"] input',
+        'td[class*="attr-column-field_inventory"] input',
+        'td[class*="attr-column-field_num"] input',
+      ];
+      const stockInputs = page.locator(stockSelectorList.join(", "));
+      const inputCount = await stockInputs.count();
+      for (let i = 0; i < inputCount; i += 1) {
+        const sku = skuConfig[i];
+        if (!sku || sku.stock === undefined || sku.stock === null) {
+          logger.info(`抖店库存逻辑：SKU ${i + 1} 未设置库存，跳过`);
+          continue;
+        }
+        try {
+          const input = stockInputs.nth(i);
+          await input.waitFor({ timeout: 5000, state: "visible" });
+          await input.scrollIntoViewIfNeeded().catch(() => undefined);
+          await input.click({ clickCount: 3 }).catch(() => undefined);
+          await input.fill("").catch(() => undefined);
+          await input.fill(String(sku.stock));
+          stockFilledCount += 1;
+          logger.info(`抖店库存逻辑：SKU ${i + 1} 库存已填写 = ${sku.stock}`);
+        } catch (error) {
+          logger.warn(`抖店库存逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
+        }
+      }
+    } else if (stockValue) {
       stockFilledCount = await fillInputsBySelectorList(
         page,
         [
@@ -2663,9 +2714,46 @@ export async function publishToDoudian(publishInfo = {}) {
       if (stockFilledCount <= 0) {
         logger.warn("抖店库存逻辑：未成功填写任何库存输入框");
       }
+    } else {
+      logger.info("抖店库存逻辑：无 SKU 配置且 stock 为空，跳过填写");
     }
 
-    const stockFilled = !stockValue || stockFilledCount > 0;
+    const stockFilled = stockFilledCount > 0;
+
+    // SKU 价格填写
+    let priceFilledCount = 0;
+    if (skuConfig.length > 0) {
+      logger.info(`抖店价格逻辑：使用 SKU 配置，共 ${skuConfig.length} 项`);
+      const priceSelectorList = [
+        'td[class*="attr-column-field_price"] input[type="text"]',
+        'td[class*="attr-column-field_price"] input[type="number"]',
+        'td[class*="attr-column-field_price"] input:not([type])',
+        'td.attr-column-field_price input',
+      ];
+      const priceInputs = page.locator(priceSelectorList.join(", "));
+      const priceInputCount = await priceInputs.count();
+      for (let i = 0; i < priceInputCount; i += 1) {
+        const sku = skuConfig[i];
+        if (!sku || sku.price === undefined || sku.price === null) {
+          logger.info(`抖店价格逻辑：SKU ${i + 1} 未设置价格，跳过`);
+          continue;
+        }
+        try {
+          const input = priceInputs.nth(i);
+          await input.waitFor({ timeout: 5000, state: "visible" });
+          await input.scrollIntoViewIfNeeded().catch(() => undefined);
+          await input.click({ clickCount: 3 }).catch(() => undefined);
+          await input.fill("").catch(() => undefined);
+          await input.fill(String(sku.price));
+          priceFilledCount += 1;
+          logger.info(`抖店价格逻辑：SKU ${i + 1} 价格已填写 = ${sku.price}`);
+        } catch (error) {
+          logger.warn(`抖店价格逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
+        }
+      }
+    }
+
+    const priceFilled = priceFilledCount > 0;
 
     let publishSubmitted = false;
     let publishSuccessConfirmed = false;
@@ -2767,6 +2855,8 @@ export async function publishToDoudian(publishInfo = {}) {
         stockValue,
         stockFilledCount,
         stockFilled,
+        priceFilledCount,
+        priceFilled,
         publishSubmitted,
         publishSuccessConfirmed,
         publishSuccessSignal,
