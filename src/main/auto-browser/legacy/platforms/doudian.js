@@ -2081,6 +2081,9 @@ export async function publishToDoudian(publishInfo = {}) {
       publishInfo.platformSettings?.[PLATFORM_KEY] ||
       {};
     const title = normalizeTitle(publishInfo.title || publishInfo.name || "");
+    const shortTitle = typeof publishInfo.shortTitle === "string"
+      ? publishInfo.shortTitle.trim()
+      : "";
     const sourceImages =
       Array.isArray(publishInfo.images) && publishInfo.images.length
         ? publishInfo.images
@@ -2212,6 +2215,22 @@ export async function publishToDoudian(publishInfo = {}) {
           logger.warn(`抖店标题回读校验未通过: ${error?.message || error}`);
         }
         logger.info(`抖店标题填写完成: ${title}`);
+      }
+    }
+
+    // 填写短标题（导购短标题）
+    if (shortTitle) {
+      logger.info(`抖店准备填写短标题: ${shortTitle}`);
+      try {
+        const shortTitleInput = page.locator('[dropdownclassname="auto-dropdown-id-导购短标题"]').first();
+        await shortTitleInput.waitFor({ timeout: 10000, state: "visible" });
+        await shortTitleInput.scrollIntoViewIfNeeded().catch(() => undefined);
+        await shortTitleInput.click({ clickCount: 3 }).catch(() => undefined);
+        await shortTitleInput.fill("").catch(() => undefined);
+        await shortTitleInput.fill(shortTitle);
+        logger.info(`抖店短标题填写完成: ${shortTitle}`);
+      } catch (error) {
+        logger.warn(`抖店短标题填写失败: ${error?.message || error}`);
       }
     }
 
