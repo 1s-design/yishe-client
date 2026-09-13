@@ -2,19 +2,12 @@
   <Teleport to="body">
     <Transition name="update-fade">
       <div v-if="visible" class="update-notification" @click="handleClick">
-        <div class="update-notification__icon">
-          <span class="update-notification__emoji">{{ emojiIcon }}</span>
-        </div>
         <div class="update-notification__content">
-          <div class="update-notification__title">
-            {{ titleText }}
-          </div>
-          <div class="update-notification__hint">
-            {{ hintText }}
-          </div>
-          <div v-if="downloading" class="update-notification__progress">
-            <div class="update-notification__progress-bar" :style="{ width: `${progress}%` }" />
-          </div>
+          <span class="update-notification__text">{{ titleText }}</span>
+          <span v-if="downloading" class="update-notification__progress">
+            <span class="update-notification__progress-bar" :style="{ width: `${progress}%` }" />
+          </span>
+          <span v-else class="update-notification__action">{{ actionText }}</span>
         </div>
         <button class="update-notification__close" title="稍后提醒" @click.stop="handleDismiss">×</button>
       </div>
@@ -48,12 +41,6 @@ const isManual = computed(
   () => Boolean(updateInfo.value.isManualDownload)
 );
 
-const emojiIcon = computed(() => {
-  if (isDownloaded.value) return "🎉";
-  if (updateInfo.value.state === "error") return "⚠️";
-  return "🚀";
-});
-
 const titleText = computed(() => {
   if (isDownloaded.value) {
     return `新版本 ${updateInfo.value.version || ""} 已就绪`;
@@ -81,6 +68,13 @@ const hintText = computed(() => {
     return "点击前往下载最新版本";
   }
   return "点击开始自动下载更新";
+});
+
+const actionText = computed(() => {
+  if (isDownloaded.value) return "点击重启安装";
+  if (downloading.value) return `${progress.value}%`;
+  if (updateInfo.value.state === "error") return "点击重试";
+  return "点击更新";
 });
 
 let unsubscribe: (() => void) | null = null;
@@ -147,98 +141,97 @@ function handleDismiss() {
 <style scoped>
 .update-notification {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 9999;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
-  background: linear-gradient(135deg, #6900ff 0%, #8b5cf6 100%);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(105, 0, 255, 0.35);
+  gap: 16px;
+  padding: 10px 16px;
+  background: #1a1a1a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  max-width: 340px;
+  transition: opacity 0.2s ease, box-shadow 0.2s ease;
+  max-width: 420px;
   user-select: none;
 }
 
 .update-notification:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 40px rgba(105, 0, 255, 0.45);
-}
-
-.update-notification__icon {
-  flex-shrink: 0;
-}
-
-.update-notification__emoji {
-  font-size: 24px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
 }
 
 .update-notification__content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex: 1;
   min-width: 0;
 }
 
-.update-notification__title {
+.update-notification__text {
   font-size: 13px;
-  font-weight: 600;
-  color: #fff;
-  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.92);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.update-notification__hint {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.85);
-  margin-top: 3px;
-  line-height: 1.3;
+.update-notification__action {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  padding-left: 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .update-notification__progress {
-  height: 4px;
-  background: rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+  width: 48px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 2px;
-  margin-top: 6px;
   overflow: hidden;
 }
 
 .update-notification__progress-bar {
+  display: block;
   height: 100%;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.7);
   border-radius: 2px;
   transition: width 0.3s ease;
 }
 
 .update-notification__close {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.75);
-  background: rgba(255, 255, 255, 0.18);
+  font-size: 14px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.4);
+  background: transparent;
   border: none;
-  border-radius: 50%;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: color 0.15s ease;
 }
 
 .update-notification__close:hover {
-  background: rgba(255, 255, 255, 0.35);
-  color: #fff;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .update-fade-enter-active,
 .update-fade-leave-active {
-  transition: all 0.3s ease;
+  transition: opacity 0.25s ease;
 }
 
 .update-fade-enter-from,
 .update-fade-leave-to {
   opacity: 0;
-  transform: translateY(-10px);
 }
 </style>
