@@ -536,6 +536,106 @@ async function fillPddSkuCodes(page, skuCodes, fallbackCode) {
   return { filled: totalResult.filled, total: codes.length };
 }
 
+/**
+ * 通用列填充：按列头文本找到列，逐行填入值
+ * @param {string} columnHeader - 列头文本，如 '库存'、'拼单价(元)'、'单买价(元)'
+ * @param {Array<string|number>} values - 要填入的值列表
+ * @param {string} label - 日志标签
+ */
+/**
+ * 解析 SKU 配置中的拼单价（支持固定值 / 随机范围）
+ * 优先使用 pddGroupPrice 字段，如果没有则返回 undefined
+ */
+function resolvePddGroupPrice(sku) {
+  if (!sku || typeof sku !== 'object') return undefined;
+  // 固定值
+  if (sku.pddGroupPrice !== undefined && sku.pddGroupPrice !== null && Number.isFinite(Number(sku.pddGroupPrice))) {
+    return Number(sku.pddGroupPrice);
+  }
+  // 随机范围
+  if (Number.isFinite(Number(sku.pddGroupPriceMin)) && Number.isFinite(Number(sku.pddGroupPriceMax))) {
+    const min = Number(sku.pddGroupPriceMin);
+    const max = Number(sku.pddGroupPriceMax);
+    if (min >= 0 && max >= min) {
+      const integerPart = Math.floor(Math.random() * (Math.floor(max) - Math.ceil(min) + 1)) + Math.ceil(min);
+      return Number(integerPart.toFixed(2));
+    }
+  }
+  return undefined;
+}
+
+async function fillPddColumnValues(page, columnHeader, values, label = columnHeader) {
+  if (!Array.isArray(values) || values.length === 0) {
+    logger.info(`${PLATFORM_NAME}${label}：无值需要填写，跳过`);
+    return { found: 0, filled: 0, total: 0 };
+  }
+
+  const frames = [page, ...page.frames()];
+  let totalResult = { found: 0, filled: 0, total: values.length };
+
+  for (const frame of frames) {
+    const result = await frame.evaluate((headerText, valuesArg) => {
+      const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+
+      // 1. 找到列头
+      const headers = Array.from(document.querySelectorAll('thead th'));
+      const colIndex = headers.findIndex((th) =>
+        th.textContent.trim().includes(headerText),
+      );
+
+      if (colIndex === -1) {
+        return { found: 0, filled: 0, error: `未找到「${headerText}」列表头` };
+      }
+
+      // 2. 取该列所有 input
+      const matchedInputs = Array.from(
+        document.querySelectorAll(`tbody tr td:nth-child(${colIndex + 1}) input`),
+      );
+
+      if (!matchedInputs.length) {
+        return { found: 0, filled: 0, error: `「${headerText}」列无输入框` };
+      }
+
+      // 3. 逐行填入
+      const fillCount = Math.min(matchedInputs.length, valuesArg.length);
+      let filled = 0;
+
+      for (let i = 0; i < fillCount; i++) {
+        const val = valuesArg[i];
+        if (val === undefined || val === null || val === '') continue;
+
+        const input = matchedInputs[i];
+        input.focus();
+        nativeSet.call(input, String(val));
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.dispatchEvent(new Event('blur', { bubbles: true }));
+        filled += 1;
+      }
+
+      return { found: matchedInputs.length, filled };
+    }, columnHeader, values);
+
+    totalResult.found += result.found;
+    totalResult.filled += result.filled;
+
+    if (result.found > 0) {
+      logger.info(`${PLATFORM_NAME}${label}列填写完成`, {
+        found: result.found,
+        filled: result.filled,
+      });
+      break;
+    }
+
+    if (result.error) {
+      logger.warn(`${PLATFORM_NAME}${label}列查找失败`, { error: result.error });
+    }
+  }
+
+  logger.info(`${PLATFORM_NAME}${label}填写结果`, totalResult);
+  return { filled: totalResult.filled, total: values.length };
+}
+
 // 获取 SKU 编码输入框数量（用于 fallback 填充）
 async function getPddSkuCodeInputCount(page) {
   const frames = [page, ...page.frames()];
@@ -1340,6 +1440,29 @@ export async function publishToPdd(publishInfo = {}) {
       return stickerCode || '';
     });
     const skuCodeResult = await fillPddSkuCodes(page, skuCodes, stickerCode);
+
+    // 从 skuConfig 提取库存、拼单价、单买价（SKU 级别）
+    if (Array.isArray(settings.skuConfig) && settings.skuConfig.length > 0) {
+      const stockValues = settings.skuConfig.map((sku) => {
+        const stock = resolveStock(sku);
+        return stock !== undefined ? stock : '';
+      });
+      const groupPriceValues = settings.skuConfig.map((sku) => {
+        // 拼单价：优先 pddGroupPrice，其次 price
+        const groupPrice = resolvePddGroupPrice(sku);
+        if (groupPrice !== undefined) return groupPrice;
+        const price = resolvePrice(sku);
+        return price !== undefined ? price : '';
+      });
+      const singlePriceValues = settings.skuConfig.map((sku) => {
+        const price = resolvePrice(sku);
+        return price !== undefined ? price : '';
+      });
+
+      await fillPddColumnValues(page, '库存', stockValues, '库存');
+      await fillPddColumnValues(page, '拼单价(元)', groupPriceValues, '拼单价');
+      await fillPddColumnValues(page, '单买价(元)', singlePriceValues, '单买价');
+    }
 
     const filledTitle = await fillPddProductTitle(page, title);
     const submitted = await submitPddProduct(page);
