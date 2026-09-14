@@ -5,6 +5,7 @@ import { ImageManager } from "../services/ImageManager.js";
 import { PageOperator } from "../services/PageOperator.js";
 import { isShopPlatformLoggedIn } from "./shopLoginFeatures.js";
 import { logger } from "../utils/logger.js";
+import { resolveStock, resolvePrice } from "../utils/skuRandom.js";
 
 const PLATFORM_KEY = "pdd";
 const PLATFORM_NAME = "拼多多";
@@ -1190,16 +1191,45 @@ async function uploadMainImages(
   result.detailSelected = detailSelectResult.selected;
   result.detailConfirmClicked = detailSelectResult.confirmClicked;
 
-  const skuImageItems = resolvePddIndexedFilePaths(
-    preparedImages.filePaths,
-    settings.skuImageIndexes,
-    "SKU",
-  );
-  const skuSelectResult = await selectPddSkuImagesFromMaterial(
-    page,
-    skuImageItems,
-  );
-  result.skuSelected = skuSelectResult.selected;
+  // 优先从 skuConfig 读取 imageIndex，兼容旧版 skuImageIndexes 字符串
+  let skuImageItems = [];
+  if (Array.isArray(settings.skuConfig) && settings.skuConfig.length > 0) {
+    skuImageItems = settings.skuConfig
+      .map((sku, index) => {
+        const imageIndex = sku?.imageIndex;
+        if (!imageIndex || !Number.isFinite(Number(imageIndex)) || Number(imageIndex) < 1) {
+          return null;
+        }
+        const idx = Number(imageIndex) - 1;
+        const filePath = preparedImages.filePaths[idx];
+        if (!filePath) {
+          logger.warn(`${PLATFORM_NAME}SKU 图片序号超出范围，已跳过`, {
+            skuIndex: index,
+            imageIndex: Number(imageIndex),
+            fileCount: preparedImages.filePaths.length,
+          });
+          return null;
+        }
+        return { imageIndex: Number(imageIndex), filePath };
+      })
+      .filter(Boolean);
+  } else if (settings.skuImageIndexes) {
+    skuImageItems = resolvePddIndexedFilePaths(
+      preparedImages.filePaths,
+      settings.skuImageIndexes,
+      "SKU",
+    );
+  }
+
+  if (skuImageItems.length > 0) {
+    const skuSelectResult = await selectPddSkuImagesFromMaterial(
+      page,
+      skuImageItems,
+    );
+    result.skuSelected = skuSelectResult.selected;
+  } else {
+    logger.info(`${PLATFORM_NAME}未配置 SKU 图片索引，跳过 SKU 图选择`);
+  }
 
   return result;
 }
