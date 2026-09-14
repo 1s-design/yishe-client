@@ -1431,14 +1431,27 @@ export async function publishToPdd(publishInfo = {}) {
     );
     tempFiles.push(...(mainImageUploadResult.tempFiles || []));
 
-    // 构建 SKU 编码列表：有供应商商品码时拼接 stickerCode-vendorProductCode，否则用 stickerCode
-    const skuCodes = vendorProductMappings.map((mapping) => {
-      const vendorProductCode = String(mapping?.code || '').trim();
-      if (vendorProductCode && stickerCode) {
-        return `${stickerCode}-${vendorProductCode}`;
-      }
-      return stickerCode || '';
-    });
+    // 构建 SKU 编码列表：优先使用 skuConfig 级别的 vendorProductCode，否则用全局 vendorProductMappings
+    let skuCodes = [];
+    if (Array.isArray(settings.skuConfig) && settings.skuConfig.length > 0) {
+      // SKU 级别绑定供应商商品
+      skuCodes = settings.skuConfig.map((sku) => {
+        const vendorProductCode = String(sku?.vendorProductCode || '').trim();
+        if (vendorProductCode && stickerCode) {
+          return `${stickerCode}-${vendorProductCode}`;
+        }
+        return stickerCode || '';
+      });
+    } else if (vendorProductMappings.length > 0) {
+      // 全局供应商商品映射
+      skuCodes = vendorProductMappings.map((mapping) => {
+        const vendorProductCode = String(mapping?.code || '').trim();
+        if (vendorProductCode && stickerCode) {
+          return `${stickerCode}-${vendorProductCode}`;
+        }
+        return stickerCode || '';
+      });
+    }
     const skuCodeResult = await fillPddSkuCodes(page, skuCodes, stickerCode);
 
     // 从 skuConfig 提取库存、拼单价、单买价（SKU 级别）
