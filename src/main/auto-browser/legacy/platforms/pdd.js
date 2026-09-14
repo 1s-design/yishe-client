@@ -5,7 +5,7 @@ import { ImageManager } from "../services/ImageManager.js";
 import { PageOperator } from "../services/PageOperator.js";
 import { isShopPlatformLoggedIn } from "./shopLoginFeatures.js";
 import { logger } from "../utils/logger.js";
-import { resolveStock, resolvePrice } from "../utils/skuRandom.js";
+import { resolveStock, resolvePrice, DEFAULT_PRICE_DECIMALS } from "../utils/skuRandom.js";
 
 const PLATFORM_KEY = "pdd";
 const PLATFORM_NAME = "拼多多";
@@ -558,7 +558,12 @@ function resolvePddGroupPrice(sku) {
     const max = Number(sku.pddGroupPriceMax);
     if (min >= 0 && max >= min) {
       const integerPart = Math.floor(Math.random() * (Math.floor(max) - Math.ceil(min) + 1)) + Math.ceil(min);
-      return Number(integerPart.toFixed(2));
+      // 应用尾数
+      const decimals = Array.isArray(sku.priceDecimals) && sku.priceDecimals.length > 0
+        ? sku.priceDecimals.filter((d) => Number.isFinite(d) && d >= 0 && d < 1)
+        : DEFAULT_PRICE_DECIMALS;
+      const decimal = decimals[Math.floor(Math.random() * decimals.length)];
+      return Number((integerPart + decimal).toFixed(2));
     }
   }
   return undefined;
@@ -574,7 +579,7 @@ async function fillPddColumnValues(page, columnHeader, values, label = columnHea
   let totalResult = { found: 0, filled: 0, total: values.length };
 
   for (const frame of frames) {
-    const result = await frame.evaluate((headerText, valuesArg) => {
+    const result = await frame.evaluate(({ headerText, valuesArg }) => {
       const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
 
       // 1. 找到列头
@@ -614,7 +619,7 @@ async function fillPddColumnValues(page, columnHeader, values, label = columnHea
       }
 
       return { found: matchedInputs.length, filled };
-    }, columnHeader, values);
+    }, { headerText: columnHeader, valuesArg: values });
 
     totalResult.found += result.found;
     totalResult.filled += result.filled;

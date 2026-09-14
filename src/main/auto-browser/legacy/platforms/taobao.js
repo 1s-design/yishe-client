@@ -5,8 +5,10 @@ import { ImageManager } from "../services/ImageManager.js";
 import { PageOperator } from "../services/PageOperator.js";
 import { isShopPlatformLoggedIn } from "./shopLoginFeatures.js";
 import { logger } from "../utils/logger.js";
+import { resolveStock, resolvePrice } from "../utils/skuRandom.js";
 
 const PLATFORM_KEY = "taobao";
+const PLATFORM_NAME = "淘宝";
 const DEFAULT_PUBLISH_URL = "https://item.upload.taobao.com/sell/v2/publish.htm";
 const QIANNIU_MATERIAL_CENTER_URL =
   "https://qn.taobao.com/home.htm/material-center/mine-material/";
@@ -491,6 +493,66 @@ async function fillTaobaoSkuOuterIds(page, productCode, skuCodes = []) {
     filledCount: result.filledCount,
   });
   return result;
+}
+
+/**
+ * 通用 SKU 列表填充：按 class 选择器找到单元格下的 input，逐行填入值
+ * @param {import('playwright').Page} page - Playwright 页面实例
+ * @param {string} cellSelector - 单元格选择器，如 '.sell-sku-cell-money'
+ * @param {Array<string|number>} values - 要填入的值列表
+ * @param {string} label - 日志标签
+ */
+async function fillTaobaoSkuInputs(page, cellSelector, values, label) {
+  if (!Array.isArray(values) || values.length === 0) {
+    logger.info(`${PLATFORM_NAME}${label}：无值需要填写，跳过`);
+    return { found: 0, filled: 0, total: 0 };
+  }
+
+  const result = await page.evaluate(({ selector, valuesArg }) => {
+    const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    const cells = Array.from(document.querySelectorAll(selector));
+
+    if (!cells.length) {
+      return { found: 0, filled: 0, error: `未找到 ${selector} 元素` };
+    }
+
+    const inputs = cells
+      .map((cell) => cell.querySelector('input'))
+      .filter(Boolean);
+
+    if (!inputs.length) {
+      return { found: 0, filled: 0, error: `${selector} 下无 input` };
+    }
+
+    const fillCount = Math.min(inputs.length, valuesArg.length);
+    let filled = 0;
+
+    for (let i = 0; i < fillCount; i++) {
+      const val = valuesArg[i];
+      if (val === undefined || val === null || val === '') continue;
+
+      const input = inputs[i];
+      input.focus();
+      nativeSet.call(input, String(val));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.dispatchEvent(new Event('blur', { bubbles: true }));
+      filled += 1;
+    }
+
+    return { found: inputs.length, filled };
+  }, { selector: cellSelector, valuesArg: values });
+
+  if (result.error) {
+    logger.warn(`${PLATFORM_NAME}${label}填写失败`, { error: result.error });
+  } else {
+    logger.info(`${PLATFORM_NAME}${label}填写完成`, {
+      found: result.found,
+      filled: result.filled,
+    });
+  }
+
+  return { filled: result.filled || 0, total: values.length };
 }
 
 async function clickTextButtonInLocator(rootLocator, text, timeout = 5000) {
@@ -1476,14 +1538,25 @@ export async function publishToTaobao(publishInfo = {}) {
     if (!stickerCode && productCode) {
       stickerCode = productCode.split('-')[0];
     }
-    const vendorProductMappings = Array.isArray(settings.vendorProductMappings)
-      ? settings.vendorProductMappings
-      : [];
-    const skuCodes = vendorProductMappings.map((mapping) => {
-      const vendorProductCode = String(mapping?.code || '').trim();
+    // 从 skuConfig 提取库存、价格、编码（SKU 级别）
+    const skuConfig = Array.isArray(settings.skuConfig) ? settings.skuConfig : [];
+    const stockValues = skuConfig.map((sku) => {
+      const stock = resolveStock(sku);
+      return stock !== undefined ? stock : '';
+    });
+    const priceValues = skuConfig.map((sku) => {
+      const price = resolvePrice(sku);
+      return price !== undefined ? price : '';
+    });
+    const skuCodes = skuConfig.map((sku) => {
+      // 优先使用 skuConfig 中的 vendorProductCode
+      const vendorProductCode = String(sku?.vendorProductCode || '').trim();
       if (vendorProductCode && stickerCode) {
         return `${stickerCode}-${vendorProductCode}`;
       }
+      // 其次使用 sku 自身的 remark 作为编码
+      const remark = String(sku?.remark || '').trim();
+      if (remark) return remark;
       return stickerCode || productCode || '';
     });
     const sourceImages =
@@ -1584,6 +1657,9 @@ export async function publishToTaobao(publishInfo = {}) {
     }
 
     const titleFilled = await fillTaobaoTitle(page, title);
+    // 从 skuConfig 填写库存、价格（SKU 级别）
+    const stockFillResult = await fillTaobaoSkuInputs(page, '.sell-sku-cell-positiveNumber', stockValues, '库存');
+    const priceFillResult = await fillTaobaoSkuInputs(page, '.sell-sku-cell-money', priceValues, '价格');
     const skuOuterIdFillResult = await fillTaobaoSkuOuterIds(page, productCode, skuCodes);
     const detailImagesClearResult = await clearTaobaoDetailImages(page);
     const detailImagePanelResult = await openTaobaoDetailImagePanel(page);
@@ -1621,6 +1697,8 @@ export async function publishToTaobao(publishInfo = {}) {
         productCode,
         skuOuterIdFieldCount: skuOuterIdFillResult.fieldCount,
         skuOuterIdFilledCount: skuOuterIdFillResult.filledCount,
+        stockFilledCount: stockFillResult.filled,
+        priceFilledCount: priceFillResult.filled,
         detailImagesContainerFound: detailImagesClearResult.containerFound,
         detailImagesClearClicked: detailImagesClearResult.clearClicked,
         detailImagesClearConfirmed: detailImagesClearResult.confirmClicked,
