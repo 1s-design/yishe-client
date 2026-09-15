@@ -458,6 +458,70 @@ async function fillTaobaoShortTitle(page, shortTitle) {
   return false;
 }
 
+// 淘宝 SKU 搜索标题填写（每个 SKU 一个标题）
+// 流程：点击 #\3${i} -skuTitle .sku-title -> 等待 -> 输入 .sku-detail-title input -> 点击 .confirm-button-first
+// 注意：CSS 选择器中数字开头需转义，如 0 -> \30 , 1 -> \31 , 2 -> \32 ...
+function escapeCssDigit(n) {
+  return `\\3${n} `;
+}
+
+async function fillTaobaoSkuSearchTitles(page, skuSearchTitles = []) {
+  const result = {
+    requested: skuSearchTitles.length,
+    filled: 0,
+  };
+
+  if (!skuSearchTitles.length) {
+    logger.info("淘宝无 SKU 搜索标题需要填写");
+    return result;
+  }
+
+  for (let i = 0; i < skuSearchTitles.length; i++) {
+    const title = String(skuSearchTitles[i] || "").trim();
+    if (!title) {
+      logger.info(`淘宝 SKU ${i + 1} 搜索标题为空，跳过`);
+      continue;
+    }
+
+    try {
+      // 1. 点击 SKU 标题区域（CSS 中数字开头需转义）
+      const skuTitleSelector = `#${escapeCssDigit(i)}-skuTitle .sku-title`;
+      const skuTitleEl = page.locator(skuTitleSelector).first();
+      await skuTitleEl.click();
+      logger.info(`淘宝 SKU ${i + 1} 已点击 skuTitle (${skuTitleSelector})`);
+
+      // 2. 等待抽屉弹出
+      await page.waitForTimeout(800);
+
+      // 3. 在输入框中填写搜索标题
+      const inputSelector = ".sku-detail-title input";
+      const inputEl = page.locator(inputSelector).first();
+      await inputEl.click();
+      await inputEl.fill("");
+      await inputEl.type(title, { delay: 30 });
+      logger.info(`淘宝 SKU ${i + 1} 搜索标题已输入: ${title}`);
+
+      // 4. 等待一下再点确定
+      await page.waitForTimeout(300);
+
+      // 5. 点击抽屉下方的确定按钮
+      const confirmBtn = page.locator(".confirm-button-first").first();
+      await confirmBtn.click();
+      logger.info(`淘宝 SKU ${i + 1} 已点击确定`);
+
+      result.filled++;
+
+      // 6. 等待抽屉关闭
+      await page.waitForTimeout(500);
+    } catch (error) {
+      logger.warn(`淘宝 SKU ${i + 1} 搜索标题填写失败: ${error?.message || error}`);
+    }
+  }
+
+  logger.info(`淘宝 SKU 搜索标题填写完成: filled=${result.filled}/${result.requested}`);
+  return result;
+}
+
 async function fillTaobaoSkuOuterIds(page, productCode, skuCodes = []) {
   const normalizedProductCode = normalizeProductCode(productCode);
   const result = {
@@ -1595,10 +1659,15 @@ export async function publishToTaobao(publishInfo = {}) {
       if (remark) return remark;
       return stickerCode || productCode || '';
     });
-    // SKU 搜索标题：优先使用 SKU 级别配置，否则使用 AI 生成的通用标题
-    const skuSearchTitles = skuConfig.map((sku) => {
-      const skuLevelTitle = String(sku?.skuSearchTitle || '').trim();
-      if (skuLevelTitle) return skuLevelTitle;
+    // SKU 搜索标题：始终使用 AI 生成结果，用户 SKU 输入仅作为 AI 提示词上下文
+    const aiSkuSearchTitles = Array.isArray(publishInfo.skuSearchTitles)
+      ? publishInfo.skuSearchTitles
+      : [];
+    const skuSearchTitles = skuConfig.map((sku, index) => {
+      // 优先使用 AI 生成的数组（按索引一一对应）
+      const aiTitle = String(aiSkuSearchTitles[index] || '').trim();
+      if (aiTitle) return aiTitle;
+      // 兜底使用 AI 生成的通用字符串
       return globalSkuSearchTitle;
     });
     const sourceImages =
@@ -1701,6 +1770,8 @@ export async function publishToTaobao(publishInfo = {}) {
     const titleFilled = await fillTaobaoTitle(page, title);
     // 填写短标题（导购短标题）
     const shortTitleFilled = await fillTaobaoShortTitle(page, shortTitle);
+    // 填写 SKU 搜索标题（每个 SKU 一个标题）
+    const skuSearchTitleFillResult = await fillTaobaoSkuSearchTitles(page, skuSearchTitles);
     // 从 skuConfig 填写库存、价格（SKU 级别）
     const stockFillResult = await fillTaobaoSkuInputs(page, '.sell-sku-cell-positiveNumber', stockValues, '库存');
     const priceFillResult = await fillTaobaoSkuInputs(page, '.sell-sku-cell-money', priceValues, '价格');
@@ -1740,6 +1811,8 @@ export async function publishToTaobao(publishInfo = {}) {
         titleValue: titleFilled ? title : "",
         shortTitleFilled,
         shortTitleValue: shortTitleFilled ? shortTitle : "",
+        skuSearchTitlesRequested: skuSearchTitles.length,
+        skuSearchTitlesFilled: skuSearchTitleFillResult.filled,
         productCode,
         skuOuterIdFieldCount: skuOuterIdFillResult.fieldCount,
         skuOuterIdFilledCount: skuOuterIdFillResult.filledCount,
