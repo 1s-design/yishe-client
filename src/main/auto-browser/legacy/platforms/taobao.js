@@ -1574,6 +1574,8 @@ export async function publishToTaobao(publishInfo = {}) {
     }
     // 从 skuConfig 提取库存、价格、编码（SKU 级别）
     const skuConfig = Array.isArray(settings.skuConfig) ? settings.skuConfig : [];
+    // AI 生成的通用 SKU 搜索标题（publishData 级别）
+    const globalSkuSearchTitle = typeof publishInfo.skuSearchTitle === 'string' ? publishInfo.skuSearchTitle.trim() : '';
     const stockValues = skuConfig.map((sku) => {
       const stock = resolveStock(sku);
       return stock !== undefined ? stock : '';
@@ -1592,6 +1594,12 @@ export async function publishToTaobao(publishInfo = {}) {
       const remark = String(sku?.remark || '').trim();
       if (remark) return remark;
       return stickerCode || productCode || '';
+    });
+    // SKU 搜索标题：优先使用 SKU 级别配置，否则使用 AI 生成的通用标题
+    const skuSearchTitles = skuConfig.map((sku) => {
+      const skuLevelTitle = String(sku?.skuSearchTitle || '').trim();
+      if (skuLevelTitle) return skuLevelTitle;
+      return globalSkuSearchTitle;
     });
     const sourceImages =
       Array.isArray(publishInfo.images) && publishInfo.images.length
