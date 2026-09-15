@@ -425,6 +425,39 @@ async function fillTaobaoTitle(page, title) {
   return false;
 }
 
+// 淘宝短标题最小字符数
+const TAOBAO_SHORT_TITLE_MIN_LEN = 6;
+
+async function fillTaobaoShortTitle(page, shortTitle) {
+  const normalizedShortTitle = String(shortTitle || "").trim();
+  if ([...normalizedShortTitle].length < TAOBAO_SHORT_TITLE_MIN_LEN) {
+    logger.info("淘宝短标题不足6个字符，跳过填写");
+    return false;
+  }
+
+  const selectors = [
+    '#sell-field-shopping_title input',
+    '#sell-field-shopping_title textarea',
+    'xpath=//*[@id="sell-field-shopping_title"]//following::input[1]',
+    'xpath=//*[@id="sell-field-shopping_title"]//following::textarea[1]',
+  ];
+
+  for (const selector of selectors) {
+    try {
+      const locator = page.locator(selector).first();
+      if (await fillTextLocator(locator, normalizedShortTitle)) {
+        logger.info(`淘宝短标题已填写: selector=${selector}, shortTitle=${normalizedShortTitle}`);
+        return true;
+      }
+    } catch (error) {
+      logger.warn(`淘宝短标题填写尝试失败: selector=${selector}, error=${error?.message || error}`);
+    }
+  }
+
+  logger.warn("淘宝未找到可填写的短标题输入框");
+  return false;
+}
+
 async function fillTaobaoSkuOuterIds(page, productCode, skuCodes = []) {
   const normalizedProductCode = normalizeProductCode(productCode);
   const result = {
@@ -1529,6 +1562,7 @@ export async function publishToTaobao(publishInfo = {}) {
       publishInfo.platformSettings?.[PLATFORM_KEY] ||
       {};
     const title = normalizeTitle(publishInfo.title || publishInfo.name || "");
+    const shortTitle = typeof publishInfo.shortTitle === "string" ? publishInfo.shortTitle.trim() : "";
     const productCode = normalizeProductCode(
       settings.productCode ?? publishInfo.productCode ?? publishInfo.data?.productCode,
     );
@@ -1657,6 +1691,8 @@ export async function publishToTaobao(publishInfo = {}) {
     }
 
     const titleFilled = await fillTaobaoTitle(page, title);
+    // 填写短标题（导购短标题）
+    const shortTitleFilled = await fillTaobaoShortTitle(page, shortTitle);
     // 从 skuConfig 填写库存、价格（SKU 级别）
     const stockFillResult = await fillTaobaoSkuInputs(page, '.sell-sku-cell-positiveNumber', stockValues, '库存');
     const priceFillResult = await fillTaobaoSkuInputs(page, '.sell-sku-cell-money', priceValues, '价格');
@@ -1694,6 +1730,8 @@ export async function publishToTaobao(publishInfo = {}) {
         finalUrl,
         titleFilled,
         titleValue: titleFilled ? title : "",
+        shortTitleFilled,
+        shortTitleValue: shortTitleFilled ? shortTitle : "",
         productCode,
         skuOuterIdFieldCount: skuOuterIdFillResult.fieldCount,
         skuOuterIdFilledCount: skuOuterIdFillResult.filledCount,
