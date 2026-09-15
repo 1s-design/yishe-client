@@ -532,13 +532,24 @@ async function sendMessage(
   }
 }
 
-async function resolveToolApproval(callId: string, approved: boolean) {
+async function resolveToolApproval(
+  callId: string,
+  approved: boolean,
+  extraData?: Record<string, unknown>,
+) {
   const message = currentMessage();
   if (message?.interaction?.id === callId) {
     message.interaction.status = approved ? "approved" : "rejected";
+    // 如果有额外数据（如用户选择的 publishConfigIds），更新 args
+    if (extraData && message.interaction.args) {
+      message.interaction.args = {
+        ...message.interaction.args,
+        ...extraData,
+      };
+    }
   }
   try {
-    await apiPost("/approve", { callId, approved });
+    await apiPost("/approve", { callId, approved, ...extraData });
   } catch {
     // 忽略审批请求失败
   }

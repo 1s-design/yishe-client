@@ -161,8 +161,9 @@ async function handleStop() {
 async function handleResolveToolApproval(payload: {
   callId: string;
   approved: boolean;
+  extraData?: Record<string, unknown>;
 }) {
-  await resolveToolApproval(payload.callId, payload.approved);
+  await resolveToolApproval(payload.callId, payload.approved, payload.extraData);
 }
 
 function handleKeydown(e: KeyboardEvent) {

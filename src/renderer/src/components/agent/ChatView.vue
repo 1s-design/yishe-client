@@ -93,6 +93,10 @@
                   v-if="message.interaction"
                   class="agent-approval"
                   :class="`is-${message.interaction.status}`"
+                  @vue:mounted="
+                    isBatchPublishConfigTool(message.interaction.toolName) &&
+                      loadPublishConfigs(message.id)
+                  "
                 >
                   <div class="agent-approval__header">
                     <span class="agent-approval__dot" aria-hidden="true" />
@@ -112,10 +116,156 @@
                     <span class="mdi mdi-wrench" aria-hidden="true" />
                     <span>{{ message.interaction.toolName }}</span>
                   </div>
+
+                  <!-- 发布配置选择列表（仅 batch_create_by_publish_config 工具显示） -->
+                  <div
+                    v-if="isBatchPublishConfigTool(message.interaction.toolName)"
+                    class="agent-config-select"
+                  >
+                    <div class="agent-config-select__header">
+                      <span class="text-xs text-muted-foreground"
+                        >选择发布配置</span
+                      >
+                      <button
+                        type="button"
+                        class="text-xs text-primary hover:underline"
+                        @click="toggleSelectAll(message.id)"
+                      >
+                        {{
+                          getSelectedIds(message.id).size ===
+                          (publishConfigCache.get(message.id)?.length || 0)
+                            ? "取消全选"
+                            : "全选"
+                        }}
+                      </button>
+                    </div>
+                    <div
+                      v-if="
+                        configListLoading.get(message.id) &&
+                        !publishConfigCache.has(message.id)
+                      "
+                      class="agent-config-select__loading"
+                    >
+                      <span class="mdi mdi-loading animate-spin text-sm" />
+                      <span class="text-xs text-muted-foreground"
+                        >加载配置中...</span
+                      >
+                    </div>
+                    <div
+                      v-else-if="
+                        publishConfigCache.get(message.id)?.length === 0
+                      "
+                      class="agent-config-select__empty text-xs text-muted-foreground"
+                    >
+                      暂无可用发布配置
+                    </div>
+                    <div v-else class="agent-config-select__list">
+                      <div
+                        v-for="config in getPagedConfigs(message.id).items"
+                        :key="config.id"
+                        class="agent-config-select__row"
+                        :class="{
+                          'is-selected': getSelectedIds(message.id).has(
+                            config.id,
+                          ),
+                        }"
+                        @click="toggleConfigSelection(message.id, config.id)"
+                      >
+                        <div
+                          class="agent-config-select__checkbox"
+                          :class="{
+                            'is-checked': getSelectedIds(message.id).has(
+                              config.id,
+                            ),
+                          }"
+                        >
+                          <span
+                            v-if="
+                              getSelectedIds(message.id).has(config.id)
+                            "
+                            class="mdi mdi-check text-[10px]"
+                          />
+                        </div>
+                        <span class="agent-config-select__name truncate">{{
+                          config.name
+                        }}</span>
+                        <span
+                          class="agent-config-select__badge"
+                          :style="{
+                            borderColor:
+                              getPlatformColor(config.platform).primary,
+                            backgroundColor:
+                              getPlatformColor(config.platform).light,
+                            color: getPlatformColor(config.platform).text,
+                          }"
+                          >{{ getPlatformLabel(config.platform) }}</span
+                        >
+                      </div>
+                    </div>
+                    <!-- 分页 -->
+                    <div
+                      v-if="getPagedConfigs(message.id).totalPages > 1"
+                      class="agent-config-select__pagination"
+                    >
+                      <span class="text-xs text-muted-foreground">
+                        共 {{ getPagedConfigs(message.id).total }} 条
+                      </span>
+                      <div class="flex items-center gap-1">
+                        <button
+                          type="button"
+                          class="agent-config-select__page-btn"
+                          :disabled="getPagedConfigs(message.id).page <= 1"
+                          @click="
+                            goConfigPage(
+                              message.id,
+                              getPagedConfigs(message.id).page - 1,
+                            )
+                          "
+                        >
+                          <span class="mdi mdi-chevron-left text-xs" />
+                        </button>
+                        <span class="text-xs">
+                          {{ getPagedConfigs(message.id).page }}/{{
+                            getPagedConfigs(message.id).totalPages
+                          }}
+                        </span>
+                        <button
+                          type="button"
+                          class="agent-config-select__page-btn"
+                          :disabled="
+                            getPagedConfigs(message.id).page >=
+                            getPagedConfigs(message.id).totalPages
+                          "
+                          @click="
+                            goConfigPage(
+                              message.id,
+                              getPagedConfigs(message.id).page + 1,
+                            )
+                          "
+                        >
+                          <span class="mdi mdi-chevron-right text-xs" />
+                        </button>
+                      </div>
+                    </div>
+                    <div class="agent-config-select__footer">
+                      <span class="text-xs text-muted-foreground">
+                        已选
+                        <span class="font-medium text-foreground">{{
+                          getSelectedIds(message.id).size
+                        }}</span>
+                        个配置
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- 普通 JSON 参数显示 -->
                   <pre
-                    v-if="Object.keys(message.interaction.args || {}).length"
+                    v-else-if="
+                      Object.keys(message.interaction.args || {}).length
+                    "
                     >{{ formatJson(message.interaction.args) }}</pre
                   >
+
                   <div
                     v-if="message.interaction.status === 'pending'"
                     class="agent-approval__actions"
@@ -135,11 +285,23 @@
                     <button
                       type="button"
                       class="agent-approval__confirm"
+                      :disabled="
+                        isBatchPublishConfigTool(
+                          message.interaction.toolName,
+                        ) && getSelectedIds(message.id).size === 0
+                      "
                       @click="
-                        emit('resolveToolApproval', {
-                          callId: message.interaction.id,
-                          approved: true,
-                        })
+                        isBatchPublishConfigTool(
+                          message.interaction.toolName,
+                        )
+                          ? confirmWithSelectedConfigs(
+                              message.id,
+                              message.interaction.id,
+                            )
+                          : emit('resolveToolApproval', {
+                              callId: message.interaction.id,
+                              approved: true,
+                            })
                       "
                     >
                       执行
@@ -305,8 +467,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type { AttachmentData, ChatMessage } from "../../types/agent";
+import { getPlatformColor, getPlatformLabel } from "../../config/platform-colors";
+import { publishConfigApi, type PublishConfig } from "../../api/publishConfig";
 import {
   Attachment,
   AttachmentInfo,
@@ -397,6 +561,105 @@ function formatJson(value: unknown) {
 
 function copyText(text: string) {
   void navigator.clipboard?.writeText(text);
+}
+
+// 发布配置选择相关状态
+const publishConfigCache = ref<Map<string, PublishConfig[]>>(new Map());
+const selectedConfigIds = ref<Map<string, Set<string>>>(new Map());
+const configListLoading = ref<Map<string, boolean>>(new Map());
+const configListPage = ref<Map<string, number>>(new Map());
+const CONFIG_PAGE_SIZE = 20;
+
+// 判断是否为发布配置批量创建工具
+function isBatchPublishConfigTool(toolName: string): boolean {
+  return (
+    toolName === "material.sticker_psd_set.batch_create_by_publish_config" ||
+    toolName === "server_material_sticker_psd_set_batch_create_by_publish_config"
+  );
+}
+
+// 获取消息对应的选中配置 ID 集合
+function getSelectedIds(messageId: string): Set<string> {
+  if (!selectedConfigIds.value.has(messageId)) {
+    selectedConfigIds.value.set(messageId, new Set());
+  }
+  return selectedConfigIds.value.get(messageId)!;
+}
+
+// 加载发布配置列表
+async function loadPublishConfigs(messageId: string) {
+  if (publishConfigCache.value.has(messageId)) return;
+  configListLoading.value.set(messageId, true);
+  try {
+    const res = await publishConfigApi.findAll();
+    if (res.data && Array.isArray(res.data)) {
+      const activeConfigs = res.data.filter((c) => c.isActive);
+      publishConfigCache.value.set(messageId, activeConfigs);
+      // 默认全选
+      const allIds = new Set(activeConfigs.map((c) => c.id));
+      selectedConfigIds.value.set(messageId, allIds);
+      configListPage.value.set(messageId, 1);
+    }
+  } catch (error) {
+    console.error("加载发布配置失败:", error);
+  } finally {
+    configListLoading.value.set(messageId, false);
+  }
+}
+
+// 切换配置选中状态
+function toggleConfigSelection(messageId: string, configId: string) {
+  const selected = getSelectedIds(messageId);
+  if (selected.has(configId)) {
+    selected.delete(configId);
+  } else {
+    selected.add(configId);
+  }
+  // 触发响应式更新
+  selectedConfigIds.value.set(messageId, new Set(selected));
+}
+
+// 获取过滤后的配置（分页）
+function getPagedConfigs(messageId: string) {
+  const configs = publishConfigCache.value.get(messageId) || [];
+  const page = configListPage.value.get(messageId) || 1;
+  const start = (page - 1) * CONFIG_PAGE_SIZE;
+  return {
+    items: configs.slice(start, start + CONFIG_PAGE_SIZE),
+    total: configs.length,
+    page,
+    totalPages: Math.ceil(configs.length / CONFIG_PAGE_SIZE),
+  };
+}
+
+// 切换页面
+function goConfigPage(messageId: string, page: number) {
+  configListPage.value.set(messageId, page);
+}
+
+// 全选/取消全选
+function toggleSelectAll(messageId: string) {
+  const configs = publishConfigCache.value.get(messageId) || [];
+  const selected = getSelectedIds(messageId);
+  if (selected.size === configs.length) {
+    selectedConfigIds.value.set(messageId, new Set());
+  } else {
+    selectedConfigIds.value.set(
+      messageId,
+      new Set(configs.map((c) => c.id)),
+    );
+  }
+}
+
+// 确认时更新 args 中的 publishConfigIds
+function confirmWithSelectedConfigs(messageId: string, callId: string) {
+  const selected = getSelectedIds(messageId);
+  // 更新原始消息中的 args，然后确认执行
+  emit("resolveToolApproval", {
+    callId,
+    approved: true,
+    extraData: { publishConfigIds: Array.from(selected) },
+  });
 }
 
 function handleSubmit() {
@@ -797,6 +1060,132 @@ function handlePaste(event: ClipboardEvent) {
 
 .agent-approval.is-approved .agent-approval__dot {
   background: #54b978;
+}
+
+/* 发布配置选择列表 */
+.agent-config-select {
+  margin-top: 12px;
+  border: 1px solid var(--agent-border-soft);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.agent-config-select__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--agent-border-soft);
+  background: var(--agent-surface-soft);
+}
+
+.agent-config-select__loading,
+.agent-config-select__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 20px;
+}
+
+.agent-config-select__list {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.agent-config-select__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--agent-border-soft);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.agent-config-select__row:last-child {
+  border-bottom: none;
+}
+
+.agent-config-select__row:hover {
+  background: var(--agent-surface-soft);
+}
+
+.agent-config-select__row.is-selected {
+  background: color-mix(in srgb, var(--theme-primary) 6%, transparent);
+}
+
+.agent-config-select__checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--agent-border);
+  border-radius: 4px;
+  background: var(--agent-surface);
+  transition: all 120ms ease;
+}
+
+.agent-config-select__checkbox.is-checked {
+  border-color: var(--theme-primary);
+  background: var(--theme-primary);
+  color: #fff;
+}
+
+.agent-config-select__name {
+  flex: 1;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.agent-config-select__badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.agent-config-select__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-top: 1px solid var(--agent-border-soft);
+  background: var(--agent-surface-soft);
+}
+
+.agent-config-select__page-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--agent-border-soft);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--agent-text);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.agent-config-select__page-btn:hover:not(:disabled) {
+  background: var(--agent-surface);
+  border-color: var(--agent-border);
+}
+
+.agent-config-select__page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-config-select__footer {
+  padding: 6px 12px;
+  border-top: 1px solid var(--agent-border-soft);
+  background: var(--agent-surface-soft);
 }
 
 .agent-tools {
