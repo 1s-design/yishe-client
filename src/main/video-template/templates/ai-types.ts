@@ -346,6 +346,16 @@ export interface SceneConfig {
 /** Video orientation preset. */
 export type VideoOrientation = "portrait" | "landscape" | "square";
 
+/** Audio configuration for background music / soundtrack. */
+export interface VideoAudioConfig {
+  /** Background music or audio track URL (e.g. mp3/wav). */
+  bgmUrl?: string;
+  /** Volume level 0.0 - 1.0 (defaults to 0.8). */
+  bgmVolume?: number;
+  /** Whether to loop the audio if it ends before the video (defaults to true). */
+  loop?: boolean;
+}
+
 /** Top-level video configuration that the AI agent generates. */
 export interface VideoConfig {
   meta: {
@@ -360,6 +370,8 @@ export interface VideoConfig {
   palette: PaletteConfig;
   /** Ordered list of scenes. */
   scenes: SceneConfig[];
+  /** Audio configuration (BGM / soundtrack). */
+  audio?: VideoAudioConfig;
 }
 
 /** Props that the Remotion AiUniversal composition receives. */

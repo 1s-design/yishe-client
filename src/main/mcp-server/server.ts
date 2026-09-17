@@ -298,17 +298,18 @@ export class McpServerManager {
 
       // 注册 Remotion 视频渲染 MCP 工具
       const videoRenderShape = {
-        templateId: z.string().optional().describe('视频模板 ID'),
+        templateId: z.string().optional().describe('视频模板 ID（action=render 时使用）'),
         inputProps: z.record(z.string(), z.any()).optional().describe('模板输入参数'),
-        action: z.enum(['render', 'status', 'list', 'catalog', 'ai-generate', 'ai-free-generate']).optional().describe('render=渲染, status=查状态, list=列任务, catalog=列模板, ai-generate=AI模板填充, ai-free-generate=AI自由编排SceneGraph'),
+        action: z.enum(['render', 'status', 'list', 'catalog', 'ai-generate', 'ai-free-generate']).optional().describe('render=渲染, status=查状态, list=列任务, catalog=列模板, ai-generate=AI模板填充, ai-free-generate=AI自由编排SceneGraph（默认）'),
         jobId: z.string().optional().describe('任务ID（action=status 时必填）'),
-        prompt: z.string().optional().describe('自然语言描述（action=ai-generate/ai-free-generate 时必填）'),
-        width: z.number().optional().describe('视频宽度px（action=ai-free-generate 时可选，默认竖屏1080）'),
-        height: z.number().optional().describe('视频高度px（action=ai-free-generate 时可选，默认竖屏1920）'),
+        prompt: z.string().optional().describe('自然语言描述提示词（action=ai-generate/ai-free-generate 时必填）'),
+        params: z.record(z.string(), z.any()).optional().describe('额外视频高级参数，如 { duration: 15, sceneDuration: 3, orientation: "landscape"|"portrait"|"square", bgmUrl: "...", bgmVolume: 0.8, palette: "noirGold", fps: 30, title: "..." }'),
+        width: z.number().optional().describe('视频宽度px（action=ai-free-generate 时可选，默认根据 orientation 决定）'),
+        height: z.number().optional().describe('视频高度px（action=ai-free-generate 时可选，默认根据 orientation 决定）'),
       };
       this.registerTool(server, {
         name: 'video_render_execute',
-        description: 'Remotion 视频渲染工具：提交视频渲染任务、查询状态、列出模板。支持两种AI模式：ai-generate（模板填充）和 ai-free-generate（自由编排SceneGraph）',
+        description: 'Remotion 视频渲染工具：提交视频渲染任务、查询状态、列出模板。支持两种AI模式：ai-generate（模板填充）和 ai-free-generate（自由编排SceneGraph），支持灵活参数 { prompt, params }',
         zodShape: videoRenderShape,
         inputSchema: {
           templateId: { type: 'string', optional: true },
@@ -316,6 +317,7 @@ export class McpServerManager {
           action: { type: 'string', optional: true },
           jobId: { type: 'string', optional: true },
           prompt: { type: 'string', optional: true },
+          params: { type: 'object', optional: true },
           width: { type: 'number', optional: true },
           height: { type: 'number', optional: true },
         },
@@ -563,6 +565,19 @@ export class McpServerManager {
           'video_render_execute',
         ],
       });
+    });
+
+    // 开放的视频生成/渲染 HTTP REST 端点，供外部工作流直接以 { prompt, params } 形式调用
+    this.app.post('/api/video/generate', async (req, res) => {
+      try {
+        const { executeVideoRender } = await import('./tools/video-rendering');
+        const result = await executeVideoRender(req.body || {});
+        const textContent = (result?.content?.[0] as any)?.text;
+        const parsed = textContent ? JSON.parse(textContent) : result;
+        res.json(parsed);
+      } catch (err: any) {
+        res.status(500).json({ success: false, error: err?.message || String(err) });
+      }
     });
 
     this.httpServer = createServer(this.app);

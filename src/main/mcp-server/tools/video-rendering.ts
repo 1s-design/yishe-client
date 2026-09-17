@@ -64,7 +64,7 @@ interface SceneGenResult {
   extracted: Record<string, any>;
 }
 
-function generateSceneGraphFromPrompt(prompt: string): SceneGenResult {
+function generateSceneGraphFromPrompt(prompt: string, params?: Record<string, any>): SceneGenResult {
   const extracted: Record<string, any> = {};
 
   // Extract structured info
@@ -91,28 +91,38 @@ function generateSceneGraphFromPrompt(prompt: string): SceneGenResult {
   }
   if (imageUrls.length > 0) extracted.images = imageUrls;
 
-  // Detect orientation
-  const isLandscape = /横[屏版]|landscape|16:9|宽/i.test(prompt);
-  const isSquare = /方[屏版]|square|1:1/i.test(prompt);
-  const orientation = isLandscape ? 'landscape' : isSquare ? 'square' : 'portrait';
+  // Detect orientation (params overrides prompt detection)
+  let orientation: 'portrait' | 'landscape' | 'square' = 'portrait';
+  if (params?.orientation && ['portrait', 'landscape', 'square'].includes(params.orientation)) {
+    orientation = params.orientation;
+  } else {
+    const isLandscape = /横[屏版]|landscape|16:9|宽/i.test(prompt);
+    const isSquare = /方[屏版]|square|1:1/i.test(prompt);
+    orientation = isLandscape ? 'landscape' : isSquare ? 'square' : 'portrait';
+  }
+  const isLandscape = orientation === 'landscape';
+  const isSquare = orientation === 'square';
 
-  // Detect palette from content
-  let palettePreset = 'noirGold';
-  if (/奢侈|高端|珠宝|金|奢|luxury|gold/i.test(prompt)) palettePreset = 'noirGold';
-  else if (/护肤|美容|skin|beauty|粉|紫/i.test(prompt)) palettePreset = 'splitBeauty';
-  else if (/限时|促销|sale|红|crimson/i.test(prompt)) palettePreset = 'flashCrimson';
-  else if (/科技|数码|tech|蓝|cyan/i.test(prompt)) palettePreset = 'midnightTech';
-  else if (/治愈|晚安|healing|mint/i.test(prompt)) palettePreset = 'healingMist';
-  else if (/数据|报告|data|emerald/i.test(prompt)) palettePreset = 'reportEmerald';
-  else if (/咖啡|餐|食|amber|暖/i.test(prompt)) palettePreset = 'financeAmber';
-  else if (/创作|creator|蓝/i.test(prompt)) palettePreset = 'creatorBlue';
-  else if (/教育|学习|edu|青/i.test(prompt)) palettePreset = 'eduCyan';
+  // Detect palette from content or params
+  let palettePreset = params?.palette || 'noirGold';
+  if (!params?.palette) {
+    if (/奢侈|高端|珠宝|金|奢|luxury|gold/i.test(prompt)) palettePreset = 'noirGold';
+    else if (/护肤|美容|skin|beauty|粉|紫/i.test(prompt)) palettePreset = 'splitBeauty';
+    else if (/限时|促销|sale|红|crimson/i.test(prompt)) palettePreset = 'flashCrimson';
+    else if (/科技|数码|tech|蓝|cyan/i.test(prompt)) palettePreset = 'midnightTech';
+    else if (/治愈|晚安|healing|mint/i.test(prompt)) palettePreset = 'healingMist';
+    else if (/数据|报告|data|emerald/i.test(prompt)) palettePreset = 'reportEmerald';
+    else if (/咖啡|餐|食|amber|暖/i.test(prompt)) palettePreset = 'financeAmber';
+    else if (/创作|creator|蓝/i.test(prompt)) palettePreset = 'creatorBlue';
+    else if (/教育|学习|edu|青/i.test(prompt)) palettePreset = 'eduCyan';
+  }
 
   // Build scenes from extracted info
   const scenes: SceneGenResult['videoConfig']['scenes'] = [];
-  const headline = extracted.headline || extracted.brandName || prompt.slice(0, 30);
+  const headline = params?.title || extracted.headline || extracted.brandName || prompt.slice(0, 30);
   const slogan = extracted.slogan || '';
   const hasImages = imageUrls.length > 0;
+  const defaultSceneDuration = params?.sceneDuration ? Math.max(1, Number(params.sceneDuration)) : 3;
 
   // Scene 1: Opening / Brand Intro
   const scene1Layers: Array<Record<string, any>> = [];
@@ -123,7 +133,7 @@ function generateSceneGraphFromPrompt(prompt: string): SceneGenResult {
   if (slogan) {
     scene1Layers.push({ type: 'subtitle', text: slogan, animation: 'fade-up', delayFrames: 12 });
   }
-  scenes.push({ duration: 3, layers: scene1Layers, transition: 'fade' });
+  scenes.push({ duration: defaultSceneDuration, layers: scene1Layers, transition: 'fade' });
 
   // Scene 2: Product showcase (if images) or feature highlights
   if (hasImages) {
@@ -132,7 +142,7 @@ function generateSceneGraphFromPrompt(prompt: string): SceneGenResult {
       scene2Layers.push({
         type: 'media',
         media: { type: 'image', src: imageUrls[0] },
-        height: '520px',
+        height: isLandscape ? '420px' : '520px',
         animation: 'zoom-in',
       });
     } else {
@@ -148,23 +158,29 @@ function generateSceneGraphFromPrompt(prompt: string): SceneGenResult {
       if (extracted.discount) {
         scene2Layers.push({
           type: 'accent-box',
-          text: `限时优惠 ${extracted.discount}`,
-          boxStyle: 'glow',
+          badge: '限时特惠',
+          title: extracted.discount,
+          description: extracted.price ? `券后仅需 ${extracted.price}` : undefined,
+          accentColor: '#ef4444',
           animation: 'bounce',
         });
       }
     }
-    scenes.push({ duration: 4, layers: scene2Layers, transition: 'slide-left' });
+    scenes.push({ duration: defaultSceneDuration + 1, layers: scene2Layers, transition: 'slide-left' });
   } else {
     // Feature highlights scene
     const featureLayers: Array<Record<string, any>> = [];
+    featureLayers.push({ type: 'headline', text: '核心亮点', animation: 'fade-up' });
+    const features = generateFeatureList(prompt);
     featureLayers.push({
       type: 'bullet-list',
-      items: generateFeatureList(prompt),
-      listStyle: 'check',
+      items: features.map((f, i) => ({
+        icon: ['✨', '💎', '🚀', '⭐', '🔥'][i % 5],
+        title: f,
+      })),
       animation: 'fade-up',
     });
-    scenes.push({ duration: 4, layers: featureLayers, transition: 'fade' });
+    scenes.push({ duration: defaultSceneDuration + 1, layers: featureLayers, transition: 'slide-left' });
   }
 
   // Scene 3: Price / Social proof
@@ -191,7 +207,7 @@ function generateSceneGraphFromPrompt(prompt: string): SceneGenResult {
       }
     }
     if (scene3Layers.length > 0) {
-      scenes.push({ duration: 3.5, layers: scene3Layers, transition: 'zoom' });
+      scenes.push({ duration: defaultSceneDuration + 0.5, layers: scene3Layers, transition: 'zoom' });
     }
   }
 
@@ -208,21 +224,44 @@ function generateSceneGraphFromPrompt(prompt: string): SceneGenResult {
       animation: 'fade-in',
     });
   }
-  scenes.push({ duration: 3, layers: ctaLayers, transition: 'fade' });
+  scenes.push({ duration: defaultSceneDuration, layers: ctaLayers, transition: 'fade' });
+
+  // If target duration specified, scale scene durations to match exactly
+  const targetDuration = params?.duration ? Math.max(2, Number(params.duration)) : null;
+  if (targetDuration && scenes.length > 0) {
+    const currentSum = scenes.reduce((sum, s) => sum + s.duration, 0);
+    const ratio = targetDuration / currentSum;
+    let accumulated = 0;
+    for (let i = 0; i < scenes.length - 1; i++) {
+      const d = Math.max(1, Math.round(scenes[i].duration * ratio * 10) / 10);
+      scenes[i].duration = d;
+      accumulated += d;
+    }
+    scenes[scenes.length - 1].duration = Math.max(1, Math.round((targetDuration - accumulated) * 10) / 10);
+  }
 
   // Calculate total duration
-  const fps = 30;
+  const fps = params?.fps ? Number(params.fps) : 30;
   const totalSeconds = scenes.reduce((sum, s) => sum + s.duration, 0);
   const durationInFrames = Math.round(totalSeconds * fps);
 
-  const width = isLandscape ? 1920 : isSquare ? 1080 : 1080;
-  const height = isLandscape ? 1080 : isSquare ? 1080 : 1920;
+  const width = params?.width || (isLandscape ? 1920 : isSquare ? 1080 : 1080);
+  const height = params?.height || (isLandscape ? 1080 : isSquare ? 1080 : 1920);
+
+  // Background audio
+  const bgmUrl = params?.bgmUrl || params?.audioUrl || prompt.match(/(https?:\/\/[^\s）)]+\.(?:mp3|wav|m4a|aac|ogg))/i)?.[1];
+  const audioConfig = bgmUrl ? {
+    bgmUrl,
+    bgmVolume: params?.bgmVolume !== undefined ? Number(params.bgmVolume) : 0.8,
+    loop: true,
+  } : undefined;
 
   return {
     videoConfig: {
-      meta: { title: `AI生成 · ${headline}`, orientation, fps },
+      meta: { title: params?.title || `AI生成 · ${headline}`, orientation, fps },
       palette: { preset: palettePreset },
       scenes,
+      ...(audioConfig ? { audio: audioConfig } : {}),
     },
     width,
     height,
@@ -261,16 +300,20 @@ export async function executeVideoRender(args: {
   action?: 'render' | 'status' | 'list' | 'catalog' | 'ai-generate' | 'ai-free-generate';
   jobId?: string;
   prompt?: string;
+  params?: Record<string, any>;
   width?: number;
   height?: number;
 }): Promise<CallToolResult> {
   try {
-    const { templateId, inputProps, action = 'render', jobId, prompt, width, height } = args;
-    const serverUrl =
+    const { templateId, inputProps, jobId, prompt, params = {}, width, height } = args;
+    // 默认如果传了 prompt 则优先进行 AI 生成，否则 render
+    const action = args.action || (prompt ? 'ai-free-generate' : 'render');
+    const base =
       process.env.VITE_BASE_URL ||
       (process.env.NODE_ENV === "development"
         ? "http://localhost:1520"
         : "https://api.1s.design");
+    const serverUrl = base.endsWith('/api') ? base : `${base}/api`;
 
     // 列出模板目录
     if (action === 'catalog') {
@@ -290,77 +333,114 @@ export async function executeVideoRender(args: {
       return jsonResult({ success: true, record: res.data || res });
     }
 
-    // AI 生成（模板填充模式 - 关键词匹配模板）
-    if (action === 'ai-generate') {
-      if (!prompt) throw new Error('ai-generate 需要 prompt 参数');
-      const config = parsePromptToConfig(prompt);
+    // AI 生成（自由编排模式 或 模板匹配模式）
+    if (action === 'ai-free-generate' || action === 'ai-generate') {
+      if (!prompt) throw new Error(`${action} 需要 prompt 参数`);
 
-      const res = await fetchJson(`${serverUrl}/remotion-video-record/generate`, {
-        method: 'POST',
-        body: JSON.stringify({
-          templateId: config.templateId,
-          title: `AI生成 · ${config.templateId}`,
-          inputProps: config.inputProps,
-        }),
-      });
+      const mergedParams: Record<string, any> = {
+        ...(params || {}),
+      };
+      if (width && !mergedParams.width) mergedParams.width = width;
+      if (height && !mergedParams.height) mergedParams.height = height;
 
-      return jsonResult({
-        success: true,
-        recordId: res.data?.id,
-        templateUsed: config.templateId,
-        mode: 'template-fill',
-        extracted: config.extracted,
-      });
+      // 1. 优先通过服务端的 /remotion-video-record/ai-generate 进行完整的 AI 解析并下发异步渲染任务
+      try {
+        const res = await fetchJson(`${serverUrl}/remotion-video-record/ai-generate`, {
+          method: 'POST',
+          body: JSON.stringify({
+            action,
+            prompt,
+            params: Object.keys(mergedParams).length > 0 ? mergedParams : undefined,
+          }),
+        });
+
+        if (res?.data?.id || res?.success || res?.code === 200) {
+          return jsonResult({
+            success: true,
+            recordId: res.data?.id,
+            status: res.data?.status || 'processing',
+            action,
+            prompt,
+            params: mergedParams,
+            message: res.message || 'AI 视频生成任务已提交，将在后台异步渲染',
+            data: res.data,
+          });
+        }
+      } catch (remoteErr: any) {
+        console.warn('[VideoRender] 远程 ai-generate 接口调用失败，降级使用本地编排规则:', remoteErr?.message);
+      }
+
+      // 2. 降级方案：本地规则解析 + 调用 /remotion-video-record/generate 提交任务
+      if (action === 'ai-generate') {
+        const config = parsePromptToConfig(prompt, mergedParams);
+        const res = await fetchJson(`${serverUrl}/remotion-video-record/generate`, {
+          method: 'POST',
+          body: JSON.stringify({
+            templateId: config.templateId,
+            title: mergedParams.title || `AI生成 · ${config.templateId}`,
+            inputProps: {
+              ...config.inputProps,
+              ...(mergedParams.inputProps || {}),
+            },
+          }),
+        });
+
+        return jsonResult({
+          success: true,
+          recordId: res.data?.id,
+          templateUsed: config.templateId,
+          mode: 'template-fill-fallback',
+          params: mergedParams,
+          extracted: config.extracted,
+        });
+      } else {
+        const sceneGraph = generateSceneGraphFromPrompt(prompt, mergedParams);
+        if (width) sceneGraph.width = width;
+        if (height) sceneGraph.height = height;
+
+        const res = await fetchJson(`${serverUrl}/remotion-video-record/generate`, {
+          method: 'POST',
+          body: JSON.stringify({
+            templateId: 'ai-universal',
+            title: sceneGraph.videoConfig.meta.title,
+            inputProps: {
+              videoConfig: sceneGraph.videoConfig,
+              width: sceneGraph.width,
+              height: sceneGraph.height,
+              fps: sceneGraph.fps,
+              durationInFrames: sceneGraph.durationInFrames,
+            },
+          }),
+        });
+
+        return jsonResult({
+          success: true,
+          recordId: res.data?.id,
+          templateUsed: 'ai-universal',
+          mode: 'ai-free-scenegraph-fallback',
+          sceneCount: sceneGraph.videoConfig.scenes.length,
+          totalDuration: sceneGraph.durationInFrames / sceneGraph.fps,
+          palette: (sceneGraph.videoConfig.palette as any)?.preset || 'custom',
+          orientation: sceneGraph.videoConfig.meta.orientation,
+          params: mergedParams,
+          extracted: sceneGraph.extracted,
+          videoConfig: sceneGraph.videoConfig,
+        });
+      }
     }
 
-    // AI 自由编排模式（生成 SceneGraph → 使用 AiUniversal 组合）
-    if (action === 'ai-free-generate') {
-      if (!prompt) throw new Error('ai-free-generate 需要 prompt 参数');
-      const sceneGraph = generateSceneGraphFromPrompt(prompt);
-
-      // Override dimensions if provided
-      if (width) sceneGraph.width = width;
-      if (height) sceneGraph.height = height;
-      sceneGraph.fps = sceneGraph.videoConfig.meta.fps;
-      sceneGraph.durationInFrames = sceneGraph.videoConfig.scenes.reduce(
-        (sum, s) => sum + s.duration, 0,
-      ) * sceneGraph.fps;
-
-      const res = await fetchJson(`${serverUrl}/remotion-video-record/generate`, {
-        method: 'POST',
-        body: JSON.stringify({
-          templateId: 'ai-universal',
-          title: sceneGraph.videoConfig.meta.title,
-          inputProps: {
-            videoConfig: sceneGraph.videoConfig,
-            width: sceneGraph.width,
-            height: sceneGraph.height,
-            fps: sceneGraph.fps,
-            durationInFrames: sceneGraph.durationInFrames,
-          },
-        }),
-      });
-
-      return jsonResult({
-        success: true,
-        recordId: res.data?.id,
-        templateUsed: 'ai-universal',
-        mode: 'ai-free-scenegraph',
-        sceneCount: sceneGraph.videoConfig.scenes.length,
-        totalDuration: sceneGraph.durationInFrames / sceneGraph.fps,
-        palette: sceneGraph.videoConfig.palette.preset,
-        orientation: sceneGraph.videoConfig.meta.orientation,
-        extracted: sceneGraph.extracted,
-        videoConfig: sceneGraph.videoConfig,
-      });
-    }
-
-    // 直接渲染
-    if (!templateId) throw new Error('缺少 templateId');
+    // 直接指定模板渲染
+    if (!templateId) throw new Error('缺少 templateId 或 prompt');
 
     const res = await fetchJson(`${serverUrl}/remotion-video-record/generate`, {
       method: 'POST',
-      body: JSON.stringify({ templateId, inputProps: inputProps || {} }),
+      body: JSON.stringify({
+        templateId,
+        inputProps: {
+          ...(inputProps || {}),
+          ...(params || {}),
+        },
+      }),
     });
 
     return jsonResult({ success: true, recordId: res.data?.id, templateId });
@@ -369,7 +449,7 @@ export async function executeVideoRender(args: {
   }
 }
 
-function parsePromptToConfig(prompt: string) {
+function parsePromptToConfig(prompt: string, params?: Record<string, any>) {
   const extracted: Record<string, any> = {};
 
   const brandMatch = prompt.match(/品牌[名]?[：:]\s*(.+?)(?:[，,。.）)])/);
@@ -384,11 +464,13 @@ function parsePromptToConfig(prompt: string) {
   const priceMatch = prompt.match(/(\d+(?:\.\d+)?(?:元|¥|￥|\$))/);
   if (priceMatch) extracted.price = priceMatch[1];
 
-  let selectedTemplate = 'prism-logo-reveal-lux';
-  for (const [templateId, keywords] of Object.entries(TEMPLATE_KEYWORDS)) {
-    if (keywords.some(kw => prompt.includes(kw))) {
-      selectedTemplate = templateId;
-      break;
+  let selectedTemplate = params?.templateId || 'prism-logo-reveal-lux';
+  if (!params?.templateId) {
+    for (const [templateId, keywords] of Object.entries(TEMPLATE_KEYWORDS)) {
+      if (keywords.some(kw => prompt.includes(kw))) {
+        selectedTemplate = templateId;
+        break;
+      }
     }
   }
 
@@ -397,12 +479,29 @@ function parsePromptToConfig(prompt: string) {
   if (extracted.headline) inputProps.headline = extracted.headline;
   if (extracted.slogan) inputProps.slogan = extracted.slogan;
   if (extracted.price) inputProps.price = extracted.price;
+  if (params?.inputProps) Object.assign(inputProps, params.inputProps);
 
   return { templateId: selectedTemplate, inputProps, extracted };
 }
 
 async function fetchJson(url: string, options?: RequestInit) {
-  const res = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...options?.headers } });
+  let authHeaders: Record<string, string> = {};
+  try {
+    const { getTokenValue } = await import('../../server');
+    const token = getTokenValue?.();
+    if (token) {
+      authHeaders['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {}
+
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+      ...options?.headers,
+    },
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   return res.json();
 }

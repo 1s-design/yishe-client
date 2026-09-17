@@ -19,7 +19,6 @@ const PLATFORM_CONFIGS: Record<string, { name: string; description: string; envi
   wikipedia: { name: '维基百科', description: '采集维基百科今日热点', environment: 'direct' },
   devto: { name: 'Dev.to', description: '采集Dev.to热门文章', environment: 'direct' },
   baidu: { name: '百度', description: '采集百度热搜榜', environment: 'direct' },
-  kuaishou: { name: '快手', description: '采集快手热搜', environment: 'direct' },
   xiaohongshu: { name: '小红书', description: '采集小红书热门内容', environment: 'direct' },
   jd_hot: { name: '京东', description: '采集京东热搜', environment: 'direct' },
   google_trends: { name: 'Google Trends', description: '采集Google趋势热搜', environment: 'proxy' },
@@ -66,7 +65,7 @@ async function executeViaServer(type: string, params: Record<string, any>): Prom
   // 使用客户端统一的 token（如果已登录），否则使用内置 super token
   let authHeader = 'Bearer 1sdesign';
   try {
-    const { getTokenValue } = await import('../server');
+    const { getTokenValue } = await import('../../server');
     const clientToken = getTokenValue?.();
     if (clientToken) {
       authHeader = `Bearer ${clientToken}`;

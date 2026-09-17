@@ -7,6 +7,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
   interpolate,
+  Audio,
 } from "remotion";
 import { z } from "zod";
 
@@ -496,6 +497,13 @@ export const AiVideoSchema = z.object({
     }),
     palette: PaletteConfigSchema,
     scenes: z.array(SceneSchema).min(1),
+    audio: z
+      .object({
+        bgmUrl: z.string().optional(),
+        bgmVolume: z.number().optional(),
+        loop: z.boolean().optional(),
+      })
+      .optional(),
   }),
 });
 
@@ -1490,6 +1498,16 @@ export const AiUniversalComposition: React.FC<AiVideoProps> = ({
 
   return (
     <AbsoluteFill style={{ background: palette.background }}>
+      {videoConfig?.audio?.bgmUrl ? (
+        <Audio
+          src={videoConfig.audio.bgmUrl}
+          volume={videoConfig.audio.bgmVolume ?? 0.8}
+          loop={videoConfig.audio.loop ?? true}
+          onError={(e) => {
+            console.warn('[Remotion Audio] BGM load error, skipping audio:', e);
+          }}
+        />
+      ) : null}
       {scenes.map((scene, i) => {
         const sceneFrames = Math.max(
           1,
