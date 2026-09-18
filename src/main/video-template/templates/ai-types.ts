@@ -316,7 +316,7 @@ export type SceneLayer =
 
 /** Scene background configuration. */
 export type SceneBackground =
-  | { type: "gradient" }
+  | { type: "gradient"; style?: "radial-glow" | "aurora" | "clean-studio" | "warm-paper" | "sunset" | "cyber-grid" }
   | { type: "solid"; color?: string }
   | { type: "media"; media: { type: "image" | "video"; src: string; poster?: string; alt?: string }; opacity?: number };
 

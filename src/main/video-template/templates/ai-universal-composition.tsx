@@ -26,6 +26,7 @@ import {
   SectionEyebrow,
   TagPill,
   alpha,
+  isLightPalette,
   mix,
   useEntrance,
   sceneWindow,
@@ -37,6 +38,89 @@ import type { Palette, MetricItem, FeatureItem, MediaSource } from "./shared";
 // ---------------------------------------------------------------------------
 
 const PALETTE_PRESETS: Record<string, Palette> = {
+  // === NEW DIVERSE & LIGHT-MODE PALETTES ===
+  cleanLight: {
+    background: "#f8fafc",
+    backgroundAlt: "#eef2f6",
+    surface: "#ffffff",
+    text: "#0f172a",
+    mutedText: "#475569",
+    accent: "#2563eb",
+    accentAlt: "#0284c7",
+    glow: "#60a5fa",
+  },
+  warmCream: {
+    background: "#fcf8f2",
+    backgroundAlt: "#f4ece1",
+    surface: "#ffffff",
+    text: "#291a10",
+    mutedText: "#786252",
+    accent: "#c86b3c",
+    accentAlt: "#d97706",
+    glow: "#f59e0b",
+  },
+  nordicMinimal: {
+    background: "#f2f6f3",
+    backgroundAlt: "#e3ede5",
+    surface: "#ffffff",
+    text: "#13261b",
+    mutedText: "#4a6353",
+    accent: "#059669",
+    accentAlt: "#10b981",
+    glow: "#34d399",
+  },
+  vibrantPop: {
+    background: "#fff5f7",
+    backgroundAlt: "#ffe4ea",
+    surface: "#ffffff",
+    text: "#201226",
+    mutedText: "#6e475d",
+    accent: "#ff2a70",
+    accentAlt: "#7c3aed",
+    glow: "#ec4899",
+  },
+  solarYellow: {
+    background: "#111111",
+    backgroundAlt: "#1c1c1e",
+    surface: "#27272a",
+    text: "#fafafa",
+    mutedText: "#a1a1aa",
+    accent: "#facc15",
+    accentAlt: "#fb923c",
+    glow: "#fde047",
+  },
+  editorialVogue: {
+    background: "#faf9f6",
+    backgroundAlt: "#f0ece3",
+    surface: "#ffffff",
+    text: "#0a0a0a",
+    mutedText: "#525252",
+    accent: "#e11d48",
+    accentAlt: "#991b1b",
+    glow: "#f43f5e",
+  },
+  cyberNeon: {
+    background: "#080318",
+    backgroundAlt: "#160a36",
+    surface: "#241254",
+    text: "#ffffff",
+    mutedText: "#c4b5fd",
+    accent: "#00f5d4",
+    accentAlt: "#f72585",
+    glow: "#7209b7",
+  },
+  auroraBorealis: {
+    background: "#05131e",
+    backgroundAlt: "#0c2838",
+    surface: "#133d54",
+    text: "#f0fdfa",
+    mutedText: "#99f6e4",
+    accent: "#2dd4bf",
+    accentAlt: "#818cf8",
+    glow: "#38bdf8",
+  },
+
+  // === CLASSIC PRESETS ===
   noirGold: {
     background: "#09070c",
     backgroundAlt: "#1b1118",
@@ -554,6 +638,34 @@ const textBase: React.CSSProperties = {
   textAlign: "center",
 };
 
+// Palette-aware font families
+function getPaletteFont(palette: Palette): string {
+  const bg = palette.background.toLowerCase();
+  const accent = palette.accent.toLowerCase();
+  // Warm / editorial style → elegant serif
+  if (bg.startsWith("#faf9") || accent === "#e11d48" || accent === "#c86b3c") {
+    return "'Playfair Display', 'Songti SC', 'STSong', Georgia, serif";
+  }
+  // Nordic / natural → rounded geo-sans
+  if (accent === "#059669" || accent === "#10b981") {
+    return "'Nunito', 'PingFang SC', 'Helvetica Neue', system-ui, sans-serif";
+  }
+  // Vibrant / dopamine → playful display
+  if (accent === "#ff2a70" || accent === "#7c3aed") {
+    return "'Outfit', 'Poppins', 'PingFang SC', system-ui, sans-serif";
+  }
+  // Cyber / neon → mono-techy
+  if (bg === "#080318" || bg === "#061018" || accent === "#00f5d4" || accent === "#51d0ff") {
+    return "'JetBrains Mono', 'Courier New', 'SF Mono', monospace";
+  }
+  // Solar yellow / high energy → condensed bold
+  if (accent === "#facc15" || accent === "#fb923c" || accent === "#ff7e52") {
+    return "'Barlow Condensed', 'Arial Narrow', 'PingFang SC', system-ui, sans-serif";
+  }
+  // Default: modern sans
+  return "'Inter', 'Segoe UI', 'PingFang SC', system-ui, sans-serif";
+}
+
 const LayerRenderer: React.FC<{
   layer: SceneLayer;
   palette: Palette;
@@ -602,6 +714,7 @@ const LayerRenderer: React.FC<{
               letterSpacing: "-0.02em",
               whiteSpace: "pre-line",
               overflow: "hidden",
+              fontFamily: getPaletteFont(palette),
             }}
           >
             {typewriterText(layer.text)}
@@ -771,7 +884,12 @@ const LayerRenderer: React.FC<{
               borderRadius: btnRadius,
               background: btnBg,
               border: btnBorder,
-              color: palette.background,
+              color:
+                layer.buttonStyle === "outline"
+                  ? palette.accent
+                  : isLightPalette(palette)
+                    ? "#ffffff"
+                    : palette.background,
               fontSize: 28,
               fontWeight: 800,
               letterSpacing: "0.04em",
@@ -795,12 +913,14 @@ const LayerRenderer: React.FC<{
         <div style={{ ...wrapper, ...textBase }}>
           <div
             style={{
-              fontSize: 42,
+              fontFamily: "'Playfair Display', 'Songti SC', 'STSong', 'Georgia', serif",
+              fontSize: 44,
               fontStyle: "italic",
               color: palette.text,
-              maxWidth: 700,
+              maxWidth: 750,
               margin: "0 auto",
               lineHeight: 1.5,
+              letterSpacing: "0.02em",
             }}
           >
             <span
@@ -1310,20 +1430,34 @@ const LayerRenderer: React.FC<{
       );
 
     case "accent-box": {
-      const boxBg =
-        layer.boxStyle === "glow"
+      const isLight = isLightPalette(palette);
+      const boxBg = isLight
+        ? layer.boxStyle === "bordered"
+          ? "transparent"
+          : layer.boxStyle === "glow"
+            ? alpha(palette.accent, 0.08)
+            : alpha(palette.accent, 0.06)
+        : layer.boxStyle === "glow"
           ? `linear-gradient(135deg, ${alpha(palette.accent, 0.15)}, ${alpha(palette.accentAlt, 0.1)})`
           : layer.boxStyle === "bordered"
             ? "transparent"
             : alpha(palette.accent, 0.12);
-      const boxBorder =
-        layer.boxStyle === "bordered"
+      const boxBorder = isLight
+        ? layer.boxStyle === "bordered"
+          ? `2px solid ${alpha(palette.accent, 0.45)}`
+          : layer.boxStyle === "glow"
+            ? `1px solid ${alpha(palette.accent, 0.28)}`
+            : `1px solid ${alpha(palette.text, 0.06)}`
+        : layer.boxStyle === "bordered"
           ? `2px solid ${alpha(palette.accent, 0.4)}`
           : layer.boxStyle === "glow"
             ? `1px solid ${alpha(palette.accent, 0.3)}`
             : "none";
-      const boxShadow =
-        layer.boxStyle === "glow"
+      const boxShadow = isLight
+        ? layer.boxStyle === "glow"
+          ? `0 12px 36px ${alpha(palette.accent, 0.14)}`
+          : `0 4px 14px ${alpha(palette.text, 0.04)}`
+        : layer.boxStyle === "glow"
           ? `0 0 40px ${alpha(palette.accent, 0.2)}, 0 0 80px ${alpha(palette.accent, 0.1)}`
           : "none";
       return (
@@ -1410,7 +1544,64 @@ const SceneRenderer: React.FC<{
   }
 
   const bgType = scene.background?.type ?? "gradient";
-  const layoutStyle = getLayoutStyle(scene.layout);
+  const layout = scene.layout ?? "centered";
+  const isSplit = layout === "split-left" || layout === "split-right";
+
+  // For split layouts: split layers at the midpoint
+  const splitIndex = isSplit
+    ? Math.ceil(scene.layers.length / 2)
+    : scene.layers.length;
+  const leftLayers = scene.layers.slice(0, splitIndex);
+  const rightLayers = scene.layers.slice(splitIndex);
+
+  const layoutStyle = getLayoutStyle(layout);
+
+  const bgNode = bgType === "gradient" ? (
+    <GradientStage
+      palette={palette}
+      frame={frame}
+      stageStyle={(scene.background as any)?.style}
+    >
+      <AbsoluteFill />
+    </GradientStage>
+  ) : bgType === "solid" ? (
+    <AbsoluteFill
+      style={{
+        background: scene.background && "color" in scene.background
+          ? (scene.background as any).color || palette.background
+          : palette.background,
+      }}
+    />
+  ) : bgType === "media" &&
+    scene.background &&
+    "media" in scene.background ? (
+    <AbsoluteFill>
+      {scene.background.media.type === "video" ? (
+        <OffthreadVideo
+          src={scene.background.media.src}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      ) : (
+        <Img
+          src={scene.background.media.src}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      )}
+      <AbsoluteFill
+        style={{
+          background: `linear-gradient(180deg, ${alpha(palette.background, 0.6)} 0%, ${alpha(palette.background, 0.4)} 40%, ${alpha(palette.background, 0.7)} 100%)`,
+        }}
+      />
+    </AbsoluteFill>
+  ) : (
+    <GradientStage
+      palette={palette}
+      frame={frame}
+      stageStyle={(scene.background as any)?.style}
+    >
+      <AbsoluteFill />
+    </GradientStage>
+  );
 
   return (
     <AbsoluteFill
@@ -1420,59 +1611,70 @@ const SceneRenderer: React.FC<{
       }}
     >
       {/* Background */}
-      {bgType === "gradient" ? (
-        <GradientStage palette={palette} frame={frame}>
-          <AbsoluteFill />
-        </GradientStage>
-      ) : bgType === "solid" ? (
+      {bgNode}
+
+      {/* Layers — split or normal */}
+      {isSplit ? (
         <AbsoluteFill
           style={{
-            background: scene.background && "color" in scene.background
-              ? (scene.background as any).color || palette.background
-              : palette.background,
+            display: "flex",
+            flexDirection: layout === "split-right" ? "row-reverse" : "row",
+            padding: `${scene.paddingY ?? 60}px ${scene.paddingX ?? 48}px`,
+            gap: scene.gap ?? 36,
+            alignItems: "center",
+            justifyContent: "center",
           }}
-        />
-      ) : bgType === "media" &&
-        scene.background &&
-        "media" in scene.background ? (
-        <AbsoluteFill>
-          {scene.background.media.type === "video" ? (
-            <OffthreadVideo
-              src={scene.background.media.src}
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-          ) : (
-            <Img
-              src={scene.background.media.src}
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-          )}
-          <AbsoluteFill
+        >
+          {/* Left column */}
+          <div
             style={{
-              background: `linear-gradient(180deg, ${alpha(palette.background, 0.6)} 0%, ${alpha(palette.background, 0.4)} 40%, ${alpha(palette.background, 0.7)} 100%)`,
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              gap: scene.gap ?? 22,
+              alignItems: "flex-start",
+              justifyContent: "center",
+              padding: "0 16px",
             }}
-          />
+          >
+            {leftLayers.map((layer, i) => (
+              <LayerRenderer key={i} layer={layer} palette={palette} index={i} />
+            ))}
+          </div>
+          {/* Right column */}
+          {rightLayers.length > 0 && (
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                gap: scene.gap ?? 22,
+                alignItems: "flex-start",
+                justifyContent: "center",
+                padding: "0 16px",
+              }}
+            >
+              {rightLayers.map((layer, i) => (
+                <LayerRenderer key={i} layer={layer} palette={palette} index={splitIndex + i} />
+              ))}
+            </div>
+          )}
         </AbsoluteFill>
       ) : (
-        <GradientStage palette={palette} frame={frame}>
-          <AbsoluteFill />
-        </GradientStage>
+        <AbsoluteFill
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            padding: `${scene.paddingY ?? 60}px ${scene.paddingX ?? 48}px`,
+            gap: scene.gap ?? 22,
+            ...layoutStyle,
+          }}
+        >
+          {scene.layers.map((layer, i) => (
+            <LayerRenderer key={i} layer={layer} palette={palette} index={i} />
+          ))}
+        </AbsoluteFill>
       )}
-
-      {/* Layers */}
-      <AbsoluteFill
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          padding: `${scene.paddingY ?? 60}px ${scene.paddingX ?? 48}px`,
-          gap: scene.gap ?? 22,
-          ...layoutStyle,
-        }}
-      >
-        {scene.layers.map((layer, i) => (
-          <LayerRenderer key={i} layer={layer} palette={palette} index={i} />
-        ))}
-      </AbsoluteFill>
     </AbsoluteFill>
   );
 };
