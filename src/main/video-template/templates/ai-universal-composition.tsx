@@ -654,11 +654,12 @@ const LayerRenderer: React.FC<{
             gap: 12,
           }}
         >
-          {layer.badges.map((b, i) => (
-            <TagPill key={i} text={b} palette={palette} light />
+          {(layer.badges || (layer as any).items || []).map((b: any, i: number) => (
+            <TagPill key={i} text={typeof b === 'string' ? b : (b?.text || b?.label || String(b))} palette={palette} light />
           ))}
         </div>
       );
+
 
     case "price":
       return (
@@ -864,7 +865,7 @@ const LayerRenderer: React.FC<{
             padding: "0 40px",
           }}
         >
-          {layer.items.map((item, i) => (
+          {(layer.items || (layer as any).badges || []).map((item: any, i: number) => (
             <div
               key={i}
               style={{ display: "flex", alignItems: "flex-start", gap: 14 }}
@@ -982,7 +983,7 @@ const LayerRenderer: React.FC<{
             maxWidth: 800,
           }}
         >
-          {layer.images.map((img, i) => (
+          {(layer.images || (layer as any).items || []).map((img: any, i: number) => (
             <Img
               key={i}
               src={img.src}
