@@ -837,20 +837,46 @@ const LayerRenderer: React.FC<{
         </div>
       );
 
-    case "media":
+    case "media": {
+      const mediaWidth = layer.width ?? "100%";
+      const mediaHeight = layer.height ?? "680px";
       return (
-        <div style={wrapper}>
-          <MediaSurface
-            media={layer.media as MediaSource}
-            palette={palette}
+        <div
+          style={{
+            ...wrapper,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            width: "100%",
+            maxWidth: 780,
+          }}
+        >
+          <div
             style={{
-              width: layer.width ?? "100%",
-              height: layer.height ?? "480px",
-              borderRadius: layer.borderRadius ?? 0,
+              position: "relative",
+              width: mediaWidth,
+              height: mediaHeight,
+              padding: 10,
+              background: `linear-gradient(145deg, ${alpha(palette.surface, 0.85)} 0%, ${alpha(palette.backgroundAlt, 0.9)} 100%)`,
+              borderRadius: (layer.borderRadius ?? 20) + 8,
+              border: `1px solid ${alpha(palette.accent, 0.4)}`,
+              boxShadow: `0 36px 96px ${alpha("#000000", 0.65)}, 0 10px 30px ${alpha(palette.glow, 0.2)}`,
             }}
-          />
+          >
+            <MediaSurface
+              media={layer.media as MediaSource}
+              palette={palette}
+              frame={frame}
+              style={{
+                width: "100%",
+                height: "100%",
+                borderRadius: layer.borderRadius ?? 20,
+              }}
+            />
+          </div>
         </div>
       );
+    }
 
     case "cta": {
       const pulse = 1 + Math.sin(frame / 18) * 0.02;
@@ -1375,49 +1401,122 @@ const LayerRenderer: React.FC<{
         </div>
       );
 
-    case "split-media":
+    case "split-media": {
+      const zoom = 1 + Math.min(0.12, (frame / 140) * 0.12);
       return (
         <div
           style={{
             ...wrapper,
             display: "flex",
             width: "100%",
-            maxWidth: 900,
-            gap: 24,
+            maxWidth: 960,
+            gap: 32,
             alignItems: "center",
             flexDirection: layer.side === "right" ? "row-reverse" : "row",
           }}
         >
-          <div style={{ flex: 1 }}>
+          {/* Media column */}
+          <div
+            style={{
+              flex: 1.1,
+              position: "relative",
+              borderRadius: 20,
+              overflow: "hidden",
+              border: `2px solid ${alpha(palette.accent, 0.45)}`,
+              boxShadow: `0 24px 70px ${alpha("#000000", 0.6)}, 0 4px 16px ${alpha(palette.glow, 0.2)}`,
+            }}
+          >
             {layer.media.type === "video" ? (
               <OffthreadVideo
                 src={layer.media.src}
-                style={{ width: "100%", height: 300, objectFit: "cover", borderRadius: 16 }}
+                style={{
+                  width: "100%",
+                  height: 460,
+                  objectFit: "cover",
+                  transform: `scale(${zoom})`,
+                }}
               />
             ) : (
               <Img
                 src={layer.media.src}
-                style={{ width: "100%", height: 300, objectFit: "cover", borderRadius: 16 }}
+                style={{
+                  width: "100%",
+                  height: 460,
+                  objectFit: "cover",
+                  transform: `scale(${zoom})`,
+                }}
               />
             )}
+            <div
+              style={{
+                position: "absolute",
+                bottom: 12,
+                left: 12,
+                padding: "3px 8px",
+                borderRadius: 4,
+                background: "rgba(0,0,0,0.6)",
+                backdropFilter: "blur(6px)",
+                color: palette.accent,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: 1.2,
+              }}
+            >
+              ✦ EXHIBITION PIECE
+            </div>
           </div>
-          <div style={{ flex: 1, ...textBase }}>
+          {/* Text column */}
+          <div
+            style={{
+              flex: 0.9,
+              ...textBase,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+              padding: "12px 18px",
+              background: `linear-gradient(135deg, ${alpha(palette.surface, 0.75)} 0%, ${alpha(palette.backgroundAlt, 0.8)} 100%)`,
+              borderRadius: 18,
+              border: `1px solid ${alpha(palette.accent, 0.25)}`,
+              backdropFilter: "blur(12px)",
+              boxShadow: `0 16px 40px ${alpha("#000000", 0.35)}`,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                letterSpacing: 2,
+                color: palette.accent,
+                textTransform: "uppercase",
+              }}
+            >
+              ART CURATION
+            </div>
             {layer.headline && (
               <div
                 style={{
-                  fontSize: 36,
+                  fontSize: 34,
                   fontWeight: 800,
                   color: palette.text,
-                  marginBottom: 12,
+                  lineHeight: 1.25,
+                  letterSpacing: -0.5,
                 }}
               >
                 {layer.headline}
               </div>
             )}
+            <div
+              style={{
+                width: 36,
+                height: 2,
+                background: palette.accent,
+                opacity: 0.8,
+              }}
+            />
             {layer.text && (
               <div
                 style={{
-                  fontSize: 22,
+                  fontSize: 20,
                   color: palette.mutedText,
                   lineHeight: 1.6,
                 }}
@@ -1428,6 +1527,7 @@ const LayerRenderer: React.FC<{
           </div>
         </div>
       );
+    }
 
     case "accent-box": {
       const isLight = isLightPalette(palette);
@@ -1612,6 +1712,114 @@ const SceneRenderer: React.FC<{
     >
       {/* Background */}
       {bgNode}
+
+      {/* Subtle giant background typography watermark */}
+      <div
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "42%",
+          transform: "translate(-50%, -50%)",
+          fontSize: 130,
+          fontWeight: 900,
+          letterSpacing: 16,
+          color: isLightPalette(palette) ? "rgba(0,0,0,0.028)" : "rgba(255,255,255,0.038)",
+          textTransform: "uppercase",
+          whiteSpace: "nowrap",
+          pointerEvents: "none",
+          userSelect: "none",
+          fontFamily: "serif",
+          zIndex: 1,
+        }}
+      >
+        MASTERWORK
+      </div>
+
+      {/* Top exhibition status header bar */}
+      <div
+        style={{
+          position: "absolute",
+          top: 44,
+          left: 52,
+          right: 52,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          pointerEvents: "none",
+          zIndex: 20,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              backgroundColor: palette.accent,
+              boxShadow: `0 0 10px ${palette.accent}`,
+            }}
+          />
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              letterSpacing: 2.5,
+              color: alpha(palette.text, 0.55),
+              textTransform: "uppercase",
+            }}
+          >
+            CURATION · MASTERPIECE
+          </span>
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: 2,
+            color: alpha(palette.text, 0.4),
+          }}
+        >
+          ✦ 4K CINEMATIC
+        </div>
+      </div>
+
+      {/* Bottom exhibition footer ruler & seal */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 40,
+          left: 52,
+          right: 52,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          pointerEvents: "none",
+          zIndex: 20,
+        }}
+      >
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {[...Array(8)].map((_, i) => (
+            <div
+              key={i}
+              style={{
+                width: 2,
+                height: i % 2 === 0 ? 12 : 6,
+                backgroundColor: alpha(palette.text, 0.28),
+              }}
+            />
+          ))}
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: 1.5,
+            color: alpha(palette.text, 0.45),
+          }}
+        >
+          MUSEUM ARCHIVE COLLECTION
+        </div>
+      </div>
 
       {/* Layers — split or normal */}
       {isSplit ? (

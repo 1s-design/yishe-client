@@ -436,6 +436,31 @@ export const GradientStage: React.FC<{
           pointerEvents: "none",
         }}
       />
+      {/* Floating gallery dust/gold particles */}
+      {[...Array(12)].map((_, idx) => {
+        const pX = (idx * 83 + frame * 0.35) % 100;
+        const pY = (idx * 137 + Math.sin(frame / (28 + idx * 4)) * 36 + 100) % 100;
+        const pAlpha = 0.12 + ((Math.sin(frame / (18 + idx * 3)) + 1) / 2) * 0.18;
+        const pSize = 3 + (idx % 3) * 2.5;
+        return (
+          <div
+            key={idx}
+            style={{
+              position: "absolute",
+              left: `${pX}%`,
+              top: `${pY}%`,
+              width: pSize,
+              height: pSize,
+              borderRadius: "50%",
+              backgroundColor: palette.glow || palette.accent,
+              opacity: pAlpha,
+              filter: "blur(1px)",
+              boxShadow: `0 0 10px ${palette.glow || palette.accent}`,
+              pointerEvents: "none",
+            }}
+          />
+        );
+      })}
       {children}
     </AbsoluteFill>
   );
@@ -712,14 +737,12 @@ export const MediaSurface: React.FC<{
   radius?: number;
   frame?: number;
   style?: React.CSSProperties;
-}> = ({ media, palette, radius = 36, frame = 0, style }) => {
-  const zoom = mix(1.08, 1, frame / 60);
-  const translateX = Math.sin(frame / 34) * 10;
-  const translateY = Math.cos(frame / 41) * 6;
-  const sheenX = ((frame * 1.8) % 170) - 40;
-  const focusX = 52 + Math.sin(frame / 22) * 18;
-  const scanOffset = (frame * 1.15) % 110;
-  const focusPulse = 0.08 + ((Math.sin(frame / 18) + 1) / 2) * 0.08;
+}> = ({ media, palette, radius = 24, frame = 0, style }) => {
+  // Smooth cinematic Ken-Burns push-in
+  const zoom = 1 + Math.min(0.14, (frame / 150) * 0.14);
+  const translateX = Math.sin(frame / 60) * 8;
+  const translateY = Math.cos(frame / 70) * 6;
+  const sheenProgress = ((frame * 1.8) % 200) - 50;
 
   return (
     <div
@@ -727,9 +750,9 @@ export const MediaSurface: React.FC<{
         position: "relative",
         overflow: "hidden",
         borderRadius: radius,
-        background: `linear-gradient(135deg, ${alpha(palette.backgroundAlt, 0.92)} 0%, ${alpha(palette.surface, 0.92)} 100%)`,
-        border: `1px solid ${alpha("#ffffff", 0.16)}`,
-        boxShadow: `0 26px 72px ${alpha("#000000", 0.36)}, inset 0 1px 0 ${alpha("#ffffff", 0.1)}`,
+        background: `linear-gradient(135deg, ${alpha(palette.backgroundAlt, 0.95)} 0%, ${alpha(palette.surface, 0.95)} 100%)`,
+        border: `2px solid ${alpha(palette.accent, 0.35)}`,
+        boxShadow: `0 32px 90px ${alpha("#000000", 0.55)}, 0 8px 24px ${alpha(palette.glow, 0.15)}, inset 0 0 0 1px ${alpha("#ffffff", 0.12)}`,
         ...style,
       }}
     >
@@ -770,68 +793,42 @@ export const MediaSurface: React.FC<{
           Upload Media
         </AbsoluteFill>
       )}
+
+      {/* Glass shimmer sweep effect */}
       <div
         style={{
           position: "absolute",
-          inset: 0,
-          background: `linear-gradient(180deg, ${alpha("#ffffff", 0.18)} 0%, transparent 24%, transparent 70%, ${alpha("#000000", 0.38)} 100%)`,
+          top: 0,
+          left: `${sheenProgress}%`,
+          width: "45%",
+          height: "100%",
+          background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.18) 50%, transparent 100%)",
+          transform: "skewX(-25deg)",
           pointerEvents: "none",
         }}
       />
+
+      {/* Gallery Piece Corner Label */}
       <div
         style={{
           position: "absolute",
-          inset: 0,
-          backgroundImage: `repeating-linear-gradient(135deg, ${alpha("#ffffff", 0.022)} 0px, ${alpha("#ffffff", 0.022)} 1px, transparent 1px, transparent 10px)`,
-          backgroundPosition: `${scanOffset}px ${scanOffset / 2}px`,
-          opacity: 0.22,
-          mixBlendMode: "soft-light",
+          top: 14,
+          right: 16,
+          padding: "4px 10px",
+          borderRadius: 6,
+          background: "rgba(0,0,0,0.65)",
+          backdropFilter: "blur(8px)",
+          border: `1px solid ${alpha(palette.accent, 0.5)}`,
+          color: palette.accent,
+          fontSize: 12,
+          fontWeight: 700,
+          letterSpacing: 1.5,
+          textTransform: "uppercase",
           pointerEvents: "none",
         }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          top: "-18%",
-          left: `${sheenX}%`,
-          width: "42%",
-          height: "140%",
-          background: `linear-gradient(90deg, transparent 0%, ${alpha("#ffffff", 0.18)} 52%, transparent 100%)`,
-          transform: "rotate(12deg)",
-          mixBlendMode: "screen",
-          opacity: 0.42,
-          pointerEvents: "none",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: `radial-gradient(circle at ${focusX}% 20%, ${alpha(
-            "#ffffff",
-            0.16 + focusPulse,
-          )} 0%, transparent 24%)`,
-          mixBlendMode: "screen",
-          pointerEvents: "none",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 1,
-          borderRadius: Math.max(0, radius - 1),
-          border: `1px solid ${alpha("#ffffff", 0.08)}`,
-          pointerEvents: "none",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: `radial-gradient(circle at top right, ${alpha("#ffffff", 0.16)} 0%, transparent 26%), radial-gradient(circle at center, transparent 48%, ${alpha("#000000", 0.16)} 100%)`,
-          pointerEvents: "none",
-        }}
-      />
+      >
+        ◆ ARTWORK
+      </div>
     </div>
   );
 };
