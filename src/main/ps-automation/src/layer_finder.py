@@ -6,7 +6,14 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 
-from photoshop.api.enumerations import LayerKind
+try:
+    from photoshop.api.enumerations import LayerKind
+except ImportError:
+    class LayerKind:
+        SmartObjectLayer = 17
+        SolidColorLayer = 19
+        NormalLayer = 1
+        TextLayer = 2
 
 # 支持相对导入和绝对导入
 try:

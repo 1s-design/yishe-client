@@ -502,6 +502,8 @@ timeout /t 2 /nobreak >nul
 taskkill /f /im yishe-client.exe 2>nul
 taskkill /f /im yishe-browser-agent.exe 2>nul
 taskkill /f /im dezoomify-rs-win.exe 2>nul
+taskkill /f /im yishe-ps-windows.exe 2>nul
+taskkill /f /im ps.exe 2>nul
 timeout /t 1 /nobreak >nul
 
 :: 3. 运行 NSIS 静默更新

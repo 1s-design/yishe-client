@@ -7,8 +7,17 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from photoshop.api import ActionDescriptor
-from photoshop.api.enumerations import DialogModes, LayerKind
+try:
+    from photoshop.api import ActionDescriptor
+    from photoshop.api.enumerations import DialogModes, LayerKind
+except ImportError:
+    ActionDescriptor = None
+    DialogModes = None
+    class LayerKind:
+        SmartObjectLayer = 17
+        SolidColorLayer = 19
+        NormalLayer = 1
+        TextLayer = 2
 
 
 def _iter_layers(layers: Iterable[Any], parent_path: str = ""):

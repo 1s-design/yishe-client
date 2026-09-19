@@ -8,9 +8,20 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from photoshop import Session
-from photoshop.api import ActionDescriptor, ActionReference
-from photoshop.api.enumerations import DialogModes, LayerKind
+try:
+    from photoshop import Session
+    from photoshop.api import ActionDescriptor, ActionReference
+    from photoshop.api.enumerations import DialogModes, LayerKind
+except ImportError:
+    Session = None
+    ActionDescriptor = None
+    ActionReference = None
+    DialogModes = None
+    class LayerKind:
+        SmartObjectLayer = 17
+        SolidColorLayer = 19
+        NormalLayer = 1
+        TextLayer = 2
 
 # 支持相对导入和绝对导入
 try:

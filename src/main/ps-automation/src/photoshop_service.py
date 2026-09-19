@@ -6,9 +6,15 @@ from pathlib import Path
 from typing import Optional
 
 from PIL import Image
-from photoshop import Session
-from photoshop.api import ActionDescriptor, ActionReference
-from photoshop.api.enumerations import DialogModes
+try:
+    from photoshop import Session
+    from photoshop.api import ActionDescriptor, ActionReference
+    from photoshop.api.enumerations import DialogModes
+except ImportError:
+    Session = None
+    ActionDescriptor = None
+    ActionReference = None
+    DialogModes = None
 
 from .utils import resize_image_in_tiles, validate_job_inputs
 

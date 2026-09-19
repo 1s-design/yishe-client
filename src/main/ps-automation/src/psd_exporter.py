@@ -8,7 +8,10 @@ import time
 from pathlib import Path
 from typing import Optional, List
 
-from photoshop import Session
+try:
+    from photoshop import Session
+except ImportError:
+    Session = None
 
 # 智能对象忽略标志：如果智能对象名称包含此标志（不区分大小写），将不会被处理
 IGNORE_SMART_OBJECT_PREFIX = "ignore"

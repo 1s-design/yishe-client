@@ -156,13 +156,13 @@ def main():
     parser.add_argument(
         "--host",
         type=str,
-        default="localhost",
-        help="服务主机地址（默认: localhost，只监听本地回环接口，更安全）"
+        default=os.getenv("HOST", "127.0.0.1"),
+        help="服务主机地址（默认: 127.0.0.1）"
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=1595,
+        default=int(os.getenv("PORT", 1595)),
         help="服务端口（默认: 1595）"
     )
     parser.add_argument(
@@ -181,12 +181,87 @@ def main():
         action="store_true",
         help="停止已启动的服务（通过 pid 文件定位进程）"
     )
+    # CLI 命令行处理模式参数（兼容直接调用 exe 替换并支持 --rotation 参数）
+    parser.add_argument(
+        "--psd",
+        type=str,
+        default=None,
+        help="PSD 文件路径（指定后将进入命令行单次替换模式，不启动 HTTP 服务）"
+    )
+    parser.add_argument(
+        "--image",
+        type=str,
+        default=None,
+        help="用于替换的图片素材路径"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="导出目录路径"
+    )
+    parser.add_argument(
+        "--rotation",
+        "-r",
+        type=float,
+        default=0,
+        help="图片旋转角度（度），在裁剪/缩放之前旋转原图。0=不旋转，支持 90/180/270 或任意角度。"
+    )
+    parser.add_argument(
+        "--smart-object-name",
+        type=str,
+        default=None,
+        help="可选：指定要替换的智能对象图层名称（默认替换首个匹配对象）"
+    )
+    parser.add_argument(
+        "--output-filename",
+        type=str,
+        default=None,
+        help="可选：导出文件名（默认自动按原文件名生成）"
+    )
+    parser.add_argument(
+        "--tile-size",
+        type=int,
+        default=512,
+        help="图片缩放分块尺寸，默认 512"
+    )
     
     args = parser.parse_args()
     # 如果是 stop 命令，直接尝试停止并退出
     if args.stop:
         stop_running_instance()
         return
+
+    # 如果指定了 --psd 或 --image，直接进入 CLI 替换执行模式
+    if args.psd or args.image:
+        if not args.psd or not args.image:
+            print("❌ 错误: 命令行处理模式必须同时指定 --psd 和 --image 参数")
+            sys.exit(1)
+
+        try:
+            import importlib.util
+            script_path = project_root / "src" / "psd-img-replace-smartobject.py"
+            spec = importlib.util.spec_from_file_location("psd_replace_cli", script_path)
+            psd_cli = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(psd_cli)
+
+            export_dir = Path(args.output_dir) if args.output_dir else (project_root / "output")
+            export_path = psd_cli.replace_and_export_psd(
+                psd_path=Path(args.psd),
+                image_path=Path(args.image),
+                export_dir=export_dir,
+                smart_object_name=args.smart_object_name,
+                output_filename=args.output_filename,
+                tile_size=args.tile_size,
+                rotation=args.rotation
+            )
+            print(f"\n✅ 处理完成！导出文件: {export_path}")
+            return
+        except Exception as e:
+            print(f"\n❌ 处理失败: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
     
     # 警告：多个工作进程可能导致 Photoshop 连接问题
     if args.workers > 1:

@@ -27,7 +27,10 @@ if sys.platform == 'win32':
     # 设置环境变量
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 
-from photoshop import Session
+try:
+    from photoshop import Session
+except ImportError:
+    Session = None
 
 # 导入工具模块
 try:

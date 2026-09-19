@@ -1209,7 +1209,7 @@ class PSDAnalysisResponse(BaseModel):
         }
 
 
-SERVICE_VERSION = "1.2.266"
+SERVICE_VERSION = "1.2.267"
 
 SERVICE_FEATURES = [
     "rotation",
@@ -1279,7 +1279,7 @@ SUPPORTED_PARAMETERS = {
 
 
 def render_status_dashboard_html() -> str:
-    """生成易设 PS 自动化服务的现代诊断看板 HTML"""
+    """生成极简风格的易设 PS 自动化服务状态看板 HTML"""
     pid = os.getpid()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return f"""<!DOCTYPE html>
@@ -1287,304 +1287,143 @@ def render_status_dashboard_html() -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>易设 PS 自动化服务 - 状态诊断看板</title>
+  <title>yishe-ps-automation</title>
   <style>
-    :root {{
-      --bg: #0f172a;
-      --card-bg: rgba(30, 41, 59, 0.7);
-      --card-border: rgba(255, 255, 255, 0.08);
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --primary: #3b82f6;
-      --success: #10b981;
-      --accent: #8b5cf6;
-      --warning: #f59e0b;
-    }}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
-      background: radial-gradient(circle at top right, #1e1b4b, #0f172a 60%);
-      color: var(--text-main);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      min-height: 100vh;
-      padding: 32px 20px;
-      display: flex;
-      justify-content: center;
+      background: #0d0e11;
+      color: #d1d5db;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      padding: 40px 24px;
+      line-height: 1.6;
     }}
     .container {{
-      max-width: 900px;
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
+      max-width: 620px;
+      margin: 0 auto;
     }}
     .header {{
       display: flex;
-      flex-wrap: wrap;
       justify-content: space-between;
       align-items: center;
-      gap: 16px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 14px;
+      border-bottom: 1px solid #1f232b;
+      margin-bottom: 24px;
     }}
-    .header-title {{
-      display: flex;
-      align-items: center;
-      gap: 12px;
+    .title {{
+      font-size: 15px;
+      font-weight: 600;
+      color: #f3f4f6;
     }}
-    .header-title h1 {{
-      font-size: 24px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-    }}
-    .status-badge {{
+    .status {{
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.4);
+      gap: 6px;
+      font-size: 12px;
       color: #34d399;
-      padding: 6px 14px;
-      border-radius: 9999px;
-      font-size: 13px;
-      font-weight: 600;
     }}
     .status-dot {{
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       background: #10b981;
       border-radius: 50%;
-      box-shadow: 0 0 10px #10b981;
-      animation: pulse 2s infinite;
     }}
-    @keyframes pulse {{
-      0%, 100% {{ opacity: 1; transform: scale(1); }}
-      50% {{ opacity: 0.4; transform: scale(0.85); }}
-    }}
-    .meta-pills {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }}
-    .pill {{
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      padding: 6px 12px;
-      border-radius: 8px;
-      font-size: 12px;
-      color: var(--text-muted);
-    }}
-    .pill b {{ color: var(--text-main); }}
-    .card {{
-      background: var(--card-bg);
-      backdrop-filter: blur(12px);
-      border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-    }}
-    .card-title {{
-      font-size: 17px;
-      font-weight: 600;
-      color: var(--text-main);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }}
-    .feature-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 14px;
-    }}
-    .feature-card {{
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      transition: border-color 0.2s;
-    }}
-    .feature-card.highlight {{
-      border: 1px solid rgba(59, 130, 246, 0.5);
-      background: rgba(59, 130, 246, 0.08);
-    }}
-    .feature-card-head {{
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }}
-    .feature-name {{
-      font-weight: 600;
-      font-size: 15px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }}
-    .feature-tag {{
-      background: rgba(16, 185, 129, 0.2);
-      color: #34d399;
+    .section-label {{
       font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7280;
+      margin: 20px 0 8px 0;
     }}
-    .feature-desc {{
-      font-size: 13px;
-      color: var(--text-muted);
-      line-height: 1.5;
-    }}
-    .code-box {{
-      background: #090d16;
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 10px;
-      padding: 14px;
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 13px;
-      color: #38bdf8;
-      overflow-x: auto;
-    }}
-    .param-list {{
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      font-size: 13px;
-    }}
-    .param-item {{
-      background: rgba(15, 23, 42, 0.5);
-      padding: 8px 12px;
+    .table {{
+      width: 100%;
+      border: 1px solid #1f232b;
       border-radius: 6px;
-      border-left: 3px solid var(--primary);
-      color: var(--text-muted);
+      background: #12151b;
+      font-size: 13px;
+      border-collapse: collapse;
+      overflow: hidden;
     }}
-    .param-item b {{ color: var(--text-main); }}
+    .table tr {{
+      border-bottom: 1px solid #1a1e26;
+    }}
+    .table tr:last-child {{
+      border-bottom: none;
+    }}
+    .table td {{
+      padding: 8px 14px;
+      vertical-align: middle;
+    }}
+    .table td.k {{
+      color: #9ca3af;
+      width: 140px;
+      white-space: nowrap;
+    }}
+    .table td.v {{
+      color: #e5e7eb;
+    }}
+    .tag {{
+      display: inline-block;
+      padding: 1px 6px;
+      background: rgba(16, 185, 129, 0.12);
+      color: #34d399;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-left: 6px;
+    }}
     .links {{
       display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
+      gap: 16px;
+      margin-top: 24px;
+      font-size: 12px;
     }}
-    .btn-link {{
-      background: rgba(59, 130, 246, 0.15);
-      border: 1px solid rgba(59, 130, 246, 0.3);
+    .links a {{
       color: #60a5fa;
-      padding: 8px 16px;
-      border-radius: 8px;
       text-decoration: none;
-      font-size: 13px;
-      font-weight: 500;
-      transition: all 0.2s;
     }}
-    .btn-link:hover {{
-      background: rgba(59, 130, 246, 0.3);
-      color: #fff;
+    .links a:hover {{
+      text-decoration: underline;
+    }}
+    .hint {{
+      margin-top: 28px;
+      font-size: 11px;
+      color: #4b5563;
     }}
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <div class="header-title">
-        <span style="font-size: 28px;">🎨</span>
-        <div>
-          <h1>易设 Photoshop 自动化服务</h1>
-          <p style="font-size: 13px; color: var(--text-muted);">PSD 智能对象批量替换与自动化导出引擎</p>
-        </div>
-      </div>
-      <div class="status-badge">
-        <span class="status-dot"></span> 服务正常运行 (ONLINE)
+      <div class="title">yishe-ps-automation</div>
+      <div class="status">
+        <span class="status-dot"></span> ONLINE
       </div>
     </div>
 
-    <div class="meta-pills">
-      <div class="pill">服务版本: <b>v{SERVICE_VERSION}</b></div>
-      <div class="pill">进程 PID: <b>{pid}</b></div>
-      <div class="pill">服务端口: <b>1595</b></div>
-      <div class="pill">刷新时间: <b>{now_str}</b></div>
+    <div class="section-label">Instance</div>
+    <table class="table">
+      <tr><td class="k">version</td><td class="v">v{SERVICE_VERSION}</td></tr>
+      <tr><td class="k">port</td><td class="v">1595</td></tr>
+      <tr><td class="k">pid</td><td class="v">{pid}</td></tr>
+      <tr><td class="k">time</td><td class="v">{now_str}</td></tr>
+    </table>
+
+    <div class="section-label">Capabilities</div>
+    <table class="table">
+      <tr><td class="k">rotation</td><td class="v">supported (-360° ~ 360°) <span class="tag">active</span></td></tr>
+      <tr><td class="k">smart_objects</td><td class="v">multi-slot matching</td></tr>
+      <tr><td class="k">background_image</td><td class="v">contain-with-cover synthesis</td></tr>
+      <tr><td class="k">custom_options</td><td class="v">position & size override</td></tr>
+      <tr><td class="k">line_buffering</td><td class="v">enabled (realtime flush)</td></tr>
+    </table>
+
+    <div class="links">
+      <a href="/docs">/docs</a>
+      <a href="/health">/health</a>
+      <a href="/photoshopStatus">/photoshopStatus</a>
     </div>
 
-    <div class="card">
-      <div class="card-title">✨ 当前服务支持的核心特性清单 (Capabilities)</div>
-      <div class="feature-grid">
-        <div class="feature-card highlight">
-          <div class="feature-card-head">
-            <span class="feature-name">🔄 原图旋转 (rotation)</span>
-            <span class="feature-tag">✅ 已支持</span>
-          </div>
-          <div class="feature-desc">
-            支持在裁剪与缩放前旋转素材原图。参数支持 <b>-360° ~ 360°</b> 任意角度（顺时针旋转，自动计算扩展画布并保持透明底）。
-          </div>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-card-head">
-            <span class="feature-name">🔗 多智能对象匹配</span>
-            <span class="feature-tag">✅ 已支持</span>
-          </div>
-          <div class="feature-desc">
-            支持一个 PSD 内配置多个素材分别替换对应槽位，支持按图层名称精确匹配或按顺序匹配。
-          </div>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-card-head">
-            <span class="feature-name">🖼️ 背景底图合成</span>
-            <span class="feature-tag">✅ 已支持</span>
-          </div>
-          <div class="feature-desc">
-            contain 模式下支持先 cover 铺满底图背景，再将素材图 contain 叠放，适合满印防留白。
-          </div>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-card-head">
-            <span class="feature-name">🎯 自定义位置与尺寸</span>
-            <span class="feature-tag">✅ 已支持</span>
-          </div>
-          <div class="feature-desc">
-            支持通过 custom_options 精确控制素材在智能对象画布上的位置 (x, y) 和尺寸 (w, h)。
-          </div>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-card-head">
-            <span class="feature-name">⚡ 实时行缓冲日志</span>
-            <span class="feature-tag">✅ 已启用</span>
-          </div>
-          <div class="feature-desc">
-            已开启 line_buffering=True 与实时输出冲刷，所有替换、旋转与异常日志均无延迟写入。
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">📋 旋转配置参数示例 (smart_objects 格式)</div>
-      <div class="code-box">
-{{
-  "psd_path": "D:\\\\templates\\\\mockup.psd",
-  "verbose": true,
-  "smart_objects": [
-    {{
-      "smart_object_name": "设计图层",
-      "image_path": "D:\\\\images\\\\artwork.jpg",
-      "rotation": 90,
-      "resize_mode": "cover",
-      "tile_size": 512
-    }}
-  ]
-}}
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">🧭 常用诊断接口与文档</div>
-      <div class="links">
-        <a class="btn-link" href="/docs" target="_blank">📖 交互式 API 文档 (/docs)</a>
-        <a class="btn-link" href="/health" target="_blank">🩺 健康状态 JSON (/health)</a>
-        <a class="btn-link" href="/photoshopStatus" target="_blank">🔍 检测 Photoshop COM 状态 (/photoshopStatus)</a>
-      </div>
+    <div class="hint">
+      Tip: API client requests receive JSON status automatically.
     </div>
   </div>
 </body>

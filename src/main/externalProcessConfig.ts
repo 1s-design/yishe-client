@@ -233,13 +233,13 @@ function resolveDevPythonExecutable(psProjectRoot: string): string {
 }
 
 function buildPsAutomationConfig(): ProcessConfig | null {
-  if (process.platform !== "win32") {
+  if (process.platform !== "win32" && process.platform !== "darwin") {
     return null;
   }
 
   const psProjectRoot = resolvePsAutomationProjectRoot();
 
-  if (is.dev) {
+  if (is.dev || process.platform === "darwin") {
     const entryFile = join(psProjectRoot, "ps.py");
     if (!existsSync(entryFile)) {
       return null;
@@ -258,7 +258,7 @@ function buildPsAutomationConfig(): ProcessConfig | null {
         PYTHONUNBUFFERED: "1",
         PORT: PS_AUTOMATION_PORT,
       },
-      platforms: ["win32"],
+      platforms: ["win32", "darwin"],
       autoStart: true,
       autoRestart: true,
       restartDelay: 3000,
@@ -284,13 +284,14 @@ function buildPsAutomationConfig(): ProcessConfig | null {
     id: "ps-automation",
     name: "PS 自动化端",
     executable: psAutomationExecutable,
+    args: ["--host", "127.0.0.1", "--port", PS_AUTOMATION_PORT],
     stopArgs: ["--stop"],
     env: {
       PYTHONIOENCODING: "utf-8",
       PYTHONUNBUFFERED: "1",
       PORT: PS_AUTOMATION_PORT,
     },
-    platforms: ["win32"],
+    platforms: ["win32", "darwin"],
     autoStart: true,
     autoRestart: true,
     restartDelay: 3000,
