@@ -6607,10 +6607,79 @@ async function handlePsdSetProduction(
     const psdTestExportDir = buildPsdTestExportDir(workspaceDir);
 
     // 配置优先级：套图的 stickerPsdSetConfig > PSD模板的 psdTemplateConfig > 默认配置
-    const stickerPsdSetConfig = psdSet.stickerPsdSetConfig;
-    const psdTemplateConfig = psdSet.psdTemplate?.psdTemplateConfig;
-    const config = stickerPsdSetConfig || psdTemplateConfig;
-    const useConfig = config && typeof config === "object";
+    let rawStickerPsdSetConfig = psdSet.stickerPsdSetConfig;
+    let rawPsdTemplateConfig = psdSet.psdTemplate?.psdTemplateConfig;
+
+    // 兼容配置可能作为 JSON 字符串返回的情况
+    if (typeof rawStickerPsdSetConfig === "string" && rawStickerPsdSetConfig.trim()) {
+      try {
+        rawStickerPsdSetConfig = JSON.parse(rawStickerPsdSetConfig.trim());
+      } catch (parseErr) {
+        emitter.emit("log", {
+          level: "warn",
+          message: `[psd-set] 解析 stickerPsdSetConfig JSON 字符串失败: ${serializeError(parseErr)}`,
+        });
+      }
+    }
+    if (typeof rawPsdTemplateConfig === "string" && rawPsdTemplateConfig.trim()) {
+      try {
+        rawPsdTemplateConfig = JSON.parse(rawPsdTemplateConfig.trim());
+      } catch (parseErr) {
+        emitter.emit("log", {
+          level: "warn",
+          message: `[psd-set] 解析 psdTemplateConfig JSON 字符串失败: ${serializeError(parseErr)}`,
+        });
+      }
+    }
+
+    const hasStickerConfig =
+      rawStickerPsdSetConfig &&
+      typeof rawStickerPsdSetConfig === "object" &&
+      Object.keys(rawStickerPsdSetConfig).length > 0;
+    const hasTemplateConfig =
+      rawPsdTemplateConfig &&
+      typeof rawPsdTemplateConfig === "object" &&
+      Object.keys(rawPsdTemplateConfig).length > 0;
+
+    // 如果套图自带配置且明确包含有效 smart_objects，优先使用；否则若模板有配置，回退使用模板配置
+    const stickerHasSmartObjects =
+      hasStickerConfig &&
+      Array.isArray(rawStickerPsdSetConfig.smart_objects) &&
+      rawStickerPsdSetConfig.smart_objects.length > 0;
+
+    let config: any;
+    let configSource = "默认配置";
+
+    if (stickerHasSmartObjects) {
+      config = rawStickerPsdSetConfig;
+      configSource = "套图的 stickerPsdSetConfig";
+    } else if (hasTemplateConfig) {
+      config = rawPsdTemplateConfig;
+      configSource = hasStickerConfig
+        ? "PSD模板的 psdTemplateConfig (套图自身配置无 smart_objects，已自动回退到模板配置)"
+        : "PSD模板的 psdTemplateConfig";
+    } else if (hasStickerConfig) {
+      config = rawStickerPsdSetConfig;
+      configSource = "套图的 stickerPsdSetConfig (无 smart_objects)";
+    } else {
+      config = null;
+      configSource = "无可用配置（使用默认处理）";
+    }
+
+    const useConfig = !!config;
+
+    emitter.emit("log", {
+      level: "info",
+      message: `[psd-set] ⚙️ 配置源判定: ${configSource} | 模板配置=${hasTemplateConfig ? "有" : "无"}, 套图配置=${hasStickerConfig ? "有" : "无"}`,
+    });
+    writePsdSetFileLog("info", `配置源判定: ${configSource}`, {
+      psdSetId,
+      hasStickerConfig,
+      hasTemplateConfig,
+      configSource,
+      resolvedConfig: config,
+    });
+
     let processPayload: any;
     const resolveProcessImagePaths = async (paths: string[]) => {
       const resolvedPaths: string[] = [];
@@ -6646,18 +6715,6 @@ async function handlePsdSetProduction(
     };
 
     if (useConfig) {
-      // 确定使用的配置来源
-      const configSource = stickerPsdSetConfig
-        ? "套图的 stickerPsdSetConfig"
-        : psdTemplateConfig
-          ? "PSD模板的 psdTemplateConfig"
-          : "未知";
-
-      emitter.emit("log", {
-        level: "info",
-        message: `[psd-set] 检测到配置，使用${configSource}处理PSD`,
-      });
-
       const configSmartObjects = Array.isArray(config.smart_objects)
         ? config.smart_objects
         : [];
@@ -6818,9 +6875,11 @@ async function handlePsdSetProduction(
     // 简化 smart_objects 输出，避免日志过大
     const logSmartObjects = processPayload.smart_objects.map((so: any) => {
       const logSo: any = {
+        smart_object_name: so.smart_object_name || undefined,
         image_path: so.image_path,
         background_image_path: so.background_image_path || undefined,
         resize_mode: so.resize_mode,
+        rotation: so.rotation !== undefined ? so.rotation : undefined,
       };
       // 如果有 custom_options，也显示关键信息
       if (so.custom_options) {

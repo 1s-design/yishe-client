@@ -146,7 +146,9 @@ def replace_smart_object_content(
                 resample=Image.LANCZOS,
                 fillcolor=fill_color
             )
-            print(f"    🔄 旋转原图: {rotation}° {original_size} → {img.size}")
+            print(f"    🔄 旋转原图生效: {rotation}° (顺时针) 尺寸变换: {original_size} → {img.size} (模式: {img.mode})")
+        else:
+            print(f"    ℹ️ 原图无需旋转 (rotation={rotation})")
         
         # 显示原始图片尺寸和比例信息
         orig_width, orig_height = img.size

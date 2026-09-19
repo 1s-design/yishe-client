@@ -1394,6 +1394,15 @@ async def process_psd(request: ProcessRequest, response: Response):
                     so_dict['custom_options'] = default_custom_options
 
                 smart_objects_config.append(so_dict)
+
+            # 详细打印接收到的配置参数
+            print(f"\n" + "=" * 60)
+            print(f"📥 [processPsd] 收到智能对象处理请求: PSD={request.psd_path}")
+            print(f"   defaults 默认配置: resize_mode={default_resize_mode}, rotation={default_rotation}°, tile_size={default_tile_size}")
+            print(f"   smart_objects 数量={len(smart_objects_config)}")
+            for idx, so_item in enumerate(smart_objects_config):
+                print(f"   [{idx+1}] 名称='{so_item.get('smart_object_name') or '(未指定名称)'}', 旋转={so_item.get('rotation')}°, 模式={so_item.get('resize_mode')}, 素材='{so_item.get('image_path')}'")
+            print("=" * 60 + "\n")
             
             # 构建配置
             config = {

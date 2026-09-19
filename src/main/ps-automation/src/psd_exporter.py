@@ -303,6 +303,7 @@ def replace_and_export_psd_multi(
                 _log_detail(f"      图层路径: {so['path']}")
                 _log_detail(f"      图片路径: {so_config['image_path']}")
                 _log_detail(f"      缩放模式: {so_config.get('resize_mode', 'contain')}")
+                _log_detail(f"      旋转角度: {so_config.get('rotation', 0)}°")
                 if so_config.get('background_image_path'):
                     _log_detail(f"      背景图: {so_config.get('background_image_path')}")
                 _log_detail(f"      分块尺寸: {so_config.get('tile_size', 512)}")
@@ -325,6 +326,7 @@ def replace_and_export_psd_multi(
                     custom_options = so_config.get('custom_options')
                     background_image_path = so_config.get('background_image_path')
                     rotation = float(so_config.get('rotation', 0))
+                    print(f"    📐 智能对象 '{so['name']}' 准备替换，旋转参数: {rotation}° (原始配置: {so_config.get('rotation', '未设置')})")
 
                     replace_smart_object_content(
                         session,

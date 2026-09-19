@@ -412,7 +412,8 @@ export class ExternalProcessManager {
         const outputs = splitProcessOutputLines(data).filter(output => !isNoisyProcessOutput(config, output))
         for (const output of outputs) {
           console.log(`[${config.name}] ${output}`)
-          this.writeProcessLog('DEBUG', '外部进程 stdout', {
+          const isKeyLog = /旋转|🔄|智能对象|processPsd|替换|缩放|导出|smart_object|rotation|rotate/i.test(output)
+          this.writeProcessLog(isKeyLog ? 'INFO' : 'DEBUG', `[${config.name}] ${output}`, {
             processId: config.id,
             processName: config.name,
             pid: childProcess.pid || null,
