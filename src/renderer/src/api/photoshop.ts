@@ -226,6 +226,8 @@ export interface HealthResponse {
   status: string
   version: string
   timestamp: string
+  features?: string[]
+  capabilities?: Record<string, any>
 }
 
 // API 方法
