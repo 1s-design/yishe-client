@@ -1364,14 +1364,16 @@ async def process_psd(request: ProcessRequest, response: Response):
             default_tile_size = 512
             default_custom_options = None
             default_background_image_path = None
-            
+            default_rotation = 0
+
             if request.defaults:
                 default_resize_mode = request.defaults.resize_mode
                 default_tile_size = request.defaults.tile_size
                 default_background_image_path = request.defaults.background_image_path
+                default_rotation = request.defaults.rotation
                 if request.defaults.custom_options:
                     default_custom_options = request.defaults.custom_options.dict()
-            
+
             # 转换 smart_objects 配置为处理函数需要的格式
             smart_objects_config = []
             for so_config in request.smart_objects:
@@ -1380,6 +1382,7 @@ async def process_psd(request: ProcessRequest, response: Response):
                     'image_path': so_config.image_path,
                     'resize_mode': so_config.resize_mode or default_resize_mode,
                     'tile_size': so_config.tile_size or default_tile_size,
+                    'rotation': so_config.rotation if so_config.rotation is not None else default_rotation,
                 }
                 background_image_path = so_config.background_image_path or default_background_image_path
                 if background_image_path:
@@ -1389,7 +1392,7 @@ async def process_psd(request: ProcessRequest, response: Response):
                     so_dict['custom_options'] = so_config.custom_options.dict()
                 elif so_dict['resize_mode'] == 'custom' and default_custom_options:
                     so_dict['custom_options'] = default_custom_options
-                
+
                 smart_objects_config.append(so_dict)
             
             # 构建配置
