@@ -1,13 +1,28 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 
+import os
+
+def collect_src_datas():
+    """收集 src 目录下的 .py 文件，排除 __pycache__"""
+    datas = []
+    src_dir = 'src'
+    for root, dirs, files in os.walk(src_dir):
+        # 排除 __pycache__ 目录
+        dirs[:] = [d for d in dirs if d != '__pycache__']
+        for f in files:
+            if f.endswith('.py'):
+                full_path = os.path.join(root, f)
+                # 目标路径保持 src/xxx 结构
+                dest_dir = os.path.dirname(full_path)
+                datas.append((full_path, dest_dir))
+    return datas
+
 a = Analysis(
     ['ps.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('src', 'src'),  # 包含整个 src 目录及其所有文件
-    ],
+    datas=collect_src_datas(),
     hiddenimports=[
         # src 模块
         'src',
