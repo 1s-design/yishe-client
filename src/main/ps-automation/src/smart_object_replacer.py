@@ -104,19 +104,22 @@ def replace_smart_object_content(
         raise ValueError(f"无法获取智能对象文档尺寸: {e}")
     
     # 准备缩放后的图片
-    from PIL import Image
+    from PIL import Image, ImageOps
     with Image.open(image_path) as img:
-        # 【第1步】旋转原图（在任何裁剪/缩放之前）
-        if rotation and rotation != 0:
-            original_size = img.size
-            img = img.rotate(-rotation, expand=True, resample=Image.LANCZOS, fillcolor=(0, 0, 0, 0) if img.mode in ("RGBA", "LA", "P") else None)
-            print(f"    🔄 旋转原图: {rotation}° {original_size} → {img.size}")
+        # 自动纠正手机拍摄的原图 EXIF 方向
+        try:
+            transposed = ImageOps.exif_transpose(img)
+            if transposed is not None:
+                img = transposed
+        except Exception:
+            pass
 
-        # 保留透明通道：RGBA、LA 模式保持原样，P 模式如果有透明通道则转换为 RGBA
+        # 保留透明通道：RGBA、LA 模式保持原样，P 模式如果有透明通道或需要旋转则转换为 RGBA
         # 只有不包含透明通道的图片才转换为 RGB
+        # 注意：色彩模式与透明通道标准化必须在旋转前完成，避免 P 模式旋转报错和非直角旋转黑边
         if img.mode == "P":
-            # 调色板模式：检查是否有透明通道
-            if "transparency" in img.info:
+            # 调色板模式：检查是否有透明通道或需旋转
+            if "transparency" in img.info or (rotation and rotation != 0):
                 img = img.convert("RGBA")
             else:
                 # 如果没有透明通道，根据模式决定是否转换为 RGB
@@ -128,7 +131,22 @@ def replace_smart_object_content(
         elif img.mode == "RGBA":
             # RGBA 模式保持不变，直接使用（所有模式都保留透明通道）
             pass
-        # RGB 等其他模式保持不变
+        elif img.mode == "RGB" and (rotation and rotation % 90 != 0):
+            # RGB 模式在进行非直角旋转（如 45°）时，转为 RGBA，以保证旋转留白为纯透明而非黑底
+            img = img.convert("RGBA")
+        # 其他模式保持不变
+
+        # 【第1步】旋转原图（在任何裁剪/缩放之前）
+        if rotation and rotation != 0:
+            original_size = img.size
+            fill_color = (0, 0, 0, 0) if img.mode == "RGBA" else None
+            img = img.rotate(
+                -rotation,
+                expand=True,
+                resample=Image.LANCZOS,
+                fillcolor=fill_color
+            )
+            print(f"    🔄 旋转原图: {rotation}° {original_size} → {img.size}")
         
         # 显示原始图片尺寸和比例信息
         orig_width, orig_height = img.size

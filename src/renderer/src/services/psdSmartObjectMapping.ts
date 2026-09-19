@@ -203,12 +203,15 @@ function applyImagesToSlots(input: {
 }) {
   return input.slots.map((slot, index) => {
     const actualIndex = Math.min(index, input.imagePaths.length - 1);
-    return {
+    const item: SmartObjectConfig = {
       ...slot,
       image_path: input.imagePaths[actualIndex],
       resize_mode: slot.resize_mode || input.defaultResizeMode,
-      rotation: slot.rotation || 0,
     };
+    if (typeof slot.rotation === "number") {
+      item.rotation = slot.rotation;
+    }
+    return item;
   });
 }
 

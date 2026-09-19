@@ -165,6 +165,7 @@ export interface SmartObjectConfig {
   resize_mode?: 'stretch' | 'contain' | 'cover' | 'custom'
   custom_options?: CustomOptions
   tile_size?: number
+  rotation?: number
 }
 
 export interface ColorLayerConfig {
@@ -179,6 +180,7 @@ export interface DefaultOptions {
   custom_options?: CustomOptions
   background_image_path?: string
   tile_size?: number
+  rotation?: number
 }
 
 export interface ProcessRequest {

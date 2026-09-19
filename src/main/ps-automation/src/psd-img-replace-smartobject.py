@@ -657,6 +657,12 @@ def main():
         default=512,
         help="图片缩放分块尺寸，默认 512"
     )
+    parser.add_argument(
+        "--rotation",
+        type=float,
+        default=0,
+        help="图片旋转角度（度），在裁剪/缩放之前旋转原图。0=不旋转，支持 90/180/270 或任意角度。"
+    )
     
     args = parser.parse_args()
     
@@ -687,7 +693,8 @@ def main():
             export_dir=export_dir,
             smart_object_name=args.smart_object_name,
             output_filename=args.output_filename,
-            tile_size=args.tile_size
+            tile_size=args.tile_size,
+            rotation=args.rotation
         )
         print(f"\n✅ 处理完成！导出文件: {export_path}")
     except Exception as e:
