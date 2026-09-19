@@ -4,7 +4,6 @@ PSD 导出模块
 """
 import re
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Optional, List
@@ -330,8 +329,6 @@ def replace_and_export_psd_multi(
                     custom_options = so_config.get('custom_options')
                     background_image_path = so_config.get('background_image_path')
                     rotation = float(so_config.get('rotation', 0))
-                    print(f"    📐 智能对象 '{so['name']}' 准备替换，旋转参数: {rotation}° (原始配置: {so_config.get('rotation', '未设置')})")
-                    sys.stdout.flush()
 
                     replace_smart_object_content(
                         session,
