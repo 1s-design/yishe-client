@@ -387,9 +387,17 @@ def replace_and_export_psd_multi(
                 doc.close()
             except Exception as close_error:
                 print(f"⚠️ 关闭主文档时出错: {close_error}")
+            # 收集所有失败的具体错误信息，帮助定位问题
+            failure_details = "; ".join(
+                f"[{item['index']}] {item['name']}: {item['error']}"
+                for item in failed_pairs[:3]  # 最多展示前3个错误
+            )
+            total = len(matched_pairs)
+            failed = len(failed_pairs)
             raise RuntimeError(
-                "智能对象替换未全部成功，已取消导出，"
-                f"成功 {processed_count}/{len(matched_pairs)}，失败 {len(failed_pairs)}。"
+                f"智能对象替换未全部成功，已取消导出，"
+                f"成功 {processed_count}/{total}，失败 {failed}。"
+                f"错误详情: {failure_details}"
             )
 
         # 确保活动文档是主文档
