@@ -1668,8 +1668,7 @@ async def process_psd(request: ProcessRequest, response: Response):
             for idx, so_item in enumerate(smart_objects_config):
                 print(f"   [{idx+1}] 名称='{so_item.get('smart_object_name') or '(未指定名称)'}', 旋转={so_item.get('rotation')}°, 模式={so_item.get('resize_mode')}, 素材='{so_item.get('image_path')}'")
             print("=" * 60 + "\n")
-            sys.stdout.flush()
-            
+
             # 构建配置
             config = {
                 'export_dir': export_dir,
@@ -1706,9 +1705,7 @@ async def process_psd(request: ProcessRequest, response: Response):
                     smart_object_config['custom_options'] = request.custom_options.dict()
 
                 smart_objects_config.append(smart_object_config)
-            
-            sys.stdout.flush()
-            
+
             # 构建新格式的配置
             config = {
                 'export_dir': export_dir,
