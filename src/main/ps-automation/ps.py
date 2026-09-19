@@ -10,15 +10,16 @@ import uvicorn
 from pathlib import Path
 import psutil
 
-# 设置标准输出和错误输出为 UTF-8 编码，避免 Windows GBK 编码问题
+# 设置标准输出和错误输出为 UTF-8 编码且行缓冲，避免 Windows GBK 编码与缓冲延迟问题
 if sys.platform == 'win32':
-    # 重新配置标准输出和错误输出为 UTF-8
+    # 重新配置标准输出和错误输出为 UTF-8 且开启行缓冲
     if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
     if hasattr(sys.stderr, 'reconfigure'):
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
     # 设置环境变量
     os.environ['PYTHONIOENCODING'] = 'utf-8'
+    os.environ['PYTHONUNBUFFERED'] = '1'
 
 # 添加项目路径
 # PyInstaller 打包后的路径处理

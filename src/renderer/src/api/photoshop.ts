@@ -198,6 +198,7 @@ export interface ProcessRequest {
   tile_size?: number
   resize_mode?: 'stretch' | 'contain' | 'cover' | 'custom'
   custom_options?: CustomOptions
+  rotation?: number
   verbose?: boolean
 }
 

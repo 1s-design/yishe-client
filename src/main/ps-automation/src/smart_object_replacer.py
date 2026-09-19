@@ -149,6 +149,7 @@ def replace_smart_object_content(
             print(f"    🔄 旋转原图生效: {rotation}° (顺时针) 尺寸变换: {original_size} → {img.size} (模式: {img.mode})")
         else:
             print(f"    ℹ️ 原图无需旋转 (rotation={rotation})")
+        sys.stdout.flush()
         
         # 显示原始图片尺寸和比例信息
         orig_width, orig_height = img.size

@@ -10,16 +10,17 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-# 设置标准输出和错误输出为 UTF-8 编码，避免 Windows GBK 编码问题
+# 设置标准输出和错误输出为 UTF-8 编码且开启行缓冲，避免 Windows 缓冲延迟问题
 if sys.platform == 'win32':
     import io
-    # 重新配置标准输出和错误输出为 UTF-8
+    # 重新配置标准输出和错误输出为 UTF-8 且开启行缓冲
     if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
     if hasattr(sys.stderr, 'reconfigure'):
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
     # 设置环境变量
     os.environ['PYTHONIOENCODING'] = 'utf-8'
+    os.environ['PYTHONUNBUFFERED'] = '1'
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -782,6 +783,13 @@ class ProcessRequest(BaseModel):
         """,
         example=None
     )
+    rotation: Optional[float] = Field(
+        0,
+        ge=-360,
+        le=360,
+        description="图片旋转角度（度），在裁剪/缩放之前旋转原图。0=不旋转，支持 90/180/270 或任意角度。",
+        example=90
+    )
     verbose: bool = Field(
         True,
         description="""
@@ -1403,6 +1411,7 @@ async def process_psd(request: ProcessRequest, response: Response):
             for idx, so_item in enumerate(smart_objects_config):
                 print(f"   [{idx+1}] 名称='{so_item.get('smart_object_name') or '(未指定名称)'}', 旋转={so_item.get('rotation')}°, 模式={so_item.get('resize_mode')}, 素材='{so_item.get('image_path')}'")
             print("=" * 60 + "\n")
+            sys.stdout.flush()
             
             # 构建配置
             config = {
@@ -1420,7 +1429,7 @@ async def process_psd(request: ProcessRequest, response: Response):
             )
         else:
             # ========== 旧格式：单个智能对象（向后兼容） ==========
-            print(f"📋 检测到旧格式请求，转换为新格式并使用 process_psd_with_image_multi")
+            print(f"📋 检测到旧格式请求，转换为新格式并使用 process_psd_with_image_multi (旋转={request.rotation or 0}°)")
 
             smart_objects_config = []
             if request.image_path:
@@ -1430,6 +1439,7 @@ async def process_psd(request: ProcessRequest, response: Response):
                     'image_path': request.image_path,
                     'resize_mode': request.resize_mode,
                     'tile_size': request.tile_size,
+                    'rotation': request.rotation or 0,
                 }
                 if request.background_image_path:
                     smart_object_config['background_image_path'] = request.background_image_path
@@ -1439,6 +1449,8 @@ async def process_psd(request: ProcessRequest, response: Response):
                     smart_object_config['custom_options'] = request.custom_options.dict()
 
                 smart_objects_config.append(smart_object_config)
+            
+            sys.stdout.flush()
             
             # 构建新格式的配置
             config = {

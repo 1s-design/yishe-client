@@ -255,6 +255,7 @@ function buildPsAutomationConfig(): ProcessConfig | null {
       stopArgs: [entryFile, "--stop"],
       env: {
         PYTHONIOENCODING: "utf-8",
+        PYTHONUNBUFFERED: "1",
         PORT: PS_AUTOMATION_PORT,
       },
       platforms: ["win32"],
@@ -285,6 +286,8 @@ function buildPsAutomationConfig(): ProcessConfig | null {
     executable: psAutomationExecutable,
     stopArgs: ["--stop"],
     env: {
+      PYTHONIOENCODING: "utf-8",
+      PYTHONUNBUFFERED: "1",
       PORT: PS_AUTOMATION_PORT,
     },
     platforms: ["win32"],

@@ -21,6 +21,7 @@ export interface PsdSmartObjectMappingInput {
     [key: string]: any;
   }>;
   defaultResizeMode?: ResizeMode;
+  defaultRotation?: number;
 }
 
 export interface PsdSmartObjectMappingResult {
@@ -200,6 +201,7 @@ function applyImagesToSlots(input: {
   slots: PsdSmartObjectSlot[];
   imagePaths: string[];
   defaultResizeMode: ResizeMode;
+  defaultRotation?: number;
 }) {
   return input.slots.map((slot, index) => {
     const actualIndex = Math.min(index, input.imagePaths.length - 1);
@@ -208,8 +210,10 @@ function applyImagesToSlots(input: {
       image_path: input.imagePaths[actualIndex],
       resize_mode: slot.resize_mode || input.defaultResizeMode,
     };
-    if (typeof slot.rotation === "number") {
-      item.rotation = slot.rotation;
+    if (slot.rotation !== undefined && slot.rotation !== null && !isNaN(Number(slot.rotation))) {
+      item.rotation = Number(slot.rotation);
+    } else if (input.defaultRotation !== undefined && !isNaN(Number(input.defaultRotation))) {
+      item.rotation = Number(input.defaultRotation);
     }
     return item;
   });
@@ -220,6 +224,7 @@ function appendExtraImageSlots(input: {
   imagePaths: string[];
   slotCount: number;
   defaultResizeMode: ResizeMode;
+  defaultRotation?: number;
 }) {
   let appendedImageSlots = 0;
   if (input.imagePaths.length <= input.slotCount) {
@@ -227,10 +232,14 @@ function appendExtraImageSlots(input: {
   }
 
   for (let index = input.slotCount; index < input.imagePaths.length; index++) {
-    input.smartObjects.push({
+    const extraSlot: SmartObjectConfig = {
       image_path: input.imagePaths[index],
       resize_mode: input.defaultResizeMode,
-    });
+    };
+    if (input.defaultRotation !== undefined && !isNaN(Number(input.defaultRotation))) {
+      extraSlot.rotation = Number(input.defaultRotation);
+    }
+    input.smartObjects.push(extraSlot);
     appendedImageSlots += 1;
   }
   return appendedImageSlots;
@@ -290,6 +299,7 @@ export function buildPsdSmartObjectMappings(input: PsdSmartObjectMappingInput): 
     : [];
   const analyzedSlots = buildSlotsFromAnalysis(input.analyzedSmartObjects);
   const defaultResizeMode = input.defaultResizeMode || DEFAULT_RESIZE_MODE;
+  const defaultRotation = input.defaultRotation;
   const slotSource = resolveSlotSource({
     configuredSlots,
     analyzedSlots,
@@ -301,12 +311,14 @@ export function buildPsdSmartObjectMappings(input: PsdSmartObjectMappingInput): 
     slots: slotSource.slots,
     imagePaths,
     defaultResizeMode,
+    defaultRotation,
   });
   const appendedImageSlots = appendExtraImageSlots({
     smartObjects,
     imagePaths,
     slotCount,
     defaultResizeMode,
+    defaultRotation,
   });
 
   return {

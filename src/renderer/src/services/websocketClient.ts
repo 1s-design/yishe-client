@@ -6647,12 +6647,46 @@ async function handlePsdSetProduction(
       Array.isArray(rawStickerPsdSetConfig.smart_objects) &&
       rawStickerPsdSetConfig.smart_objects.length > 0;
 
+    // 检查模板是否配置了非零旋转
+    const templateHasRotation =
+      hasTemplateConfig &&
+      ((rawPsdTemplateConfig.defaults?.rotation && Number(rawPsdTemplateConfig.defaults.rotation) !== 0) ||
+       (Array.isArray(rawPsdTemplateConfig.smart_objects) &&
+        rawPsdTemplateConfig.smart_objects.some((so: any) => so.rotation && Number(so.rotation) !== 0)));
+
+    // 检查套图自身是否配置了非零旋转
+    const stickerHasRotation =
+      hasStickerConfig &&
+      ((rawStickerPsdSetConfig.defaults?.rotation && Number(rawStickerPsdSetConfig.defaults.rotation) !== 0) ||
+       (Array.isArray(rawStickerPsdSetConfig.smart_objects) &&
+        rawStickerPsdSetConfig.smart_objects.some((so: any) => so.rotation && Number(so.rotation) !== 0)));
+
+    // 如果套图自带配置没有旋转，但模板配置了旋转，智能继承模板中的旋转参数
+    if (stickerHasSmartObjects && templateHasRotation && !stickerHasRotation) {
+      rawStickerPsdSetConfig.smart_objects = rawStickerPsdSetConfig.smart_objects.map((so: any, idx: number) => {
+        const tmplSo = Array.isArray(rawPsdTemplateConfig.smart_objects) ? rawPsdTemplateConfig.smart_objects[idx] : null;
+        const inheritedRotation = tmplSo?.rotation ?? rawPsdTemplateConfig.defaults?.rotation;
+        return {
+          ...so,
+          rotation: (so.rotation !== undefined && Number(so.rotation) !== 0) ? so.rotation : inheritedRotation,
+        };
+      });
+      if ((!rawStickerPsdSetConfig.defaults?.rotation || Number(rawStickerPsdSetConfig.defaults.rotation) === 0) && rawPsdTemplateConfig.defaults?.rotation) {
+        rawStickerPsdSetConfig.defaults = {
+          ...rawStickerPsdSetConfig.defaults,
+          rotation: rawPsdTemplateConfig.defaults.rotation,
+        };
+      }
+    }
+
     let config: any;
     let configSource = "默认配置";
 
     if (stickerHasSmartObjects) {
       config = rawStickerPsdSetConfig;
-      configSource = "套图的 stickerPsdSetConfig";
+      configSource = templateHasRotation && !stickerHasRotation
+        ? "套图的 stickerPsdSetConfig (已自动继承模板旋转参数)"
+        : "套图的 stickerPsdSetConfig";
     } else if (hasTemplateConfig) {
       config = rawPsdTemplateConfig;
       configSource = hasStickerConfig
@@ -6733,6 +6767,7 @@ async function handlePsdSetProduction(
         configuredSmartObjects: configSmartObjects,
         analyzedSmartObjects,
         defaultResizeMode: config.defaults?.resize_mode || "contain",
+        defaultRotation: config.defaults?.rotation !== undefined ? Number(config.defaults.rotation) : undefined,
       });
       const smartObjects = mappingResult.smartObjects;
 
@@ -6913,6 +6948,19 @@ async function handlePsdSetProduction(
         smart_objects: logSmartObjects,
       },
     });
+    // 显式记录 PSD 旋转参数，确保日志文件中能够直接按“旋转”关键字搜到
+    const rotationLogList = processPayload.smart_objects.map((so: any, i: number) => {
+      return `图层[${so.smart_object_name || i + 1}]: 旋转角度=${so.rotation ?? 0}°`;
+    });
+    emitter.emit("log", {
+      level: "info",
+      message: `[psd-set] 🔄 PSD旋转参数确认: ${rotationLogList.join(" | ")}`,
+    });
+    writePsdSetFileLog("info", `PSD旋转参数确认: ${rotationLogList.join(" | ")}`, {
+      psdSetId,
+      rotations: processPayload.smart_objects.map((so: any) => ({ name: so.smart_object_name, rotation: so.rotation })),
+    });
+
     writePsdSetFileLog("info", "准备调用 Photoshop processPsd", {
       psdSetId,
       commandId: taskId || null,
@@ -8163,6 +8211,17 @@ function registerBuiltInLocalServices() {
         if (!psdTestExportDir) {
           throw new Error("工作目录未设置，无法生成 PSD 调试导出目录");
         }
+        const reqRotationInfo = request.smart_objects
+          ? request.smart_objects.map((so: any, i: number) => `槽位[${i + 1}]: 旋转=${so.rotation ?? 0}°`).join("; ")
+          : `旋转=${request.rotation ?? 0}°`;
+        writePsdSetFileLog("info", `[debugProcess] 收到调试处理指令，旋转参数: ${reqRotationInfo}`, {
+          psdPath: request.psd_path,
+          smartObjects: request.smart_objects,
+        });
+        emitter.emit("log", {
+          level: "info",
+          message: `[debugProcess] 🔄 调试处理旋转参数: ${reqRotationInfo}`,
+        });
         const data = await photoshopApi.processPsd({
           ...request,
           export_dir: psdTestExportDir,
