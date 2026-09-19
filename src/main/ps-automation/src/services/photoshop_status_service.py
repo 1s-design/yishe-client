@@ -3,6 +3,7 @@ Photoshop 状态检测服务
 用于检测 Photoshop 是否启动、可用，以及连接状态
 """
 
+import sys
 from typing import Optional, Dict, Any
 from datetime import datetime
 
