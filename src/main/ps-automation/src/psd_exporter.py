@@ -324,6 +324,7 @@ def replace_and_export_psd_multi(
                     tile_size = so_config.get('tile_size', 512)
                     custom_options = so_config.get('custom_options')
                     background_image_path = so_config.get('background_image_path')
+                    rotation = float(so_config.get('rotation', 0))
 
                     replace_smart_object_content(
                         session,
@@ -334,7 +335,8 @@ def replace_and_export_psd_multi(
                         tile_size,
                         resize_mode,
                         custom_options,
-                        Path(background_image_path) if background_image_path else None
+                        Path(background_image_path) if background_image_path else None,
+                        rotation,
                     )
                     print(f"✅ [{i}/{len(matched_pairs)}] 智能对象 '{so['name']}' 已替换")
                     processed_count += 1

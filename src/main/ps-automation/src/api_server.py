@@ -375,7 +375,14 @@ class SmartObjectConfig(BaseModel):
         description="图片缩放分块尺寸（可选，未指定则使用 defaults.tile_size）",
         example=512
     )
-    
+    rotation: Optional[float] = Field(
+        0,
+        ge=-360,
+        le=360,
+        description="图片旋转角度（度），在裁剪/缩放之前旋转原图。0=不旋转，支持 90/180/270 或任意角度。",
+        example=90
+    )
+
     @validator('image_path')
     def validate_image(cls, v):
         """验证图片文件路径格式（不检查文件是否存在，文件存在性检查在实际处理时进行）"""
@@ -475,6 +482,13 @@ class DefaultOptions(BaseModel):
         le=2048,
         description="默认图片缩放分块尺寸",
         example=512
+    )
+    rotation: float = Field(
+        0,
+        ge=-360,
+        le=360,
+        description="默认旋转角度（度），在裁剪/缩放之前旋转原图。0=不旋转。",
+        example=0
     )
     
     @validator('resize_mode')

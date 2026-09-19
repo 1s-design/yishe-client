@@ -24,6 +24,7 @@ export interface DouyinVideo {
   cover: string;
   duration: string;
   playCount: string;
+  hot?: string;
   author: string;
   authorId: string;
   date: string;

@@ -59,7 +59,10 @@ const isAutoCheckEnabled = true;
 // 腾讯云 COS 资源发布地址（国内高带宽直连）
 const COS_BASE_URL =
   "https://yishe-storage-1257307499.cos.ap-beijing.myqcloud.com/yishe-client/";
-const COS_LATEST_YML_URL = `${COS_BASE_URL}latest.yml`;
+const COS_LATEST_YML_URL =
+  process.platform === "darwin"
+    ? `${COS_BASE_URL}latest-mac.yml`
+    : `${COS_BASE_URL}latest.yml`;
 const COS_WIN_URL = `${COS_BASE_URL}yishe-client.exe`;
 const COS_MAC_URL = `${COS_BASE_URL}yishe-client.dmg`;
 const BACKEND_DOWNLOAD_API = "https://api.1s.design/api/system-config/downloads";
@@ -457,6 +460,88 @@ export async function startDownload(): Promise<void> {
 }
 
 /**
+ * Windows 平台：执行静默热更新安装并自动拉起新版本
+ */
+function installWinUpdateAndRestart(exePath: string): void {
+  const currentExePath = process.execPath;
+  const currentExeDir = path.dirname(currentExePath);
+  const pid = process.pid;
+
+  const winExePath = exePath.replace(/\//g, "\\");
+  const winExeDir = currentExeDir.replace(/\//g, "\\");
+  const winExeBin = currentExePath.replace(/\//g, "\\");
+
+  console.log(`[AutoUpdater] 准备执行 Windows 自动静默更新: installDir=${winExeDir}, exePath=${winExePath}`);
+
+  // 编写批处理脚本：
+  // 1. 等待当前主进程退出
+  // 2. 清理残余子进程并释放文件占用锁
+  // 3. 执行 NSIS 静默更新安装 (/S --updated --force-run /D=...)
+  // 4. 若未自动拉起则手动拉起新版
+  // 5. 清理临时安装包
+  const batScript = `@echo off
+chcp 65001 >nul
+set LOG_FILE=%TEMP%\\yishe_win_updater.log
+echo [%date% %time%] 开始执行 yishe-client 自动静默更新 > "%LOG_FILE%"
+echo [INFO] 主进程PID: ${pid} >> "%LOG_FILE%"
+echo [INFO] 安装目录: "${winExeDir}" >> "%LOG_FILE%"
+echo [INFO] 安装包: "${winExePath}" >> "%LOG_FILE%"
+
+:: 1. 等待主进程完全退出
+echo [INFO] 等待主进程 (PID: ${pid}) 完全退出... >> "%LOG_FILE%"
+:wait_pid
+tasklist /fi "PID eq ${pid}" 2>nul | findstr /i "${pid}" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto wait_pid
+)
+echo [INFO] 主进程已退出 >> "%LOG_FILE%"
+
+:: 2. 缓冲 2 秒并清理可能残余的辅助进程，彻底释放文件锁
+timeout /t 2 /nobreak >nul
+taskkill /f /im yishe-client.exe 2>nul
+taskkill /f /im yishe-browser-agent.exe 2>nul
+taskkill /f /im dezoomify-rs-win.exe 2>nul
+timeout /t 1 /nobreak >nul
+
+:: 3. 运行 NSIS 静默更新
+:: 注意：NSIS 规范中，/D 参数必须作为最后一项，且路径绝对不能加引号，即使路径包含空格
+echo [INFO] 正在执行静默覆盖安装... >> "%LOG_FILE%"
+"${winExePath}" /S --updated --force-run /D=${winExeDir} >> "%LOG_FILE%" 2>&1
+set INSTALL_EXIT_CODE=%errorlevel%
+echo [INFO] 安装程序执行完毕，退出码: %INSTALL_EXIT_CODE% >> "%LOG_FILE%"
+
+:: 4. 检查客户端是否已由安装程序自动拉起，若未运行则手动拉起
+timeout /t 2 /nobreak >nul
+tasklist /fi "IMAGENAME eq yishe-client.exe" 2>nul | findstr /i "yishe-client.exe" >nul
+if errorlevel 1 (
+    echo [INFO] 客户端未自动启动，正在手动启动: "${winExeBin}" >> "%LOG_FILE%"
+    start "" "${winExeBin}"
+) else (
+    echo [INFO] 客户端新版本已成功运行 >> "%LOG_FILE%"
+)
+
+:: 5. 清理临时安装包
+timeout /t 3 /nobreak >nul
+del /f /q "${winExePath}" 2>nul
+exit
+`;
+
+  const batPath = path.join(app.getPath("temp"), `yishe_win_updater_${Date.now()}.bat`);
+  fs.writeFileSync(batPath, batScript, { encoding: "utf8" });
+
+  const child = spawn("cmd.exe", ["/c", batPath], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+
+  // 退出当前应用，由后台批处理完成替换并重启
+  app.exit(0);
+}
+
+/**
  * macOS 平台：执行静默热更新替换并自动重启新版
  */
 function installMacUpdateAndRestart(dmgPath: string): void {
@@ -467,24 +552,38 @@ function installMacUpdateAndRestart(dmgPath: string): void {
   console.log(`[AutoUpdater] 准备执行 macOS 自动热更新: appPath=${appPath}, dmgPath=${dmgPath}`);
 
   const scriptContent = `#!/bin/bash
-# 1. 等待当前客户端进程退出
+LOG_FILE="/tmp/yishe_mac_updater.log"
+echo "$(date) 开始执行 macOS 客户端更新: appPath=${appPath}, dmgPath=${dmgPath}" > "$LOG_FILE"
+
+# 1. 等待当前主进程及清理 Helper 子进程，释放二进制锁
 while kill -0 ${pid} 2>/dev/null; do
   sleep 0.5
 done
+killall -9 "yishe-client Helper" 2>/dev/null || true
+killall -9 "yishe-client Helper (Renderer)" 2>/dev/null || true
+killall -9 "yishe-client Helper (GPU)" 2>/dev/null || true
+sleep 1
 
 # 2. 创建临时挂载目录并静默挂载 DMG
 MOUNT_DIR=$(mktemp -d /tmp/yishe_dmg_XXXXXX)
-hdiutil attach "${dmgPath}" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+hdiutil attach "${dmgPath}" -mountpoint "$MOUNT_DIR" -nobrowse -quiet >> "$LOG_FILE" 2>&1
 
 # 3. 查找挂载盘里的新应用
 NEW_APP=$(find "$MOUNT_DIR" -maxdepth 1 -name "*.app" -print -quit)
+if [ -z "$NEW_APP" ]; then
+  # 备选：查找 /Volumes 目录中的挂载项
+  NEW_APP=$(find /Volumes/yishe-client* -maxdepth 1 -name "*.app" 2>/dev/null | head -n 1)
+fi
+
+echo "$(date) 找到新版本 App: $NEW_APP" >> "$LOG_FILE"
 
 if [ -n "$NEW_APP" ] && [ -d "$NEW_APP" ]; then
   # 替换目标 app
-  rm -rf "${appPath}"
-  cp -R "$NEW_APP" "${appPath}"
+  rm -rf "${appPath}" >> "$LOG_FILE" 2>&1
+  cp -R "$NEW_APP" "${appPath}" >> "$LOG_FILE" 2>&1
   # 移除 Mac 隔离属性（杜绝出现"文件已损坏"提示）
   xattr -cr "${appPath}" 2>/dev/null || true
+  echo "$(date) 覆盖完成并清除隔离属性" >> "$LOG_FILE"
 fi
 
 # 4. 卸载 DMG 并清理临时文件
@@ -493,6 +592,7 @@ rm -rf "$MOUNT_DIR" 2>/dev/null || true
 rm -f "${dmgPath}" 2>/dev/null || true
 
 # 5. 重新启动新版本客户端
+echo "$(date) 正在启动新版本客户端..." >> "$LOG_FILE"
 open -n "${appPath}"
 `;
 
@@ -513,51 +613,41 @@ open -n "${appPath}"
  * 退出并安装更新
  */
 export function quitAndInstall(): void {
-  // 1. Windows 生产打包且通过 electron-updater 下载
-  if (process.platform === "win32" && app.isPackaged) {
+  // 开发环境下保护：不执行实际文件替换，避免污染源码开发工程
+  if (!app.isPackaged) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      dialog.showMessageBox(mainWindow, {
+        type: "info",
+        title: "开发环境更新提示",
+        message: `更新包已成功下载至:\n${downloadedPackagePath || "本地临时目录"}`,
+        detail: "开发环境下不执行实际应用覆盖替换。在打包生成的正式安装包（.exe / .app）中，点击重启将自动静默安装并拉起新版本。",
+        buttons: ["好的"],
+      });
+    }
+    return;
+  }
+
+  // 1. Windows 生产环境：优先通过我们的静默更新批处理完成精确覆盖与自动重启
+  if (process.platform === "win32") {
+    if (downloadedPackagePath && fs.existsSync(downloadedPackagePath)) {
+      installWinUpdateAndRestart(downloadedPackagePath);
+      return;
+    }
+
+    // 若是通过 electron-updater 自带机制下载
     const updater = getElectronUpdater()?.autoUpdater;
-    if (updater && currentUpdateInfo.state === "downloaded" && !downloadedPackagePath) {
+    if (updater && currentUpdateInfo.state === "downloaded") {
       try {
         updater.quitAndInstall(false, true);
         return;
       } catch (e) {
-        console.warn("[AutoUpdater] autoUpdater.quitAndInstall 失败，尝试本地安装包:", e);
+        console.warn("[AutoUpdater] autoUpdater.quitAndInstall 失败:", e);
       }
     }
   }
 
-  // 2. Windows 本地独立下载好的 exe
-  if (process.platform === "win32" && downloadedPackagePath && fs.existsSync(downloadedPackagePath)) {
-    try {
-      const child = spawn(downloadedPackagePath, [], {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.unref();
-      app.exit(0);
-      return;
-    } catch (e) {
-      console.error("[AutoUpdater] 启动更新安装包失败:", e);
-    }
-  }
-
-  // 3. macOS 平台安装并重启
+  // 2. macOS 生产环境：执行静默挂载、应用替换并自动重启
   if (process.platform === "darwin" && downloadedPackagePath && fs.existsSync(downloadedPackagePath)) {
-    if (!app.isPackaged) {
-      // 开发环境下，提示已下载，不覆盖开发工程
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        dialog.showMessageBox(mainWindow, {
-          type: "info",
-          title: "开发环境更新提示",
-          message: `macOS 更新包已成功下载至:\n${downloadedPackagePath}`,
-          detail: "开发环境下不执行实际应用替换。在打包生成的生产环境（.app）中，点击重启将自动静默挂载 DMG 并无缝覆盖更新重启。",
-          buttons: ["好的"],
-        });
-      }
-      return;
-    }
-
-    // 生产环境：启动后台替换 Shell 脚本并退出
     installMacUpdateAndRestart(downloadedPackagePath);
     return;
   }

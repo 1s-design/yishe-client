@@ -44,7 +44,8 @@ def replace_smart_object_content(
     tile_size: int = 512,
     resize_mode: str = "contain",
     custom_options: Optional[dict] = None,
-    background_image_path: Optional[Path] = None
+    background_image_path: Optional[Path] = None,
+    rotation: float = 0,
 ) -> None:
     """
     替换智能对象图层的内容
@@ -63,6 +64,7 @@ def replace_smart_object_content(
             - "custom": 自定义模式，精确控制位置和尺寸（需要 custom_options）
         custom_options: 自定义模式配置（仅当 resize_mode="custom" 时使用）
         background_image_path: contain 模式下可选背景图。背景图会先 cover 铺满，再叠放 contain 后的素材图。
+        rotation: 图片旋转角度（度），在裁剪/缩放之前旋转原图。0=不旋转，支持 90/180/270 或任意角度。
     """
     # 设置当前活动图层
     doc.activeLayer = layer
@@ -104,6 +106,12 @@ def replace_smart_object_content(
     # 准备缩放后的图片
     from PIL import Image
     with Image.open(image_path) as img:
+        # 【第1步】旋转原图（在任何裁剪/缩放之前）
+        if rotation and rotation != 0:
+            original_size = img.size
+            img = img.rotate(-rotation, expand=True, resample=Image.LANCZOS, fillcolor=(0, 0, 0, 0) if img.mode in ("RGBA", "LA", "P") else None)
+            print(f"    🔄 旋转原图: {rotation}° {original_size} → {img.size}")
+
         # 保留透明通道：RGBA、LA 模式保持原样，P 模式如果有透明通道则转换为 RGBA
         # 只有不包含透明通道的图片才转换为 RGB
         if img.mode == "P":

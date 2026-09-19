@@ -57,7 +57,8 @@ def replace_and_export_psd(
     tile_size: int = 512,
     resize_mode: str = "contain",
     custom_options: Optional[dict] = None,
-    background_image_path: Optional[Path] = None
+    background_image_path: Optional[Path] = None,
+    rotation: float = 0,
 ) -> Path:
     """
     替换 PSD 中的智能对象并导出图片
@@ -76,7 +77,8 @@ def replace_and_export_psd(
             - "custom": 自定义模式，精确控制位置和尺寸（需要 custom_options）
         custom_options: 自定义模式配置（仅当 resize_mode="custom" 时使用）
         background_image_path: contain 模式下可选背景图。背景图 cover 铺满后再叠放 contain 后的素材图。
-    
+        rotation: 图片旋转角度（度），在裁剪/缩放之前旋转原图。0=不旋转。
+
     Returns:
         导出的图片文件路径
     """
@@ -316,13 +318,14 @@ def replace_and_export_psd(
                 replace_smart_object_content(
                     session,
                     doc,
-                    so['layer'], 
-                    image_path, 
-                    export_dir, 
+                    so['layer'],
+                    image_path,
+                    export_dir,
                     tile_size,
                     resize_mode,
                     custom_options,
-                    background_image_path
+                    background_image_path,
+                    rotation,
                 )
                 print(f"✅ [{i}/{len(smart_objects)}] 智能对象 '{so['name']}' 已替换")
                 processed_count += 1

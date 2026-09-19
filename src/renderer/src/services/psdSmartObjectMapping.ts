@@ -8,6 +8,7 @@ export interface PsdSmartObjectSlot {
   custom_options?: SmartObjectConfig["custom_options"];
   tile_size?: number;
   background_image_path?: string;
+  rotation?: number;
   [key: string]: any;
 }
 
@@ -206,6 +207,7 @@ function applyImagesToSlots(input: {
       ...slot,
       image_path: input.imagePaths[actualIndex],
       resize_mode: slot.resize_mode || input.defaultResizeMode,
+      rotation: slot.rotation || 0,
     };
   });
 }
