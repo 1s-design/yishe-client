@@ -4,6 +4,7 @@ PSD 导出模块
 """
 import re
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Optional, List
