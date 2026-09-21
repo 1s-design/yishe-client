@@ -7,6 +7,7 @@ import { app, shell } from "electron";
 
 import publishService from "./legacy/api/publishService.js";
 import crawlerService from "./legacy/api/crawlerService.js";
+import { directPublish, directPublishMulti, getSupportedPlatforms } from "./legacy/api/directPublish.js";
 import {
   checkAndReconnectBrowser,
   cleanup as cleanupBrowserService,
@@ -756,6 +757,9 @@ class AutoBrowserService {
       endpoints: [
         { method: "GET", path: "/api" },
         { method: "POST", path: "/api/publish" },
+        { method: "POST", path: "/api/direct-publish" },
+        { method: "POST", path: "/api/direct-publish/multi" },
+        { method: "GET", path: "/api/direct-publish/platforms" },
         { method: "POST", path: "/api/tasks/execute" },
         { method: "GET", path: "/api/tasks" },
         { method: "GET", path: "/api/browser/status" },
@@ -938,6 +942,69 @@ class AutoBrowserService {
         createdAt: task.createdAt,
       },
       message: "任务已创建",
+    });
+  }
+
+  // ─── 直发处理器 ──────────────────────────────────────────
+
+  private async handleDirectPublish(body: Record<string, any>) {
+    const { platform, images, video, title, content, tags, profileId, ...options } = body || {};
+
+    if (!platform) {
+      return this.fail(400, "缺少 platform 参数");
+    }
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      return this.fail(400, "缺少 images（图片URL数组）");
+    }
+    if (!content) {
+      return this.fail(400, "缺少 content（正文内容）");
+    }
+
+    const result = await directPublish({
+      platform: String(platform).trim(),
+      images,
+      video,
+      title,
+      content,
+      tags,
+      profileId,
+      options,
+    });
+
+    return this.ok(result);
+  }
+
+  private async handleDirectPublishMulti(body: Record<string, any>) {
+    const { platforms, images, video, title, content, tags, profileId, ...options } = body || {};
+
+    if (!platforms || !Array.isArray(platforms) || platforms.length === 0) {
+      return this.fail(400, "缺少 platforms（平台ID数组）");
+    }
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      return this.fail(400, "缺少 images（图片URL数组）");
+    }
+    if (!content) {
+      return this.fail(400, "缺少 content（正文内容）");
+    }
+
+    const results = await directPublishMulti({
+      platforms,
+      images,
+      video,
+      title,
+      content,
+      tags,
+      profileId,
+      options,
+    });
+
+    const successCount = results.filter((r) => r.success).length;
+    return this.ok({
+      success: successCount === platforms.length,
+      total: platforms.length,
+      successCount,
+      failedCount: platforms.length - successCount,
+      results,
     });
   }
 
@@ -1741,6 +1808,15 @@ class AutoBrowserService {
       }
       if (reqPath === "/api/publish" && method === "POST") {
         return this.handlePublishUnified(body);
+      }
+      if (reqPath === "/api/direct-publish" && method === "POST") {
+        return this.handleDirectPublish(body);
+      }
+      if (reqPath === "/api/direct-publish/multi" && method === "POST") {
+        return this.handleDirectPublishMulti(body);
+      }
+      if (reqPath === "/api/direct-publish/platforms" && method === "GET") {
+        return this.ok({ success: true, data: getSupportedPlatforms() });
       }
       if (reqPath === "/api/tasks/execute" && method === "POST") {
         return this.handleCreateExecutionTask(body);

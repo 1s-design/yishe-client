@@ -437,6 +437,42 @@ export class McpServerManager {
         });
       }
 
+      // 注册直发工具
+      const { directPublishTool, directPublishMultiTool } = await import('./tools/direct-publish');
+      this.registerTool(server, {
+        name: directPublishTool.definition.name,
+        description: directPublishTool.definition.description,
+        zodShape: {
+          platform: z.string().describe('目标平台ID'),
+          images: z.array(z.string()).describe('图片URL数组'),
+          content: z.string().describe('正文内容'),
+          title: z.string().optional().describe('标题'),
+          tags: z.array(z.string()).optional().describe('标签数组'),
+          video: z.string().optional().describe('视频URL'),
+          profileId: z.string().optional().describe('浏览器Profile ID'),
+        },
+        inputSchema: directPublishTool.definition.inputSchema,
+        category: 'publish',
+        capability: { key: 'direct_publish', label: '直发内容', description: '直发内容到社交媒体平台' },
+        handler: async (args) => directPublishTool.execute(args as any) as any,
+      });
+      this.registerTool(server, {
+        name: directPublishMultiTool.definition.name,
+        description: directPublishMultiTool.definition.description,
+        zodShape: {
+          platforms: z.array(z.string()).describe('目标平台ID数组'),
+          images: z.array(z.string()).describe('图片URL数组'),
+          content: z.string().describe('正文内容'),
+          title: z.string().optional().describe('标题'),
+          tags: z.array(z.string()).optional().describe('标签数组'),
+          video: z.string().optional().describe('视频URL'),
+        },
+        inputSchema: directPublishMultiTool.definition.inputSchema,
+        category: 'publish',
+        capability: { key: 'direct_publish_multi', label: '批量直发', description: '批量直发内容到多个平台' },
+        handler: async (args) => directPublishMultiTool.execute(args as any) as any,
+      });
+
       // 客户端 CapabilityRegistry 是本地工具的唯一真相源。
       // MCP 只做协议适配，不再为 googleArt / 其他本地能力重复定义 handler、schema 或参数。
       registerAllCapabilities();

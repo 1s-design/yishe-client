@@ -9096,6 +9096,26 @@ function registerBuiltInLocalServices() {
         };
       }
 
+      if (action === "direct-publish" || action === "directPublish") {
+        setBrowserAutomationManualClosed(false, "direct-publish-command");
+        const { directPublish } = await import('../../auto-browser/legacy/api/directPublish');
+        const result = await directPublish({
+          platform: String(command.payload?.platform || '').trim(),
+          images: Array.isArray(command.payload?.images) ? command.payload.images : [],
+          ...(command.payload?.video ? { video: String(command.payload.video) } : {}),
+          ...(command.payload?.title ? { title: String(command.payload.title) } : {}),
+          content: String(command.payload?.content || ''),
+          ...(Array.isArray(command.payload?.tags) ? { tags: command.payload.tags } : {}),
+          ...(command.payload?.profileId ? { profileId: String(command.payload.profileId) } : {}),
+        });
+        await syncServiceRuntime("uploader");
+        return {
+          success: result.success,
+          message: result.message || (result.success ? '直发成功' : '直发失败'),
+          data: result,
+        };
+      }
+
       throw new Error(`未实现的浏览器自动化命令: ${action}`);
     },
   });
