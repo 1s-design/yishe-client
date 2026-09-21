@@ -8427,7 +8427,7 @@ function registerBuiltInLocalServices() {
         };
       }
 
-      if (action === "openPlatform") {
+      if (action === "openPlatform" || action === "open-platform") {
         const platform = String(command.payload?.platform || "").trim();
         const profileId =
           String(command.payload?.profileId || "").trim() || undefined;
