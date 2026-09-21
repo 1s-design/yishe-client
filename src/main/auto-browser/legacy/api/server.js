@@ -374,6 +374,8 @@ class ApiServer {
                     await this.handleSwaggerUi(req, res);
                 } else if (reqPath === '/api/publish' && method === 'POST') {
                     await this.handlePublishUnified(req, res);
+                } else if (reqPath === '/api/direct-publish' && method === 'POST') {
+                    await this.handleDirectPublish(req, res);
                 } else if (reqPath === '/api/tasks/execute' && method === 'POST') {
                     await this.handleCreateExecutionTask(req, res);
                 } else if (reqPath === '/api/tasks' && method === 'GET') {
@@ -1302,6 +1304,52 @@ class ApiServer {
 
         const result = await publishService.batchPublish(platforms, { ...normalizedPublishInfo, action }, { concurrent });
         this.sendResponse(res, 200, result);
+    }
+
+    /**
+     * 直发：直接调用平台发布器，不经过任务队列
+     */
+    async handleDirectPublish(req, res) {
+        const body = await this.parseBody(req);
+        const {
+            platform,
+            images,
+            content,
+            title,
+            tags,
+            video,
+            profileId,
+        } = body;
+
+        if (!platform) {
+            this.sendResponse(res, 400, { success: false, message: '缺少 platform' });
+            return;
+        }
+        if (!images || !Array.isArray(images) || images.length === 0) {
+            this.sendResponse(res, 400, { success: false, message: '缺少 images（至少1张图片URL）' });
+            return;
+        }
+        if (!content) {
+            this.sendResponse(res, 400, { success: false, message: '缺少 content（正文内容）' });
+            return;
+        }
+
+        const result = await publishService.publishToPlatform(platform, {
+            action: 'publish',
+            images,
+            content,
+            ...(title ? { title } : {}),
+            ...(tags ? { tags } : {}),
+            ...(video ? { video } : {}),
+            ...(profileId ? { profileId } : {}),
+        });
+
+        this.sendResponse(res, 200, {
+            success: result.success,
+            platform,
+            message: result.message || (result.success ? '发布成功' : '发布失败'),
+            data: result,
+        });
     }
 
     async handleCreateExecutionTask(req, res) {

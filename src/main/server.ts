@@ -1809,6 +1809,50 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
 
   registerHotSearchRoutes(app, () => token);
 
+  // ── 直发路由 ──────────────────────────────────────────────
+  app.post("/api/direct-publish", async (req, res) => {
+    try {
+      const { platform, images, content, title, tags, video, profileId } = req.body || {};
+
+      if (!platform) {
+        res.status(400).json({ success: false, message: "缺少 platform" });
+        return;
+      }
+      if (!images || !Array.isArray(images) || images.length === 0) {
+        res.status(400).json({ success: false, message: "缺少 images（至少1张图片URL）" });
+        return;
+      }
+      if (!content) {
+        res.status(400).json({ success: false, message: "缺少 content（正文内容）" });
+        return;
+      }
+
+      // 调用 publishService 执行发布
+      const { publishToPlatform } = await import("./auto-browser/legacy/api/publishService.js");
+      const result = await publishToPlatform(platform, {
+        action: "publish",
+        images,
+        content,
+        ...(title ? { title } : {}),
+        ...(tags ? { tags } : {}),
+        ...(video ? { video } : {}),
+        ...(profileId ? { profileId } : {}),
+      });
+
+      res.json({
+        success: result.success,
+        platform,
+        message: result.message || (result.success ? "发布成功" : "发布失败"),
+        data: result,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message: error?.message || "发布异常",
+      });
+    }
+  });
+
   // 返回停止服务器的函数
   return () => {
     return new Promise<void>((resolve) => {

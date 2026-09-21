@@ -62,8 +62,11 @@ class WeiboPublisher {
                 publishInfo.images = publishInfo.images || [];
             }
 
-            // 规范 title 与 content
-            publishInfo.title = (publishInfo.title || publishInfo.description || publishInfo.content || '').toString();
+            // 规范 title 与 content（避免内容重复：title 仅在显式传入时才使用）
+            if (!publishInfo.title && publishInfo.content) {
+                // title 未传入时不回退到 content，避免 fillContent 拼接时重复
+                publishInfo.title = '';
+            }
             publishInfo.content = (publishInfo.content || publishInfo.description || '').toString();
 
             // 规范 tags：支持字符串或数组
@@ -313,6 +316,45 @@ class WeiboPublisher {
         }
 
         if (this.config.selectors.contentInput) {
+            // 先聚焦输入框
+            const selectors = Array.isArray(this.config.selectors.contentInput)
+                ? this.config.selectors.contentInput
+                : [this.config.selectors.contentInput];
+
+            for (const sel of selectors) {
+                try {
+                    await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
+                    await page.click(sel);
+                    await this.pageOperator.delay(200);
+
+                    // 全选并删除（Cmd+A / Ctrl+A → Backspace）
+                    const isMac = process.platform === 'darwin';
+                    await page.keyboard.down(isMac ? 'Meta' : 'Control');
+                    await page.keyboard.press('KeyA');
+                    await page.keyboard.up(isMac ? 'Meta' : 'Control');
+                    await this.pageOperator.delay(100);
+                    await page.keyboard.press('Backspace');
+                    await this.pageOperator.delay(200);
+
+                    // 再次清空（双重保险）
+                    await page.evaluate((s) => {
+                        const el = document.querySelector(s);
+                        if (el) {
+                            if (el.isContentEditable) {
+                                el.innerHTML = '';
+                            } else {
+                                el.value = '';
+                            }
+                        }
+                    }, sel);
+                    await this.pageOperator.delay(100);
+                    break;
+                } catch {
+                    continue;
+                }
+            }
+
+            // 填写内容
             await this.pageOperator.fillInput(page, this.config.selectors.contentInput, combinedContent);
             logger.info('已填写正文（标题+描述+话题）');
         }
