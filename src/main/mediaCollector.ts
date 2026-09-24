@@ -15,7 +15,7 @@ import { getBackendApiBase, getCurrentAccessToken } from './cos'
 
 // ─── 类型定义 ──────────────────────────────────────────────
 
-export type MediaSource = 'wikimedia' | 'internet-archive'
+export type MediaSource = 'wikimedia' | 'internet-archive' | 'pexels'
 export type MediaType = 'image' | 'video' | 'audio'
 
 export interface MediaAsset {

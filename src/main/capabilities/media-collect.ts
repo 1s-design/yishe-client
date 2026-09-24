@@ -13,10 +13,10 @@ import { searchMedia, importMedia, listSources } from '../mediaCollector'
 const searchDef: CapabilityDefinition = {
   name: 'search',
   namespace: 'media-collect',
-  description: '搜索开放媒体资源（Wikimedia Commons / Internet Archive）',
+  description: '搜索开放媒体资源（Wikimedia Commons / Internet Archive / Pexels）',
   riskLevel: 'read',
   argsSchema: z.object({
-    source: z.string().describe('采集源: wikimedia / internet-archive'),
+    source: z.string().describe('采集源: wikimedia / internet-archive / pexels'),
     query: z.string().describe('搜索关键词'),
     mediaType: z.enum(['image', 'video', 'audio']).optional().describe('媒体类型'),
     page: z.number().optional().default(1).describe('页码'),

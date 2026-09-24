@@ -93,21 +93,6 @@ export async function searchMediaCollect(params: {
   return json.data
 }
 
-/** 获取支持的采集源列表（从本地桥接） */
-export async function getMediaCollectProviders(): Promise<MediaSourceInfo[]> {
-  try {
-    const res = await fetch(`${API_BASE}/api/media-collect/providers`)
-    const json = await res.json()
-    return json?.data || []
-  } catch (error) {
-    console.error('[MediaCollect] 获取采集源失败:', error)
-    return [
-      { key: 'wikimedia', name: 'Wikimedia Commons', supportedTypes: ['image', 'video', 'audio'] },
-      { key: 'internet-archive', name: 'Internet Archive', supportedTypes: ['image', 'video', 'audio'] },
-    ]
-  }
-}
-
 /** 导入媒体资源到文件库 */
 export async function importMediaCollect(items: MediaAsset[]): Promise<{
   success: number

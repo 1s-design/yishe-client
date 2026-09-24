@@ -7990,7 +7990,7 @@ function registerBuiltInLocalServices() {
         supportedCommands: ["refreshRuntime", "health", "search", "import"],
         details: {
           runtime: "desktop",
-          sources: ["wikimedia", "internet-archive"],
+          sources: ["wikimedia", "internet-archive", "pexels"],
         },
       };
     },
@@ -8046,6 +8046,51 @@ function registerBuiltInLocalServices() {
       throw new Error(`未实现的媒体采集命令: ${action}`);
     },
   });
+
+  const internetArchiveService = {
+    key: "internet-archive",
+    pluginKey: "internet-archive",
+    label: "Internet Archive",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      const hasMediaCollectApi = !!nativeApi?.mediaCollectSearch;
+
+      return {
+        label: "Internet Archive",
+        connected: true,
+        available: hasMediaCollectApi,
+        status: hasMediaCollectApi ? "connected" : "disconnected",
+        state: hasMediaCollectApi ? "idle" : "offline",
+        busy: false,
+        message: hasMediaCollectApi
+          ? "Internet Archive 采集服务可用"
+          : "当前环境未注入桌面端 Internet Archive 采集能力",
+        endpoint: "https://archive.org/",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health", "search", "import"],
+        details: {
+          runtime: "desktop",
+          source: "internet-archive",
+        },
+      };
+    },
+    execute: async (command) => {
+      const mediaCollectHandler = localServiceHandlers.get("media-collect");
+      if (!mediaCollectHandler?.execute) {
+        throw new Error("当前环境未注入桌面端媒体采集能力");
+      }
+      return mediaCollectHandler.execute({
+        ...command,
+        action: command.action,
+        payload: {
+          ...command.payload,
+          source: "internet-archive",
+        },
+      });
+    },
+  };
+  registerLocalService(internetArchiveService);
 
   registerLocalService({
     key: "fileDownload",
