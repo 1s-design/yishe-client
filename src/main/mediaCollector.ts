@@ -9,6 +9,7 @@ import os from 'os'
 import fs from 'fs'
 import { searchWikimedia, downloadWikimediaImage, type WikimediaFile, type WikimediaSearchResult } from './wikimedia'
 import { searchInternetArchive, downloadInternetArchiveFile, type InternetArchiveFile, type InternetArchiveSearchResult } from './internetArchive'
+import { searchPexelsMedia, downloadPexelsMedia, type PexelsMediaResult } from './pexelsMedia'
 import { generateCosKey, uploadFileToCos } from './cos'
 import { getBackendApiBase, getCurrentAccessToken } from './cos'
 
@@ -73,6 +74,7 @@ export interface ImportProgress {
 const SOURCES: MediaSourceInfo[] = [
   { key: 'wikimedia', name: 'Wikimedia Commons', supportedTypes: ['image', 'video', 'audio'] },
   { key: 'internet-archive', name: 'Internet Archive', supportedTypes: ['image', 'video', 'audio'] },
+  { key: 'pexels', name: 'Pexels', supportedTypes: ['image', 'video'] },
 ]
 
 // ─── 搜索 ──────────────────────────────────────────────
@@ -88,6 +90,8 @@ export async function searchMedia(params: MediaSearchParams): Promise<MediaSearc
     return searchWikimediaMedia(query, mediaType, page, pageSize)
   } else if (source === 'internet-archive') {
     return searchInternetArchiveMedia(query, mediaType, page, pageSize)
+  } else if (source === 'pexels') {
+    return searchPexelsMediaMedia(query, mediaType, page, pageSize)
   }
 
   throw new Error(`Unknown source: ${source}`)
@@ -181,6 +185,49 @@ async function searchInternetArchiveMedia(
   }
 }
 
+async function searchPexelsMediaMedia(
+  query: string,
+  mediaType: MediaType | undefined,
+  page: number,
+  pageSize: number
+): Promise<MediaSearchResult> {
+  const result: PexelsMediaResult = await searchPexelsMedia(query, {
+    mediaType,
+    page,
+    pageSize,
+  })
+
+  if (!result.success) {
+    throw new Error(result.error || '搜索失败')
+  }
+
+  const items: MediaAsset[] = result.items.map((f) => ({
+    id: f.id,
+    source: 'pexels' as MediaSource,
+    title: f.title,
+    description: f.description,
+    mediaType: f.mediaType,
+    mimeType: f.mimeType,
+    thumbnailUrl: f.thumbnail || undefined,
+    previewUrl: f.preview || f.fileUrl,
+    fileUrl: f.fileUrl,
+    fileSize: undefined,
+    width: f.width,
+    height: f.height,
+    duration: f.duration,
+    creator: f.creator,
+    license: 'Pexels License',
+  }))
+
+  return {
+    total: result.total || result.count,
+    page,
+    pageSize,
+    items,
+    hasMore: result.hasMore,
+  }
+}
+
 function getMimeType(mime?: string, mediatype?: string): MediaType {
   if (mime?.startsWith('video/') || mediatype === 'movies') return 'video'
   if (mime?.startsWith('audio/') || mediatype === 'audio') return 'audio'
@@ -225,6 +272,8 @@ export async function importMedia(
         await downloadWikimediaImage(item.fileUrl!, destDir, filename)
       } else if (item.source === 'internet-archive') {
         await downloadInternetArchiveFile(item.fileUrl!, destDir, filename)
+      } else if (item.source === 'pexels') {
+        await downloadPexelsMedia(item.fileUrl!, destDir, filename)
       }
 
       // 2. 上传到 COS
