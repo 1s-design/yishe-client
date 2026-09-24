@@ -157,9 +157,10 @@ export async function uploadToMaterialLibrary(
               return;
             }
             const result = JSON.parse(data);
-            // 后端返回：{ success, failed, items, errors }
-            if (result.success > 0 && result.items?.length > 0) {
-              const created = result.items[0];
+            // 后端 TransformInterceptor：{ code: 0, data: { success, failed, items, errors }, status: true }
+            const innerData = result.data || result;
+            if (innerData.success > 0 && innerData.items?.length > 0) {
+              const created = innerData.items[0];
               console.log(`[MaterialLibrary] ✅ crawler_material 创建成功: id=${created?.id}, url=${created?.url}`);
               resolve({
                 ok: true,
@@ -170,7 +171,7 @@ export async function uploadToMaterialLibrary(
               console.error(`[MaterialLibrary] ❌ crawler_material 创建失败:`, result);
               resolve({
                 ok: false,
-                msg: (result.errors?.[0]?.error) || "素材库保存失败",
+                msg: (innerData.errors?.[0]?.error) || innerData.message || "素材库保存失败",
               });
             }
           } catch (e: any) {
