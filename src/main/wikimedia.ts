@@ -28,6 +28,7 @@ export interface WikimediaFile {
   width?: number
   height?: number
   mime?: string
+  duration?: number
   author?: string
   license?: string
   date?: string
@@ -37,6 +38,7 @@ export interface WikimediaSearchResult {
   success: boolean
   query: string
   count: number
+  totalHits: number
   items: WikimediaFile[]
   links: string[]
   nextOffset: number | null
@@ -47,11 +49,15 @@ interface WikimediaSearchOptions {
   pageSize?: number
   limit?: number
   imageOnly?: boolean
+  mediaType?: 'image' | 'video' | 'audio'
   offset?: number | null
 }
 
+const WIKIMEDIA_MAX_SEARCH_RESULTS = 10_000
+
 /**
- * 搜索 Wikimedia Commons 图片。仅保留图片类型 (mime 以 image/ 开头)。
+ * 搜索 Wikimedia Commons。支持图片/视频/音频。
+ * @param mediaType 媒体类型过滤：image / video / audio。不传则默认图片（向后兼容）。
  */
 export async function searchWikimedia(
   query: string,
@@ -59,27 +65,51 @@ export async function searchWikimedia(
 ): Promise<WikimediaSearchResult> {
   const keyword = (query || '').trim()
   if (!keyword) {
-    return { success: false, query: '', count: 0, items: [], links: [], nextOffset: null, error: '缺少搜索关键词' }
+    return { success: false, query: '', count: 0, totalHits: 0, items: [], links: [], nextOffset: null, error: '缺少搜索关键词' }
   }
 
   const limit = Math.min(Math.max(Number(options.limit) || 25, 1), 250)
-  const imageOnly = options.imageOnly ?? true
+  // 向后兼容：imageOnly=true 且未传 mediaType 时，默认只搜图片
+  const mediaType = options.mediaType || (options.imageOnly === false ? undefined : 'image')
+  const imageOnly = mediaType === 'image'
+
+  // 构建搜索关键词（加上媒体类型过滤）
+  let searchQuery = keyword
+  if (mediaType === 'video') {
+    searchQuery += ' filetype:video'
+  } else if (mediaType === 'audio') {
+    searchQuery += ' filetype:audio'
+  }
 
   try {
     const items: WikimediaFile[] = []
     const seen = new Set<string>()
     let offset: number | null = options.offset ?? null
+    let totalHits = 0
+    let rawItemCount = 0
+    let rawCandidateCount = 0
+    let filteredCandidateCount = 0
+    let exhausted = false
 
     while (items.length < limit) {
       const pageSize = Math.min(Math.max(Number(options.pageSize) || 25, 1), 50)
-      const batch = await fetchSearchPage({ query: keyword, pageSize, offset })
+      const batch = await fetchSearchPage({ query: searchQuery, pageSize, offset }, mediaType)
 
       if (!batch.items.length) {
         break
       }
 
+      // 第一次 batch 记录 totalHits 和类型命中率。
+      // generator=search 的 totalhits 是关键词命中总数，不能直接作为类型过滤后的分页总数。
+      if (totalHits === 0) {
+        totalHits = batch.totalHits
+        rawItemCount = batch.items.length
+      }
+      rawCandidateCount += batch.rawItemCount
+      filteredCandidateCount += batch.items.length
+
       for (const file of batch.items) {
-        if (imageOnly && file.mime && !file.mime.startsWith('image/')) continue
+        if (mediaType === 'image' && file.mime && !file.mime.startsWith('image/')) continue
         if (seen.has(file.id)) continue
         seen.add(file.id)
         items.push(file)
@@ -87,15 +117,24 @@ export async function searchWikimedia(
       }
 
       offset = batch.nextOffset
-      if (offset == null) break
+      if (offset == null) {
+        exhausted = true
+        break
+      }
+      if (rawCandidateCount >= WIKIMEDIA_MAX_SEARCH_RESULTS) {
+        exhausted = true
+        break
+      }
       await sleep(500)
     }
 
     const finalItems = (imageOnly ? items.filter((f) => !f.mime || f.mime.startsWith('image/')) : items).slice(0, limit)
+
     return {
       success: true,
       query: keyword,
       count: finalItems.length,
+      totalHits,  // API 返回的真实总数，直接用于分页
       items: finalItems,
       links: finalItems.map((f) => f.image).filter(Boolean),
       nextOffset: offset,
@@ -105,6 +144,7 @@ export async function searchWikimedia(
       success: false,
       query: keyword,
       count: 0,
+      totalHits: 0,
       items: [],
       links: [],
       nextOffset: null,
@@ -115,6 +155,8 @@ export async function searchWikimedia(
 
 interface SearchPageResult {
   items: WikimediaFile[]
+  rawItemCount: number
+  totalHits: number
   nextOffset: number | null
 }
 
@@ -122,41 +164,34 @@ async function fetchSearchPage(opts: {
   query: string
   pageSize: number
   offset?: number | null
-}): Promise<SearchPageResult> {
+}, mediaType?: string): Promise<SearchPageResult> {
+  // 同时请求 generator=search（获取文件详情）和 list=search（获取总数）
+  // list=search 返回 searchinfo.totalhits，用于分页显示总数
   const params = new URLSearchParams({
     action: 'query',
     format: 'json',
+    origin: '*',
+    // generator=search 获取文件详情
     generator: 'search',
-    utilityProps: '', // placeholder avoid trailing equal
     gsrsearch: opts.query,
     gsrnamespace: '6', // File 命名空间
     gsrlimit: String(opts.pageSize),
     gsrsort: 'relevance',
+    // 同时请求 list=search 以获取 totalhits
+    list: 'search',
+    srsearch: opts.query,
+    srnamespace: '6',
+    srlimit: '1',      // 只需要总数，不需要结果
+    srinfo: 'totalhits',
+    // 文件详情
     prop: 'imageinfo',
     iiprop: 'url|size|mime|extmetadata',
     iiurlwidth: '2048',
     iilimit: String(opts.pageSize),
   })
-  params.delete('utilityProps')
   if (opts.offset != null) params.set('gsroffset', String(opts.offset))
 
-  // 避免 URLSearchParams 编码 `|` 造成兼容问题，用原始查询串
-  const rawQuery = [
-    'action=query',
-    'format=json',
-    'generator=search',
-    `gsrsearch=${encodeURIComponent(opts.query)}`,
-    'gsrnamespace=6',
-    `gsrlimit=${opts.pageSize}`,
-    'gsrsort=relevance',
-    'prop=imageinfo',
-    'iiprop=url|size|mime|extmetadata',
-    'iiurlwidth=2048',
-    `iilimit=${opts.pageSize}`,
-    ...(opts.offset != null ? [`gsroffset=${opts.offset}`] : []),
-  ].join('&')
-
-  const url = `${WIKIMEDIA_API_URL}?${rawQuery}`
+  const url = `${WIKIMEDIA_API_URL}?${params.toString()}`
   const r = await fetchWithRetry(url, {
     method: 'GET',
     headers: {
@@ -171,7 +206,7 @@ async function fetchSearchPage(opts: {
   const data = await r.json()
   const pages = data?.query?.pages
   if (!pages || typeof pages !== 'object') {
-    return { items: [], nextOffset: null }
+    return { items: [], rawItemCount: 0, totalHits: 0, nextOffset: null }
   }
 
   const items: WikimediaFile[] = Object.values(pages)
@@ -186,31 +221,50 @@ async function fetchSearchPage(opts: {
     return ia - ib
   })
 
+  // 客户端过滤媒体类型，并保留原始数量用于估算过滤后的结果总数。
+  let filteredItems = items
+  if (mediaType === 'video') {
+    filteredItems = items.filter((f) => f.mime?.startsWith('video/'))
+  } else if (mediaType === 'audio') {
+    filteredItems = items.filter((f) => f.mime?.startsWith('audio/'))
+  } else if (mediaType === 'image') {
+    filteredItems = items.filter((f) => f.mime?.startsWith('image/') || f.mime === 'image/svg+xml')
+  }
+
   let nextOffset: number | null = null
   const cont = data?.continue
   if (cont && typeof cont.gsroffset === 'number') {
     nextOffset = cont.gsroffset
   }
 
-  return { items, nextOffset }
+  // 从 list=search 的 searchinfo 获取真实总数
+  const totalHits = data?.query?.searchinfo?.totalhits || filteredItems.length
+
+  return { items: filteredItems, rawItemCount: items.length, totalHits, nextOffset }
 }
 
-function normalizeFile(page: any): WikimediaFile | null {
+function normalizeFile(page: any, searchItem?: any): WikimediaFile | null {
   const id = String(page?.pageid || '')
   const ii = page?.imageinfo?.[0]
   if (!id || !ii || !ii.url) return null
 
-  // 优先使用 2048px 高清 Web 转码图，避免直接下载 50MB~100MB 印刷级超大原图导致网络阻塞超时
+  const mime = ii.mime || ''
+  const isVideo = mime.startsWith('video/')
+  const isAudio = mime.startsWith('audio/')
+
+  // 图片：优先使用 2048px 高清缩略图，避免下载超大原图
+  // 视频：使用 thumburl 作为缩略图，原始文件为 url
+  // 音频：没有真实缩略图
   const rawUrl = stripUtm(ii.url)
-  const thumbUrl = ii.thumburl ? stripUtm(ii.thumburl) : rawUrl
-  const image = (ii.thumburl && Number(ii.width) > 2048) ? thumbUrl : rawUrl
-  const thumbnail = thumbUrl
+  const thumbUrl = ii.thumburl ? stripUtm(ii.thumburl) : ''
+  const image = isVideo ? rawUrl : (ii.thumburl && Number(ii.width) > 2048) ? thumbUrl : rawUrl
+  const thumbnail = isAudio ? '' : thumbUrl
   const ext = ii.extmetadata || {}
 
   return {
     id,
     title: cleanTitle(page?.title || ''),
-    description: stripHtml(firstText(ext.ImageDescription)) || stripHtml(firstText(ext.ObjectName)) || '',
+    description: stripHtml(firstText(ext.ImageDescription)) || stripHtml(firstText(ext.ObjectName)) || (searchItem?.snippet ? stripHtml(searchItem.snippet) : ''),
     image,
     thumbnail,
     link: page?.title ? `https://commons.wikimedia.org/wiki/${encodeURIComponent(page.title.replace(/^File:/, ''))}` : '',
@@ -218,6 +272,7 @@ function normalizeFile(page: any): WikimediaFile | null {
     width: ii.width,
     height: ii.height,
     mime: ii.mime,
+    duration: ii.duration || undefined,
     author: stripHtml(firstText(ext.Artist)) || '',
     license: firstText(ext.LicenseShortName) || '',
     date: firstText(ext.DateTimeOriginal) || '',

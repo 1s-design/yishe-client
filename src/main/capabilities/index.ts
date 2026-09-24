@@ -11,6 +11,7 @@ import { registerNetworkCapabilities } from "./network";
 import { registerPrintCapabilities } from "./print";
 import { registerPinterestCapabilities } from "./pinterest";
 import { registerWikimediaCapabilities } from "./wikimedia";
+import { registerMediaCollectCapabilities } from "./media-collect";
 import { registerPexelsCapabilities } from "./pexels";
 import { registerPixabayCapabilities } from "./pixabay";
 import { registerRawpixelCapabilities } from "./rawpixel";
@@ -97,6 +98,7 @@ export function registerAllCapabilities(): void {
   registerPrintCapabilities();
   registerPinterestCapabilities();
   registerWikimediaCapabilities();
+  registerMediaCollectCapabilities();
   registerPexelsCapabilities();
   registerPixabayCapabilities();
   registerRawpixelCapabilities();

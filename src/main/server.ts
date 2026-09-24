@@ -21,6 +21,7 @@ import { uploadFileToCos, generateCosKey, getCurrentUserIdentity } from "./cos";
 import { crawlerCollectorService } from "./crawlerCollector";
 import { registerHotSearchRoutes } from "./hotsearch/hotsearch.routes";
 import { hotSearchService } from "./hotsearch/hotsearch.service";
+import { registerMediaCollectRoutes } from "./mediaCollect.routes";
 import { writeClientLog } from "./clientLogger";
 import { createAgentApiRouter } from "./agent/agent-api";
 import { sessionStore } from "./agent/session-store";
@@ -1808,6 +1809,9 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
   hotSearchService.setClientDeviceId(deviceId);
 
   registerHotSearchRoutes(app, () => token);
+
+  // ── 媒体采集路由（客户端执行，服务端只做轻量登记） ────────────────
+  registerMediaCollectRoutes(app, () => token);
 
   // ── 直发路由 ──────────────────────────────────────────────
   app.post("/api/direct-publish", async (req, res) => {

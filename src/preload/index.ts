@@ -231,6 +231,18 @@ const api = {
   }) => ipcRenderer.invoke("pixabay:sync", payload),
   uploadFileToCos: (payload: { filePath: string; key?: string }) =>
     ipcRenderer.invoke("cos:upload-file", payload),
+  // 媒体采集（客户端执行）
+  mediaCollectSearch: (payload: {
+    source: string
+    query: string
+    mediaType?: string
+    page?: number
+    pageSize?: number
+  }) => ipcRenderer.invoke("media-collect:search", payload),
+  mediaCollectImport: (payload: { items: any[] }) =>
+    ipcRenderer.invoke("media-collect:import", payload),
+  mediaCollectGetProviders: () =>
+    ipcRenderer.invoke("media-collect:providers"),
   generateCosKey: (payload: {
     category: string;
     filename: string;

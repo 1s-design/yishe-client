@@ -149,11 +149,12 @@ export const directPublishMultiTool = {
 
   async execute(args: Record<string, unknown>): Promise<CallToolResult> {
     const { platforms, images, content, title, tags, video } = args;
+    const platformList = Array.isArray(platforms) ? platforms.map(String) : [];
 
     try {
       const mod = await getDirectPublishModule();
       const results = await mod.directPublishMulti({
-        platforms: platforms as string[],
+        platforms: platformList,
         images: images as string[],
         content: content as string,
         ...(title ? { title: title as string } : {}),
@@ -168,10 +169,10 @@ export const directPublishMultiTool = {
           {
             type: 'text',
             text: JSON.stringify({
-              success: successCount === platforms.length,
-              total: platforms.length,
+              success: successCount === platformList.length,
+              total: platformList.length,
               successCount,
-              failedCount: platforms.length - successCount,
+              failedCount: platformList.length - successCount,
               results: results.map((r) => ({
                 platform: r.platform,
                 success: r.success,

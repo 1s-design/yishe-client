@@ -558,6 +558,7 @@ const RUNTIME_REPORTING_SERVICE_KEYS = new Set([
   "image-processing",
   "video-template",
   "file-download",
+  "media-collect",
   "client-log",
   "mcp-server",
   "local-service",
@@ -7966,6 +7967,87 @@ function registerBuiltInLocalServices() {
   }
 
   registerLocalService({
+    key: "mediaCollect",
+    pluginKey: "media-collect",
+    label: "媒体采集",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi();
+      const hasMediaCollectApi =
+        !!nativeApi?.mediaCollectSearch && !!nativeApi?.mediaCollectImport;
+
+      return {
+        label: "媒体采集",
+        connected: true,
+        available: hasMediaCollectApi,
+        status: hasMediaCollectApi ? "connected" : "disconnected",
+        state: hasMediaCollectApi ? "idle" : "offline",
+        busy: false,
+        message: hasMediaCollectApi
+          ? "媒体采集服务可用"
+          : "当前环境未注入桌面端媒体采集能力",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: null,
+        supportedCommands: ["refreshRuntime", "health", "search", "import"],
+        details: {
+          runtime: "desktop",
+          sources: ["wikimedia", "internet-archive"],
+        },
+      };
+    },
+    execute: async (command) => {
+      const nativeApi = getNativeApi() as any;
+      const action = command.action;
+
+      if (action === "search") {
+        if (!nativeApi?.mediaCollectSearch) {
+          throw new Error("当前环境未注入桌面端媒体搜索能力");
+        }
+        const result = await nativeApi.mediaCollectSearch(command.payload || {});
+        if (!result?.ok) {
+          throw new Error(result?.msg || "媒体搜索失败");
+        }
+        return {
+          success: true,
+          message: `搜索完成: ${result.data?.items?.length || 0} 条`,
+          data: result.data,
+        };
+      }
+
+      if (action === "import") {
+        if (!nativeApi?.mediaCollectImport) {
+          throw new Error("当前环境未注入桌面端媒体导入能力");
+        }
+        const result = await nativeApi.mediaCollectImport(command.payload || {});
+        if (!result?.ok) {
+          throw new Error(result?.msg || "媒体导入失败");
+        }
+        return {
+          success: true,
+          message: `导入完成: 成功 ${result.data?.success || 0} 个，失败 ${result.data?.failed || 0} 个`,
+          data: result.data,
+        };
+      }
+
+      if (action === "providers") {
+        if (!nativeApi?.mediaCollectGetProviders) {
+          throw new Error("当前环境未注入桌面端媒体采集源能力");
+        }
+        const result = await nativeApi.mediaCollectGetProviders();
+        if (!result?.ok) {
+          throw new Error(result?.msg || "获取媒体采集源失败");
+        }
+        return {
+          success: true,
+          message: "媒体采集源已读取",
+          data: result.data,
+        };
+      }
+
+      throw new Error(`未实现的媒体采集命令: ${action}`);
+    },
+  });
+
+  registerLocalService({
     key: "fileDownload",
     pluginKey: "file-download",
     label: "文件下载",
@@ -14457,8 +14539,8 @@ for (const cfg of imageEnginesConfig) {
       throw new Error(`不支持的操作: ${action}`);
     },
   });
-}
 
+}
 
 function emitClientInfo() {
   if (!socket || !socket.connected) return;

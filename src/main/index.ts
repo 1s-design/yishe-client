@@ -254,6 +254,7 @@ import {
   downloadNounProjectAsset,
 } from "./nounproject";
 import { generateCosKey, uploadFileToCos } from "./cos";
+import { listSources, searchMedia, importMedia } from "./mediaCollector";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
 import {
@@ -6230,6 +6231,55 @@ ipcMain.handle(
     return res;
   },
 );
+
+// ── 媒体采集 IPC（客户端执行，不走服务端带宽） ────────────────
+ipcMain.handle(
+  "media-collect:providers",
+  async () => {
+    try {
+      const sources = listSources()
+      return { ok: true, data: sources }
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || '获取采集源失败' }
+    }
+  },
+)
+
+ipcMain.handle(
+  "media-collect:search",
+  async (_event, payload: {
+    source: string
+    query: string
+    mediaType?: string
+    page?: number
+    pageSize?: number
+  }) => {
+    try {
+      const result = await searchMedia({
+        source: payload.source as any,
+        query: payload.query,
+        mediaType: payload.mediaType as any,
+        page: payload.page,
+        pageSize: payload.pageSize,
+      })
+      return { ok: true, data: result }
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || '搜索失败' }
+    }
+  },
+)
+
+ipcMain.handle(
+  "media-collect:import",
+  async (_event, payload: { items: any[] }) => {
+    try {
+      const result = await importMedia(payload.items)
+      return { ok: true, data: result }
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || '导入失败' }
+    }
+  },
+)
 
 ipcMain.handle(
   "cos:generate-key",

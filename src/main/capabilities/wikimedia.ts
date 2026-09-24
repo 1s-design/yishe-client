@@ -41,19 +41,19 @@ function normalizeSearchResult(result: {
 const searchDef: CapabilityDefinition = {
   name: 'search',
   namespace: 'wikimedia',
-  description: '搜索 Wikimedia Commons 自由版权图片，返回原图链接和元数据（作者/许可证）。无需登录。',
+  description: '搜索 Wikimedia Commons 自由版权媒体（图片/视频/音频），返回链接和元数据。无需登录。',
   riskLevel: 'read',
   argsSchema: z.object({
     keyword: z.string().describe('搜索关键词 (中英文均可)'),
     limit: z.number().optional().default(25).describe('最多返回结果数，最大 250'),
-    imageOnly: z.boolean().optional().default(true).describe('是否只返回静态图片'),
+    mediaType: z.enum(['image', 'video', 'audio']).optional().describe('媒体类型过滤：image=图片, video=视频, audio=音频。不传则默认图片。'),
     offset: z.number().optional().nullable().describe('分页游标 (nextOffset)'),
   }),
-  handler: async ({ keyword, limit, imageOnly, offset }) => {
+  handler: async ({ keyword, limit, mediaType, offset }) => {
     if (!keyword || !keyword.trim()) {
       return { success: false, error: '缺少搜索关键词 keyword' };
     }
-    const result = await searchWikimedia(keyword.trim(), { limit, imageOnly, offset });
+    const result = await searchWikimedia(keyword.trim(), { limit, mediaType, offset });
     return normalizeSearchResult(result);
   },
 };
@@ -90,22 +90,22 @@ const downloadDef: CapabilityDefinition = {
 const collectDef: CapabilityDefinition = {
   name: 'collect',
   namespace: 'wikimedia',
-  description: '从 Wikimedia Commons 批量搜索并下载图片到工作目录并同步素材库 (推荐工具)。',
+  description: '从 Wikimedia Commons 批量搜索并下载媒体到工作目录并同步素材库 (推荐工具)。',
   riskLevel: 'write',
   argsSchema: z.object({
     keyword: z.string().describe('搜索关键词 (中英文均可)'),
     maxCount: z.number().optional().default(5).describe('采集数量，最大 50'),
-    imageOnly: z.boolean().optional().default(true).describe('是否只采集静态图片'),
+    mediaType: z.enum(['image', 'video', 'audio']).optional().default('image').describe('媒体类型：image=图片, video=视频, audio=音频'),
     syncToMaterial: z.boolean().optional().default(true).describe('是否同步到素材库'),
   }),
-  handler: async ({ keyword, maxCount, imageOnly, syncToMaterial }) => {
+  handler: async ({ keyword, maxCount, mediaType, syncToMaterial }) => {
     if (!keyword || !keyword.trim()) {
       return { success: false, error: '缺少搜索关键词 keyword' };
     }
     const count = Math.min(Math.max(Number(maxCount) || 5, 1), 50);
     try {
       const { syncWikimediaToMaterialLibrary, downloadWikimediaImage } = await import('../wikimedia');
-      const search = await searchWikimedia(keyword.trim(), { limit: count, imageOnly });
+      const search = await searchWikimedia(keyword.trim(), { limit: count, mediaType });
       if (!search.success || !search.items.length) {
         return { success: false, error: search.error || '未搜索到任何图片' };
       }
