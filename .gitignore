@@ -10,3 +10,5 @@ temp
 generated
 resources/remotion
 resources/remotion-browser
+src/main/ps-automation/yishe-ps.pid
+*.tsbuildinfo

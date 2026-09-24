@@ -1,7 +1,6 @@
 /**
  * Pexels 媒体采集（图片 + 视频）
- * 基于 Pexels 官方 API，支持图片和视频搜索
- * 无需额外实现，复用现有 pexels.ts 的 API Key 和下载逻辑
+ * 基于网页抓取，无需 API Key
  */
 
 import { session } from 'electron'
@@ -9,19 +8,8 @@ import fs from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
 
-const PEXELS_API_BASE = 'https://api.pexels.com/v1'
-const PEXELS_VIDEO_API_BASE = 'https://api.pexels.com/videos'
-
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-
-// Pexels API Keys（轮换使用）
-const PEXELS_API_KEYS = [
-  '563492ad6f91700001000001c27181c03386450aa6d10c0e70498a44',
-  '563492ad6f917000010000018593a6e9bbdf482fa816e8855e4e7e6f',
-  '563492ad6f91700001000001e3895e638b9745e1a17957eeea0bf5c5',
-  '563492ad6f91700001000001a1c97aef44b0451a99859f518e119420',
-]
 
 export interface PexelsMediaItem {
   id: string
@@ -114,55 +102,7 @@ async function searchPexelsImages(
   const items: PexelsMediaItem[] = []
   let totalResults = 0
 
-  // 1. 优先使用 API（如果 Key 有效）
-  const apiUrl = `${PEXELS_API_BASE}/search?query=${encodeURIComponent(keyword)}&per_page=${limit}&page=${page}`
-  for (const apiKey of PEXELS_API_KEYS) {
-    try {
-      const res = await fetchFn(apiUrl, {
-        headers: {
-          'Authorization': apiKey,
-          'User-Agent': USER_AGENT,
-        },
-      })
-      if (res.ok) {
-        const data: any = await res.json()
-        totalResults = data.total_results || 0
-        const photos = data.photos || []
-        for (const p of photos) {
-          if (!p || !p.id) continue
-          items.push({
-            id: String(p.id),
-            title: p.alt || `${keyword} photo`,
-            description: p.alt || '',
-            mediaType: 'image',
-            mimeType: 'image/jpeg',
-            fileUrl: p.src?.original || p.src?.large2x || p.src?.large || '',
-            preview: p.src?.medium || p.src?.small || '',
-            thumbnail: p.src?.tiny || p.src?.small || '',
-            width: p.width,
-            height: p.height,
-            creator: p.photographer,
-            link: p.url || `https://www.pexels.com/photo/${p.id}/`,
-          })
-        }
-        if (items.length > 0) {
-          return {
-            success: true,
-            query: keyword,
-            count: items.length,
-            total: totalResults,
-            items,
-            page,
-            hasMore: items.length >= limit,
-          }
-        }
-      }
-    } catch {
-      // try next key
-    }
-  }
-
-  // 2. 回退：抓取网页 HTML（无需 API Key）
+  // 抓取网页 HTML（无需 API Key）
   const searchUrl = `https://www.pexels.com/search/${encodeURIComponent(keyword)}/?page=${page}`
   try {
     const res = await fetchFn(searchUrl, {
@@ -256,26 +196,34 @@ async function searchPexelsVideos(
   page: number,
   limit: number
 ): Promise<PexelsMediaResult> {
-  const apiUrl = `${PEXELS_VIDEO_API_BASE}/search?query=${encodeURIComponent(keyword)}&per_page=${limit}&page=${page}`
   const fetchFn = getFetchFn()
   const items: PexelsMediaItem[] = []
   let totalResults = 0
 
-  for (const apiKey of PEXELS_API_KEYS) {
-    try {
-      const res = await fetchFn(apiUrl, {
-        headers: {
-          'Authorization': apiKey,
-          'User-Agent': USER_AGENT,
-        },
-      })
-      if (res.ok) {
-        const data: any = await res.json()
-        totalResults = data.total_results || 0
-        const videos = data.videos || []
+  // 抓取视频网页 HTML（无需 API Key）
+  const searchUrl = `https://www.pexels.com/search/videos/${encodeURIComponent(keyword)}/?page=${page}`
+  try {
+    const res = await fetchFn(searchUrl, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Referer': 'https://www.pexels.com/',
+      },
+    })
+    const html = await res.text()
+
+    // 解析 NEXT_DATA JSON
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s)
+    if (nextDataMatch) {
+      try {
+        const nextData = JSON.parse(nextDataMatch[1])
+        const pageProps = nextData?.props?.pageProps
+        const videos = pageProps?.initialResults?.videos || pageProps?.videos || []
+        totalResults = pageProps?.totalResults || videos.length || 0
+
         for (const v of videos) {
           if (!v || !v.id) continue
-          // 获取最佳质量视频文件
           const videoFiles = v.video_files || []
           const bestFile = videoFiles.find((f: any) => f.quality === 'hd')
             || videoFiles.find((f: any) => f.quality === 'sd')
@@ -297,14 +245,14 @@ async function searchPexelsVideos(
             creator: v.user?.name,
             link: v.url || `https://www.pexels.com/video/${v.id}/`,
           })
+          if (items.length >= limit) break
         }
-        if (items.length > 0) break
-      } else {
-        console.warn(`[Pexels Video] API Key ${apiKey.slice(0, 8)}... 返回 HTTP ${res.status}`)
+      } catch {
+        // ignore parse error
       }
-    } catch (err: any) {
-      console.warn(`[Pexels Video] API Key ${apiKey.slice(0, 8)}... 失败: ${err?.message || err}`)
     }
+  } catch (err: any) {
+    console.error(`[Pexels Video] 网页抓取失败: ${err?.message || err}`)
   }
 
   return {
