@@ -108,31 +108,25 @@ export async function uploadToMaterialLibrary(
     const keywordsEn = clean4ByteEmoji(payload?.keywordsEn || payload?.keywords || "").slice(0, 990);
     const group = clean4ByteEmoji(payload?.group || category).slice(0, 500);
 
+    // 入库到 crawler_material（不再使用 sticker）
     const postData = JSON.stringify({
-      url: cosResult.url,
-      key: cosResult.key,
-      suffix: payload?.suffix || "jpg",
-      originUrl: (payload?.originUrl || "").slice(0, 1000),
-      source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
-      group,
-      isPublic: payload?.isPublic ?? true,
-      isTexture: payload?.isTexture ?? false,
-      isCustom: payload?.isCustom ?? false,
-      name,
-      nameEn,
-      description,
-      descriptionEn,
-      keywords,
-      keywordsEn,
-      colorPalette: payload?.colorPalette || "",
-      meta: {
-        collectedAt: new Date().toISOString(),
-        ...(payload?.meta || {}),
-      },
+      items: [{
+        url: cosResult.url,
+        originUrl: (payload?.originUrl || "").slice(0, 1000),
+        name,
+        description,
+        suffix: payload?.suffix || "jpg",
+        source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
+        meta: {
+          collectedAt: new Date().toISOString(),
+          cosKey: cosResult.key,
+          ...(payload?.meta || {}),
+        },
+      }],
     });
 
-    const apiUrl = new URL(`${apiBase}/sticker/create`);
-    console.log(`[MaterialLibrary] 发起 sticker/create 请求: ${apiUrl.toString()}, tokenPresent=${Boolean(token)}`);
+    const apiUrl = new URL(`${apiBase}/crawler/material/import-from-cos`);
+    console.log(`[MaterialLibrary] 发起 crawler/material/import-from-cos 请求: ${apiUrl.toString()}, tokenPresent=${Boolean(token)}`);
     const options = {
       hostname: apiUrl.hostname,
       port: apiUrl.port || (apiUrl.protocol === "https:" ? 443 : 80),
@@ -156,31 +150,31 @@ export async function uploadToMaterialLibrary(
         });
         res.on("end", () => {
           try {
-            console.log(`[MaterialLibrary] sticker/create 响应状态码: ${res.statusCode}, 响应体: ${data.slice(0, 300)}`);
+            console.log(`[MaterialLibrary] crawler/material/import-from-cos 响应状态码: ${res.statusCode}, 响应体: ${data.slice(0, 300)}`);
             if (res.statusCode && res.statusCode >= 400) {
-              console.error(`[MaterialLibrary] ❌ sticker/create 响应 HTTP ${res.statusCode}: ${data}`);
+              console.error(`[MaterialLibrary] ❌ crawler/material/import-from-cos 响应 HTTP ${res.statusCode}: ${data}`);
               resolve({ ok: false, msg: `HTTP ${res.statusCode}: 请求失败 (${data || '无详情'})` });
               return;
             }
             const result = JSON.parse(data);
-            // 后端 TransformInterceptor：{ code: 0, data, status: true }；data 即新建的 sticker 实体
-            if (result.code === 0 && result.status === true) {
-              const created = result.data && typeof result.data === "object" ? result.data : null;
-              console.log(`[MaterialLibrary] ✅ sticker 创建成功: materialId=${created?.id}, materialUrl=${created?.url}`);
+            // 后端返回：{ success, failed, items, errors }
+            if (result.success > 0 && result.items?.length > 0) {
+              const created = result.items[0];
+              console.log(`[MaterialLibrary] ✅ crawler_material 创建成功: id=${created?.id}, url=${created?.url}`);
               resolve({
                 ok: true,
                 materialId: created?.id || undefined,
                 materialUrl: created?.url || undefined,
               });
             } else {
-              console.error(`[MaterialLibrary] ❌ sticker 创建业务失败:`, result);
+              console.error(`[MaterialLibrary] ❌ crawler_material 创建失败:`, result);
               resolve({
                 ok: false,
-                msg: result.message || result.msg || "素材库保存失败",
+                msg: (result.errors?.[0]?.error) || "素材库保存失败",
               });
             }
           } catch (e: any) {
-            console.error(`[MaterialLibrary] ❌ sticker 响应解析异常: ${e?.message}`);
+            console.error(`[MaterialLibrary] ❌ crawler_material 响应解析异常: ${e?.message}`);
             resolve({ ok: false, msg: "素材库 API 响应解析失败" });
           }
         });

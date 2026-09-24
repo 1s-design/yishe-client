@@ -281,7 +281,7 @@ export async function importMedia(
       onProgress?.(progress)
 
       const cosKey = await generateCosKey({
-        category: 'file-resource',
+        category: 'crawler-material',
         filename,
       })
       const uploadResult = await uploadFileToCos(filePath, cosKey)
@@ -348,8 +348,9 @@ async function saveFileResource(data: Record<string, any>): Promise<void> {
   if (!token) throw new Error('未登录，无法保存文件记录')
 
   const { default: axios } = await import('axios')
+  // 写入 crawler_material 表（不再使用 file-resource）
   await axios.post(
-    `${apiBase}/media-collect/import`,
+    `${apiBase}/crawler/material/import-from-cos`,
     { items: [data] },
     { headers: { Authorization: `Bearer ${token}` } }
   )
