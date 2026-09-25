@@ -15253,98 +15253,61 @@ async function syncBoundClientAgentConfig() {
   }
 }
 
+
 // 获取客户端 Agent 配置
-async function fetchClientAgentConfig() {
+async function fetchClientAgentConfig(): Promise<boolean> {
   try {
-    // 优先从 AI 设置获取 featureBindings
+    // 从 AI 设置获取 featureBindings（新结构：[code][specCode] = { keyId, ... }）
     const aiSetting = await getAiSetting();
-    if (aiSetting && typeof aiSetting === "object") {
-      const binding = aiSetting.featureBindings?.["ai.client-agent.execute"];
-      if (binding && typeof binding === "object") {
-        clientAgentConfig.keyId = binding.keyId || null;
-        clientAgentConfig.model = binding.model || binding.params?.model || "";
-        clientAgentConfig.baseUrl = binding.params?.baseUrl || "";
-        clientAgentConfig.enabled = !!binding.keyId;
+    if (aiSetting?.featureBindings) {
+      const binding = aiSetting.featureBindings["ai.client-agent.execute"];
+      const item = binding?.keyId ? binding : Object.values(binding || {})[0];
+      if (item?.keyId) {
+        clientAgentConfig.keyId = item.keyId;
+        clientAgentConfig.model = item.model || item.params?.model || "";
+        clientAgentConfig.baseUrl = item.params?.baseUrl || "";
+        clientAgentConfig.enabled = true;
         clientAgentConfig.loaded = true;
-        emitter.emit("log", {
-          level: "info",
-          message: `[agent] 配置已同步: enabled=${clientAgentConfig.enabled}, keyId=${clientAgentConfig.keyId}, model=${clientAgentConfig.model || "默认"}`,
-        });
-        return;
+        return true;
       }
     }
 
     // 兼容旧的用户设置方式
     const setting = await getUserSetting();
-    if (setting && typeof setting === "object") {
-      const binding = setting.featureBindings?.["ai.client-agent.execute"];
-      if (binding && typeof binding === "object") {
-        clientAgentConfig.keyId = binding.keyId || null;
-        clientAgentConfig.model = binding.model || binding.params?.model || "";
-        clientAgentConfig.baseUrl = binding.params?.baseUrl || "";
-        clientAgentConfig.enabled = !!binding.keyId;
-        clientAgentConfig.loaded = true;
-        emitter.emit("log", {
-          level: "info",
-          message: `[agent] 配置已同步(兼容模式): enabled=${clientAgentConfig.enabled}, keyId=${clientAgentConfig.keyId}, model=${clientAgentConfig.model || "默认"}`,
-        });
-        return;
-      }
-      // 兼容旧的 clientAgent 配置
-      const legacySetting = setting.clientAgent;
-      if (legacySetting && typeof legacySetting === "object") {
-        clientAgentConfig.keyId = legacySetting.keyId || null;
-        clientAgentConfig.model = legacySetting.model || "";
-        clientAgentConfig.baseUrl = legacySetting.baseUrl || "";
-        clientAgentConfig.enabled = legacySetting.enabled || false;
-        clientAgentConfig.loaded = true;
-        emitter.emit("log", {
-          level: "info",
-          message: `[agent] 配置已同步(旧版模式): enabled=${clientAgentConfig.enabled}, keyId=${clientAgentConfig.keyId}, model=${clientAgentConfig.model || "默认"}`,
-        });
-        return;
-      }
+    const binding = setting?.featureBindings?.["ai.client-agent.execute"];
+    const item = binding?.keyId ? binding : Object.values(binding || {})[0];
+    if (item?.keyId) {
+      clientAgentConfig.keyId = item.keyId;
+      clientAgentConfig.model = item.model || item.params?.model || "";
+      clientAgentConfig.baseUrl = item.params?.baseUrl || "";
+      clientAgentConfig.enabled = true;
+      clientAgentConfig.loaded = true;
+      return true;
     }
-    clientAgentConfig.loaded = true;
-    emitter.emit("log", {
-      level: "info",
-      message: "[agent] 未找到配置，使用默认状态",
-    });
-  } catch (error) {
-    emitter.emit("log", {
-      level: "warn",
-      message: `[agent] 获取配置失败: ${error instanceof Error ? error.message : String(error)}`,
-    });
-  } finally {
-    try {
-      await syncBoundClientAgentConfig();
-    } catch (error) {
-      emitter.emit("log", {
-        level: "warn",
-        message: `[agent] 服务端绑定配置同步失败: ${error instanceof Error ? error.message : String(error)}`,
-      });
-    }
-  }
 
-  // 兼容旧 MCP 配置读取；Agent 实际运行配置由上面的主进程同步结果提供。
-  try {
-    const nativeApi = getNativeApi() as any;
-    if (nativeApi?.setAgentConfig) {
-      await nativeApi.setAgentConfig({
-        keyId: clientAgentConfig.keyId,
-        model: clientAgentConfig.model,
-        baseUrl: clientAgentConfig.baseUrl,
-        apiKey: "", // API key 由 main 进程从数据库读取
-        enabled: clientAgentConfig.enabled,
-      });
-    }
-  } catch {
-    // ignore sync errors
+    clientAgentConfig.loaded = true;
+    return false;
+  } catch (error) {
+    clientAgentConfig.loaded = true;
+    return false;
+  } finally {
+    await syncBoundClientAgentConfig();
   }
 }
-
 function startClientAgentConfigSync() {
-  void fetchClientAgentConfig();
+  void fetchClientAgentConfig().then((loaded) => {
+    // 如果本地获取失败，尝试从云端同步
+    if (!loaded || !clientAgentConfig.enabled) {
+      void syncBoundClientAgentConfig().then((synced) => {
+        if (synced) {
+          emitter.emit("log", {
+            level: "info",
+            message: "[agent] 配置已从云端同步",
+          });
+        }
+      });
+    }
+  });
 }
 
 function stopPsConfigSync() {

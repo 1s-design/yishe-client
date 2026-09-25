@@ -154,8 +154,9 @@ export async function syncCloudAgentConfig(
     );
     const aiSetting = settingRes.data?.data || settingRes.data || {};
     const bindings = aiSetting.featureBindings || {};
-    const clientAgentItem =
-      bindings["ai.client-agent.execute"] || bindings["ai.agent.execute"];
+    const clientAgentBinding = bindings["ai.client-agent.execute"] || bindings["ai.agent.execute"];
+    // 新结构：featureBindings[code][specCode] = { keyId, ... }
+    const clientAgentItem = clientAgentBinding?.keyId ? clientAgentBinding : Object.values(clientAgentBinding || {})[0];
 
     if (!clientAgentItem?.keyId) {
       // 用户切换或解除绑定时不能继续使用上一账号残留的 Key。
