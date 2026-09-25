@@ -6262,8 +6262,10 @@ ipcMain.handle(
         page: payload.page,
         pageSize: payload.pageSize,
       })
+      console.log(`[IPC:media-collect:search] ok, items=${result?.items?.length}, total=${result?.total}`)
       return { ok: true, data: result }
     } catch (error: any) {
+      console.error(`[IPC:media-collect:search] error:`, error?.message)
       return { ok: false, msg: error?.message || '搜索失败' }
     }
   },
@@ -6273,9 +6275,12 @@ ipcMain.handle(
   "media-collect:import",
   async (_event, payload: { items: any[] }) => {
     try {
+      console.log(`[IPC:media-collect:import] 收到导入请求, items=${payload?.items?.length}`)
       const result = await importMedia(payload.items)
+      console.log(`[IPC:media-collect:import] 完成, success=${result?.success}, failed=${result?.failed}`)
       return { ok: true, data: result }
     } catch (error: any) {
+      console.error(`[IPC:media-collect:import] error:`, error?.message)
       return { ok: false, msg: error?.message || '导入失败' }
     }
   },

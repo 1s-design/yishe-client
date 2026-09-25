@@ -9,6 +9,7 @@ import {
   searchOpenverse,
   getOpenverseStatus,
   downloadOpenverseImage,
+  downloadOpenverseFile,
   syncOpenverseToMaterialLibrary,
 } from '../openverse';
 import type { OpenversePhoto } from '../openverse';
@@ -43,6 +44,9 @@ function normalizeSearchResult(result: {
       author: item.author || null,
       license: item.license || 'CC / Public Domain',
       tags: item.tags || '',
+      mediaType: item.mediaType || 'image',
+      duration: item.duration || null,
+      fileSize: item.fileSize || null,
     })),
   };
 }
@@ -51,17 +55,19 @@ function normalizeSearchResult(result: {
 const searchDef: CapabilityDefinition = {
   name: 'search',
   namespace: 'openverse',
-  description: '在 Openverse 搜索全球 6 亿+ CC / CC0 公共领域免费图像素材。',
+  description: '在 Openverse 搜索全球 6 亿+ CC / CC0 公共领域免费图片与音频素材。',
   riskLevel: 'read',
   argsSchema: z.object({
-    keyword: z.string().describe('搜索关键词，如 cat, vintage, nature'),
+    keyword: z.string().describe('搜索关键词，如 cat, vintage, nature, music'),
     page: z.number().optional().default(1),
     limit: z.number().optional().default(20),
+    mediaType: z.enum(['image', 'audio']).optional().default('image').describe('媒体类型: image(图片) 或 audio(音频)'),
   }),
-  handler: async (args: { keyword: string; page?: number; limit?: number }) => {
+  handler: async (args: { keyword: string; page?: number; limit?: number; mediaType?: 'image' | 'audio' }) => {
     const res = await searchOpenverse(args.keyword, {
       page: args.page,
       limit: args.limit,
+      mediaType: args.mediaType,
     });
     return normalizeSearchResult(res);
   },
@@ -71,14 +77,15 @@ const searchDef: CapabilityDefinition = {
 const downloadDef: CapabilityDefinition = {
   name: 'download',
   namespace: 'openverse',
-  description: '从 Openverse 下载 CC 高清原图到本地缓存目录。',
+  description: '从 Openverse 下载 CC 高清图片或音频到本地缓存目录。',
   riskLevel: 'write',
   argsSchema: z.object({
-    imageUrl: z.string().url().describe('Openverse 图片 URL'),
+    fileUrl: z.string().url().describe('Openverse 文件 URL（图片或音频）'),
     filename: z.string().optional().describe('自定义文件名'),
+    mediaType: z.enum(['image', 'audio']).optional().default('image').describe('媒体类型'),
   }),
-  handler: async (args: { imageUrl: string; filename?: string }) => {
-    const res = await downloadOpenverseImage(args.imageUrl, { filename: args.filename });
+  handler: async (args: { fileUrl: string; filename?: string; mediaType?: 'image' | 'audio' }) => {
+    const res = await downloadOpenverseFile(args.fileUrl, { filename: args.filename, mediaType: args.mediaType });
     if (!res.success) {
       return { success: false, error: res.error || '下载失败' };
     }
@@ -95,22 +102,24 @@ const downloadDef: CapabilityDefinition = {
 const collectDef: CapabilityDefinition = {
   name: 'collect',
   namespace: 'openverse',
-  description: '批量搜索 Openverse 并将 CC 高清原图转存上传至 COS 与素材库。',
+  description: '批量搜索 Openverse 并将 CC 图片/音频转存上传至 COS 与素材库。',
   riskLevel: 'write',
   argsSchema: z.object({
     keyword: z.string().describe('搜索关键词'),
-    maxCount: z.number().optional().default(10).describe('最多转存图片张数 (1-50)'),
+    maxCount: z.number().optional().default(10).describe('最多转存数量 (1-50)'),
+    mediaType: z.enum(['image', 'audio']).optional().default('image').describe('媒体类型: image(图片) 或 audio(音频)'),
   }),
-  handler: async (args: { keyword: string; maxCount?: number }) => {
+  handler: async (args: { keyword: string; maxCount?: number; mediaType?: 'image' | 'audio' }) => {
     const maxCount = Math.min(Math.max(args.maxCount || 10, 1), 50);
-    const searchRes = await searchOpenverse(args.keyword, { limit: maxCount, page: 1 });
+    const mediaType = args.mediaType || 'image';
+    const searchRes = await searchOpenverse(args.keyword, { limit: maxCount, page: 1, mediaType });
     if (!searchRes.success || !searchRes.items.length) {
-      return { success: false, error: searchRes.error || '未检索到可转存的 Openverse 图片' };
+      return { success: false, error: searchRes.error || '未检索到可转存的 Openverse 素材' };
     }
 
     let successCount = 0;
     let failCount = 0;
-    const syncedImages: string[] = [];
+    const syncedUrls: string[] = [];
 
     for (const item of searchRes.items) {
       try {
@@ -124,7 +133,7 @@ const collectDef: CapabilityDefinition = {
         });
         if (syncRes.success) {
           successCount++;
-          syncedImages.push(syncRes.data?.cosUrl || item.image);
+          syncedUrls.push(syncRes.data?.cosUrl || item.image);
         } else {
           failCount++;
         }
@@ -138,7 +147,7 @@ const collectDef: CapabilityDefinition = {
       data: {
         successCount,
         failCount,
-        images: syncedImages,
+        images: syncedUrls,
         items: searchRes.items,
       },
     };

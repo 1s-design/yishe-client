@@ -10,12 +10,13 @@ import fs from 'fs'
 import { searchWikimedia, downloadWikimediaImage, type WikimediaFile, type WikimediaSearchResult } from './wikimedia'
 import { searchInternetArchive, downloadInternetArchiveFile, type InternetArchiveFile, type InternetArchiveSearchResult } from './internetArchive'
 import { searchPexelsMedia, downloadPexelsMedia, type PexelsMediaResult } from './pexelsMedia'
+import { searchOpenverse, downloadOpenverseFile, type OpenversePhoto, type OpenverseSearchResult } from './openverse'
 import { generateCosKey, uploadFileToCos } from './cos'
 import { getBackendApiBase, getCurrentAccessToken } from './cos'
 
 // ─── 类型定义 ──────────────────────────────────────────────
 
-export type MediaSource = 'wikimedia' | 'internet-archive' | 'pexels'
+export type MediaSource = 'wikimedia' | 'internet-archive' | 'pexels' | 'openverse'
 export type MediaType = 'image' | 'video' | 'audio'
 
 export interface MediaAsset {
@@ -74,6 +75,7 @@ export interface ImportProgress {
 const SOURCES: MediaSourceInfo[] = [
   { key: 'wikimedia', name: 'Wikimedia Commons', supportedTypes: ['image', 'video', 'audio'] },
   { key: 'internet-archive', name: 'Internet Archive', supportedTypes: ['image', 'video', 'audio'] },
+  { key: 'openverse', name: 'Openverse', supportedTypes: ['image', 'audio'] },
   { key: 'pexels', name: 'Pexels', supportedTypes: ['image', 'video'] },
 ]
 
@@ -85,11 +87,14 @@ export function listSources(): MediaSourceInfo[] {
 
 export async function searchMedia(params: MediaSearchParams): Promise<MediaSearchResult> {
   const { source, query, mediaType, page = 1, pageSize = 20 } = params
+  console.log(`[MediaCollect] searchMedia: source=${source}, query=${query}, mediaType=${mediaType}, page=${page}, pageSize=${pageSize}`)
 
   if (source === 'wikimedia') {
     return searchWikimediaMedia(query, mediaType, page, pageSize)
   } else if (source === 'internet-archive') {
     return searchInternetArchiveMedia(query, mediaType, page, pageSize)
+  } else if (source === 'openverse') {
+    return searchOpenverseMedia(query, mediaType, page, pageSize)
   } else if (source === 'pexels') {
     return searchPexelsMediaMedia(query, mediaType, page, pageSize)
   }
@@ -228,6 +233,52 @@ async function searchPexelsMediaMedia(
   }
 }
 
+async function searchOpenverseMedia(
+  query: string,
+  mediaType: MediaType | undefined,
+  page: number,
+  pageSize: number
+): Promise<MediaSearchResult> {
+  const result: OpenverseSearchResult = await searchOpenverse(query, {
+    mediaType,
+    page,
+    pageSize,
+  })
+
+  console.log(`[MediaCollect:openverse] search result: success=${result.success}, count=${result.count}, total=${result.total}, items=${result.items?.length}`)
+
+  if (!result.success) {
+    throw new Error(result.error || '搜索失败')
+  }
+
+  const items: MediaAsset[] = result.items.map((f) => ({
+    id: f.id,
+    source: 'openverse' as MediaSource,
+    title: f.title,
+    description: f.description,
+    mediaType: f.mediaType || 'image',
+    mimeType: undefined,
+    thumbnailUrl: f.thumbnail || undefined,
+    previewUrl: f.mediaType === 'audio' ? (f.waveformUrl || f.thumbnail) : f.image,
+    fileUrl: f.downloadUrl || f.image,
+    fileSize: f.fileSize,
+    width: f.width,
+    height: f.height,
+    duration: f.duration,
+    license: f.license,
+    creator: f.author,
+    tags: f.tags ? f.tags.split(',') : [],
+  }))
+
+  return {
+    total: result.total || result.count,
+    page,
+    pageSize,
+    items,
+    hasMore: result.nextPage != null,
+  }
+}
+
 function getMimeType(mime?: string, mediatype?: string): MediaType {
   if (mime?.startsWith('video/') || mediatype === 'movies') return 'video'
   if (mime?.startsWith('audio/') || mediatype === 'audio') return 'audio'
@@ -240,6 +291,7 @@ export async function importMedia(
   items: MediaAsset[],
   onProgress?: (progress: ImportProgress) => void
 ): Promise<{ success: number; failed: number; errors: string[] }> {
+  console.log(`[MediaCollect] importMedia 开始, items=${items?.length}`)
   const progress: ImportProgress = {
     total: items.length,
     current: 0,
@@ -268,20 +320,29 @@ export async function importMedia(
       const filename = `${sanitizeName(item.title).slice(0, 50)}_${Date.now()}${ext}`
       const filePath = path.join(destDir, filename)
 
+      let downloadOk = false
       if (item.source === 'wikimedia') {
         await downloadWikimediaImage(item.fileUrl!, destDir, filename)
+        downloadOk = true
       } else if (item.source === 'internet-archive') {
         await downloadInternetArchiveFile(item.fileUrl!, destDir, filename)
+        downloadOk = true
+      } else if (item.source === 'openverse') {
+        const dl = await downloadOpenverseFile(item.fileUrl!, { filename, mediaType: item.mediaType, destDir })
+        downloadOk = dl.success
+        if (!downloadOk) throw new Error(dl.error || 'Openverse 下载失败')
       } else if (item.source === 'pexels') {
         await downloadPexelsMedia(item.fileUrl!, destDir, filename)
+        downloadOk = true
       }
+      if (!downloadOk) throw new Error('下载失败')
 
       // 2. 上传到 COS
       progress.stage = 'uploading'
       onProgress?.(progress)
 
       const cosKey = await generateCosKey({
-        category: 'crawler-material',
+        category: 'file-resource',
         filename,
       })
       const uploadResult = await uploadFileToCos(filePath, cosKey)
@@ -323,7 +384,9 @@ export async function importMedia(
       progress.successCount++
     } catch (error: any) {
       progress.failCount++
-      progress.errors.push(`${item.title}: ${error?.message || String(error)}`)
+      const errMsg = `${item.title}: ${error?.message || String(error)}`
+      progress.errors.push(errMsg)
+      console.error(`[MediaCollect] 导入失败 [${item.source}] ${errMsg}`)
     }
 
     onProgress?.(progress)
@@ -348,12 +411,15 @@ async function saveFileResource(data: Record<string, any>): Promise<void> {
   if (!token) throw new Error('未登录，无法保存文件记录')
 
   const { default: axios } = await import('axios')
-  // 写入 crawler_material 表（不再使用 file-resource）
-  await axios.post(
-    `${apiBase}/crawler/material/import-from-cos`,
+  const resp = await axios.post(
+    `${apiBase}/media-collect/import`,
     { items: [data] },
     { headers: { Authorization: `Bearer ${token}` } }
   )
+  console.log(`[MediaCollect] 保存记录响应:`, resp?.data)
+  if (resp?.data?.code !== 0) {
+    throw new Error(resp?.data?.message || '保存记录失败')
+  }
 }
 
 function getExtFromUrl(url: string): string {

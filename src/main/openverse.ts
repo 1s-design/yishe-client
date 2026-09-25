@@ -11,10 +11,13 @@ import { uploadFileToCos, generateCosKey } from './cos'
 import { checkSiteAvailability } from './siteAvailability'
 
 const OPENVERSE_SITE_URL = 'https://openverse.org/'
-const OPENVERSE_API_URL = 'https://api.openverse.org/v1/images/'
+const OPENVERSE_IMAGE_API = 'https://api.openverse.org/v1/images/'
+const OPENVERSE_AUDIO_API = 'https://api.openverse.org/v1/audio/'
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
+export type OpenverseMediaType = 'image' | 'audio'
 
 export interface OpenversePhoto {
   id: string
@@ -35,6 +38,13 @@ export interface OpenversePhoto {
   source?: string
   isFree?: boolean
   tags?: string
+  /** 音频独有字段 */
+  mediaType?: OpenverseMediaType
+  duration?: number
+  fileSize?: number
+  waveformUrl?: string
+  bitRate?: number
+  sampleRate?: number
 }
 
 export interface OpenverseSearchResult {
@@ -55,6 +65,7 @@ interface OpenverseSearchOptions {
   pageSize?: number
   license?: string
   provider?: string
+  mediaType?: OpenverseMediaType
 }
 
 function sanitizeName(str: string): string {
@@ -84,7 +95,8 @@ export async function getOpenverseStatus() {
 }
 
 /**
- * 搜索 Openverse 图库
+ * 搜索 Openverse 图库（图片 / 音频）
+ * mediaType 可选 'image' | 'audio'，不传默认图片
  */
 export async function searchOpenverse(
   query: string,
@@ -106,11 +118,13 @@ export async function searchOpenverse(
 
   const page = Math.max(Number(options.page) || 1, 1)
   const limit = Math.min(Math.max(Number(options.limit || options.pageSize) || 20, 1), 100)
+  const mediaType = options.mediaType === 'audio' ? 'audio' : 'image'
 
   try {
     const fetchFn = await getFetchImpl()
+    const baseUrl = mediaType === 'audio' ? OPENVERSE_AUDIO_API : OPENVERSE_IMAGE_API
 
-    let apiUrl = `${OPENVERSE_API_URL}?q=${encodeURIComponent(keyword)}&page=${page}&page_size=${limit}`
+    let apiUrl = `${baseUrl}?q=${encodeURIComponent(keyword)}&page=${page}&page_size=${limit}`
     if (options.license) {
       apiUrl += `&license=${encodeURIComponent(options.license)}`
     }
@@ -118,12 +132,15 @@ export async function searchOpenverse(
       apiUrl += `&source=${encodeURIComponent(options.provider)}`
     }
 
+    console.log(`[Openverse] 搜索: ${apiUrl}`)
+
     const headers = {
       'User-Agent': USER_AGENT,
       'Accept': 'application/json, text/plain, */*',
     }
 
     const res = await fetchFn(apiUrl, { method: 'GET', headers })
+    console.log(`[Openverse] HTTP 状态: ${res.status}`)
     if (!res.ok) {
       return {
         success: false,
@@ -139,11 +156,14 @@ export async function searchOpenverse(
 
     const json = await res.json()
     const rawItems = json?.results || (Array.isArray(json) ? json : [])
-    const totalCount = json?.result_count || json?.page_count * limit || rawItems.length
+    // Openverse API 的 result_count / page_count / next 字段均不可靠
+    // 根据实际返回数量判断：返回满页说明可能还有下一页
+    const hasMore = rawItems.length >= limit
+    console.log(`[Openverse] 返回 ${rawItems.length} 条，page=${page}, hasMore=${hasMore}`)
 
     const photos: OpenversePhoto[] = rawItems
       .filter((item: any) => item && typeof item === 'object')
-      .map((item: any) => normalizeOpenversePhoto(item))
+      .map((item: any) => normalizeOpenversePhoto(item, mediaType))
       .filter((photo: OpenversePhoto | null): photo is OpenversePhoto => photo !== null)
 
     const finalPhotos = photos.slice(0, limit)
@@ -151,13 +171,14 @@ export async function searchOpenverse(
       success: true,
       query: keyword,
       count: finalPhotos.length,
-      total: totalCount,
+      total: 0, // 不返回总数
       items: finalPhotos,
       links: finalPhotos.map((p) => p.image).filter(Boolean),
       page,
-      nextPage: finalPhotos.length >= limit ? page + 1 : null,
+      nextPage: hasMore ? page + 1 : null,
     }
   } catch (error: any) {
+    console.error(`[Openverse] 搜索异常:`, error?.message || String(error))
     return {
       success: false,
       query: keyword,
@@ -173,8 +194,9 @@ export async function searchOpenverse(
 
 /**
  * 标准化 Openverse API 项
+ * mediaType: 'image' | 'audio'
  */
-function normalizeOpenversePhoto(item: any): OpenversePhoto | null {
+function normalizeOpenversePhoto(item: any, mediaType: OpenverseMediaType = 'image'): OpenversePhoto | null {
   if (!item) return null
   const id = String(item.id || item.uuid || Math.random().toString(36).slice(2, 10))
 
@@ -191,7 +213,8 @@ function normalizeOpenversePhoto(item: any): OpenversePhoto | null {
   if (!image) return null
 
   const title = item.title || item.name || item.alt || `Openverse #${id.slice(0, 8)}`
-  let link = item.foreign_landing_url || item.detail_url || item.url || `https://openverse.org/image/${id}`
+  const mediaPath = mediaType === 'audio' ? 'audio' : 'image'
+  let link = item.foreign_landing_url || item.detail_url || item.url || `https://openverse.org/${mediaPath}/${id}`
   if (typeof link === 'string' && link.startsWith('/')) {
     link = `https://openverse.org${link}`
   }
@@ -221,46 +244,60 @@ function normalizeOpenversePhoto(item: any): OpenversePhoto | null {
     provider: item.provider || item.source || 'Openverse',
     source: item.source || item.provider || 'Openverse',
     isFree: true,
-    tags: tagsArr.join(', ')
+    tags: tagsArr.join(', '),
+    mediaType,
+    duration: item.duration || null,
+    fileSize: item.file_size || item.fileSize || null,
+    waveformUrl: item.waveform_url || item.waveformUrl || null,
+    bitRate: item.bit_rate || item.bitRate || null,
+    sampleRate: item.sample_rate || item.sampleRate || null,
   }
 }
 
 /**
- * 下载单张 Openverse 图片
+ * 下载 Openverse 文件（图片 / 音频）
  */
-export async function downloadOpenverseImage(
-  imageUrl: string,
-  options: { filename?: string } = {}
+export async function downloadOpenverseFile(
+  fileUrl: string,
+  options: { filename?: string; mediaType?: OpenverseMediaType; destDir?: string } = {}
 ): Promise<{ success: boolean; filePath?: string; error?: string }> {
-  if (!/^https?:\/\//.test(imageUrl)) {
-    return { success: false, error: `无效的图片地址: ${imageUrl}` }
+  if (!/^https?:\/\//.test(fileUrl)) {
+    return { success: false, error: `无效地址: ${fileUrl}` }
   }
 
   try {
     const fetchFn = await getFetchImpl()
 
-    const r = await fetchFn(imageUrl, {
+    const r = await fetchFn(fileUrl, {
       method: 'GET',
       headers: { 'User-Agent': USER_AGENT }
     })
 
     if (!r.ok) {
-      return { success: false, error: `Openverse 图片下载失败: HTTP ${r.status}` }
+      return { success: false, error: `Openverse 下载失败: HTTP ${r.status}` }
     }
 
     const arrayBuffer = await r.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
-    const workspaceDir = app.getPath('userData')
-    const saveDir = join(workspaceDir, 'openverse-downloads')
+    // 优先使用传入的 destDir，否则用默认下载目录
+    const saveDir = options.destDir
+      ? options.destDir
+      : join(app.getPath('userData'), 'openverse-downloads')
     if (!fs.existsSync(saveDir)) {
       fs.mkdirSync(saveDir, { recursive: true })
     }
 
-    let ext = '.jpg'
+    // 根据 content-type 推断后缀
     const contentType = r.headers.get('content-type') || ''
+    let ext = options.mediaType === 'audio' ? '.mp3' : '.jpg'
     if (contentType.includes('png')) ext = '.png'
     else if (contentType.includes('webp')) ext = '.webp'
+    else if (contentType.includes('wav')) ext = '.wav'
+    else if (contentType.includes('ogg')) ext = '.ogg'
+    else if (contentType.includes('mpeg') || contentType.includes('mp3')) ext = '.mp3'
+    else if (contentType.includes('flac')) ext = '.flac'
+    else if (contentType.includes('svg')) ext = '.svg'
 
     const fileName = options.filename
       ? sanitizeName(options.filename)
@@ -273,6 +310,14 @@ export async function downloadOpenverseImage(
   } catch (error: any) {
     return { success: false, error: error?.message || String(error) }
   }
+}
+
+/** 向后兼容：下载图片 */
+export async function downloadOpenverseImage(
+  imageUrl: string,
+  options: { filename?: string } = {}
+): Promise<{ success: boolean; filePath?: string; error?: string }> {
+  return downloadOpenverseFile(imageUrl, { ...options, mediaType: 'image' })
 }
 
 /**
