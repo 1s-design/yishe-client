@@ -18,6 +18,7 @@ import { registerRawpixelCapabilities } from "./rawpixel";
 import { registerDouyinJingxuanCapabilities } from "./douyin-jingxuan";
 import { registerStockSnapCapabilities } from "./stocksnap";
 import { registerOpenverseCapabilities } from "./openverse";
+import { registerNappyCapabilities } from "./nappy";
 import { registerKaboompicsCapabilities } from "./kaboompics";
 import { registerOpenclipartCapabilities } from "./openclipart";
 import { registerUndrawCapabilities } from "./undraw";
@@ -105,6 +106,7 @@ export function registerAllCapabilities(): void {
   registerDouyinJingxuanCapabilities();
   registerStockSnapCapabilities();
   registerOpenverseCapabilities();
+  registerNappyCapabilities();
   registerKaboompicsCapabilities();
   registerOpenclipartCapabilities();
   registerUndrawCapabilities();

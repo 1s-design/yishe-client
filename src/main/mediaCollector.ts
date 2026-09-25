@@ -11,12 +11,13 @@ import { searchWikimedia, downloadWikimediaImage, type WikimediaFile, type Wikim
 import { searchInternetArchive, downloadInternetArchiveFile, type InternetArchiveFile, type InternetArchiveSearchResult } from './internetArchive'
 import { searchPexelsMedia, downloadPexelsMedia, type PexelsMediaResult } from './pexelsMedia'
 import { searchOpenverse, downloadOpenverseFile, type OpenversePhoto, type OpenverseSearchResult } from './openverse'
+import { searchNappy, downloadNappyImage, type NappyPhoto, type NappySearchResult } from './nappy'
 import { generateCosKey, uploadFileToCos } from './cos'
 import { getBackendApiBase, getCurrentAccessToken } from './cos'
 
 // ─── 类型定义 ──────────────────────────────────────────────
 
-export type MediaSource = 'wikimedia' | 'internet-archive' | 'pexels' | 'openverse'
+export type MediaSource = 'wikimedia' | 'internet-archive' | 'openverse' | 'nappy' | 'pexels'
 export type MediaType = 'image' | 'video' | 'audio'
 
 export interface MediaAsset {
@@ -76,6 +77,7 @@ const SOURCES: MediaSourceInfo[] = [
   { key: 'wikimedia', name: 'Wikimedia Commons', supportedTypes: ['image', 'video', 'audio'] },
   { key: 'internet-archive', name: 'Internet Archive', supportedTypes: ['image', 'video', 'audio'] },
   { key: 'openverse', name: 'Openverse', supportedTypes: ['image', 'audio'] },
+  { key: 'nappy', name: 'Nappy', supportedTypes: ['image'] },
   { key: 'pexels', name: 'Pexels', supportedTypes: ['image', 'video'] },
 ]
 
@@ -95,6 +97,8 @@ export async function searchMedia(params: MediaSearchParams): Promise<MediaSearc
     return searchInternetArchiveMedia(query, mediaType, page, pageSize)
   } else if (source === 'openverse') {
     return searchOpenverseMedia(query, mediaType, page, pageSize)
+  } else if (source === 'nappy') {
+    return searchNappyMedia(query, mediaType, page, pageSize)
   } else if (source === 'pexels') {
     return searchPexelsMediaMedia(query, mediaType, page, pageSize)
   }
@@ -279,6 +283,42 @@ async function searchOpenverseMedia(
   }
 }
 
+async function searchNappyMedia(
+  query: string,
+  mediaType: MediaType | undefined,
+  page: number,
+  pageSize: number
+): Promise<MediaSearchResult> {
+  console.log(`[MediaCollect:nappy] 搜索: query="${query}", page=${page}`)
+  const result: NappySearchResult = await searchNappy(query, { page, pageSize })
+  console.log(`[MediaCollect:nappy] 结果: success=${result.success}, count=${result.count}`)
+
+  if (!result.success) {
+    throw new Error(result.error || '搜索失败')
+  }
+
+  const items: MediaAsset[] = result.items.map((f) => ({
+    id: f.id,
+    source: 'nappy' as MediaSource,
+    title: `Nappy ${f.id.slice(0, 8)}`,
+    description: '',
+    mediaType: 'image' as MediaType,
+    mimeType: 'image/jpeg',
+    thumbnailUrl: f.thumbnail,
+    previewUrl: f.url,
+    fileUrl: f.url,
+    license: 'Nappy License (Free for commercial use)',
+  }))
+
+  return {
+    total: 0, // Nappy 不返回总数
+    page,
+    pageSize,
+    items,
+    hasMore: result.hasMore,
+  }
+}
+
 function getMimeType(mime?: string, mediatype?: string): MediaType {
   if (mime?.startsWith('video/') || mediatype === 'movies') return 'video'
   if (mime?.startsWith('audio/') || mediatype === 'audio') return 'audio'
@@ -331,6 +371,10 @@ export async function importMedia(
         const dl = await downloadOpenverseFile(item.fileUrl!, { filename, mediaType: item.mediaType, destDir })
         downloadOk = dl.success
         if (!downloadOk) throw new Error(dl.error || 'Openverse 下载失败')
+      } else if (item.source === 'nappy') {
+        const dl = await downloadNappyImage(item.fileUrl!, { filename, destDir })
+        downloadOk = dl.success
+        if (!downloadOk) throw new Error(dl.error || 'Nappy 下载失败')
       } else if (item.source === 'pexels') {
         await downloadPexelsMedia(item.fileUrl!, destDir, filename)
         downloadOk = true
