@@ -5082,6 +5082,7 @@ function cleanupSocket() {
   transientWsToastCache.clear();
   lastServiceRuntimeEmitCache.clear();
   stopHeartbeat();
+  stopWorkerHeartbeat();
   // 断开连接时停止轮询和配置同步
   stopPsdSetPolling();
   stopPsConfigSync();
@@ -5094,6 +5095,75 @@ function buildQuery() {
     machineCode: identity.machineCode,
     ...(identity.deviceKey ? { deviceKey: identity.deviceKey } : {}),
   };
+}
+
+let workerHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+async function registerAsWorker(targetSocket: Socket) {
+  try {
+    const nativeApi = getNativeApi();
+    const appVersion = (await nativeApi?.getAppVersion?.()) || "1.0.0";
+    const workerId = identity.machineCode
+      ? `electron_${identity.machineCode}`
+      : `electron_${identity.clientId || "client"}`;
+    const workerName = `Electron-${identity.machineCode?.slice(0, 8) || "Desktop"}`;
+
+    let capabilities = [
+      "client.system.info",
+      "client.screen.capture",
+      "client.filesystem.read",
+      "client.filesystem.write",
+      "system.info",
+      "screen.capture_screen",
+    ];
+
+    if (nativeApi?.listWorkerCapabilities) {
+      try {
+        const caps = await nativeApi.listWorkerCapabilities();
+        if (Array.isArray(caps) && caps.length > 0) {
+          capabilities = Array.from(new Set([...capabilities, ...caps]));
+        }
+      } catch (err) {
+        console.warn("[Worker] listWorkerCapabilities 异常:", err);
+      }
+    }
+
+    targetSocket.emit("worker:register", {
+      workerId,
+      workerName,
+      workerType: "electron",
+      capabilities,
+      platform: typeof window !== "undefined" ? window.navigator.platform : "darwin",
+      appVersion,
+      metadata: {
+        machineCode: identity.machineCode,
+        clientId: identity.clientId,
+      },
+    });
+
+    console.log(`[Worker] 已发送 worker:register: workerId=${workerId}, caps=${capabilities.length}`);
+
+    // 启动 Worker 心跳循环 (每 20 秒)
+    if (workerHeartbeatTimer) clearInterval(workerHeartbeatTimer);
+    workerHeartbeatTimer = setInterval(() => {
+      if (targetSocket.connected) {
+        targetSocket.emit("worker:heartbeat", {
+          workerId,
+          status: "online",
+          capabilities,
+        });
+      }
+    }, 20_000);
+  } catch (e) {
+    console.error("[Worker] 注册 Worker 异常:", e);
+  }
+}
+
+function stopWorkerHeartbeat() {
+  if (workerHeartbeatTimer) {
+    clearInterval(workerHeartbeatTimer);
+    workerHeartbeatTimer = null;
+  }
 }
 
 function bindSocketEvents(currentSocket: Socket) {
@@ -5130,6 +5200,8 @@ function bindSocketEvents(currentSocket: Socket) {
     startClientAgentConfigSync();
     // WebSocket 重连后重新拉取平台任务自动执行配置，避免断连期间遗漏事件
     void syncPlatformAutoDispatchConfig();
+    // 注册成为 Agent Run Worker 节点并启动心跳
+    void registerAsWorker(currentSocket);
   });
 
   currentSocket.on("disconnect", (reason) => {
@@ -5151,6 +5223,7 @@ function bindSocketEvents(currentSocket: Socket) {
       });
     }
     stopHeartbeat();
+    stopWorkerHeartbeat();
     updateState({
       status: intentionalDisconnect ? "disconnected" : "error",
       lastError: reason || null,
@@ -5413,6 +5486,177 @@ function bindSocketEvents(currentSocket: Socket) {
       timestamp: new Date().toISOString(),
       originalData: data,
     });
+  });
+
+  // ── Agent Run Worker 协议 ───────────────────────────────────
+
+  currentSocket.on("worker:registered", (data: any) => {
+    console.log("[Worker] 注册成功回执:", data);
+    emitter.emit("log", {
+      level: "info",
+      message: `[ws] worker registered successfully: ${data?.workerId}`,
+    });
+  });
+
+  currentSocket.on("worker:heartbeat-ack", () => {
+    // 心跳成功回执
+  });
+
+  currentSocket.on("worker:task", async (task: any) => {
+    const taskId = task?.taskId;
+    const capabilityId = task?.capabilityId || "";
+    console.log(`[Worker] 收到来自服务端的执行任务: taskId=${taskId} capability=${capabilityId}`, task);
+    emitter.emit("log", {
+      level: "info",
+      message: `[ws] worker task received: ${taskId} (${capabilityId})`,
+    });
+
+    const startTime = Date.now();
+    const nativeApi = getNativeApi();
+    const electronApi = typeof window !== "undefined" ? (window as any).electron : undefined;
+
+    const mergedArgs = { ...(task?.inputs || {}), ...(task?.params || {}) };
+    if (mergedArgs.encoding && typeof mergedArgs.encoding === "string") {
+      mergedArgs.encoding = mergedArgs.encoding.replace("-", "").toLowerCase();
+    }
+
+    try {
+      let result: any = null;
+
+      // 路径 1: 如果已注入 executeWorkerTask
+      if (typeof nativeApi?.executeWorkerTask === "function") {
+        try {
+          result = await nativeApi.executeWorkerTask(task);
+        } catch (e: any) {
+          console.warn("[Worker] executeWorkerTask 尝试失败，尝试 fallback:", e);
+        }
+      }
+
+      // 路径 2: 如果存在 electron.ipcRenderer.invoke
+      if (!result && typeof electronApi?.ipcRenderer?.invoke === "function") {
+        try {
+          result = await electronApi.ipcRenderer.invoke("worker:execute-task", task);
+        } catch (e: any) {
+          console.warn("[Worker] ipcRenderer invoke worker:execute-task 尝试失败:", e);
+        }
+      }
+
+      // 路径 3: 映射到本地已有的 CapabilityRegistry (通过 executeCapability)
+      if (!result && typeof nativeApi?.executeCapability === "function") {
+        const CAPABILITY_MAPPINGS: Record<string, { namespace: string; name: string }> = {
+          "client.system.info": { namespace: "system", name: "info" },
+          "system.info": { namespace: "system", name: "info" },
+          "client.system.screen": { namespace: "system", name: "screen_info" },
+          "system.screen": { namespace: "system", name: "screen_info" },
+          "client.screen.capture": { namespace: "screen", name: "capture_screen" },
+          "screen.capture": { namespace: "screen", name: "capture_screen" },
+          "screen.capture_screen": { namespace: "screen", name: "capture_screen" },
+          "client.filesystem.read": { namespace: "filesystem", name: "file_read" },
+          "filesystem.read": { namespace: "filesystem", name: "file_read" },
+          "filesystem.file_read": { namespace: "filesystem", name: "file_read" },
+          "client.filesystem.write": { namespace: "filesystem", name: "file_write" },
+          "filesystem.write": { namespace: "filesystem", name: "file_write" },
+          "filesystem.file_write": { namespace: "filesystem", name: "file_write" },
+        };
+
+        let target = CAPABILITY_MAPPINGS[capabilityId];
+        if (!target) {
+          const stripped = capabilityId.replace(/^client\./, "");
+          const dotIdx = stripped.indexOf(".");
+          if (dotIdx !== -1) {
+            target = {
+              namespace: stripped.substring(0, dotIdx),
+              name: stripped.substring(dotIdx + 1),
+            };
+          }
+        }
+
+        if (target) {
+          try {
+            console.log(`[Worker] 调用本地 Capability: ${target.namespace}.${target.name}`, mergedArgs);
+            const capRes = await nativeApi.executeCapability(target.namespace, target.name, mergedArgs);
+            console.log(`[Worker] 本地 Capability 执行返回:`, capRes);
+            if (capRes && (capRes.success !== false && capRes.ok !== false)) {
+              result = {
+                success: true,
+                output: capRes.data ?? capRes.output ?? capRes,
+                logs: [`[Worker] 本地能力 ${target.namespace}.${target.name} 执行成功`],
+              };
+            } else {
+              result = {
+                success: false,
+                error: capRes?.error || capRes?.message || "Capability 执行失败",
+                logs: [`[Worker] 本地能力执行报错: ${capRes?.error || capRes?.message}`],
+              };
+            }
+          } catch (e: any) {
+            console.warn("[Worker] executeCapability 异常:", e);
+          }
+        }
+      }
+
+      // 路径 4: 回退到 MCP 工具
+      if (!result && typeof nativeApi?.callMcpTool === "function") {
+        try {
+          const toolName = capabilityId.replace(/^client\./, "");
+          const mcpRes = await nativeApi.callMcpTool(toolName, mergedArgs, {
+            runId: task?.runId,
+          });
+          if (mcpRes?.isError) {
+            const errText = mcpRes.content?.map((c: any) => c.text).join("; ") || "MCP 执行失败";
+            result = { success: false, error: errText };
+          } else {
+            let parsedData: any = {};
+            try {
+              const textContent = mcpRes.content?.find((c: any) => c.type === "text")?.text;
+              parsedData = textContent ? JSON.parse(textContent) : mcpRes;
+            } catch {
+              parsedData = mcpRes;
+            }
+            result = {
+              success: true,
+              output: parsedData,
+              logs: [`[Worker] MCP 工具 ${toolName} 执行成功`],
+            };
+          }
+        } catch (e: any) {
+          console.warn("[Worker] MCP 工具调用异常:", e);
+        }
+      }
+
+      if (!result) {
+        console.error(`[Worker] 未能找到任何执行器来处理能力: ${capabilityId}`);
+        currentSocket.emit("worker:result", {
+          taskId,
+          success: false,
+          error: `客户端未找到可用的执行通道来执行能力: ${capabilityId}`,
+          errorCode: "NO_EXECUTOR",
+          logs: [`[Worker] 客户端缺少 capability=${capabilityId} 的可用执行器`],
+        });
+        return;
+      }
+
+      const durationMs = Date.now() - startTime;
+      console.log(`[Worker] 任务 ${taskId} 执行完毕: success=${result.success} (${durationMs}ms)`, result);
+
+      currentSocket.emit("worker:result", {
+        taskId,
+        success: !!result.success,
+        output: result.output ?? result.data ?? {},
+        error: result.error,
+        errorCode: result.success ? undefined : (result.errorCode || "WORKER_FAILED"),
+        logs: result.logs || [`[Worker] 任务执行完成 (耗时 ${durationMs}ms)`],
+      });
+    } catch (err: any) {
+      console.error(`[Worker] 任务 ${taskId} 异常:`, err);
+      currentSocket.emit("worker:result", {
+        taskId,
+        success: false,
+        error: err?.message || String(err),
+        errorCode: "WORKER_EXCEPTION",
+        logs: [`[Worker 异常] ${err?.message || err}`],
+      });
+    }
   });
 
   // MCP 工具调用：服务端请求客户端执行本地 MCP 工具

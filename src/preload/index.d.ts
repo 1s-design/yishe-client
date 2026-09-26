@@ -477,6 +477,13 @@ declare global {
           inputSchema: Record<string, any>;
         }>
       >;
+      executeWorkerTask(task: any): Promise<{
+        success: boolean;
+        output?: Record<string, any>;
+        error?: string;
+        logs?: string[];
+      }>;
+      listWorkerCapabilities(): Promise<string[]>;
       // Agent 配置同步
       setAgentConfig(config: {
         keyId: number | null;

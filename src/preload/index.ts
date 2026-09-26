@@ -269,6 +269,11 @@ const api = {
     context?: { sessionId?: string; runId?: string },
   ) => ipcRenderer.invoke("mcp:call-tool", toolName, toolArgs, context),
   listMcpTools: () => ipcRenderer.invoke("mcp:list-tools"),
+  // Agent Run Worker 执行与能力列表
+  executeWorkerTask: (task: any) =>
+    ipcRenderer.invoke("worker:execute-task", task),
+  listWorkerCapabilities: () =>
+    ipcRenderer.invoke("worker:list-capabilities"),
   // Agent 配置同步
   setAgentConfig: (config: {
     keyId: number | null;

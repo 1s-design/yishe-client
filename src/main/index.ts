@@ -1717,6 +1717,133 @@ app.whenReady().then(() => {
     }
   });
 
+  // ── Agent Run Worker 任务执行 IPC ──────────────────────────────────────
+  ipcMain.handle(
+    "worker:execute-task",
+    async (
+      _event,
+      task: {
+        taskId: string;
+        runId?: string;
+        stageIndex?: number;
+        capabilityId: string;
+        name?: string;
+        params?: Record<string, any>;
+        inputs?: Record<string, any>;
+      },
+    ) => {
+      const startTime = Date.now();
+      const capabilityId = task?.capabilityId || "";
+      const params = task?.params || {};
+      const inputs = task?.inputs || {};
+      const mergedArgs = { ...inputs, ...params };
+
+      console.log(`[Worker IPC] 收到任务调度: ${task?.taskId} (${capabilityId})`, { mergedArgs });
+      writeMainLog("INFO", "Worker 任务开始执行", {
+        taskId: task?.taskId,
+        capabilityId,
+        params,
+      });
+
+      try {
+        const { CapabilityRegistry } = await import("./capabilities/registry");
+
+        // 规范化名称与别名映射
+        const CAPABILITY_ALIASES: Record<string, string> = {
+          "client.system.info": "system.info",
+          "client.screen.capture": "screen.capture_screen",
+          "client.filesystem.read": "filesystem.read_file",
+          "client.filesystem.write": "filesystem.write_file",
+          "screen.capture": "screen.capture_screen",
+          "system.info": "system.info",
+          "system.screen": "system.screen_info",
+        };
+
+        const targetName = CAPABILITY_ALIASES[capabilityId] || capabilityId.replace(/^client\./, "");
+        const dotIndex = targetName.indexOf(".");
+
+        let result: any = null;
+        if (dotIndex !== -1) {
+          const namespace = targetName.substring(0, dotIndex);
+          const action = targetName.substring(dotIndex + 1);
+          const definition = CapabilityRegistry.getDefinition(namespace, action);
+          if (definition) {
+            result = await CapabilityRegistry.call(namespace, action, mergedArgs);
+          }
+        }
+
+        // 如果 CapabilityRegistry 没有找到对应定义，回退到 MCP 工具
+        if (!result) {
+          const { callMcpTool } = await getMcpServerModule();
+          const mcpRes = await callMcpTool(targetName, mergedArgs, {
+            runId: task?.runId,
+          });
+          if (mcpRes?.isError) {
+            const errText = mcpRes.content?.map((c) => c.text).join("; ") || "MCP 执行失败";
+            result = { success: false, error: errText };
+          } else {
+            let parsedData: any = {};
+            try {
+              const textContent = mcpRes.content?.find((c) => c.type === "text")?.text;
+              parsedData = textContent ? JSON.parse(textContent) : mcpRes;
+            } catch {
+              parsedData = mcpRes;
+            }
+            result = { success: true, data: parsedData };
+          }
+        }
+
+        const durationMs = Date.now() - startTime;
+        console.log(`[Worker IPC] 任务 ${task?.taskId} 执行完毕: success=${result?.success} (${durationMs}ms)`);
+        writeMainLog(result?.success ? "INFO" : "ERROR", "Worker 任务执行完成", {
+          taskId: task?.taskId,
+          capabilityId,
+          success: result?.success,
+          durationMs,
+        });
+
+        return {
+          success: !!result?.success,
+          output: result?.data ?? result?.output ?? {},
+          error: result?.error,
+          logs: [
+            `[Worker] 执行能力 ${capabilityId} (${targetName}) 耗时 ${durationMs}ms`,
+            result?.error ? `[Worker 错误] ${result?.error}` : `[Worker] 结果状态: 成功`,
+          ],
+        };
+      } catch (err: any) {
+        const durationMs = Date.now() - startTime;
+        console.error(`[Worker IPC] 任务 ${task?.taskId} 异常:`, err);
+        writeMainLog("ERROR", "Worker 任务执行异常", {
+          taskId: task?.taskId,
+          capabilityId,
+          error: err?.message || String(err),
+        });
+        return {
+          success: false,
+          error: err?.message || String(err),
+          logs: [`[Worker 异常] ${err?.message || err}`],
+        };
+      }
+    },
+  );
+
+  ipcMain.handle("worker:list-capabilities", async () => {
+    try {
+      const { CapabilityRegistry } = await import("./capabilities/registry");
+      const localCaps = CapabilityRegistry.list().map((c) => `${c.namespace}.${c.name}`);
+      return [
+        "client.system.info",
+        "client.screen.capture",
+        "client.filesystem.read",
+        "client.filesystem.write",
+        ...localCaps,
+      ];
+    } catch {
+      return ["client.system.info", "client.screen.capture", "client.filesystem.read"];
+    }
+  });
+
   // 退出确认IPC处理器
   ipcMain.handle("confirm-exit", async () => {
     if (!mainWindow) return "cancel";
