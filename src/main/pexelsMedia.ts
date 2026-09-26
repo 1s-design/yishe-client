@@ -68,12 +68,9 @@ export async function searchPexelsMedia(
   const mediaType = options.mediaType || 'image'
 
   try {
-    // 视频搜索
     if (mediaType === 'video') {
       return await searchPexelsVideos(keyword, page, limit)
     }
-
-    // 图片搜索
     return await searchPexelsImages(keyword, page, limit)
   } catch (error: any) {
     console.error(`[Pexels] 搜索失败: ${error?.message || error}`)
@@ -102,7 +99,6 @@ async function searchPexelsImages(
   const items: PexelsMediaItem[] = []
   let totalResults = 0
 
-  // 抓取网页 HTML（无需 API Key）
   const searchUrl = `https://www.pexels.com/search/${encodeURIComponent(keyword)}/?page=${page}`
   try {
     const res = await fetchFn(searchUrl, {
@@ -115,7 +111,6 @@ async function searchPexelsImages(
     })
     const html = await res.text()
 
-    // 解析 NEXT_DATA JSON
     const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s)
     if (nextDataMatch) {
       try {
@@ -148,7 +143,6 @@ async function searchPexelsImages(
       }
     }
 
-    // 回退：正则解析图片 URL
     if (items.length === 0) {
       const imgRegex = /https:\/\/images\.pexels\.com\/photos\/(\d+)\/pexels-photo-\1\.jpeg[^\s"'\)]*/g
       let match: RegExpExecArray | null
@@ -200,7 +194,6 @@ async function searchPexelsVideos(
   const items: PexelsMediaItem[] = []
   let totalResults = 0
 
-  // 抓取视频网页 HTML（无需 API Key）
   const searchUrl = `https://www.pexels.com/search/videos/${encodeURIComponent(keyword)}/?page=${page}`
   try {
     const res = await fetchFn(searchUrl, {
@@ -213,7 +206,6 @@ async function searchPexelsVideos(
     })
     const html = await res.text()
 
-    // 解析 NEXT_DATA JSON
     const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s)
     if (nextDataMatch) {
       try {
@@ -293,7 +285,16 @@ export async function downloadPexelsMedia(
     fs.mkdirSync(destDir, { recursive: true })
   }
 
-  const name = filename || `pexels-${Date.now()}.mp4`
+  // 推断扩展名
+  const contentType = res.headers.get('content-type') || ''
+  let ext = '.jpg'
+  if (contentType.includes('video/mp4')) ext = '.mp4'
+  else if (contentType.includes('video/webm')) ext = '.webm'
+  else if (contentType.includes('png')) ext = '.png'
+  else if (contentType.includes('webp')) ext = '.webp'
+
+  const baseName = filename || `pexels-${Date.now()}`
+  const name = baseName.endsWith(ext) ? baseName : `${baseName}${ext}`
   const filePath = join(destDir, name)
   fs.writeFileSync(filePath, buffer)
   return filePath

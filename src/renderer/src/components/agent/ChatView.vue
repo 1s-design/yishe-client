@@ -351,6 +351,27 @@
                   </Tool>
                 </div>
 
+                <!-- Agent Run Stage 进度 -->
+                <div
+                  v-if="getRunStages(getMessageRunId(message.id)).length"
+                  class="agent-run-stages"
+                >
+                  <div class="agent-run-stages__header">
+                    <span class="mdi mdi-pipeline" />
+                    <span>执行管线</span>
+                  </div>
+                  <div
+                    v-for="stage in getRunStages(getMessageRunId(message.id))"
+                    :key="stage.stageIndex"
+                    class="agent-run-stage"
+                    :class="`is-${stage.status}`"
+                  >
+                    <span class="agent-run-stage__dot" />
+                    <span class="agent-run-stage__name">{{ stage.name }}</span>
+                    <span class="agent-run-stage__status">{{ stageStatusText(stage.status) }}</span>
+                  </div>
+                </div>
+
                 <MessageContent class="agent-assistant-message">
                   <MessageResponse
                     v-if="message.content"
@@ -467,10 +488,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import type { AttachmentData, ChatMessage } from "../../types/agent";
 import { getPlatformColor, getPlatformLabel } from "../../config/platform-colors";
 import { publishConfigApi, type PublishConfig } from "../../api/publishConfig";
+import { useAgent } from "../../composables/useAgent";
 import {
   Attachment,
   AttachmentInfo,
@@ -527,6 +549,14 @@ const emit = defineEmits<{
 const inputText = ref("");
 const attachedFiles = ref<AttachmentData[]>([]);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+
+// Agent Run Engine Stage 进度
+const { getRunStages, stageStatusText, messageRunIdMap } = useAgent();
+
+/** 获取消息关联的 Agent Run ID */
+function getMessageRunId(messageId: string): string | undefined {
+  return messageRunIdMap.value.get(messageId);
+}
 
 const suggestions = [
   {
@@ -1193,6 +1223,74 @@ function handlePaste(event: ClipboardEvent) {
   flex-direction: column;
   gap: 10px;
   margin: 0 0 18px;
+}
+
+/* ── Agent Run Stage Progress ── */
+.agent-run-stages {
+  margin: 0 8px 12px;
+  padding: 8px 12px;
+  background: var(--agent-surface);
+  border: 1px solid var(--agent-border-soft);
+  border-radius: 11px;
+}
+
+.agent-run-stages__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--agent-text);
+}
+
+.agent-run-stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.agent-run-stage__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--agent-muted);
+}
+
+.agent-run-stage.is-running .agent-run-stage__dot {
+  background: #d97706;
+  animation: agent-stage-pulse 1.2s ease-in-out infinite;
+}
+
+.agent-run-stage.is-success .agent-run-stage__dot {
+  background: #059669;
+}
+
+.agent-run-stage.is-failed .agent-run-stage__dot,
+.agent-run-stage.is-timeout .agent-run-stage__dot {
+  background: #dc2626;
+}
+
+.agent-run-stage.is-waiting .agent-run-stage__dot {
+  background: #6366f1;
+}
+
+.agent-run-stage__name {
+  flex: 1;
+  color: var(--agent-text);
+}
+
+.agent-run-stage__status {
+  font-size: 11px;
+  color: var(--agent-muted);
+}
+
+@keyframes agent-stage-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .agent-tool {

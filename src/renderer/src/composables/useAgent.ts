@@ -6,6 +6,7 @@ import type {
   ChatSession,
   ToolCallItem,
 } from "../types/agent";
+import { websocketClient } from "../services/websocketClient";
 
 interface StreamPayload {
   runId: string;
@@ -24,6 +25,92 @@ const streamingToolCalls = ref<ToolCallItem[]>([]);
 const currentAssistantMessageId = ref<string | null>(null);
 const activeRunId = ref<string | null>(null);
 let abortController: AbortController | null = null;
+
+// ── Agent Run Engine Stage 进度 ──
+
+export interface AgentRunStageProgress {
+  stageIndex: number;
+  capabilityId: string;
+  name: string;
+  status: "pending" | "running" | "success" | "failed" | "timeout" | "waiting";
+  output?: Record<string, any>;
+  error?: string;
+}
+
+/** Run ID → Stage 进度列表 */
+const agentRunStages = ref<Map<string, AgentRunStageProgress[]>>(new Map());
+
+/** 消息 ID → Agent Run ID 的关联 */
+const messageRunIdMap = ref<Map<string, string>>(new Map());
+
+let agentRunSubscribed = false;
+
+function subscribeAgentRunEvents() {
+  if (agentRunSubscribed) return;
+  agentRunSubscribed = true;
+  websocketClient.events.on("agent-run-event", (event) => {
+    const { type, runId, data } = event || {};
+    if (!runId) return;
+
+    switch (type) {
+      case "run.started":
+        activeRunId.value = runId;
+        agentRunStages.value.set(runId, []);
+        break;
+      case "run.stage.started": {
+        const stages = agentRunStages.value.get(runId) || [];
+        stages.push({
+          stageIndex: data?.stageIndex ?? stages.length,
+          capabilityId: data?.capabilityId || "",
+          name: data?.name || `Stage ${stages.length}`,
+          status: "running",
+        });
+        agentRunStages.value.set(runId, stages);
+        break;
+      }
+      case "run.stage.completed": {
+        const stages = agentRunStages.value.get(runId) || [];
+        const stage = stages.find((s) => s.stageIndex === data?.stageIndex);
+        if (stage) {
+          stage.status = "success";
+          stage.output = data?.output;
+        }
+        break;
+      }
+      case "run.stage.failed":
+      case "run.stage.timeout": {
+        const stages = agentRunStages.value.get(runId) || [];
+        const stage = stages.find((s) => s.stageIndex === data?.stageIndex);
+        if (stage) {
+          stage.status = type === "run.stage.timeout" ? "timeout" : "failed";
+          stage.error = data?.error;
+        }
+        break;
+      }
+      case "run.success":
+      case "run.failed":
+        agentRunStages.value.delete(runId);
+        break;
+    }
+  });
+}
+
+function getRunStages(runId: string | undefined): AgentRunStageProgress[] {
+  if (!runId) return [];
+  return agentRunStages.value.get(runId) || [];
+}
+
+function stageStatusText(status: string): string {
+  const map: Record<string, string> = {
+    pending: "等待中",
+    running: "执行中",
+    success: "完成",
+    failed: "失败",
+    timeout: "超时",
+    waiting: "待审批",
+  };
+  return map[status] || status;
+}
 
 function id(prefix = "id") {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -486,6 +573,10 @@ async function sendMessage(
   const runId = id("run");
   activeRunId.value = runId;
   currentAssistantMessageId.value = assistantMessage.id;
+  // 关联消息 ID → runId（用于 Stage 进度展示）
+  messageRunIdMap.value.set(assistantMessage.id, runId);
+  // 确保 WebSocket 事件已订阅
+  subscribeAgentRunEvents();
   isStreaming.value = true;
   streamingContent.value = "";
   streamingReasoning.value = "";
@@ -629,6 +720,10 @@ export function useAgent() {
     streamingContent,
     streamingReasoning,
     streamingToolCalls,
+    agentRunStages,
+    getRunStages,
+    stageStatusText,
+    messageRunIdMap,
     createSession,
     setActiveSession,
     deleteSession,

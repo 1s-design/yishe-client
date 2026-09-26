@@ -4,6 +4,7 @@
  * 网站: https://nappy.co
  */
 
+import { getFetchImpl } from './common/fetch'
 import fs from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
@@ -32,27 +33,6 @@ export interface NappySearchResult {
   error?: string
 }
 
-// ─── fetch 实现 ───
-let fetchImplPromise: Promise<typeof fetch> | null = null
-
-async function getFetchImpl(): Promise<typeof fetch> {
-  if (!fetchImplPromise) {
-    fetchImplPromise = (async () => {
-      try {
-        const electron = await import('electron')
-        const net = electron.net
-        if (net && typeof (net as any).fetch === 'function') {
-          return (net as any).fetch.bind(net) as typeof fetch
-        }
-      } catch {
-        // non-electron env
-      }
-      return fetch
-    })()
-  }
-  return fetchImplPromise
-}
-
 /**
  * 搜索 Nappy.co 图片
  */
@@ -66,6 +46,7 @@ export async function searchNappy(
   }
 
   const page = Math.max(Number(options.page) || 1, 1)
+  const pageSize = Math.min(Math.max(Number(options.pageSize) || 20, 1), 100)
 
   try {
     const fetchFn = await getFetchImpl()
@@ -83,13 +64,22 @@ export async function searchNappy(
 
     const html = await res.text()
 
-    // 提取图片 URL
+    // 提取图片 URL 和尺寸
     const imageRegex = /https:\/\/images\.nappy\.co\/photo\/[^"'?\s]+\.(?:jpg|jpeg|png|webp)/gi
     const matches = html.match(imageRegex) || []
+
+    // 尝试提取宽高（从 data-* 属性或 img 标签）
+    const sizeRegex = /data-(?:width|height)="(\d+)"/gi
+    const sizes: number[] = []
+    let sizeMatch: RegExpExecArray | null
+    while ((sizeMatch = sizeRegex.exec(html)) !== null) {
+      sizes.push(parseInt(sizeMatch[1], 10))
+    }
 
     // 去重
     const seen = new Set<string>()
     const photos: NappyPhoto[] = []
+    let sizeIdx = 0
 
     for (const url of matches) {
       // 去掉查询参数，提取 id
@@ -102,15 +92,21 @@ export async function searchNappy(
       if (seen.has(id)) continue
       seen.add(id)
 
+      const width = sizes[sizeIdx] || undefined
+      const height = sizes[sizeIdx + 1] || undefined
+      sizeIdx += 2
+
       photos.push({
         id,
         url: cleanUrl,
         thumbnail: cleanUrl,
+        width,
+        height,
       })
     }
 
-    // 如果有图片，假设还有下一页（Nappy 不返回总数）
-    const hasMore = photos.length > 0
+    // Nappy 不返回总数，根据返回数量判断是否有下一页（与 Openverse 一致）
+    const hasMore = photos.length >= pageSize
 
     return {
       success: true,
@@ -131,7 +127,7 @@ export async function searchNappy(
  */
 export async function downloadNappyImage(
   imageUrl: string,
-  options: { filename?: string; destDir?: string } = {}
+  options: { filename?: string; destDir: string }
 ): Promise<{ success: boolean; filePath?: string; error?: string }> {
   if (!/^https?:\/\//.test(imageUrl)) {
     return { success: false, error: `无效地址: ${imageUrl}` }
@@ -152,7 +148,7 @@ export async function downloadNappyImage(
     const arrayBuffer = await r.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
-    const saveDir = options.destDir || join(app.getPath('userData'), 'nappy-downloads')
+    const saveDir = options.destDir
     if (!fs.existsSync(saveDir)) {
       fs.mkdirSync(saveDir, { recursive: true })
     }
@@ -164,9 +160,10 @@ export async function downloadNappyImage(
 
     const fileName = options.filename
       ? sanitizeName(options.filename)
-      : `nappy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`
+      : `nappy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
-    const filePath = join(saveDir, fileName.endsWith(ext) ? fileName : `${fileName}${ext}`)
+    const safeName = fileName.endsWith(ext) ? fileName : `${fileName}${ext}`
+    const filePath = join(saveDir, safeName)
     fs.writeFileSync(filePath, buffer)
 
     return { success: true, filePath }

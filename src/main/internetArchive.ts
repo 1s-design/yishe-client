@@ -1,4 +1,5 @@
 /**
+import { getFetchImpl } from './common/fetch'
  * Internet Archive 媒体采集
  * 搜索: https://archive.org/advancedsearch.php
  * 元数据: https://archive.org/metadata/{identifier}
@@ -84,7 +85,7 @@ export async function searchInternetArchive(
 
   try {
     const url = `${SEARCH_API}?${params.toString()}`
-    const r = await fetch(url, {
+    const r = await (await getFetchImpl())(url, {
       headers: { 'User-Agent': USER_AGENT },
     })
 
@@ -143,7 +144,7 @@ export async function searchInternetArchive(
 async function getMetadata(identifier: string): Promise<any> {
   try {
     const url = `${METADATA_API}/${identifier}`
-    const r = await fetch(url, {
+    const r = await (await getFetchImpl())(url, {
       headers: { 'User-Agent': USER_AGENT },
     })
     if (!r.ok) return null
@@ -247,7 +248,7 @@ export async function downloadInternetArchiveFile(
     throw new Error(`无效的文件地址: ${fileUrl}`)
   }
 
-  const r = await fetch(fileUrl, {
+  const r = await (await getFetchImpl())(fileUrl, {
     headers: { 'User-Agent': USER_AGENT },
   })
 

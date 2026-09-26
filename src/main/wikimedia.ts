@@ -10,6 +10,7 @@ import fs from 'fs'
 import { join } from 'path'
 import { checkSiteAvailability } from './siteAvailability'
 import { uploadToMaterialLibrary as uploadToMaterialLibraryShared } from './materialLibrary'
+import { getFetchImpl } from './common/fetch'
 
 const WIKIMEDIA_API_URL = 'https://commons.wikimedia.org/w/api.php'
 const WIKIMEDIA_SITE_URL = 'https://commons.wikimedia.org/'
@@ -489,28 +490,6 @@ function guessExtFromUrl(url: string): string {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-// ─── fetch 实现选择与重试 (Electron 优先 net/fetch 走系统栈，更稳) ───
-
-let fetchImplPromise: Promise<typeof fetch> | null = null
-
-async function getFetchImpl(): Promise<typeof fetch> {
-  if (!fetchImplPromise) {
-    fetchImplPromise = (async () => {
-      try {
-        const electron = await import('electron')
-        const net = electron.net
-        if (net && typeof (net as any).fetch === 'function') {
-          return (net as any).fetch.bind(net) as typeof fetch
-        }
-      } catch {
-        // 非 Electron 环境
-      }
-      return fetch
-    })()
-  }
-  return fetchImplPromise
 }
 
 /**

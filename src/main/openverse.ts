@@ -9,6 +9,7 @@ import { join } from 'path'
 import { app } from 'electron'
 import { uploadFileToCos, generateCosKey } from './cos'
 import { checkSiteAvailability } from './siteAvailability'
+import { getFetchImpl } from './common/fetch'
 
 const OPENVERSE_SITE_URL = 'https://openverse.org/'
 const OPENVERSE_IMAGE_API = 'https://api.openverse.org/v1/images/'
@@ -171,14 +172,14 @@ export async function searchOpenverse(
       success: true,
       query: keyword,
       count: finalPhotos.length,
-      total: 0, // 不返回总数
+      total: 0,
       items: finalPhotos,
-      links: finalPhotos.map((p) => p.image).filter(Boolean),
+      links: finalPhotos.map((p) => p.url || p.image),
       page,
       nextPage: hasMore ? page + 1 : null,
     }
   } catch (error: any) {
-    console.error(`[Openverse] 搜索异常:`, error?.message || String(error))
+    console.error('[Openverse] 搜索失败:', error?.message || String(error))
     return {
       success: false,
       query: keyword,
@@ -192,65 +193,61 @@ export async function searchOpenverse(
   }
 }
 
-/**
- * 标准化 Openverse API 项
- * mediaType: 'image' | 'audio'
- */
-function normalizeOpenversePhoto(item: any, mediaType: OpenverseMediaType = 'image'): OpenversePhoto | null {
+/** 标准化 Openverse 图片/音频数据 */
+function normalizeOpenversePhoto(item: any, mediaType: OpenverseMediaType): OpenversePhoto | null {
   if (!item) return null
-  const id = String(item.id || item.uuid || Math.random().toString(36).slice(2, 10))
+  try {
+    const id = String(item.id || '')
+    const title = item.title || item.name || ''
+    const description = item.description || ''
+    const creator = item.creator || item.author || ''
+    const license_ = item.license || item.license_version || ''
+    const licenseVersion = item.license_version || ''
+    const licenseUrl = item.license_url || ''
+    const provider = item.provider || item.source || ''
+    const source = item.source || ''
+    const tags = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '')
+    const width = item.width || null
+    const height = item.height || null
 
-  let image = item.url || item.image || item.imageUrl || ''
-  let thumbnail = item.thumbnail || item.preview || image
+    let image = ''
+    let thumbnail = ''
+    let fileUrl = ''
 
-  if (typeof image === 'string' && image.startsWith('//')) {
-    image = `https:${image}`
-  }
-  if (typeof thumbnail === 'string' && thumbnail.startsWith('//')) {
-    thumbnail = `https:${thumbnail}`
-  }
+    if (mediaType === 'audio') {
+      // 音频字段
+      image = item.audio_url || item.url || ''
+      thumbnail = item.thumbnail || ''
+      fileUrl = item.audio_url || item.url || ''
+      return {
+        id, title, description, image, thumbnail, downloadUrl: fileUrl,
+        link: item.foreign_landing_url || '', url: fileUrl,
+        width: null, height: null,
+        author: creator, license: license_, licenseVersion, licenseUrl,
+        provider, source, isFree: true, tags,
+        mediaType: 'audio',
+        duration: item.duration || null,
+        fileSize: item.filesize || null,
+        waveformUrl: item.waveform || '',
+        bitRate: item.bit_rate || null,
+        sampleRate: item.sample_rate || null,
+      }
+    }
 
-  if (!image) return null
+    // 图片字段
+    image = item.url || item.thumbnail || ''
+    thumbnail = item.thumbnail || item.url || ''
+    fileUrl = item.url || ''
 
-  const title = item.title || item.name || item.alt || `Openverse #${id.slice(0, 8)}`
-  const mediaPath = mediaType === 'audio' ? 'audio' : 'image'
-  let link = item.foreign_landing_url || item.detail_url || item.url || `https://openverse.org/${mediaPath}/${id}`
-  if (typeof link === 'string' && link.startsWith('/')) {
-    link = `https://openverse.org${link}`
-  }
-
-  const tagsArr = Array.isArray(item.tags)
-    ? item.tags.map((t: any) => (typeof t === 'string' ? t : t.name)).filter(Boolean)
-    : []
-
-  const licenseCode = (item.license || 'CC').toUpperCase()
-  const licenseVer = item.license_version ? ` ${item.license_version}` : ''
-
-  return {
-    id,
-    title,
-    description: item.description || tagsArr.slice(0, 5).join(', ') || '',
-    image,
-    thumbnail: thumbnail || image,
-    downloadUrl: image,
-    link,
-    url: link,
-    width: item.width || null,
-    height: item.height || null,
-    author: item.creator || item.author || 'Openverse Contributor',
-    license: `${licenseCode}${licenseVer}`,
-    licenseVersion: item.license_version || '',
-    licenseUrl: item.license_url || 'https://creativecommons.org/',
-    provider: item.provider || item.source || 'Openverse',
-    source: item.source || item.provider || 'Openverse',
-    isFree: true,
-    tags: tagsArr.join(', '),
-    mediaType,
-    duration: item.duration || null,
-    fileSize: item.file_size || item.fileSize || null,
-    waveformUrl: item.waveform_url || item.waveformUrl || null,
-    bitRate: item.bit_rate || item.bitRate || null,
-    sampleRate: item.sample_rate || item.sampleRate || null,
+    return {
+      id, title, description, image, thumbnail, downloadUrl: fileUrl,
+      link: item.foreign_landing_url || '', url: fileUrl,
+      width, height,
+      author: creator, license: license_, licenseVersion, licenseUrl,
+      provider, source, isFree: true, tags,
+    }
+  } catch {
+    return null
   }
 }
 
@@ -259,7 +256,7 @@ function normalizeOpenversePhoto(item: any, mediaType: OpenverseMediaType = 'ima
  */
 export async function downloadOpenverseFile(
   fileUrl: string,
-  options: { filename?: string; mediaType?: OpenverseMediaType; destDir?: string } = {}
+  options: { filename?: string; mediaType?: OpenverseMediaType; destDir: string }
 ): Promise<{ success: boolean; filePath?: string; error?: string }> {
   if (!/^https?:\/\//.test(fileUrl)) {
     return { success: false, error: `无效地址: ${fileUrl}` }
@@ -280,10 +277,7 @@ export async function downloadOpenverseFile(
     const arrayBuffer = await r.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
-    // 优先使用传入的 destDir，否则用默认下载目录
     const saveDir = options.destDir
-      ? options.destDir
-      : join(app.getPath('userData'), 'openverse-downloads')
     if (!fs.existsSync(saveDir)) {
       fs.mkdirSync(saveDir, { recursive: true })
     }
@@ -301,9 +295,10 @@ export async function downloadOpenverseFile(
 
     const fileName = options.filename
       ? sanitizeName(options.filename)
-      : `openverse_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`
+      : `openverse_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
-    const filePath = join(saveDir, fileName.endsWith(ext) ? fileName : `${fileName}${ext}`)
+    const safeName = fileName.endsWith(ext) ? fileName : `${fileName}${ext}`
+    const filePath = join(saveDir, safeName)
     fs.writeFileSync(filePath, buffer)
 
     return { success: true, filePath }
@@ -315,7 +310,7 @@ export async function downloadOpenverseFile(
 /** 向后兼容：下载图片 */
 export async function downloadOpenverseImage(
   imageUrl: string,
-  options: { filename?: string } = {}
+  options: { filename?: string; destDir: string }
 ): Promise<{ success: boolean; filePath?: string; error?: string }> {
   return downloadOpenverseFile(imageUrl, { ...options, mediaType: 'image' })
 }
@@ -330,8 +325,12 @@ export async function syncOpenverseToMaterialLibrary(
   const imageUrl = typeof dataOrMetadata?.imageUrl === 'string' ? dataOrMetadata.imageUrl : clientIdOrUrl
   const metadata = (typeof dataOrMetadata?.imageUrl === 'string' ? dataOrMetadata.metadata : dataOrMetadata) || {}
 
+  const tempDir = join(require('os').tmpdir(), 'yishe-media-collect')
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
+
   const downloadResult = await downloadOpenverseImage(imageUrl, {
     filename: metadata?.title ? `${sanitizeName(metadata.title)}` : undefined,
+    destDir: tempDir,
   })
 
   if (!downloadResult.success || !downloadResult.filePath) {
@@ -340,7 +339,6 @@ export async function syncOpenverseToMaterialLibrary(
       message: downloadResult.error || '图片下载失败',
     }
   }
-
 
   const localFilePath = downloadResult.filePath
   try {
@@ -383,25 +381,4 @@ export async function syncOpenverseToMaterialLibrary(
       message: err?.message || String(err),
     }
   }
-}
-
-// ─── fetch 实现 ───
-let fetchImplPromise: Promise<typeof fetch> | null = null
-
-async function getFetchImpl(): Promise<typeof fetch> {
-  if (!fetchImplPromise) {
-    fetchImplPromise = (async () => {
-      try {
-        const electron = await import('electron')
-        const net = electron.net
-        if (net && typeof (net as any).fetch === 'function') {
-          return (net as any).fetch.bind(net) as typeof fetch
-        }
-      } catch {
-        // non-electron env
-      }
-      return fetch
-    })()
-  }
-  return fetchImplPromise
 }

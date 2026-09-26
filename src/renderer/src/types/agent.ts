@@ -42,6 +42,8 @@ export interface ChatMessage {
   timestamp: number;
   isStreaming?: boolean;
   error?: string;
+  /** 关联的 Agent Run Engine Run ID（用于 Stage 进度展示） */
+  runId?: string;
 }
 
 export interface ChatSession {

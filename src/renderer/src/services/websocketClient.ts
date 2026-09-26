@@ -542,6 +542,7 @@ export type WebsocketEvents = {
     autoDispatchEnabled?: boolean | null;
     operator?: { id?: string | number; account?: string };
   };
+  "agent-run-event": { type: string; runId: string; timestamp: number; data?: Record<string, any> };
 };
 
 const emitter = mitt<WebsocketEvents>();
@@ -5623,6 +5624,14 @@ function bindSocketEvents(currentSocket: Socket) {
         stopPlatformTaskPolling();
         platformTaskAutoState.running = false;
       }
+    },
+  );
+
+  // Agent Run Engine 事件
+  currentSocket.on(
+    "agent-run.event",
+    (data: { type: string; runId: string; timestamp: number; data?: Record<string, any> }) => {
+      emitter.emit("agent-run-event", data);
     },
   );
 }
