@@ -4,23 +4,8 @@ import { getPlatform, allPlatforms } from "../hotsearch/platforms";
 import { hotSearchService } from "../hotsearch/hotsearch.service";
 import type { CapabilityDefinition } from "./types";
 
-const LEGACY_HOTSEARCH_KEYS = [
-  "google_trends",
-  "hackernews",
-  "github",
-  "wikipedia",
-  "bbc_news",
-  "cnn",
-  "nytimes",
-  "aljazeera",
-  "devto",
-  "ebay_trending",
-  "shopify_trending",
-  "baidu",
-  "lobsters",
-  "tencent_news",
-  "tencent_tech",
-];
+// 注意：热搜平台的 per-platform namespace 注册由下方 allPlatforms 循环动态生成，
+// 不需要手动维护 key 列表。hotsearch_${platformKey}.search 自动覆盖所有平台。
 
 const searchDef: CapabilityDefinition = {
   name: "search",
