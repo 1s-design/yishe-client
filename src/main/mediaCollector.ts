@@ -12,12 +12,13 @@ import { searchInternetArchive, downloadInternetArchiveFile, type InternetArchiv
 import { searchPexelsMedia, downloadPexelsMedia, type PexelsMediaResult } from './pexelsMedia'
 import { searchOpenverse, downloadOpenverseFile, type OpenversePhoto, type OpenverseSearchResult } from './openverse'
 import { searchNappy, downloadNappyImage, type NappyPhoto, type NappySearchResult } from './nappy'
+import { searchMagnific, downloadMagnificFile, type MagnificSearchResult } from './magnific'
 import { generateCosKey, uploadFileToCos } from './cos'
 import { getBackendApiBase, getCurrentAccessToken } from './cos'
 
 // ─── 类型定义 ──────────────────────────────────────────────
 
-export type MediaSource = 'wikimedia' | 'internet-archive' | 'openverse' | 'nappy' | 'pexels'
+export type MediaSource = 'wikimedia' | 'internet-archive' | 'openverse' | 'nappy' | 'pexels' | 'magnific'
 export type MediaType = 'image' | 'video' | 'audio'
 
 export interface MediaAsset {
@@ -37,6 +38,8 @@ export interface MediaAsset {
   license?: string
   creator?: string
   tags?: string[]
+  /** Magnific 专用：资源类型（video/photo/vector/icon），入库时决定文件后缀 */
+  resourceType?: 'video' | 'photo' | 'vector' | 'icon'
 }
 
 export interface MediaSearchParams {
@@ -45,6 +48,12 @@ export interface MediaSearchParams {
   mediaType?: MediaType
   page?: number
   pageSize?: number
+  /** Magnific 专用：资源类型，默认 video */
+  resourceType?: 'video' | 'photo' | 'vector' | 'icon'
+  /** Magnific 图标专用：standard(静态) / animated(动图) / all */
+  iconType?: 'standard' | 'animated' | 'all'
+  /** Magnific 排序：relevance(默认) / recent */
+  order?: 'relevance' | 'recent'
 }
 
 export interface MediaSearchResult {
@@ -79,6 +88,7 @@ const SOURCES: MediaSourceInfo[] = [
   { key: 'openverse', name: 'Openverse', supportedTypes: ['image', 'audio'] },
   { key: 'nappy', name: 'Nappy', supportedTypes: ['image'] },
   { key: 'pexels', name: 'Pexels', supportedTypes: ['image', 'video'] },
+  { key: 'magnific', name: 'Magnific', supportedTypes: ['image', 'video'] },
 ]
 
 // ─── 搜索 ──────────────────────────────────────────────
@@ -101,9 +111,59 @@ export async function searchMedia(params: MediaSearchParams): Promise<MediaSearc
     return searchNappyMedia(query, mediaType, page, pageSize)
   } else if (source === 'pexels') {
     return searchPexelsMediaMedia(query, mediaType, page, pageSize)
+  } else if (source === 'magnific') {
+    return searchMagnificMedia(params as Required<Pick<MediaSearchParams, 'query' | 'page' | 'pageSize'>> & MediaSearchParams)
   }
 
   throw new Error(`Unknown source: ${source}`)
+}
+
+/**
+ * Magnific 媒体搜索（视频 / 图片 / 矢量 / 图标 全类型）
+ * 视频=免费无水印预览 mp4；图片/矢量=放大预览 jpg；图标=512 PNG
+ */
+async function searchMagnificMedia(params: MediaSearchParams): Promise<MediaSearchResult> {
+  const { query, page = 1, pageSize = 20, resourceType = 'video', iconType, order } = params
+  const result: MagnificSearchResult = await searchMagnific(query, {
+    resourceType,
+    license: 'free',
+    order,
+    iconType,
+    page,
+    limit: resourceType === 'video' ? Math.min(Math.max(pageSize, 1), 50) : pageSize,
+  })
+
+  if (!result.success) {
+    throw new Error(result.error || '搜索失败')
+  }
+
+  const items: MediaAsset[] = result.items.map((v) => ({
+    id: v.id,
+    source: 'magnific' as MediaSource,
+    title: v.title,
+    description: v.description,
+    mediaType: v.mediaType,
+    mimeType: v.resourceType === 'video' ? 'video/mp4' : v.resourceType === 'icon' ? 'image/png' : 'image/jpeg',
+    thumbnailUrl: v.thumbnail || v.image || undefined,
+    previewUrl: v.previewUrl || undefined,
+    fileUrl: v.fileUrl || v.videoUrl,
+    fileSize: undefined,
+    width: v.width ?? undefined,
+    height: v.height ?? undefined,
+    duration: v.duration ?? undefined,
+    license: v.license,
+    creator: v.author,
+    resourceType: v.resourceType,
+  }))
+
+  return {
+    total: result.total || items.length,
+    page,
+    // 图标/图片端点每页条数固定（96/50），返回服务端实际值供后台同步分页
+    pageSize: result.perPage || pageSize,
+    items,
+    hasMore: result.nextPage != null,
+  }
 }
 
 async function searchWikimediaMedia(
@@ -358,7 +418,7 @@ export async function importMedia(
 
       const ext = getExtFromUrl(item.fileUrl || '') || getExtFromMime(item.mimeType)
       const filename = `${sanitizeName(item.title).slice(0, 50)}_${Date.now()}${ext}`
-      const filePath = path.join(destDir, filename)
+      let filePath = path.join(destDir, filename)
 
       let downloadOk = false
       if (item.source === 'wikimedia') {
@@ -378,6 +438,21 @@ export async function importMedia(
       } else if (item.source === 'pexels') {
         await downloadPexelsMedia(item.fileUrl!, destDir, filename)
         downloadOk = true
+      } else if (item.source === 'magnific') {
+        // downloadMagnificFile 写入 saveDir/magnific-downloads/ 且自行拼接后缀，
+        // 用返回的实际路径覆盖预计算路径，供后续上传/清理使用
+        const magnificSuffix =
+          item.resourceType === 'icon' ? 'png'
+          : item.resourceType === 'video' ? 'mp4'
+          : 'jpg' // photo / vector 预览均为 jpg
+        const dl = await downloadMagnificFile(item.fileUrl!, {
+          filename: filename.replace(/\.[a-z0-9]+$/i, ''),
+          suffix: magnificSuffix,
+          saveDir: destDir,
+        })
+        downloadOk = dl.success
+        if (!downloadOk) throw new Error(dl.error || 'Magnific 下载失败')
+        if (dl.filePath) filePath = dl.filePath
       }
       if (!downloadOk) throw new Error('下载失败')
 

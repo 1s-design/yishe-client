@@ -1,4 +1,5 @@
 import React from "react";
+import * as RemotionModule from "remotion";
 import {
   AbsoluteFill,
   Img,
@@ -7,6 +8,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
   interpolate,
+  spring,
   Audio,
 } from "remotion";
 import { z } from "zod";
@@ -16,6 +18,13 @@ import type {
   PaletteConfig,
   SceneConfig,
   SceneLayer,
+  CustomCodeLayer,
+  DynamicComponentLayer,
+  KineticTextLayer,
+  SoundWaveLayer,
+  ParticlesLayer,
+  CodeBlockLayer,
+  ChartLayer,
 } from "./ai-types";
 import {
   GradientStage,
@@ -530,23 +539,99 @@ const LayerSchema: z.ZodType<SceneLayer> = z.discriminatedUnion("type", [
     animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
     opacity: z.number().min(0).max(1).optional(),
   }),
+  // === SCHEME 3: DYNAMIC REMOTION ENGINE LAYERS ===
+  z.object({
+    type: z.literal("custom-code"),
+    code: z.string(),
+    props: z.record(z.any()).optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("dynamic-component"),
+    componentName: z.string(),
+    props: z.record(z.any()).optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("kinetic-text"),
+    text: z.string(),
+    subtext: z.string().optional(),
+    style: z.enum(["marquee", "bold-impact", "neon-glow", "outline-stroke", "glitch"]).optional(),
+    fontSize: z.number().optional(),
+    rotate: z.number().optional(),
+    speed: z.number().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("sound-wave"),
+    bars: z.number().optional(),
+    height: z.number().optional(),
+    waveStyle: z.enum(["bars", "wave", "circle", "mirror"]).optional(),
+    color: z.string().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("particles"),
+    count: z.number().optional(),
+    style: z.enum(["bokeh", "sparks", "dust", "grid-dots"]).optional(),
+    color: z.string().optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("code-block"),
+    code: z.string(),
+    language: z.string().optional(),
+    title: z.string().optional(),
+    highlightLines: z.array(z.number()).optional(),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
+  z.object({
+    type: z.literal("chart"),
+    chartType: z.enum(["bar", "ring", "gauge"]),
+    title: z.string().optional(),
+    items: z.array(z.object({ label: z.string(), value: z.number(), max: z.number().optional(), color: z.string().optional() })),
+    delayFrames: z.number().optional(),
+    animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }),
 ]) as unknown as z.ZodType<SceneLayer>;
 
 const SceneSchema: z.ZodType<SceneConfig> = z.object({
   duration: z.number().min(0.1),
   background: z
     .discriminatedUnion("type", [
-      z.object({ type: z.literal("gradient") }),
-      z.object({ type: z.literal("solid"), color: z.string().optional() }),
+      z.object({ type: z.literal("gradient"), style: z.string().optional() }).passthrough(),
+      z.object({ type: z.literal("solid"), color: z.string().optional() }).passthrough(),
       z.object({
         type: z.literal("media"),
         media: MediaSourceSchema,
         opacity: z.number().min(0).max(1).optional(),
-      }),
+      }).passthrough(),
     ])
     .optional(),
   layers: z.array(LayerSchema),
   transition: z.enum(["cut", "fade", "slide-left", "slide-right", "zoom"]).optional(),
+  camera: z.enum(["none", "dolly-in", "dolly-out", "pan-left", "pan-right", "shake", "zoom-twist"]).optional(),
+  decorations: z
+    .object({
+      watermark: z.string().optional(),
+      headerBadge: z.string().optional(),
+      footerText: z.string().optional(),
+      showExhibition: z.boolean().optional(),
+    })
+    .optional(),
   layout: z.enum(["centered", "top", "bottom", "split-left", "split-right", "fullscreen", "grid"]).optional(),
   paddingY: z.number().optional(),
   paddingX: z.number().optional(),
@@ -573,22 +658,27 @@ const PaletteConfigSchema: z.ZodType<PaletteConfig> = z.union([
 ]);
 
 export const AiVideoSchema = z.object({
-  videoConfig: z.object({
-    meta: z.object({
-      title: z.string(),
-      orientation: z.enum(["portrait", "landscape", "square"]).optional(),
-      fps: z.number().optional(),
-    }),
-    palette: PaletteConfigSchema,
-    scenes: z.array(SceneSchema).min(1),
-    audio: z
-      .object({
-        bgmUrl: z.string().optional(),
-        bgmVolume: z.number().optional(),
-        loop: z.boolean().optional(),
-      })
-      .optional(),
-  }),
+  videoConfig: z
+    .object({
+      meta: z
+        .object({
+          title: z.string().optional(),
+          orientation: z.enum(["portrait", "landscape", "square"]).optional(),
+          fps: z.number().optional(),
+        })
+        .optional()
+        .default({ title: "AI Video", orientation: "portrait", fps: 30 }),
+      palette: PaletteConfigSchema.optional().default({ preset: "cyberpunk" }),
+      scenes: z.array(SceneSchema).min(1),
+      audio: z
+        .object({
+          bgmUrl: z.string().optional(),
+          bgmVolume: z.number().optional(),
+          loop: z.boolean().optional(),
+        })
+        .optional(),
+    })
+    .passthrough(),
 });
 
 // ---------------------------------------------------------------------------
@@ -665,6 +755,515 @@ function getPaletteFont(palette: Palette): string {
   // Default: modern sans
   return "'Inter', 'Segoe UI', 'PingFang SC', system-ui, sans-serif";
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic Component Renderers (Scheme 3: Remotion Open Engine)
+// ---------------------------------------------------------------------------
+
+const DynamicCodeRenderer: React.FC<{
+  code: string;
+  props?: Record<string, any>;
+  palette: Palette;
+  frame: number;
+  fps: number;
+}> = ({ code, props = {}, palette, frame, fps }) => {
+  try {
+    const exportsObj: Record<string, any> = {};
+    const moduleObj = { exports: exportsObj };
+
+    const reactModule = Object.assign({}, React, { default: React, __esModule: true });
+    const remModule = Object.assign({}, RemotionModule, { default: RemotionModule, __esModule: true });
+
+    const virtualRequire = (mod: string) => {
+      if (mod === "react") return reactModule;
+      if (mod === "remotion" || mod === "@remotion/core") return remModule;
+      return {};
+    };
+
+    const scope = {
+      React: reactModule,
+      ...React,
+      remotion: remModule,
+      ...RemotionModule,
+      // Remotion hook and context bridges
+      useCurrentFrame: () => frame,
+      useVideoConfig: () => ({ fps, width: 1080, height: 1920, durationInFrames: 300 }),
+      AbsoluteFill,
+      Img,
+      OffthreadVideo,
+      Sequence,
+      Audio,
+      interpolate,
+      spring,
+      frame,
+      fps,
+      palette,
+      props,
+      alpha,
+      mix,
+      isLightPalette,
+      require: virtualRequire,
+      exports: exportsObj,
+      module: moduleObj,
+    };
+
+    const fn = new Function(
+      "scope",
+      `
+      const {
+        React,
+        remotion,
+        useCurrentFrame,
+        useVideoConfig,
+        AbsoluteFill,
+        Sequence,
+        Img,
+        OffthreadVideo,
+        Audio,
+        interpolate,
+        spring,
+        frame,
+        fps,
+        palette,
+        props,
+        alpha,
+        mix,
+        isLightPalette,
+        require,
+        exports,
+        module,
+      } = scope;
+
+      try {
+        ${code.includes("return") || code.includes("export") || code.includes("module.exports") ? code : `return (${code});`}
+
+        // Check if a React component was exported
+        const exported = module.exports?.default || exports.default || module.exports;
+        if (typeof exported === 'function') {
+          return React.createElement(exported, { frame, fps, palette, props });
+        }
+        if (React.isValidElement(exported)) {
+          return exported;
+        }
+      } catch (err) {
+        return React.createElement('div', {
+          style: { padding: 16, color: '#f87171', background: 'rgba(0,0,0,0.5)', borderRadius: 10, fontSize: 16 }
+        }, 'Dynamic Code Execution Error: ' + (err.message || String(err)));
+      }
+    `
+    );
+    const result = fn(scope);
+    return React.isValidElement(result) ? result : <div>{String(result ?? "")}</div>;
+  } catch (err: any) {
+    return (
+      <div style={{ color: "#f87171", fontSize: 14, background: "rgba(0,0,0,0.6)", padding: 12, borderRadius: 8 }}>
+        Render Evaluation Error: {err?.message || String(err)}
+      </div>
+    );
+  }
+};
+
+const KineticTextRenderer: React.FC<{
+  layer: KineticTextLayer;
+  palette: Palette;
+  frame: number;
+  fps: number;
+}> = ({ layer, palette, frame }) => {
+  const style = layer.style || "bold-impact";
+  const fontSize = layer.fontSize || (style === "marquee" ? 44 : 76);
+  const rotate = layer.rotate ?? (style === "bold-impact" ? -3 : 0);
+  const speed = layer.speed ?? 1;
+
+  if (style === "marquee") {
+    const offset = ((frame * speed * 4) % 1200) * -1;
+    return (
+      <div
+        style={{
+          width: "100%",
+          overflow: "hidden",
+          whiteSpace: "nowrap",
+          padding: "16px 0",
+          background: `linear-gradient(90deg, transparent, ${alpha(palette.accent, 0.15)}, transparent)`,
+          transform: `rotate(${rotate}deg)`,
+        }}
+      >
+        <div
+          style={{
+            display: "inline-block",
+            transform: `translateX(${offset}px)`,
+            fontSize,
+            fontWeight: 900,
+            letterSpacing: 4,
+            textTransform: "uppercase",
+            color: palette.accent,
+            textShadow: `0 0 20px ${alpha(palette.glow, 0.5)}`,
+          }}
+        >
+          {`${layer.text}  ✦  ${layer.subtext || layer.text}  ✦  ${layer.text}  ✦  ${layer.subtext || layer.text}  ✦  `}
+        </div>
+      </div>
+    );
+  }
+
+  const isOutline = style === "outline-stroke";
+  const isNeon = style === "neon-glow";
+  const isGlitch = style === "glitch";
+
+  const glitchX = isGlitch && frame % 12 < 3 ? Math.sin(frame) * 8 : 0;
+  const glitchY = isGlitch && frame % 12 < 3 ? Math.cos(frame) * 4 : 0;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        transform: `rotate(${rotate}deg) translate(${glitchX}px, ${glitchY}px)`,
+        padding: "20px 30px",
+        textAlign: "center",
+      }}
+    >
+      <div
+        style={{
+          fontSize,
+          fontWeight: 900,
+          lineHeight: 1.05,
+          letterSpacing: -1,
+          textTransform: "uppercase",
+          color: isOutline ? "transparent" : palette.text,
+          WebkitTextStroke: isOutline ? `3px ${palette.accent}` : undefined,
+          textShadow: isNeon
+            ? `0 0 15px ${palette.glow}, 0 0 40px ${palette.accent}`
+            : `0 8px 30px ${alpha("#000000", 0.4)}`,
+        }}
+      >
+        {layer.text}
+      </div>
+      {layer.subtext && (
+        <div
+          style={{
+            marginTop: 12,
+            fontSize: Math.round(fontSize * 0.38),
+            fontWeight: 700,
+            letterSpacing: 3,
+            color: palette.accent,
+            textTransform: "uppercase",
+          }}
+        >
+          {layer.subtext}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SoundWaveRenderer: React.FC<{
+  layer: SoundWaveLayer;
+  palette: Palette;
+  frame: number;
+}> = ({ layer, palette, frame }) => {
+  const bars = layer.bars || 28;
+  const height = layer.height || 100;
+  const color = layer.color || palette.accent;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        height,
+        padding: "10px 20px",
+        borderRadius: 16,
+        background: alpha(palette.surface, 0.4),
+        backdropFilter: "blur(8px)",
+      }}
+    >
+      {Array.from({ length: bars }).map((_, i) => {
+        const wave1 = Math.sin(frame * 0.18 + i * 0.4);
+        const wave2 = Math.cos(frame * 0.12 - i * 0.25);
+        const wave3 = Math.sin(frame * 0.28 + i * 0.6);
+        const normalized = Math.max(0.12, (wave1 * 0.4 + wave2 * 0.35 + wave3 * 0.25 + 1) / 2);
+        const barHeight = Math.round(normalized * (height - 16));
+
+        return (
+          <div
+            key={i}
+            style={{
+              width: 5,
+              height: barHeight,
+              borderRadius: 3,
+              background: `linear-gradient(180deg, ${palette.glow} 0%, ${color} 100%)`,
+              boxShadow: `0 0 10px ${alpha(color, 0.4)}`,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
+const ParticlesRenderer: React.FC<{
+  layer: ParticlesLayer;
+  palette: Palette;
+  frame: number;
+}> = ({ layer, palette, frame }) => {
+  const count = layer.count || 24;
+  const color = layer.color || palette.glow;
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        overflow: "hidden",
+      }}
+    >
+      {Array.from({ length: count }).map((_, i) => {
+        const seedX = (i * 137.5) % 100;
+        const seedY = (i * 223.1) % 100;
+        const size = 4 + ((i * 7) % 18);
+        const driftX = Math.sin(frame * 0.04 + i) * 20;
+        const driftY = ((frame * (0.3 + (i % 5) * 0.1) + seedY * 10) % 110) - 10;
+        const opacity = 0.2 + (Math.sin(frame * 0.08 + i) + 1) * 0.25;
+
+        return (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              left: `${seedX}%`,
+              bottom: `${driftY}%`,
+              transform: `translateX(${driftX}px)`,
+              width: size,
+              height: size,
+              borderRadius: "50%",
+              backgroundColor: color,
+              opacity,
+              boxShadow: `0 0 ${size * 2}px ${color}`,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
+const CodeBlockRenderer: React.FC<{
+  layer: CodeBlockLayer;
+  palette: Palette;
+  frame: number;
+}> = ({ layer, palette, frame }) => {
+  const lines = layer.code.split("\n");
+  const visibleLineCount = Math.min(lines.length, Math.floor(frame / 6) + 1);
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        maxWidth: 720,
+        background: "rgba(15, 23, 42, 0.88)",
+        borderRadius: 16,
+        overflow: "hidden",
+        border: `1px solid ${alpha(palette.accent, 0.35)}`,
+        boxShadow: `0 20px 50px rgba(0, 0, 0, 0.5), 0 0 25px ${alpha(palette.glow, 0.2)}`,
+        backdropFilter: "blur(14px)",
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 16px",
+          background: "rgba(0, 0, 0, 0.35)",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+        }}
+      >
+        <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#ef4444" }} />
+          <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#eab308" }} />
+          <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#22c55e" }} />
+        </div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>
+          {layer.title || (layer.language ? `snippet.${layer.language}` : "main.tsx")}
+        </div>
+        <div style={{ width: 44 }} />
+      </div>
+
+      <div style={{ padding: "16px 20px", fontSize: 17, lineHeight: 1.6, color: "#f8fafc" }}>
+        {lines.slice(0, visibleLineCount).map((line, idx) => {
+          const isHighlighted = layer.highlightLines?.includes(idx + 1);
+          return (
+            <div
+              key={idx}
+              style={{
+                display: "flex",
+                background: isHighlighted ? alpha(palette.accent, 0.2) : undefined,
+                padding: "2px 8px",
+                borderRadius: 4,
+              }}
+            >
+              <span style={{ width: 36, color: "rgba(255,255,255,0.3)", userSelect: "none" }}>
+                {idx + 1}
+              </span>
+              <span style={{ color: isHighlighted ? palette.glow : "#e2e8f0" }}>{line}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const ChartRenderer: React.FC<{
+  layer: ChartLayer;
+  palette: Palette;
+  frame: number;
+}> = ({ layer, palette, frame }) => {
+  const progress = Math.min(1, frame / 30);
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        maxWidth: 720,
+        padding: "24px 28px",
+        borderRadius: 20,
+        background: `linear-gradient(135deg, ${alpha(palette.surface, 0.8)}, ${alpha(palette.backgroundAlt, 0.85)})`,
+        border: `1px solid ${alpha(palette.accent, 0.3)}`,
+        boxShadow: `0 16px 40px rgba(0, 0, 0, 0.35)`,
+        backdropFilter: "blur(12px)",
+      }}
+    >
+      {layer.title && (
+        <div
+          style={{
+            fontSize: 22,
+            fontWeight: 800,
+            marginBottom: 20,
+            color: palette.text,
+            letterSpacing: -0.2,
+          }}
+        >
+          {layer.title}
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {layer.items.map((item, idx) => {
+          const max = item.max || 100;
+          const currentPercent = Math.min(100, Math.round((item.value / max) * 100 * progress));
+          const barColor = item.color || (idx % 2 === 0 ? palette.accent : palette.accentAlt);
+
+          return (
+            <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 700, color: palette.text }}>
+                <span>{item.label}</span>
+                <span style={{ color: barColor }}>{currentPercent}%</span>
+              </div>
+              <div
+                style={{
+                  width: "100%",
+                  height: 12,
+                  borderRadius: 6,
+                  background: alpha(palette.text, 0.1),
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    width: `${currentPercent}%`,
+                    height: "100%",
+                    borderRadius: 6,
+                    background: `linear-gradient(90deg, ${barColor}, ${palette.glow})`,
+                    boxShadow: `0 0 12px ${alpha(barColor, 0.5)}`,
+                  }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const DynamicComponentRenderer: React.FC<{
+  layer: DynamicComponentLayer;
+  palette: Palette;
+  frame: number;
+  fps: number;
+}> = ({ layer, palette, frame, fps }) => {
+  const name = layer.componentName?.toLowerCase() || "";
+  const props = layer.props || {};
+
+  if (name.includes("sound-wave") || name.includes("audio-visualizer") || name.includes("equalizer")) {
+    return <SoundWaveRenderer layer={{ type: "sound-wave", ...props }} palette={palette} frame={frame} />;
+  }
+  if (name.includes("kinetic") || name.includes("marquee") || name.includes("ticker")) {
+    return <KineticTextRenderer layer={{ type: "kinetic-text", text: props.text || "DYNAMIC KEYNOTE", ...props }} palette={palette} frame={frame} fps={fps} />;
+  }
+  if (name.includes("particle") || name.includes("spark") || name.includes("bokeh")) {
+    return <ParticlesRenderer layer={{ type: "particles", ...props }} palette={palette} frame={frame} />;
+  }
+  if (name.includes("code") || name.includes("terminal")) {
+    return <CodeBlockRenderer layer={{ type: "code-block", code: props.code || "// AI Dynamic Engine", ...props }} palette={palette} frame={frame} />;
+  }
+  if (name.includes("chart") || name.includes("gauge") || name.includes("metric-bars")) {
+    return (
+      <ChartRenderer
+        layer={{
+          type: "chart",
+          chartType: props.chartType || "bar",
+          title: props.title,
+          items: props.items || [{ label: "性能提升", value: 92 }, { label: "能耗降低", value: 68 }],
+        }}
+        palette={palette}
+        frame={frame}
+      />
+    );
+  }
+  if (name.includes("cyber-hud") || name.includes("hologram") || name.includes("scanner")) {
+    return (
+      <div
+        style={{
+          position: "relative",
+          padding: "24px 36px",
+          border: `1px solid ${alpha(palette.accent, 0.4)}`,
+          background: alpha(palette.surface, 0.3),
+          borderRadius: 8,
+          boxShadow: `0 0 30px ${alpha(palette.glow, 0.25)}`,
+        }}
+      >
+        <div style={{ position: "absolute", top: -2, left: -2, width: 14, height: 14, borderTop: `3px solid ${palette.accent}`, borderLeft: `3px solid ${palette.accent}` }} />
+        <div style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderTop: `3px solid ${palette.accent}`, borderRight: `3px solid ${palette.accent}` }} />
+        <div style={{ position: "absolute", bottom: -2, left: -2, width: 14, height: 14, borderBottom: `3px solid ${palette.accent}`, borderLeft: `3px solid ${palette.accent}` }} />
+        <div style={{ position: "absolute", bottom: -2, right: -2, width: 14, height: 14, borderBottom: `3px solid ${palette.accent}`, borderRight: `3px solid ${palette.accent}` }} />
+        <div style={{ fontSize: 13, letterSpacing: 3, color: palette.accent, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>
+          {props.tag || "SYSTEM PROTOCOL"}
+        </div>
+        <div style={{ fontSize: 28, fontWeight: 800, color: palette.text }}>
+          {props.content || "CYBER ENGINE ACTIVE"}
+        </div>
+      </div>
+    );
+  }
+
+  if (props.code) {
+    return <DynamicCodeRenderer code={props.code} props={props} palette={palette} frame={frame} fps={fps} />;
+  }
+
+  return (
+    <div style={{ padding: 16, border: `1px dashed ${palette.accent}`, borderRadius: 12, color: palette.text }}>
+      [DynamicComponent: {layer.componentName}]
+    </div>
+  );
+};
 
 const LayerRenderer: React.FC<{
   layer: SceneLayer;
@@ -1447,23 +2046,25 @@ const LayerRenderer: React.FC<{
                 }}
               />
             )}
-            <div
-              style={{
-                position: "absolute",
-                bottom: 12,
-                left: 12,
-                padding: "3px 8px",
-                borderRadius: 4,
-                background: "rgba(0,0,0,0.6)",
-                backdropFilter: "blur(6px)",
-                color: palette.accent,
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: 1.2,
-              }}
-            >
-              ✦ EXHIBITION PIECE
-            </div>
+            {layer.badge ? (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 12,
+                  left: 12,
+                  padding: "3px 8px",
+                  borderRadius: 4,
+                  background: "rgba(0,0,0,0.6)",
+                  backdropFilter: "blur(6px)",
+                  color: palette.accent,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: 1.2,
+                }}
+              >
+                {layer.badge}
+              </div>
+            ) : null}
           </div>
           {/* Text column */}
           <div
@@ -1481,17 +2082,19 @@ const LayerRenderer: React.FC<{
               boxShadow: `0 16px 40px ${alpha("#000000", 0.35)}`,
             }}
           >
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                letterSpacing: 2,
-                color: palette.accent,
-                textTransform: "uppercase",
-              }}
-            >
-              ART CURATION
-            </div>
+            {layer.eyebrow ? (
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: 2,
+                  color: palette.accent,
+                  textTransform: "uppercase",
+                }}
+              >
+                {layer.eyebrow}
+              </div>
+            ) : null}
             {layer.headline && (
               <div
                 style={{
@@ -1587,6 +2190,73 @@ const LayerRenderer: React.FC<{
       );
     }
 
+    // === SCHEME 3: DYNAMIC REMOTION ENGINE LAYER DISPATCH ===
+
+    case "custom-code":
+      return (
+        <div style={wrapper}>
+          <DynamicCodeRenderer
+            code={layer.code}
+            props={layer.props}
+            palette={palette}
+            frame={frame}
+            fps={fps}
+          />
+        </div>
+      );
+
+    case "dynamic-component":
+      return (
+        <div style={wrapper}>
+          <DynamicComponentRenderer
+            layer={layer}
+            palette={palette}
+            frame={frame}
+            fps={fps}
+          />
+        </div>
+      );
+
+    case "kinetic-text":
+      return (
+        <div style={wrapper}>
+          <KineticTextRenderer
+            layer={layer}
+            palette={palette}
+            frame={frame}
+            fps={fps}
+          />
+        </div>
+      );
+
+    case "sound-wave":
+      return (
+        <div style={wrapper}>
+          <SoundWaveRenderer layer={layer} palette={palette} frame={frame} />
+        </div>
+      );
+
+    case "particles":
+      return (
+        <div style={wrapper}>
+          <ParticlesRenderer layer={layer} palette={palette} frame={frame} />
+        </div>
+      );
+
+    case "code-block":
+      return (
+        <div style={wrapper}>
+          <CodeBlockRenderer layer={layer} palette={palette} frame={frame} />
+        </div>
+      );
+
+    case "chart":
+      return (
+        <div style={wrapper}>
+          <ChartRenderer layer={layer} palette={palette} frame={frame} />
+        </div>
+      );
+
     default:
       return null;
   }
@@ -1642,6 +2312,47 @@ const SceneRenderer: React.FC<{
   } else if (transition === "zoom") {
     sceneTransform = `scale(${mix(0.8, 1, sceneOpacity)})`;
   }
+
+  // Camera motion transforms (Scheme 3: Remotion Cinematic Camera)
+  const camera = scene.camera || "none";
+  let cameraTransform = "";
+  if (camera === "dolly-in") {
+    const scale = interpolate(frame, [0, sceneFrames], [1.0, 1.12], {
+      extrapolateRight: "clamp",
+    });
+    cameraTransform = `scale(${scale})`;
+  } else if (camera === "dolly-out") {
+    const scale = interpolate(frame, [0, sceneFrames], [1.14, 1.0], {
+      extrapolateRight: "clamp",
+    });
+    cameraTransform = `scale(${scale})`;
+  } else if (camera === "pan-left") {
+    const tx = interpolate(frame, [0, sceneFrames], [24, -24], {
+      extrapolateRight: "clamp",
+    });
+    cameraTransform = `scale(1.05) translateX(${tx}px)`;
+  } else if (camera === "pan-right") {
+    const tx = interpolate(frame, [0, sceneFrames], [-24, 24], {
+      extrapolateRight: "clamp",
+    });
+    cameraTransform = `scale(1.05) translateX(${tx}px)`;
+  } else if (camera === "shake") {
+    const offsetX = Math.sin(frame * 0.4) * 4 + Math.cos(frame * 0.7) * 2;
+    const offsetY = Math.cos(frame * 0.35) * 4 + Math.sin(frame * 0.8) * 2;
+    cameraTransform = `translate(${offsetX}px, ${offsetY}px)`;
+  } else if (camera === "zoom-twist") {
+    const scale = interpolate(frame, [0, sceneFrames], [1.0, 1.1], {
+      extrapolateRight: "clamp",
+    });
+    const rot = interpolate(frame, [0, sceneFrames], [-0.8, 0.8], {
+      extrapolateRight: "clamp",
+    });
+    cameraTransform = `scale(${scale}) rotate(${rot}deg)`;
+  }
+
+  const combinedTransform = [sceneTransform, cameraTransform]
+    .filter(Boolean)
+    .join(" ");
 
   const bgType = scene.background?.type ?? "gradient";
   const layout = scene.layout ?? "centered";
@@ -1707,119 +2418,125 @@ const SceneRenderer: React.FC<{
     <AbsoluteFill
       style={{
         opacity: sceneOpacity,
-        transform: sceneTransform || undefined,
+        transform: combinedTransform || undefined,
       }}
     >
       {/* Background */}
       {bgNode}
 
-      {/* Subtle giant background typography watermark */}
-      <div
-        style={{
-          position: "absolute",
-          left: "50%",
-          top: "42%",
-          transform: "translate(-50%, -50%)",
-          fontSize: 130,
-          fontWeight: 900,
-          letterSpacing: 16,
-          color: isLightPalette(palette) ? "rgba(0,0,0,0.028)" : "rgba(255,255,255,0.038)",
-          textTransform: "uppercase",
-          whiteSpace: "nowrap",
-          pointerEvents: "none",
-          userSelect: "none",
-          fontFamily: "serif",
-          zIndex: 1,
-        }}
-      >
-        MASTERWORK
-      </div>
-
-      {/* Top exhibition status header bar */}
-      <div
-        style={{
-          position: "absolute",
-          top: 44,
-          left: 52,
-          right: 52,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          pointerEvents: "none",
-          zIndex: 20,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              backgroundColor: palette.accent,
-              boxShadow: `0 0 10px ${palette.accent}`,
-            }}
-          />
-          <span
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              letterSpacing: 2.5,
-              color: alpha(palette.text, 0.55),
-              textTransform: "uppercase",
-            }}
-          >
-            CURATION · MASTERPIECE
-          </span>
-        </div>
+      {/* Background watermark - ONLY if explicitly configured or exhibition */}
+      {scene.decorations?.watermark || scene.decorations?.showExhibition ? (
         <div
           style={{
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: 2,
-            color: alpha(palette.text, 0.4),
+            position: "absolute",
+            left: "50%",
+            top: "42%",
+            transform: "translate(-50%, -50%)",
+            fontSize: 130,
+            fontWeight: 900,
+            letterSpacing: 16,
+            color: isLightPalette(palette) ? "rgba(0,0,0,0.028)" : "rgba(255,255,255,0.038)",
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            userSelect: "none",
+            fontFamily: "serif",
+            zIndex: 1,
           }}
         >
-          ✦ 4K CINEMATIC
+          {scene.decorations?.watermark || "MASTERWORK"}
         </div>
-      </div>
+      ) : null}
 
-      {/* Bottom exhibition footer ruler & seal */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 40,
-          left: 52,
-          right: 52,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          pointerEvents: "none",
-          zIndex: 20,
-        }}
-      >
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          {[...Array(8)].map((_, i) => (
-            <div
-              key={i}
+      {/* Top Header Bar - ONLY if explicitly configured or exhibition */}
+      {scene.decorations?.headerBadge || scene.decorations?.showExhibition ? (
+        <div
+          style={{
+            position: "absolute",
+            top: 44,
+            left: 52,
+            right: 52,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            pointerEvents: "none",
+            zIndex: 20,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span
               style={{
-                width: 2,
-                height: i % 2 === 0 ? 12 : 6,
-                backgroundColor: alpha(palette.text, 0.28),
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                backgroundColor: palette.accent,
+                boxShadow: `0 0 10px ${palette.accent}`,
               }}
             />
-          ))}
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                letterSpacing: 2.5,
+                color: alpha(palette.text, 0.55),
+                textTransform: "uppercase",
+              }}
+            >
+              {scene.decorations?.headerBadge || "CURATION · MASTERPIECE"}
+            </span>
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: 2,
+              color: alpha(palette.text, 0.4),
+            }}
+          >
+            ✦ 4K CINEMATIC
+          </div>
         </div>
+      ) : null}
+
+      {/* Bottom Footer - ONLY if explicitly configured or exhibition */}
+      {scene.decorations?.footerText || scene.decorations?.showExhibition ? (
         <div
           style={{
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: 1.5,
-            color: alpha(palette.text, 0.45),
+            position: "absolute",
+            bottom: 40,
+            left: 52,
+            right: 52,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            pointerEvents: "none",
+            zIndex: 20,
           }}
         >
-          MUSEUM ARCHIVE COLLECTION
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {[...Array(8)].map((_, i) => (
+              <div
+                key={i}
+                style={{
+                  width: 2,
+                  height: i % 2 === 0 ? 12 : 6,
+                  backgroundColor: alpha(palette.text, 0.28),
+                }}
+              />
+            ))}
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: 1.5,
+              color: alpha(palette.text, 0.45),
+            }}
+          >
+            {scene.decorations?.footerText || "MUSEUM ARCHIVE COLLECTION"}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {/* Layers — split or normal */}
       {isSplit ? (

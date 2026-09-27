@@ -13,14 +13,11 @@ function resolveAiMetadata(
   const targetFps = Number(meta.fps || props.fps || template.fps || 30);
   const orientation = String(meta.orientation || "portrait");
   const totalFrames = scenes.reduce((sum: number, scene) => {
-    const duration = Number((scene as Record<string, unknown>)?.duration || 3);
-    return (
-      sum +
-      Math.max(
-        1,
-        Math.round((Number.isFinite(duration) ? duration : 3) * targetFps),
-      )
-    );
+    const s = scene as Record<string, unknown>;
+    const frames = s?.durationInFrames
+      ? Number(s.durationInFrames)
+      : Math.round(Number(s?.duration || 3) * targetFps);
+    return sum + Math.max(1, frames);
   }, 0);
   const isLandscape = orientation === "landscape";
   const isSquare = orientation === "square";

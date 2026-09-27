@@ -6,6 +6,7 @@ import {
 } from "@remotion/renderer";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import ts from "typescript";
 import type { RemotionChromeMode } from "./remotion-browser";
 
 export interface VideoTemplateJobData {
@@ -368,8 +369,43 @@ export function makeRenderQueue({
       },
     );
 
+function precompileTsxLayers(inputProps: Record<string, unknown>): Record<string, unknown> {
+  try {
+    const config = (inputProps?.videoConfig || {}) as Record<string, unknown>;
+    const scenes = Array.isArray(config?.scenes) ? config.scenes : [];
+    for (const scene of scenes) {
+      if (Array.isArray(scene?.layers)) {
+        for (const layer of scene.layers) {
+          if (
+            (layer?.type === "custom-code" || layer?.type === "tsx-component") &&
+            typeof layer?.code === "string" &&
+            layer.code.trim()
+          ) {
+            try {
+              const transpiled = ts.transpileModule(layer.code, {
+                compilerOptions: {
+                  jsx: ts.JsxEmit.React,
+                  target: ts.ScriptTarget.ES2020,
+                  module: ts.ModuleKind.CommonJS,
+                  esModuleInterop: true,
+                },
+              }).outputText;
+              layer.code = transpiled;
+            } catch (err: any) {
+              console.warn("[TSX Precompile] Failed to transpile layer code:", err?.message);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore error
+  }
+  return inputProps;
+}
+
     try {
-      const inputProps = job.data.inputProps;
+      const inputProps = precompileTsxLayers(job.data.inputProps);
       const serveUrl = await resolveServeUrl(job.data);
       setJob(
         {

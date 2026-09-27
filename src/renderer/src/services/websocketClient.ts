@@ -8245,7 +8245,14 @@ function registerBuiltInLocalServices() {
         supportedCommands: ["refreshRuntime", "health", "search", "import"],
         details: {
           runtime: "desktop",
-          sources: ["wikimedia", "internet-archive", "pexels"],
+          sources: [
+            "wikimedia",
+            "internet-archive",
+            "openverse",
+            "nappy",
+            "pexels",
+            "magnific",
+          ],
         },
       };
     },
@@ -11629,12 +11636,12 @@ function registerBuiltInLocalServices() {
   registerLocalService({
     key: "magnific",
     pluginKey: "magnific",
-    label: "Magnific 视频素材",
+    label: "Magnific 素材采集",
     getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
       const nativeApi = getNativeApi() as any;
       if (!nativeApi?.getMagnificStatus) {
         return {
-          label: "Magnific 视频素材",
+          label: "Magnific 素材采集",
           connected: false,
           available: false,
           status: "disconnected",
@@ -11654,7 +11661,7 @@ function registerBuiltInLocalServices() {
       const available = true;
 
       return {
-        label: "Magnific 视频素材",
+        label: "Magnific 素材采集",
         connected,
         available,
         status: available ? "connected" : "error",
@@ -11685,8 +11692,10 @@ function registerBuiltInLocalServices() {
           query,
           limit = 20,
           page = 1,
+          resourceType = "video",
           license = "free",
           order = "relevance",
+          iconType = "standard",
         } = command.payload || {};
         const q = query || keyword;
         if (!q) {
@@ -11700,8 +11709,10 @@ function registerBuiltInLocalServices() {
           query: q,
           limit,
           page,
+          resourceType,
           license,
           order,
+          iconType,
         });
         return {
           success: result?.success ?? false,
@@ -11713,36 +11724,40 @@ function registerBuiltInLocalServices() {
       }
 
       if (command.action === "download") {
-        const { videoUrl, filename } = command.payload || {};
+        const { videoUrl, fileUrl, filename, suffix } = command.payload || {};
         const nativeApi = getNativeApi() as any;
-        if (!videoUrl) {
-          throw new Error("缺少 Magnific 视频链接");
+        const targetUrl = fileUrl || videoUrl;
+        if (!targetUrl) {
+          throw new Error("缺少 Magnific 素材链接");
         }
         if (!nativeApi?.downloadMagnificVideo) {
           throw new Error("当前环境未注入桌面端 Magnific 下载能力");
         }
         const data = await nativeApi.downloadMagnificVideo({
           videoUrl,
+          fileUrl,
           filename,
+          suffix,
         });
         return {
           success: !!data?.ok,
-          message: data?.ok ? "视频下载完成" : data?.msg || "下载失败",
+          message: data?.ok ? "素材下载完成" : data?.msg || "下载失败",
           data,
         };
       }
 
       if (command.action === "sync") {
-        const { videoUrl, metadata } = command.payload || {};
+        const { videoUrl, fileUrl, imageUrl, metadata } = command.payload || {};
         const nativeApi = getNativeApi() as any;
-        if (!videoUrl) {
-          throw new Error("缺少 Magnific 视频链接");
+        const targetUrl = fileUrl || videoUrl || imageUrl;
+        if (!targetUrl) {
+          throw new Error("缺少 Magnific 素材链接");
         }
         if (!nativeApi?.syncMagnificToMaterialLibrary) {
           throw new Error("当前环境未注入桌面端 Magnific 同步能力");
         }
         const data = await nativeApi.syncMagnificToMaterialLibrary(
-          videoUrl,
+          targetUrl,
           metadata,
         );
         await syncServiceRuntime("magnific");
@@ -11750,7 +11765,7 @@ function registerBuiltInLocalServices() {
           success: !!data?.ok || !!data?.success,
           message:
             data?.message ||
-            (data?.ok ? "视频已同步到素材库" : data?.msg || "同步到素材库失败"),
+            (data?.ok ? "素材已同步到素材库" : data?.msg || "同步到素材库失败"),
           data,
         };
       }
@@ -11760,8 +11775,10 @@ function registerBuiltInLocalServices() {
           keyword,
           query,
           maxCount = 10,
+          resourceType = "video",
           license = "free",
           order = "relevance",
+          iconType = "standard",
           syncToMaterial = true,
         } = command.payload || {};
         const q = query || keyword;
@@ -11779,19 +11796,21 @@ function registerBuiltInLocalServices() {
         const searchResult = await nativeApi.searchMagnific({
           query: q,
           limit: maxCount,
+          resourceType,
           license,
           order,
+          iconType,
         });
         if (!searchResult?.success || !searchResult?.items?.length) {
           return {
             success: false,
             message: searchResult?.error || "搜索失败",
-            data: { successCount: 0, failCount: 0, videos: [] },
+            data: { successCount: 0, failCount: 0, items: [] },
           };
         }
 
         const items = searchResult.items;
-        const videos: any[] = [];
+        const collected: any[] = [];
         let successCount = 0;
         let failCount = 0;
 
@@ -11799,7 +11818,7 @@ function registerBuiltInLocalServices() {
           try {
             if (syncToMaterial) {
               const syncResult =
-                await nativeApi.syncMagnificToMaterialLibrary(item.videoUrl, {
+                await nativeApi.syncMagnificToMaterialLibrary(item.fileUrl, {
                   title: item.title,
                   url: item.url,
                   link: item.link,
@@ -11807,15 +11826,18 @@ function registerBuiltInLocalServices() {
                   duration: item.duration,
                   quality: item.quality,
                   premium: item.premium,
+                  resourceType: item.resourceType,
+                  suffix: item.suffix,
                   id: item.id,
                 });
               if (syncResult?.success || syncResult?.ok) {
-                videos.push({
+                collected.push({
                   url:
                     syncResult.data?.cosUrl ||
                     syncResult.data?.localFilePath ||
                     syncResult.cosUrl,
-                  originUrl: item.videoUrl,
+                  originUrl: item.fileUrl,
+                  resourceType: item.resourceType ?? null,
                   duration: item.duration ?? null,
                 });
                 successCount++;
@@ -11824,10 +11846,11 @@ function registerBuiltInLocalServices() {
               }
             } else {
               const dl = await nativeApi.downloadMagnificVideo({
-                videoUrl: item.videoUrl,
+                fileUrl: item.fileUrl,
+                suffix: item.suffix,
               });
               if (dl?.ok) {
-                videos.push({ url: dl.filePath, originUrl: item.videoUrl });
+                collected.push({ url: dl.filePath, originUrl: item.fileUrl });
                 successCount++;
               } else {
                 failCount++;
@@ -11842,7 +11865,7 @@ function registerBuiltInLocalServices() {
         return {
           success: true,
           message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
-          data: { successCount, failCount, videos },
+          data: { successCount, failCount, items: collected },
         };
       }
 

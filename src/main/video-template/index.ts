@@ -318,7 +318,12 @@ function getVideoTemplateBundleCandidates(kind: VideoTemplateBundleKind) {
 }
 
 function collectVideoTemplateSourceFiles(kind: VideoTemplateBundleKind) {
-  const sourceRoot = path.join(app.getAppPath(), "src", "main", "video-template");
+  const candidateRoots = [
+    path.join(process.cwd(), "src", "main", "video-template"),
+    path.join(app.getAppPath(), "src", "main", "video-template"),
+    path.join(__dirname, "../../src/main/video-template"),
+  ];
+  const sourceRoot = candidateRoots.find((r) => fs.existsSync(r)) || candidateRoots[0];
   const sourceFiles = kind === "ai"
     ? [
         path.join(sourceRoot, "remotion", "AiRoot.tsx"),
@@ -556,6 +561,37 @@ async function ensureVideoTemplateServeUrl(kind: VideoTemplateBundleKind) {
     return prebuiltBundle;
   }
 
+  // In dev mode, if source files are newer than the built bundle, clear cached promise
+  if (!app.isPackaged) {
+    const directories = ensureVideoTemplateDirectories();
+    const outputDirectory = path.join(directories.bundles, kind);
+    const indexPath = path.join(outputDirectory, "index.html");
+    if (fs.existsSync(indexPath)) {
+      const bundleTime = fs.statSync(indexPath).mtimeMs;
+      const sourceFiles = collectVideoTemplateSourceFiles(kind);
+      const isStale = sourceFiles.some((src) => {
+        try {
+          return fs.statSync(src).mtimeMs > bundleTime;
+        } catch {
+          return false;
+        }
+      });
+      if (isStale) {
+        console.info(
+          `[video-template] Dev mode: ${kind} bundle is stale, rebuilding fresh.`,
+        );
+        try {
+          fs.rmSync(outputDirectory, { recursive: true, force: true });
+        } catch {}
+        if (kind === "ai") {
+          aiBundlePromise = null;
+        } else {
+          standardBundlePromise = null;
+        }
+      }
+    }
+  }
+
   const existingPromise =
     kind === "ai" ? aiBundlePromise : standardBundlePromise;
   if (!existingPromise) {
@@ -607,7 +643,9 @@ function getVideoTemplateBundleKind(data: {
   const compositionId = String(data.compositionId || "").trim();
 
   return templateId === aiUniversalTemplateMetadata.id ||
-    compositionId === aiUniversalTemplateMetadata.compositionId
+    templateId === "ai-universal-composition" ||
+    compositionId === aiUniversalTemplateMetadata.compositionId ||
+    compositionId === "AiUniversal"
     ? "ai"
     : "standard";
 }
@@ -700,7 +738,7 @@ function sanitizeInputProps(
 ) {
   const template =
     templateCatalog.find((item) => item.id === templateId) ||
-    (templateId === aiUniversalTemplateMetadata.id
+    (templateId === aiUniversalTemplateMetadata.id || templateId === "ai-universal-composition"
       ? aiUniversalTemplateMetadata
       : null);
   if (!template) {

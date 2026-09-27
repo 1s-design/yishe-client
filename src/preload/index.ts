@@ -238,6 +238,12 @@ const api = {
     mediaType?: string
     page?: number
     pageSize?: number
+    /** Magnific 专用：资源类型（video/photo/vector/icon） */
+    resourceType?: 'video' | 'photo' | 'vector' | 'icon'
+    /** Magnific 图标专用：standard / animated / all */
+    iconType?: 'standard' | 'animated' | 'all'
+    /** Magnific 排序：relevance / recent */
+    order?: 'relevance' | 'recent'
   }) => ipcRenderer.invoke("media-collect:search", payload),
   mediaCollectImport: (payload: { items: any[] }) =>
     ipcRenderer.invoke("media-collect:import", payload),
@@ -365,16 +371,22 @@ const api = {
     query: string;
     limit?: number;
     page?: number;
+    resourceType?: "video" | "icon" | "photo" | "vector";
     license?: "free" | "premium" | "all";
     order?: "relevance" | "recent";
+    iconType?: "standard" | "animated" | "all";
   }) => ipcRenderer.invoke("magnific:search", payload),
   getMagnificStatus: () => ipcRenderer.invoke("magnific:status"),
-  downloadMagnificVideo: (payload: { videoUrl: string; filename?: string }) =>
-    ipcRenderer.invoke("magnific:download", payload),
+  downloadMagnificVideo: (payload: {
+    videoUrl?: string;
+    fileUrl?: string;
+    filename?: string;
+    suffix?: string;
+  }) => ipcRenderer.invoke("magnific:download", payload),
   syncMagnificToMaterialLibrary: (
-    videoUrl: string,
+    fileUrl: string,
     metadata?: Record<string, any>,
-  ) => ipcRenderer.invoke("magnific:sync", { videoUrl, metadata }),
+  ) => ipcRenderer.invoke("magnific:sync", { fileUrl, metadata }),
   // Openclipart API 导出
   searchOpenclipart: (payload: {
     query: string;

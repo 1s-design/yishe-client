@@ -35,7 +35,15 @@ export type LayerType =
   | "rating"
   | "social-proof"
   | "split-media"
-  | "accent-box";
+  | "accent-box"
+  // === SCHEME 3: DYNAMIC REMOTION ENGINE LAYERS ===
+  | "custom-code"
+  | "dynamic-component"
+  | "kinetic-text"
+  | "sound-wave"
+  | "particles"
+  | "code-block"
+  | "chart";
 
 /** Animation style for layer entrance. */
 export type AnimationStyle =
@@ -277,6 +285,10 @@ export interface SplitMediaLayer extends LayerBase {
   text?: string;
   /** Headline text. */
   headline?: string;
+  /** Optional top eyebrow label */
+  eyebrow?: string;
+  /** Optional corner badge */
+  badge?: string;
 }
 
 /** Accent box / callout card. */
@@ -285,6 +297,72 @@ export interface AccentBoxLayer extends LayerBase {
   text: string;
   /** Box style: "filled" (default), "bordered", "glow". */
   boxStyle?: "filled" | "bordered" | "glow";
+}
+
+// === SCHEME 3: DYNAMIC REMOTION ENGINE INTERFACES ===
+
+/** Custom React / Remotion executable code block */
+export interface CustomCodeLayer extends LayerBase {
+  type: "custom-code";
+  /** JavaScript/React expression or function body returning a React element */
+  code: string;
+  /** Custom props or parameters passed into the execution scope */
+  props?: Record<string, any>;
+}
+
+/** Pre-built or dynamically registered specialized component */
+export interface DynamicComponentLayer extends LayerBase {
+  type: "dynamic-component";
+  /** Component preset identifier: "audio-visualizer" | "kinetic-text" | "particles" | "code-block" | "chart" | "cyber-hud" */
+  componentName: string;
+  /** Arbitrary props passed to the dynamic component */
+  props?: Record<string, any>;
+}
+
+/** High-impact kinetic typography layer */
+export interface KineticTextLayer extends LayerBase {
+  type: "kinetic-text";
+  text: string;
+  subtext?: string;
+  /** Style: "marquee" (looping ribbon), "bold-impact" (massive angled typography), "neon-glow", "outline-stroke", "glitch" */
+  style?: "marquee" | "bold-impact" | "neon-glow" | "outline-stroke" | "glitch";
+  fontSize?: number;
+  rotate?: number;
+  speed?: number;
+}
+
+/** Dynamic audio rhythm visualizer / sound wave bars */
+export interface SoundWaveLayer extends LayerBase {
+  type: "sound-wave";
+  bars?: number;
+  height?: number;
+  waveStyle?: "bars" | "wave" | "circle" | "mirror";
+  color?: string;
+}
+
+/** Ambient floating particles / bokeh / spark dust */
+export interface ParticlesLayer extends LayerBase {
+  type: "particles";
+  count?: number;
+  style?: "bokeh" | "sparks" | "dust" | "grid-dots";
+  color?: string;
+}
+
+/** Developer syntax code block / terminal window */
+export interface CodeBlockLayer extends LayerBase {
+  type: "code-block";
+  code: string;
+  language?: string;
+  title?: string;
+  highlightLines?: number[];
+}
+
+/** Visual data chart or ring gauge */
+export interface ChartLayer extends LayerBase {
+  type: "chart";
+  chartType: "bar" | "ring" | "gauge";
+  title?: string;
+  items: Array<{ label: string; value: number; max?: number; color?: string }>;
 }
 
 /** Union of all layer types the AI can compose. */
@@ -312,11 +390,40 @@ export type SceneLayer =
   | RatingLayer
   | SocialProofLayer
   | SplitMediaLayer
-  | AccentBoxLayer;
+  | AccentBoxLayer
+  | CustomCodeLayer
+  | DynamicComponentLayer
+  | KineticTextLayer
+  | SoundWaveLayer
+  | ParticlesLayer
+  | CodeBlockLayer
+  | ChartLayer;
+
+/** Cinematic physical camera motion for scenes. */
+export type CameraMotion =
+  | "none"
+  | "dolly-in"
+  | "dolly-out"
+  | "pan-left"
+  | "pan-right"
+  | "shake"
+  | "zoom-twist";
+
+/** Optional decorative watermarks or badges (opt-in only, no default hardcoding) */
+export interface SceneDecorations {
+  /** Optional background typography watermark (if omitted, no watermark shown) */
+  watermark?: string;
+  /** Optional header badge (e.g. "✦ 4K CINEMATIC") */
+  headerBadge?: string;
+  /** Optional footer brand or archive text */
+  footerText?: string;
+  /** Explicitly toggle museum exhibition aesthetic */
+  showExhibition?: boolean;
+}
 
 /** Scene background configuration. */
 export type SceneBackground =
-  | { type: "gradient"; style?: "radial-glow" | "aurora" | "clean-studio" | "warm-paper" | "sunset" | "cyber-grid" }
+  | { type: "gradient"; style?: "radial-glow" | "aurora" | "clean-studio" | "warm-paper" | "sunset" | "cyber-grid" | string }
   | { type: "solid"; color?: string }
   | { type: "media"; media: { type: "image" | "video"; src: string; poster?: string; alt?: string }; opacity?: number };
 
@@ -333,6 +440,10 @@ export interface SceneConfig {
   layers: SceneLayer[];
   /** Transition used when entering this scene. Defaults to "fade". */
   transition?: SceneTransition;
+  /** Cinematic camera motion applied to this scene. */
+  camera?: CameraMotion;
+  /** Optional decorative watermarks and seals. Default is clean with no watermarks. */
+  decorations?: SceneDecorations;
   /** Layout preset for this scene. Defaults to "centered". */
   layout?: SceneLayout;
   /** Vertical padding in px (default 60). */

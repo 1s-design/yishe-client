@@ -91,7 +91,7 @@ import {
   searchMagnific,
   getMagnificStatus,
   syncMagnificToMaterialLibrary,
-  downloadMagnificVideo,
+  downloadMagnificFile,
 } from "./magnific";
 import {
   searchOpenclipart,
@@ -3504,16 +3504,21 @@ ipcMain.handle(
       page?: number;
       limit?: number;
       pageSize?: number;
+      resourceType?: "video" | "icon" | "photo" | "vector";
       license?: "free" | "premium" | "all";
       order?: "relevance" | "recent";
+      iconType?: "standard" | "animated" | "all";
     },
   ) => {
-    const { query, page, limit, pageSize, license, order } = payload || {};
+    const { query, page, limit, pageSize, resourceType, license, order, iconType } =
+      payload || {};
     return searchMagnific(query, {
       page: page || 1,
       limit: limit || pageSize || 20,
+      resourceType,
       license,
       order,
+      iconType,
     });
   },
 );
@@ -3524,11 +3529,20 @@ ipcMain.handle("magnific:status", async () => {
 
 ipcMain.handle(
   "magnific:download",
-  async (_event, payload: { videoUrl: string; filename?: string }) => {
+  async (
+    _event,
+    payload: {
+      videoUrl?: string;
+      fileUrl?: string;
+      filename?: string;
+      suffix?: string;
+    },
+  ) => {
     try {
-      const { videoUrl, filename } = payload || {};
-      if (!videoUrl) return { ok: false, msg: "缺少视频链接" };
-      const res = await downloadMagnificVideo(videoUrl, { filename });
+      const { videoUrl, fileUrl, filename, suffix } = payload || {};
+      const targetUrl = fileUrl || videoUrl;
+      if (!targetUrl) return { ok: false, msg: "缺少文件链接" };
+      const res = await downloadMagnificFile(targetUrl, { filename, suffix });
       return { ok: res.success, filePath: res.filePath, msg: res.error };
     } catch (error: any) {
       return { ok: false, msg: error?.message || String(error) };
@@ -3542,15 +3556,18 @@ ipcMain.handle(
     _event,
     payload: {
       clientId: string;
-      videoUrl: string;
+      fileUrl?: string;
+      videoUrl?: string;
+      imageUrl?: string;
       metadata?: Record<string, any>;
     },
   ) => {
     try {
-      const { clientId, videoUrl, metadata } = payload || {};
-      if (!videoUrl) return { ok: false, msg: "缺少视频链接" };
+      const { clientId, fileUrl, videoUrl, imageUrl, metadata } = payload || {};
+      const targetUrl = fileUrl || videoUrl || imageUrl;
+      if (!targetUrl) return { ok: false, msg: "缺少文件链接" };
       const res = await syncMagnificToMaterialLibrary(clientId || "local", {
-        videoUrl,
+        fileUrl: targetUrl,
         metadata,
       });
       return { ok: res.success, msg: res.error, data: res };
@@ -6451,6 +6468,12 @@ ipcMain.handle(
     mediaType?: string
     page?: number
     pageSize?: number
+    /** Magnific 专用：资源类型（video/photo/vector/icon） */
+    resourceType?: 'video' | 'photo' | 'vector' | 'icon'
+    /** Magnific 图标专用：standard / animated / all */
+    iconType?: 'standard' | 'animated' | 'all'
+    /** Magnific 排序：relevance / recent */
+    order?: 'relevance' | 'recent'
   }) => {
     try {
       const result = await searchMedia({
@@ -6459,6 +6482,9 @@ ipcMain.handle(
         mediaType: payload.mediaType as any,
         page: payload.page,
         pageSize: payload.pageSize,
+        resourceType: payload.resourceType,
+        iconType: payload.iconType,
+        order: payload.order,
       })
       console.log(`[IPC:media-collect:search] ok, items=${result?.items?.length}, total=${result?.total}`)
       return { ok: true, data: result }
