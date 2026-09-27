@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import type {
   AiVideoProps,
+  ArtDirection,
   PaletteConfig,
   SceneConfig,
   SceneLayer,
@@ -27,6 +28,8 @@ import type {
   ChartLayer,
 } from "./ai-types";
 import {
+  ArtDirectionContext,
+  DENSITY_PRESETS,
   GradientStage,
   MediaSurface,
   MetricGrid,
@@ -34,9 +37,11 @@ import {
   ProgressBarRow,
   SectionEyebrow,
   TagPill,
+  TYPOGRAPHY_STACKS,
   alpha,
   isLightPalette,
   mix,
+  useArtDirection,
   useEntrance,
   sceneWindow,
 } from "./shared";
@@ -657,6 +662,25 @@ const PaletteConfigSchema: z.ZodType<PaletteConfig> = z.union([
   }),
 ]);
 
+const ArtDirectionSchema: z.ZodType<ArtDirection> = z
+  .object({
+    mood: z.string().optional(),
+    motionEnergy: z.enum(["low", "medium", "high"]).optional(),
+    density: z.enum(["airy", "balanced", "packed"]).optional(),
+    typography: z
+      .enum([
+        "serif-editorial",
+        "sans-modern",
+        "mono-tech",
+        "display-condensed",
+        "rounded-friendly",
+      ])
+      .optional(),
+    transitionStyle: z.enum(["soft", "punchy", "geometric"]).optional(),
+    signature: z.string().optional(),
+  })
+  .optional();
+
 export const AiVideoSchema = z.object({
   videoConfig: z
     .object({
@@ -669,6 +693,7 @@ export const AiVideoSchema = z.object({
         .optional()
         .default({ title: "AI Video", orientation: "portrait", fps: 30 }),
       palette: PaletteConfigSchema.optional().default({ preset: "cyberpunk" }),
+      artDirection: ArtDirectionSchema,
       scenes: z.array(SceneSchema).min(1),
       audio: z
         .object({
@@ -730,6 +755,8 @@ const textBase: React.CSSProperties = {
 
 // Palette-aware font families
 function getPaletteFont(palette: Palette): string {
+  // artDirection.typography override wins — the director's explicit voice
+  if (palette.fontFamily) return palette.fontFamily;
   const bg = palette.background.toLowerCase();
   const accent = palette.accent.toLowerCase();
   // Warm / editorial style → elegant serif
@@ -2292,6 +2319,11 @@ const SceneRenderer: React.FC<{
   sceneFrames: number;
 }> = ({ scene, palette, sceneFrames }) => {
   const frame = useCurrentFrame();
+  const art = useArtDirection();
+  const density = DENSITY_PRESETS[art.density] ?? DENSITY_PRESETS.balanced;
+  const padY = scene.paddingY ?? density.paddingY;
+  const padX = scene.paddingX ?? density.paddingX;
+  const gapDefault = scene.gap ?? density.gap;
   const transition = scene.transition ?? "fade";
   const fadeIn = transition === "fade" ? 18 : 0;
   const fadeOut = transition === "fade" ? 18 : 0;
@@ -2544,8 +2576,8 @@ const SceneRenderer: React.FC<{
           style={{
             display: "flex",
             flexDirection: layout === "split-right" ? "row-reverse" : "row",
-            padding: `${scene.paddingY ?? 60}px ${scene.paddingX ?? 48}px`,
-            gap: scene.gap ?? 36,
+            padding: `${padY}px ${padX}px`,
+            gap: gapDefault + 14,
             alignItems: "center",
             justifyContent: "center",
           }}
@@ -2556,7 +2588,7 @@ const SceneRenderer: React.FC<{
               flex: 1,
               display: "flex",
               flexDirection: "column",
-              gap: scene.gap ?? 22,
+              gap: gapDefault,
               alignItems: "flex-start",
               justifyContent: "center",
               padding: "0 16px",
@@ -2573,7 +2605,7 @@ const SceneRenderer: React.FC<{
                 flex: 1,
                 display: "flex",
                 flexDirection: "column",
-                gap: scene.gap ?? 22,
+                gap: gapDefault,
                 alignItems: "flex-start",
                 justifyContent: "center",
                 padding: "0 16px",
@@ -2590,8 +2622,8 @@ const SceneRenderer: React.FC<{
           style={{
             display: "flex",
             flexDirection: "column",
-            padding: `${scene.paddingY ?? 60}px ${scene.paddingX ?? 48}px`,
-            gap: scene.gap ?? 22,
+            padding: `${padY}px ${padX}px`,
+            gap: gapDefault,
             ...layoutStyle,
           }}
         >
@@ -2616,6 +2648,20 @@ export const AiUniversalComposition: React.FC<AiVideoProps> = ({
   const palette = resolvePalette(videoConfig?.palette);
   const scenes = videoConfig?.scenes ?? [];
 
+  // Style DNA from artDirection — typography voice, motion energy, density
+  const art = videoConfig?.artDirection;
+  const artTokens = React.useMemo(
+    () => ({
+      motionEnergy: art?.motionEnergy ?? "medium",
+      density: art?.density ?? "balanced",
+      typography: art?.typography,
+    }),
+    [art?.motionEnergy, art?.density, art?.typography],
+  );
+  if (art?.typography && TYPOGRAPHY_STACKS[art.typography] && !palette.fontFamily) {
+    palette.fontFamily = TYPOGRAPHY_STACKS[art.typography];
+  }
+
   // Pre-compute cumulative frame offsets
   const offsets: number[] = [];
   let cumulative = 0;
@@ -2625,37 +2671,39 @@ export const AiUniversalComposition: React.FC<AiVideoProps> = ({
   }
 
   return (
-    <AbsoluteFill style={{ background: palette.background }}>
-      {videoConfig?.audio?.bgmUrl ? (
-        <Audio
-          src={videoConfig.audio.bgmUrl}
-          volume={videoConfig.audio.bgmVolume ?? 0.8}
-          loop={videoConfig.audio.loop ?? true}
-          onError={(e) => {
-            console.warn('[Remotion Audio] BGM load error, skipping audio:', e);
-          }}
-        />
-      ) : null}
-      {scenes.map((scene, i) => {
-        const sceneFrames = Math.max(
-          1,
-          Math.round((scene.duration || 3) * fps),
-        );
-        return (
-          <Sequence
-            key={i}
-            from={offsets[i]}
-            durationInFrames={sceneFrames}
-            name={`scene-${i}`}
-          >
-            <SceneRenderer
-              scene={scene}
-              palette={palette}
-              sceneFrames={sceneFrames}
-            />
-          </Sequence>
-        );
-      })}
-    </AbsoluteFill>
+    <ArtDirectionContext.Provider value={artTokens}>
+      <AbsoluteFill style={{ background: palette.background }}>
+        {videoConfig?.audio?.bgmUrl ? (
+          <Audio
+            src={videoConfig.audio.bgmUrl}
+            volume={videoConfig.audio.bgmVolume ?? 0.8}
+            loop={videoConfig.audio.loop ?? true}
+            onError={(e) => {
+              console.warn('[Remotion Audio] BGM load error, skipping audio:', e);
+            }}
+          />
+        ) : null}
+        {scenes.map((scene, i) => {
+          const sceneFrames = Math.max(
+            1,
+            Math.round((scene.duration || 3) * fps),
+          );
+          return (
+            <Sequence
+              key={i}
+              from={offsets[i]}
+              durationInFrames={sceneFrames}
+              name={`scene-${i}`}
+            >
+              <SceneRenderer
+                scene={scene}
+                palette={palette}
+                sceneFrames={sceneFrames}
+              />
+            </Sequence>
+          );
+        })}
+      </AbsoluteFill>
+    </ArtDirectionContext.Provider>
   );
 };

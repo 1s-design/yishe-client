@@ -467,6 +467,31 @@ export interface VideoAudioConfig {
   loop?: boolean;
 }
 
+/**
+ * Artistic direction tokens — the "style DNA" of a film.
+ * Lets the AI director set a coherent tone that propagates to every scene
+ * (typography voice, motion energy, layout breathing) instead of only colors.
+ */
+export interface ArtDirection {
+  /** Free-form mood / genre feel, e.g. "cinematic-luxe" | "cyber-frenetic" | "editorial-calm". */
+  mood?: string;
+  /** Entrance spring dynamics. low=slow & damped, high=snappy & bouncy. */
+  motionEnergy?: "low" | "medium" | "high";
+  /** Layout breathing density. */
+  density?: "airy" | "balanced" | "packed";
+  /** Typography voice preset. */
+  typography?:
+    | "serif-editorial"
+    | "sans-modern"
+    | "mono-tech"
+    | "display-condensed"
+    | "rounded-friendly";
+  /** Transition punch style. */
+  transitionStyle?: "soft" | "punchy" | "geometric";
+  /** One-line visual signature that makes this film unique (AI creative anchor). */
+  signature?: string;
+}
+
 /** Top-level video configuration that the AI agent generates. */
 export interface VideoConfig {
   meta: {
@@ -479,6 +504,8 @@ export interface VideoConfig {
   };
   /** Color palette for the entire video. */
   palette: PaletteConfig;
+  /** Style DNA applied across all scenes. */
+  artDirection?: ArtDirection;
   /** Ordered list of scenes. */
   scenes: SceneConfig[];
   /** Audio configuration (BGM / soundtrack). */

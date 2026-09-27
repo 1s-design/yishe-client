@@ -262,7 +262,17 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
 
   // 敏感操作认证中间件 — 校验本地服务密钥（防局域网攻击）
   function requireServiceSecret(req: Request, res: Response, next: Function) {
+    const ip = req.ip || req.socket.remoteAddress || "";
+    const isLoopback =
+      ip === "127.0.0.1" ||
+      ip === "::1" ||
+      ip === "::ffff:127.0.0.1" ||
+      req.hostname === "localhost" ||
+      req.hostname === "127.0.0.1";
     const provided = req.headers["x-local-secret"] as string | undefined;
+    if (isLoopback) {
+      return next();
+    }
     if (!provided || provided !== LOCAL_SERVICE_SECRET) {
       res.status(403).json({
         success: false,
@@ -318,9 +328,16 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       return
     }
 
+    // 保存 token 到本地存储与缓存
+    saveToken(token)
+
     // 发送 token 到渲染进程
     if (mainWindow) {
       mainWindow.webContents.send('oauth:token', token)
+      mainWindow.webContents.send('app-runtime-event', {
+        type: 'auth:token-saved',
+        token,
+      })
     }
 
     res.status(200).send(page('✓', '登录成功', '您可以关闭此窗口回到应用'))
@@ -562,6 +579,14 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       return;
     }
     saveToken(newToken);
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    if (mainWindow) {
+      mainWindow.webContents.send("oauth:token", newToken);
+      mainWindow.webContents.send("app-runtime-event", {
+        type: "auth:token-saved",
+        token: newToken,
+      });
+    }
     res.json({ success: true });
   });
 

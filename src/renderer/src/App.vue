@@ -1523,6 +1523,21 @@ onMounted(() => {
 
   void checkAuthAndGetUserInfo();
 
+  if (typeof nativeApi?.onOAuthToken === "function") {
+    nativeApi.onOAuthToken((_token: string) => {
+      console.log("[App] 收到 OAuth Token，自动完成登录");
+      void handleLoginSuccess();
+    });
+  }
+  if (typeof nativeApi?.onAppRuntimeEvent === "function") {
+    nativeApi.onAppRuntimeEvent((event: any) => {
+      if (event?.type === "auth:token-saved") {
+        console.log("[App] 收到 token-saved 运行时事件，自动完成登录");
+        void handleLoginSuccess();
+      }
+    });
+  }
+
   (window as any).__materialUploadService = downloadImageAndUploadMaterial;
   (window as any).__crawlerMaterialUploadService =
     downloadImageAndUploadMaterial;

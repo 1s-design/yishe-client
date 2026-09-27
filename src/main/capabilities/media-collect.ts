@@ -13,17 +13,18 @@ import { searchMedia, importMedia, listSources } from '../mediaCollector'
 const searchDef: CapabilityDefinition = {
   name: 'search',
   namespace: 'media-collect',
-  description: '搜索开放媒体资源（Wikimedia Commons / Internet Archive / Pexels）',
+  description: '搜索开放媒体资源（Wikimedia Commons / Internet Archive / Pexels / Magnific / Midjourney）',
   riskLevel: 'read',
   argsSchema: z.object({
-    source: z.string().describe('采集源: wikimedia / internet-archive / pexels'),
-    query: z.string().describe('搜索关键词'),
+    source: z.string().describe('采集源: wikimedia / internet-archive / openverse / nappy / pexels / magnific / midjourney'),
+    query: z.string().optional().default('').describe('搜索关键词'),
     mediaType: z.enum(['image', 'video', 'audio']).optional().describe('媒体类型'),
     page: z.number().optional().default(1).describe('页码'),
     pageSize: z.number().optional().default(20).describe('每页数量'),
-  }),
-  handler: async ({ source, query, mediaType, page, pageSize }) => {
-    const result = await searchMedia({ source: source as any, query, mediaType: mediaType as any, page, pageSize })
+    feed: z.string().optional().describe('Midjourney 专用: top / video_top'),
+  }).passthrough(),
+  handler: async (args: any) => {
+    const result = await searchMedia(args)
     return { success: true, data: result }
   },
 }

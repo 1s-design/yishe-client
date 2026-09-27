@@ -404,8 +404,152 @@ function precompileTsxLayers(inputProps: Record<string, unknown>): Record<string
   return inputProps;
 }
 
+async function probeUrl(url: string, mode: "HEAD" | "RANGE"): Promise<Response | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3500);
+  try {
+    const res =
+      mode === "HEAD"
+        ? await fetch(url, { method: "HEAD", signal: controller.signal })
+        : await fetch(url, {
+            method: "GET",
+            headers: { Range: "bytes=0-100" },
+            signal: controller.signal,
+          });
+    return res;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function isUrlReachable(url: string): Promise<boolean> {
+  const head = await probeUrl(url, "HEAD");
+  if (head && head.ok) return true;
+  // HEAD 不可用/失败时降级 Range GET；404/4xx/5xx 或网络失败均视为不可达
+  const range = await probeUrl(url, "RANGE");
+  return !!(range && range.ok);
+}
+
+async function sanitizeAndValidateInputMedia(inputProps: Record<string, any>): Promise<Record<string, any>> {
+  if (!inputProps || typeof inputProps !== "object") return inputProps;
+  const videoConfig = inputProps.videoConfig;
+  if (!videoConfig || typeof videoConfig !== "object") return inputProps;
+
+  // 1. 预检 BGM 音频可达性，防止 Remotion Html5Audio 在 404/不可达 URL 上产生 delayRender 死锁
+  const bgmUrl = videoConfig.audio?.bgmUrl;
+  if (bgmUrl && typeof bgmUrl === "string" && bgmUrl.startsWith("http")) {
+    const ok = await isUrlReachable(bgmUrl);
+    if (!ok) {
+      console.warn(`[video-template] BGM URL 无法访问: ${bgmUrl}，已安全剥离以防 Remotion delayRender 死锁`);
+      delete videoConfig.audio.bgmUrl;
+    }
+  }
+
+  // 2. 预检图层/背景中的图片与视频 URL，死链会导致 <Img>/<OffthreadVideo> 直接抛错使整片失败
+  const deadMediaSrcs: string[] = [];
+  const mediaUrlRe = /^https?:\/\//i;
+
+  const collectMediaUrls = (node: any, bag: Set<string>) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) collectMediaUrls(item, bag);
+      return;
+    }
+    if (node.media && typeof node.media === "object" && typeof node.media.src === "string") {
+      if (mediaUrlRe.test(node.media.src)) bag.add(node.media.src);
+    }
+    if (node.before && typeof node.before === "object" && typeof node.before.src === "string" && mediaUrlRe.test(node.before.src)) {
+      bag.add(node.before.src);
+    }
+    if (node.after && typeof node.after === "object" && typeof node.after.src === "string" && mediaUrlRe.test(node.after.src)) {
+      bag.add(node.after.src);
+    }
+    if (Array.isArray(node.images)) {
+      for (const img of node.images) {
+        if (img && typeof img.src === "string" && mediaUrlRe.test(img.src)) bag.add(img.src);
+      }
+    }
+    if (typeof node.src === "string" && mediaUrlRe.test(node.src) && (node.type === "image" || node.type === "video" || node.type === "logo-reveal")) {
+      bag.add(node.src);
+    }
+    for (const v of Object.values(node)) {
+      if (v && typeof v === "object") collectMediaUrls(v, bag);
+    }
+  };
+
+  const mediaUrls = new Set<string>();
+  collectMediaUrls(videoConfig.scenes, mediaUrls);
+  if (videoConfig.scenes) {
+    for (const scene of videoConfig.scenes) {
+      const bg = scene?.background;
+      if (bg && bg.type === "media" && bg.media?.src && mediaUrlRe.test(bg.media.src)) {
+        mediaUrls.add(bg.media.src);
+      }
+    }
+  }
+
+  for (const url of mediaUrls) {
+    const ok = await isUrlReachable(url);
+    if (!ok) {
+      deadMediaSrcs.push(url);
+      console.warn(`[video-template] 媒体 URL 无法访问: ${url}，将从场景中剥离以防渲染失败`);
+    }
+  }
+
+  if (deadMediaSrcs.length > 0) {
+    const dead = new Set(deadMediaSrcs);
+    // 1x1 透明 PNG，保证 <Img> 可加载且不破坏排版
+    const PLACEHOLDER =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=";
+
+    const stripDead = (node: any): any => {
+      if (!node || typeof node !== "object") return node;
+      if (Array.isArray(node)) {
+        return node.map(stripDead).filter((item) => {
+          if (item && typeof item === "object") {
+            // 纯媒体图层死链 → 整层移除
+            if (item.media?.src && dead.has(item.media.src) && !item.text && !item.headline && !item.code) {
+              return false;
+            }
+            if (Array.isArray(item.images)) {
+              item.images = item.images.map((img: any) =>
+                img?.src && dead.has(img.src) ? { ...img, src: PLACEHOLDER, alt: "media-unavailable" } : img,
+              );
+              if (item.images.length === 0 && item.type === "image-grid") return false;
+            }
+            if (item.before?.src && dead.has(item.before.src)) item.before.src = PLACEHOLDER;
+            if (item.after?.src && dead.has(item.after.src)) item.after.src = PLACEHOLDER;
+            if (item.src && dead.has(item.src) && item.type === "logo-reveal") {
+              item.src = PLACEHOLDER;
+            }
+          }
+          return true;
+        });
+      }
+      for (const [k, v] of Object.entries(node)) {
+        if (k === "media" && v && typeof v === "object" && dead.has((v as any).src)) {
+          (node as any).media = { ...(v as any), src: PLACEHOLDER, alt: "media-unavailable" };
+          continue;
+        }
+        if (k === "background" && v && typeof v === "object" && (v as any).type === "media" && dead.has((v as any).media?.src)) {
+          (node as any).background = { type: "gradient" };
+          continue;
+        }
+        node[k] = stripDead(v);
+      }
+      return node;
+    };
+    videoConfig.scenes = stripDead(videoConfig.scenes);
+  }
+
+  return inputProps;
+}
+
     try {
-      const inputProps = precompileTsxLayers(job.data.inputProps);
+      const transpiledProps = precompileTsxLayers(job.data.inputProps);
+      const inputProps = await sanitizeAndValidateInputMedia(transpiledProps);
       const serveUrl = await resolveServeUrl(job.data);
       setJob(
         {

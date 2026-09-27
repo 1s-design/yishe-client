@@ -13,12 +13,13 @@ import { searchPexelsMedia, downloadPexelsMedia, type PexelsMediaResult } from '
 import { searchOpenverse, downloadOpenverseFile, type OpenversePhoto, type OpenverseSearchResult } from './openverse'
 import { searchNappy, downloadNappyImage, type NappyPhoto, type NappySearchResult } from './nappy'
 import { searchMagnific, downloadMagnificFile, type MagnificSearchResult } from './magnific'
+import { searchMidjourney, downloadMidjourneyMedia, type MidjourneySearchResult } from './midjourney'
 import { generateCosKey, uploadFileToCos } from './cos'
 import { getBackendApiBase, getCurrentAccessToken } from './cos'
 
 // ─── 类型定义 ──────────────────────────────────────────────
 
-export type MediaSource = 'wikimedia' | 'internet-archive' | 'openverse' | 'nappy' | 'pexels' | 'magnific'
+export type MediaSource = 'wikimedia' | 'internet-archive' | 'openverse' | 'nappy' | 'pexels' | 'magnific' | 'midjourney'
 export type MediaType = 'image' | 'video' | 'audio'
 
 export interface MediaAsset {
@@ -54,6 +55,8 @@ export interface MediaSearchParams {
   iconType?: 'standard' | 'animated' | 'all'
   /** Magnific 排序：relevance(默认) / recent */
   order?: 'relevance' | 'recent'
+  /** Midjourney 专用：数据流（top / video_top） */
+  feed?: string
 }
 
 export interface MediaSearchResult {
@@ -89,6 +92,7 @@ const SOURCES: MediaSourceInfo[] = [
   { key: 'nappy', name: 'Nappy', supportedTypes: ['image'] },
   { key: 'pexels', name: 'Pexels', supportedTypes: ['image', 'video'] },
   { key: 'magnific', name: 'Magnific', supportedTypes: ['image', 'video'] },
+  { key: 'midjourney', name: 'Midjourney', supportedTypes: ['image', 'video'] },
 ]
 
 // ─── 搜索 ──────────────────────────────────────────────
@@ -113,6 +117,8 @@ export async function searchMedia(params: MediaSearchParams): Promise<MediaSearc
     return searchPexelsMediaMedia(query, mediaType, page, pageSize)
   } else if (source === 'magnific') {
     return searchMagnificMedia(params as Required<Pick<MediaSearchParams, 'query' | 'page' | 'pageSize'>> & MediaSearchParams)
+  } else if (source === 'midjourney') {
+    return searchMidjourneyMedia(params)
   }
 
   throw new Error(`Unknown source: ${source}`)
@@ -163,6 +169,53 @@ async function searchMagnificMedia(params: MediaSearchParams): Promise<MediaSear
     pageSize: result.perPage || pageSize,
     items,
     hasMore: result.nextPage != null,
+  }
+}
+
+/**
+ * Midjourney 媒体搜索（精选图片 / 视频）
+ * 图片=超清 Master JPEG；视频=无水印原生 MP4
+ */
+async function searchMidjourneyMedia(params: MediaSearchParams): Promise<MediaSearchResult> {
+  const { query, page = 1, pageSize = 50, mediaType, feed } = params
+  const targetFeed = feed || (mediaType === 'video' ? 'video_top' : 'top')
+  const result: MidjourneySearchResult = await searchMidjourney({
+    feed: targetFeed,
+    page,
+    query,
+    mediaType: mediaType as any,
+    pageSize,
+  })
+
+  if (!result.success) {
+    throw new Error(result.error || 'Midjourney 搜索失败')
+  }
+
+  const items: MediaAsset[] = result.items.map((item) => ({
+    id: item.id,
+    source: 'midjourney' as MediaSource,
+    title: item.title,
+    description: item.description,
+    mediaType: item.mediaType,
+    mimeType: item.mimeType,
+    thumbnailUrl: item.thumbnailUrl,
+    previewUrl: item.previewUrl,
+    fileUrl: item.fileUrl,
+    fileSize: undefined,
+    width: item.width,
+    height: item.height,
+    duration: undefined,
+    license: item.license,
+    creator: item.creator,
+    tags: item.tags,
+  }))
+
+  return {
+    total: result.total,
+    page,
+    pageSize,
+    items,
+    hasMore: result.hasMore,
   }
 }
 
@@ -304,7 +357,7 @@ async function searchOpenverseMedia(
   pageSize: number
 ): Promise<MediaSearchResult> {
   const result: OpenverseSearchResult = await searchOpenverse(query, {
-    mediaType,
+    mediaType: mediaType === 'video' ? undefined : (mediaType as any),
     page,
     pageSize,
   })
@@ -428,7 +481,7 @@ export async function importMedia(
         await downloadInternetArchiveFile(item.fileUrl!, destDir, filename)
         downloadOk = true
       } else if (item.source === 'openverse') {
-        const dl = await downloadOpenverseFile(item.fileUrl!, { filename, mediaType: item.mediaType, destDir })
+        const dl = await downloadOpenverseFile(item.fileUrl!, { filename, mediaType: item.mediaType === 'video' ? 'image' : (item.mediaType as any), destDir })
         downloadOk = dl.success
         if (!downloadOk) throw new Error(dl.error || 'Openverse 下载失败')
       } else if (item.source === 'nappy') {
@@ -452,6 +505,11 @@ export async function importMedia(
         })
         downloadOk = dl.success
         if (!downloadOk) throw new Error(dl.error || 'Magnific 下载失败')
+        if (dl.filePath) filePath = dl.filePath
+      } else if (item.source === 'midjourney') {
+        const dl = await downloadMidjourneyMedia(item, destDir, filename)
+        downloadOk = dl.success
+        if (!downloadOk) throw new Error(dl.error || 'Midjourney 下载失败')
         if (dl.filePath) filePath = dl.filePath
       }
       if (!downloadOk) throw new Error('下载失败')

@@ -18,6 +18,8 @@ export type Palette = {
   accent: string;
   accentAlt: string;
   glow: string;
+  /** Optional typography override coming from artDirection. */
+  fontFamily?: string;
 };
 
 export type MediaSource = {
@@ -101,16 +103,75 @@ export const formatDurationLabel = ({
   return `${seconds.toFixed(0)} s`;
 };
 
-export const useEntrance = (delayFrames = 0, damping = 16, stiffness = 120) => {
+// ---------------------------------------------------------------------------
+// Art direction tokens (style DNA)
+// ---------------------------------------------------------------------------
+
+export type MotionEnergy = "low" | "medium" | "high";
+export type DensityPreset = "airy" | "balanced" | "packed";
+
+export type ArtDirectionTokens = {
+  motionEnergy: MotionEnergy;
+  density: DensityPreset;
+  typography?: string;
+};
+
+export const DEFAULT_ART_DIRECTION: ArtDirectionTokens = {
+  motionEnergy: "medium",
+  density: "balanced",
+};
+
+export const ArtDirectionContext =
+  React.createContext<ArtDirectionTokens>(DEFAULT_ART_DIRECTION);
+
+export const useArtDirection = (): ArtDirectionTokens =>
+  React.useContext(ArtDirectionContext);
+
+/** Spring configs per motion energy. Higher energy = snappier, bouncier entrances. */
+export const MOTION_SPRING_PRESETS: Record<
+  MotionEnergy,
+  { damping: number; stiffness: number }
+> = {
+  low: { damping: 24, stiffness: 85 },
+  medium: { damping: 16, stiffness: 120 },
+  high: { damping: 9, stiffness: 180 },
+};
+
+/** Layout breathing per density preset. */
+export const DENSITY_PRESETS: Record<
+  DensityPreset,
+  { paddingY: number; paddingX: number; gap: number }
+> = {
+  airy: { paddingY: 84, paddingX: 64, gap: 44 },
+  balanced: { paddingY: 60, paddingX: 48, gap: 22 },
+  packed: { paddingY: 36, paddingX: 28, gap: 12 },
+};
+
+/** Font stacks addressable by artDirection.typography. */
+export const TYPOGRAPHY_STACKS: Record<string, string> = {
+  "serif-editorial":
+    "'Playfair Display', 'Songti SC', 'STSong', Georgia, serif",
+  "sans-modern": "'Inter', 'Segoe UI', 'PingFang SC', system-ui, sans-serif",
+  "mono-tech": "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace",
+  "display-condensed":
+    "'Barlow Condensed', 'Arial Narrow', 'PingFang SC', system-ui, sans-serif",
+  "rounded-friendly":
+    "'Nunito', 'PingFang SC', 'Helvetica Neue', system-ui, sans-serif",
+};
+
+export const useEntrance = (delayFrames = 0, damping?: number, stiffness?: number) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const art = useArtDirection();
+  const preset =
+    MOTION_SPRING_PRESETS[art.motionEnergy] ?? MOTION_SPRING_PRESETS.medium;
 
   return spring({
     frame: Math.max(0, frame - delayFrames),
     fps,
     config: {
-      damping,
-      stiffness,
+      damping: damping ?? preset.damping,
+      stiffness: stiffness ?? preset.stiffness,
       mass: 0.8,
     },
   });
