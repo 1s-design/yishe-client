@@ -88,6 +88,12 @@ import {
   downloadKaboompicsImage,
 } from "./kaboompics";
 import {
+  searchMagnific,
+  getMagnificStatus,
+  syncMagnificToMaterialLibrary,
+  downloadMagnificVideo,
+} from "./magnific";
+import {
   searchOpenclipart,
   getOpenclipartStatus,
   syncOpenclipartToMaterialLibrary,
@@ -3480,6 +3486,71 @@ ipcMain.handle(
       if (!imageUrl) return { ok: false, msg: "缺少图片链接" };
       const res = await syncKaboompicsToMaterialLibrary(clientId || "local", {
         imageUrl,
+        metadata,
+      });
+      return { ok: res.success, msg: res.error, data: res };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "magnific:search",
+  async (
+    _event,
+    payload: {
+      query: string;
+      page?: number;
+      limit?: number;
+      pageSize?: number;
+      license?: "free" | "premium" | "all";
+      order?: "relevance" | "recent";
+    },
+  ) => {
+    const { query, page, limit, pageSize, license, order } = payload || {};
+    return searchMagnific(query, {
+      page: page || 1,
+      limit: limit || pageSize || 20,
+      license,
+      order,
+    });
+  },
+);
+
+ipcMain.handle("magnific:status", async () => {
+  return getMagnificStatus();
+});
+
+ipcMain.handle(
+  "magnific:download",
+  async (_event, payload: { videoUrl: string; filename?: string }) => {
+    try {
+      const { videoUrl, filename } = payload || {};
+      if (!videoUrl) return { ok: false, msg: "缺少视频链接" };
+      const res = await downloadMagnificVideo(videoUrl, { filename });
+      return { ok: res.success, filePath: res.filePath, msg: res.error };
+    } catch (error: any) {
+      return { ok: false, msg: error?.message || String(error) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "magnific:sync",
+  async (
+    _event,
+    payload: {
+      clientId: string;
+      videoUrl: string;
+      metadata?: Record<string, any>;
+    },
+  ) => {
+    try {
+      const { clientId, videoUrl, metadata } = payload || {};
+      if (!videoUrl) return { ok: false, msg: "缺少视频链接" };
+      const res = await syncMagnificToMaterialLibrary(clientId || "local", {
+        videoUrl,
         metadata,
       });
       return { ok: res.success, msg: res.error, data: res };

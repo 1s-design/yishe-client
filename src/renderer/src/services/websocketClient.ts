@@ -1898,6 +1898,8 @@ function buildBrowserAutomationRuntimePatch(
 
   return {
     ...payload,
+    connected,
+    available,
     busy,
     state,
     currentTaskId,
@@ -11621,6 +11623,230 @@ function registerBuiltInLocalServices() {
       }
 
       throw new Error(`未实现的 Kaboompics 命令: ${command.action}`);
+    },
+  });
+
+  registerLocalService({
+    key: "magnific",
+    pluginKey: "magnific",
+    label: "Magnific 视频素材",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      if (!nativeApi?.getMagnificStatus) {
+        return {
+          label: "Magnific 视频素材",
+          connected: false,
+          available: false,
+          status: "disconnected",
+          state: "offline",
+          busy: false,
+          message: "当前为浏览器环境，未注入桌面端 Magnific 能力",
+          endpoint: "",
+          lastCheckedAt: new Date().toISOString(),
+          lastError: null,
+          supportedCommands: ["refreshRuntime", "health"],
+          details: { runtime: "browser" },
+        } as Partial<ClientServiceStatus>;
+      }
+
+      const status = await nativeApi.getMagnificStatus();
+      const connected = true;
+      const available = true;
+
+      return {
+        label: "Magnific 视频素材",
+        connected,
+        available,
+        status: available ? "connected" : "error",
+        state: available ? "idle" : "error",
+        busy: false,
+        message: status?.message || "Magnific 可用",
+        endpoint: "https://www.magnific.com/",
+        lastCheckedAt: new Date().toISOString(),
+        lastError: available ? null : status?.message || null,
+        supportedCommands: [
+          "refreshRuntime",
+          "health",
+          "search",
+          "download",
+          "sync",
+          "collect",
+        ],
+        details: {
+          siteAvailable: true,
+          runtime: "desktop",
+        },
+      } as Partial<ClientServiceStatus>;
+    },
+    execute: async (command) => {
+      if (command.action === "search") {
+        const {
+          keyword,
+          query,
+          limit = 20,
+          page = 1,
+          license = "free",
+          order = "relevance",
+        } = command.payload || {};
+        const q = query || keyword;
+        if (!q) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (!nativeApi?.searchMagnific) {
+          throw new Error("当前环境未注入桌面端 Magnific 搜索能力");
+        }
+        const result = await nativeApi.searchMagnific({
+          query: q,
+          limit,
+          page,
+          license,
+          order,
+        });
+        return {
+          success: result?.success ?? false,
+          message: result?.success
+            ? `搜索完成: ${result?.count || 0} 条`
+            : result?.error || "搜索失败",
+          data: result,
+        };
+      }
+
+      if (command.action === "download") {
+        const { videoUrl, filename } = command.payload || {};
+        const nativeApi = getNativeApi() as any;
+        if (!videoUrl) {
+          throw new Error("缺少 Magnific 视频链接");
+        }
+        if (!nativeApi?.downloadMagnificVideo) {
+          throw new Error("当前环境未注入桌面端 Magnific 下载能力");
+        }
+        const data = await nativeApi.downloadMagnificVideo({
+          videoUrl,
+          filename,
+        });
+        return {
+          success: !!data?.ok,
+          message: data?.ok ? "视频下载完成" : data?.msg || "下载失败",
+          data,
+        };
+      }
+
+      if (command.action === "sync") {
+        const { videoUrl, metadata } = command.payload || {};
+        const nativeApi = getNativeApi() as any;
+        if (!videoUrl) {
+          throw new Error("缺少 Magnific 视频链接");
+        }
+        if (!nativeApi?.syncMagnificToMaterialLibrary) {
+          throw new Error("当前环境未注入桌面端 Magnific 同步能力");
+        }
+        const data = await nativeApi.syncMagnificToMaterialLibrary(
+          videoUrl,
+          metadata,
+        );
+        await syncServiceRuntime("magnific");
+        return {
+          success: !!data?.ok || !!data?.success,
+          message:
+            data?.message ||
+            (data?.ok ? "视频已同步到素材库" : data?.msg || "同步到素材库失败"),
+          data,
+        };
+      }
+
+      if (command.action === "collect") {
+        const {
+          keyword,
+          query,
+          maxCount = 10,
+          license = "free",
+          order = "relevance",
+          syncToMaterial = true,
+        } = command.payload || {};
+        const q = query || keyword;
+        if (!q) {
+          throw new Error("缺少搜索关键词");
+        }
+        const nativeApi = getNativeApi() as any;
+        if (
+          !nativeApi?.searchMagnific ||
+          !nativeApi?.syncMagnificToMaterialLibrary
+        ) {
+          throw new Error("当前环境未注入桌面端 Magnific 采集能力");
+        }
+
+        const searchResult = await nativeApi.searchMagnific({
+          query: q,
+          limit: maxCount,
+          license,
+          order,
+        });
+        if (!searchResult?.success || !searchResult?.items?.length) {
+          return {
+            success: false,
+            message: searchResult?.error || "搜索失败",
+            data: { successCount: 0, failCount: 0, videos: [] },
+          };
+        }
+
+        const items = searchResult.items;
+        const videos: any[] = [];
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of items) {
+          try {
+            if (syncToMaterial) {
+              const syncResult =
+                await nativeApi.syncMagnificToMaterialLibrary(item.videoUrl, {
+                  title: item.title,
+                  url: item.url,
+                  link: item.link,
+                  author: item.author,
+                  duration: item.duration,
+                  quality: item.quality,
+                  premium: item.premium,
+                  id: item.id,
+                });
+              if (syncResult?.success || syncResult?.ok) {
+                videos.push({
+                  url:
+                    syncResult.data?.cosUrl ||
+                    syncResult.data?.localFilePath ||
+                    syncResult.cosUrl,
+                  originUrl: item.videoUrl,
+                  duration: item.duration ?? null,
+                });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } else {
+              const dl = await nativeApi.downloadMagnificVideo({
+                videoUrl: item.videoUrl,
+              });
+              if (dl?.ok) {
+                videos.push({ url: dl.filePath, originUrl: item.videoUrl });
+                successCount++;
+              } else {
+                failCount++;
+              }
+            }
+          } catch {
+            failCount++;
+          }
+        }
+
+        await syncServiceRuntime("magnific");
+        return {
+          success: true,
+          message: `采集完成: 成功 ${successCount} 个, 失败 ${failCount} 个`,
+          data: { successCount, failCount, videos },
+        };
+      }
+
+      throw new Error(`未实现的 Magnific 命令: ${command.action}`);
     },
   });
 

@@ -360,6 +360,21 @@ const api = {
     imageUrl: string,
     metadata?: Record<string, any>,
   ) => ipcRenderer.invoke("kaboompics:sync", { imageUrl, metadata }),
+  // Magnific API 导出
+  searchMagnific: (payload: {
+    query: string;
+    limit?: number;
+    page?: number;
+    license?: "free" | "premium" | "all";
+    order?: "relevance" | "recent";
+  }) => ipcRenderer.invoke("magnific:search", payload),
+  getMagnificStatus: () => ipcRenderer.invoke("magnific:status"),
+  downloadMagnificVideo: (payload: { videoUrl: string; filename?: string }) =>
+    ipcRenderer.invoke("magnific:download", payload),
+  syncMagnificToMaterialLibrary: (
+    videoUrl: string,
+    metadata?: Record<string, any>,
+  ) => ipcRenderer.invoke("magnific:sync", { videoUrl, metadata }),
   // Openclipart API 导出
   searchOpenclipart: (payload: {
     query: string;

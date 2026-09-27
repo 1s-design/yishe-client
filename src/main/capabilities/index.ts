@@ -20,6 +20,7 @@ import { registerStockSnapCapabilities } from "./stocksnap";
 import { registerOpenverseCapabilities } from "./openverse";
 import { registerNappyCapabilities } from "./nappy";
 import { registerKaboompicsCapabilities } from "./kaboompics";
+import { registerMagnificCapabilities } from "./magnific";
 import { registerOpenclipartCapabilities } from "./openclipart";
 import { registerUndrawCapabilities } from "./undraw";
 import { registerVecteezyCapabilities } from "./vecteezy";
@@ -108,6 +109,7 @@ export function registerAllCapabilities(): void {
   registerOpenverseCapabilities();
   registerNappyCapabilities();
   registerKaboompicsCapabilities();
+  registerMagnificCapabilities();
   registerOpenclipartCapabilities();
   registerUndrawCapabilities();
   registerVecteezyCapabilities();
