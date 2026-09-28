@@ -44,16 +44,8 @@ function getSystemProxy(): { host: string; port: number; protocol?: string } | n
 const SYSTEM_PROXY = getSystemProxy();
 console.log(`[HotSearch] 系统代理: ${SYSTEM_PROXY ? `${SYSTEM_PROXY.host}:${SYSTEM_PROXY.port}` : "无"}`);
 
-// 与服务端通信的基础地址（main 进程直接 HTTP 调用，无需关注 CORS）
-const REMOTE_API_BASE =
-  process.env.NODE_ENV === "development"
-    ? "http://localhost:1520/api"
-    : "https://api.1s.design/api";
-
 // 客户端设备标识（从 server.ts 注入）
 let clientDeviceId: string | null = null;
-
-console.log(`[HotSearch] REMOTE_API_BASE = ${REMOTE_API_BASE} (NODE_ENV=${process.env.NODE_ENV})`);
 
 class HotSearchService {
   private running = false;
@@ -79,10 +71,12 @@ class HotSearchService {
   }
 
   /**
-   * 请求服务端 API（REMOTE_API_BASE 已按 NODE_ENV 决定本地/生产地址）
+   * 请求服务端 API（动态根据当前服务地址发起调用）
    */
   private async apiFetch(path: string, init?: RequestInit): Promise<Response> {
-    return fetch(`${REMOTE_API_BASE}${path}`, init);
+    const { getBackendApiBase } = await import("../cos");
+    const remoteBase = await getBackendApiBase();
+    return fetch(`${remoteBase}${path}`, init);
   }
 
   /**

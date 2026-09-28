@@ -308,11 +308,8 @@ export async function executeVideoRender(args: {
     const { templateId, inputProps, jobId, prompt, params = {}, width, height } = args;
     // 默认如果传了 prompt 则优先进行 AI 生成，否则 render
     const action = args.action || (prompt ? 'ai-free-generate' : 'render');
-    const base =
-      process.env.VITE_BASE_URL ||
-      (process.env.NODE_ENV === "development"
-        ? "http://localhost:1520"
-        : "https://api.1s.design");
+    const { DynamicCapabilityManager } = await import('../dynamic-capability-manager');
+    const base = process.env.VITE_BASE_URL || await DynamicCapabilityManager.resolveServerUrl();
     const serverUrl = base.endsWith('/api') ? base : `${base}/api`;
 
     // 列出模板目录

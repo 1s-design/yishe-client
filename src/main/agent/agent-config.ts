@@ -25,8 +25,8 @@ export interface ClientAgentConfig {
 const DEFAULT_CONFIG: ClientAgentConfig = {
   keyId: null,
   provider: "openai",
-  model: "gpt5.6sol",
-  baseUrl: "https://aidaapi.site/",
+  model: "",
+  baseUrl: "",
   // Never ship a credential in the application bundle.  The model credential
   // is populated in the main process by syncCloudAgentConfig() after the user
   // signs in and has an ai.client-agent.execute binding.
@@ -78,10 +78,13 @@ export async function requestDesignServer<T>(
   try {
     return await request();
   } catch (error: any) {
-    const hostname = new URL(url).hostname;
-    if (error?.code === "CERT_HAS_EXPIRED" && hostname === "api.1s.design") {
+    if (
+      error?.code === "CERT_HAS_EXPIRED" ||
+      error?.code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ||
+      error?.code === "DEPTH_ZERO_SELF_SIGNED_CERT"
+    ) {
       console.warn(
-        "[AgentConfig] 服务端 TLS 证书已过期，临时回退读取客户端 Agent 绑定配置",
+        `[AgentConfig] 服务端 TLS 证书验证异常 (${error.code})，临时回退读取客户端 Agent 绑定配置`,
       );
       return request(expiredCertificateAgent);
     }

@@ -747,7 +747,7 @@ function computeAnimation(
   }
 }
 
-const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+// clamp01 从 ./shared 引入
 
 // ---------------------------------------------------------------------------
 // Layer renderers

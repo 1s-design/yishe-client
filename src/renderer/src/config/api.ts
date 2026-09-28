@@ -12,17 +12,63 @@ const isDev = process.env.NODE_ENV === 'development'
 // 服务模式类型
 export type ServiceMode = 'local' | 'remote'
 
-// 服务模式存储键名
-const SERVICE_MODE_STORAGE_KEY = 'yishe.serviceMode'
+// 存储键名
+export const SERVICE_MODE_STORAGE_KEY = 'yishe.serviceMode'
+export const CUSTOM_SERVER_URL_STORAGE_KEY = 'yishe.customServerUrl'
 
-// 获取服务模式（优先从localStorage读取）
-export function getServiceMode(): ServiceMode {
-  // 生产环境强制使用remote
-  if (!isDev) {
-    return 'remote'
+// 默认服务器地址
+export const DEFAULT_LOCAL_SERVER_URL = 'http://localhost:1520'
+export const DEFAULT_REMOTE_SERVER_URL = 'https://api.1s.design'
+
+// 获取自定义远程服务器地址
+export function getCustomServerUrl(): string {
+  try {
+    const stored = localStorage.getItem(CUSTOM_SERVER_URL_STORAGE_KEY)
+    if (stored && typeof stored === 'string' && stored.trim()) {
+      return stored.trim().replace(/\/+$/, '')
+    }
+  } catch (error) {
+    console.warn('读取自定义服务地址失败:', error)
   }
-  
-  // 开发环境从localStorage读取，默认local
+  return ''
+}
+
+// 保存自定义远程服务器地址
+export function setCustomServerUrl(url: string): void {
+  try {
+    const cleaned = String(url || '').trim().replace(/\/+$/, '')
+    if (!cleaned) {
+      localStorage.removeItem(CUSTOM_SERVER_URL_STORAGE_KEY)
+    } else {
+      localStorage.setItem(CUSTOM_SERVER_URL_STORAGE_KEY, cleaned)
+    }
+    window.dispatchEvent(
+      new CustomEvent('server-config-changed', {
+        detail: { customServerUrl: cleaned, apiBase: getRemoteApiBase(), wsEndpoint: getWsEndpoint() }
+      })
+    )
+  } catch (error) {
+    console.error('保存自定义服务地址失败:', error)
+  }
+}
+
+// 获取当前生效的服务根地址 (origin / host)
+export function getServerOrigin(mode?: ServiceMode): string {
+  const currentMode = mode || getServiceMode()
+  if (currentMode === 'local') {
+    return DEFAULT_LOCAL_SERVER_URL
+  }
+
+  const customUrl = getCustomServerUrl()
+  if (customUrl) {
+    return customUrl.replace(/\/api$/, '')
+  }
+
+  return DEFAULT_REMOTE_SERVER_URL
+}
+
+// 获取服务模式（支持开发与生产环境自定义）
+export function getServiceMode(): ServiceMode {
   try {
     const stored = localStorage.getItem(SERVICE_MODE_STORAGE_KEY)
     if (stored === 'local' || stored === 'remote') {
@@ -32,19 +78,13 @@ export function getServiceMode(): ServiceMode {
     console.warn('读取服务模式配置失败:', error)
   }
   
-  return 'local' // 默认本地服务
+  return isDev ? 'local' : 'remote'
 }
 
 // 保存服务模式
 export function setServiceMode(mode: ServiceMode): void {
-  if (!isDev) {
-    console.warn('生产环境不允许切换服务模式')
-    return
-  }
-  
   try {
     localStorage.setItem(SERVICE_MODE_STORAGE_KEY, mode)
-    // 触发自定义事件，通知其他模块配置已更改
     window.dispatchEvent(new CustomEvent('service-mode-changed', { detail: { mode } }))
   } catch (error) {
     console.error('保存服务模式配置失败:', error)
@@ -52,23 +92,24 @@ export function setServiceMode(mode: ServiceMode): void {
 }
 
 export function getApiBaseByMode(mode: ServiceMode): string {
-  return mode === 'local'
-    ? 'http://localhost:1520/api'
-    : 'https://api.1s.design/api'
+  const origin = getServerOrigin(mode)
+  return `${origin}/api`
 }
 
 export function getWsEndpointByMode(mode: ServiceMode): string {
-  return mode === 'local'
-    ? 'http://localhost:1520/ws'
-    : 'wss://api.1s.design/ws'
+  const origin = getServerOrigin(mode)
+  const isHttps = origin.startsWith('https:')
+  const wsProtocol = isHttps ? 'wss:' : 'ws:'
+  const hostPart = origin.replace(/^https?:\/\//, '')
+  return `${wsProtocol}//${hostPart}/ws`
 }
 
-// 动态获取远程API地址
+// 动态获取生效的API地址
 export function getRemoteApiBase(): string {
   return getApiBaseByMode(getServiceMode())
 }
 
-// 动态获取WebSocket地址
+// 动态获取生效的WebSocket地址
 export function getWsEndpoint(): string {
   return getWsEndpointByMode(getServiceMode())
 }
@@ -79,7 +120,7 @@ export const LOCAL_API_BASE = 'http://localhost:1519/api'
 // 浏览器自动化服务（yishe-uploader）地址，与客户端配合使用
 export const UPLOADER_API_BASE = 'http://127.0.0.1:7010'
 
-// 兼容性导出（保持现有代码可用，但会在模块加载时确定值）
-// 注意：这些值在模块加载时确定，如果需要动态获取，请使用上面的函数
+// 兼容性导出
 export const REMOTE_API_BASE = getRemoteApiBase()
 export const WS_ENDPOINT = getWsEndpoint()
+

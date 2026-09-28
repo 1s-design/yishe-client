@@ -19,13 +19,16 @@ type CosConfig = {
 }
 
 const SERVICE_MODE_STORAGE_KEY = 'yishe.serviceMode'
-const BASIC_CONFIG_SECRET = '1s'
+const CUSTOM_SERVER_URL_STORAGE_KEY = 'yishe.customServerUrl'
+const BASIC_CONFIG_SECRET = process.env.YISHE_COS_CONFIG_SECRET || '1s'
 const DEV_REMOTE_API_BASE = process.env.YISHE_LOCAL_API_BASE || 'http://localhost:1520/api'
 const PROD_REMOTE_API_BASE = process.env.YISHE_REMOTE_API_BASE || 'https://api.1s.design/api'
 
+const COS_CONFIG_TTL_MS = 30 * 60 * 1000 // 30 分钟缓存有效期，支持定时更新
 let cachedCosConfig: CosConfig | null = null
 let cachedCosConfigSource: string | null = null
 let cachedCosConfigToken: string | null = null
+let cachedCosConfigTime = 0
 let pendingRemoteConfigPromise: Promise<CosConfig> | null = null
 
 type UploadResult =
@@ -88,14 +91,10 @@ function loadCosSdk(): any | null {
 }
 
 async function getCurrentServiceMode(): Promise<'local' | 'remote'> {
-  if (process.env.NODE_ENV !== 'development') {
-    return 'remote'
-  }
-
   try {
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (!mainWindow || mainWindow.isDestroyed()) {
-      return 'local'
+      return process.env.NODE_ENV === 'development' ? 'local' : 'remote'
     }
 
     const mode = await mainWindow.webContents.executeJavaScript(`
@@ -109,17 +108,47 @@ async function getCurrentServiceMode(): Promise<'local' | 'remote'> {
       })()
     `)
 
-    return mode === 'remote' ? 'remote' : 'local'
+    if (mode === 'local' || mode === 'remote') {
+      return mode
+    }
   } catch (error) {
-    console.warn('[COS] 读取服务模式失败，开发环境默认使用本地服务:', error)
-    return 'local'
+    console.warn('[COS] 读取服务模式失败:', error)
   }
+
+  return process.env.NODE_ENV === 'development' ? 'local' : 'remote'
 }
 
 async function getBackendApiBase(): Promise<string> {
   const mode = await getCurrentServiceMode()
-  const base = mode === 'local' ? DEV_REMOTE_API_BASE : PROD_REMOTE_API_BASE
-  return String(base || '').replace(/\/$/, '')
+  if (mode === 'local') {
+    return DEV_REMOTE_API_BASE.replace(/\/$/, '')
+  }
+
+  // remote 模式：优先读取用户在渲染层配置的 customServerUrl
+  try {
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const customUrl = await mainWindow.webContents.executeJavaScript(`
+        (() => {
+          try {
+            const value = localStorage.getItem(${JSON.stringify(CUSTOM_SERVER_URL_STORAGE_KEY)})
+            return typeof value === 'string' && value.trim() ? value.trim() : null
+          } catch (e) {
+            return null
+          }
+        })()
+      `)
+
+      if (customUrl) {
+        const cleaned = customUrl.replace(/\/+$/, '')
+        return cleaned.endsWith('/api') ? cleaned : `${cleaned}/api`
+      }
+    }
+  } catch (error) {
+    console.warn('[COS] 读取自定义服务器地址失败:', error)
+  }
+
+  return PROD_REMOTE_API_BASE.replace(/\/$/, '')
 }
 
 /** 供其他模块复用：获取当前生效的后端 API 基地址（与 COS 配置获取保持一致） */
@@ -265,10 +294,12 @@ async function fetchRemoteCosConfig(): Promise<CosConfig> {
     throw new Error('未检测到登录 token，请先登录后再获取 COS 配置')
   }
 
+  const now = Date.now()
   if (
     cachedCosConfig &&
     cachedCosConfigSource === apiBase &&
-    cachedCosConfigToken === token
+    cachedCosConfigToken === token &&
+    now - cachedCosConfigTime < COS_CONFIG_TTL_MS
   ) {
     return cachedCosConfig
   }
@@ -293,6 +324,7 @@ async function fetchRemoteCosConfig(): Promise<CosConfig> {
         cachedCosConfig = config
         cachedCosConfigSource = apiBase
         cachedCosConfigToken = token
+        cachedCosConfigTime = Date.now()
         return config
       } catch (error: any) {
         lastError = error
@@ -312,8 +344,92 @@ async function fetchRemoteCosConfig(): Promise<CosConfig> {
   }
 }
 
+/** 手动使 COS 缓存失效（配置更新或鉴权失效时调用） */
+export function invalidateCosConfig(): void {
+  cachedCosConfig = null
+  cachedCosConfigSource = null
+  cachedCosConfigToken = null
+  cachedCosConfigTime = 0
+}
+
 async function getCosConfig(): Promise<CosConfig | null> {
   return fetchRemoteCosConfig()
+}
+
+// ─── STS 临时凭据（优先），失败回退永久密钥 ───────────────────
+
+type StsCredential = {
+  TmpSecretId: string
+  TmpSecretKey: string
+  SecurityToken: string
+  ExpiredTime: number
+  Bucket: string
+  Region: string
+}
+
+let cachedSts: StsCredential | null = null
+let cachedStsTime = 0
+/** 提前 5 分钟过期，避免上传中途失效 */
+const STS_REFRESH_AHEAD_MS = 5 * 60 * 1000
+
+export function invalidateStsCredential(): void {
+  cachedSts = null
+  cachedStsTime = 0
+}
+
+/**
+ * 获取 COS STS 临时凭据（服务端 /cos/sts 签发）
+ * 返回 null 表示当前后端不支持 STS，调用方应回退旧的永久密钥模式
+ */
+async function fetchStsCredential(): Promise<StsCredential | null> {
+  const apiBase = await getBackendApiBase()
+  const token = await getCurrentAccessToken()
+  if (!token) return null
+
+  const now = Date.now()
+  if (cachedSts && now - cachedStsTime < STS_REFRESH_AHEAD_MS) {
+    // 未临近过期则直接用缓存
+    const remain = (cachedSts.ExpiredTime || 0) * 1000 - now
+    if (remain > STS_REFRESH_AHEAD_MS) {
+      return cachedSts
+    }
+  }
+
+  try {
+    const responseText = await requestText(
+      `${apiBase}/cos/sts`,
+      'GET',
+      undefined,
+      { Authorization: `Bearer ${token}` },
+    )
+    const parsed = parseMaybeJson(responseText)
+    const data = parsed?.data ?? parsed
+    if (
+      data &&
+      data.TmpSecretId &&
+      data.TmpSecretKey &&
+      data.SecurityToken &&
+      data.ExpiredTime
+    ) {
+      cachedSts = {
+        TmpSecretId: String(data.TmpSecretId),
+        TmpSecretKey: String(data.TmpSecretKey),
+        SecurityToken: String(data.SecurityToken),
+        ExpiredTime: Number(data.ExpiredTime),
+        Bucket: String(data.Bucket || data.bucket || ''),
+        Region: String(data.Region || data.region || ''),
+      }
+      cachedStsTime = now
+      console.log(
+        `[COS] STS 临时凭据已获取，有效至 ${new Date(cachedSts.ExpiredTime * 1000).toISOString()}`,
+      )
+      return cachedSts
+    }
+    return null
+  } catch (error: any) {
+    console.warn('[COS] STS 凭据获取失败（将回退永久密钥模式）:', error?.message || error)
+    return null
+  }
 }
 
 export async function getCurrentUserIdentity(): Promise<{ userId: string; account: string }> {
@@ -426,9 +542,14 @@ export async function uploadFileToCos(filePath: string, key?: string): Promise<U
     return { ok: false, msg: '文件不存在，无法上传' }
   }
 
-  const cosConfig = await getCosConfig()
-  if (!cosConfig) {
-    return { ok: false, msg: 'COS 配置缺失，请检查后端 getBasicConfig' }
+  // 优先 STS 临时凭据；后端不支持或失败时回退永久密钥（getBasicConfig）
+  const sts = await fetchStsCredential()
+  let cosConfig: CosConfig | null = null
+  if (!sts) {
+    cosConfig = await getCosConfig()
+    if (!cosConfig) {
+      return { ok: false, msg: 'COS 配置缺失，请检查后端 getBasicConfig' }
+    }
   }
 
   const COS = loadCosSdk()
@@ -436,10 +557,25 @@ export async function uploadFileToCos(filePath: string, key?: string): Promise<U
     return { ok: false, msg: '未安装 cos-nodejs-sdk-v5，请先安装依赖' }
   }
 
-  const cosClient = new COS({
-    SecretId: cosConfig.SecretId,
-    SecretKey: cosConfig.SecretKey
-  })
+  const cosClient = sts
+    ? new COS({
+        getAuthorization: (_options: any, callback: (auth: any) => void) => {
+          callback({
+            TmpSecretId: sts.TmpSecretId,
+            TmpSecretKey: sts.TmpSecretKey,
+            SecurityToken: sts.SecurityToken,
+            ExpiredTime: sts.ExpiredTime,
+          })
+        },
+      })
+    : new COS({
+        SecretId: cosConfig!.SecretId,
+        SecretKey: cosConfig!.SecretKey,
+      })
+
+  // STS 模式下 bucket/region 以凭据为准
+  const bucket = sts?.Bucket || cosConfig!.Bucket
+  const region = sts?.Region || cosConfig!.Region
 
   const fileName = path.basename(filePath)
   const cosKey = key || await generateCosKey({
@@ -451,27 +587,37 @@ export async function uploadFileToCos(filePath: string, key?: string): Promise<U
   return new Promise((resolve) => {
     cosClient.putObject(
       {
-        Bucket: cosConfig.Bucket,
-        Region: cosConfig.Region,
+        Bucket: bucket,
+        Region: region,
         Key: cosKey,
         Body: fileBuffer
       },
       (err: any, data: any) => {
         if (err) {
           console.error('[COS] 上传失败:', err)
+          if (
+            err?.statusCode === 403 ||
+            err?.code === 'SignatureDoesNotMatch' ||
+            err?.code === 'AccessDenied' ||
+            err?.code === 'RequestTimeTooSkewed'
+          ) {
+            console.warn('[COS] 凭据已失效或过期，清除本地 COS/STS 缓存准备重试刷新')
+            invalidateCosConfig()
+            invalidateStsCredential()
+          }
           resolve({ ok: false, msg: err?.message || 'COS 上传失败' })
         } else {
           const url = `https://${data.Location}`
           void registerFileAssetBestEffort({
-            bucket: cosConfig.Bucket,
-            region: cosConfig.Region,
+            bucket,
+            region,
             objectKey: cosKey,
             url,
             fileName,
             size: fs.statSync(filePath).size,
             sourceModule: cosKey.split('/')[2] || 'uncategorized',
             category: cosKey.split('/')[2] || 'uncategorized',
-            metadata: { uploadMode: 'electron-main' },
+            metadata: { uploadMode: sts ? 'electron-main-sts' : 'electron-main' },
           })
           resolve({ ok: true, url, key: cosKey })
         }

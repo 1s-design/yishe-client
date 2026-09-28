@@ -95,13 +95,7 @@ const REMOTION_TEMPLATE_CACHE_TTL_MS = 60_000;
 const REMOTION_RECORD_PROGRESS_PERSIST_STEP = 10;
 const REMOTION_RECORD_PROGRESS_PERSIST_INTERVAL_MS = 15_000;
 const REMOTION_LOCAL_BASE = "electron://video-template";
-const PROD_WS_ENDPOINT = "wss://api.1s.design/ws";
-const DEV_WS_ENDPOINT = "http://localhost:1520/ws";
-const FALLBACK_ENDPOINT = import.meta.env.PROD
-  ? PROD_WS_ENDPOINT
-  : DEV_WS_ENDPOINT;
-const DEFAULT_WS_ENDPOINT =
-  import.meta.env.VITE_WS_ENDPOINT ?? FALLBACK_ENDPOINT;
+const DEFAULT_WS_ENDPOINT = import.meta.env.VITE_WS_ENDPOINT || getWsEndpoint();
 const IDENTITY_STORAGE_KEY = "yishe.ws.identity";
 const BROWSER_AUTOMATION_DISPATCH_STORAGE_KEY =
   "yishe.browserAutomation.autoDispatchEnabled";

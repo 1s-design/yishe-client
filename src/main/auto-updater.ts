@@ -56,8 +56,9 @@ let mainWindow: BrowserWindow | null = null;
 let currentUpdateInfo: UpdateInfo = { state: "idle" };
 const isAutoCheckEnabled = true;
 
-// 腾讯云 COS 资源发布地址（国内高带宽直连）
+// 腾讯云 COS 资源发布地址（支持私有化部署通过环境变量 YISHE_UPDATE_COS_BASE_URL 覆盖）
 const COS_BASE_URL =
+  process.env.YISHE_UPDATE_COS_BASE_URL ||
   "https://yishe-storage-1257307499.cos.ap-beijing.myqcloud.com/yishe-client/";
 const COS_LATEST_YML_URL =
   process.platform === "darwin"
@@ -65,8 +66,7 @@ const COS_LATEST_YML_URL =
     : `${COS_BASE_URL}latest.yml`;
 const COS_WIN_URL = `${COS_BASE_URL}yishe-client.exe`;
 const COS_MAC_URL = `${COS_BASE_URL}yishe-client.dmg`;
-const BACKEND_DOWNLOAD_API = "https://api.1s.design/api/system-config/downloads";
-const GITHUB_REPO = "1s-design/yishe-client";
+const GITHUB_REPO = process.env.YISHE_GITHUB_REPO || "1s-design/yishe-client";
 const RELEASE_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
 
 let downloadedPackagePath: string | null = null;

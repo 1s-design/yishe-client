@@ -4,8 +4,10 @@ import { ElMessageBox } from "element-plus";
 import { updateApiBaseUrl } from "../api/request";
 import {
   getApiBaseByMode,
+  getCustomServerUrl,
   getServiceMode,
   getWsEndpointByMode,
+  setCustomServerUrl,
   type ServiceMode,
 } from "../config/api";
 import { useToast } from "../composables/useToast";
@@ -27,8 +29,8 @@ function getNativeApi() {
   return (window as typeof window & { api?: typeof window.api }).api;
 }
 
-const isDevelopment = process.env.NODE_ENV === "development";
 const serviceMode = ref<ServiceMode>(getServiceMode());
+const customServerUrl = ref(getCustomServerUrl());
 const workspaceDirectory = ref("");
 const workspaceLoading = ref(false);
 const selectingWorkspace = ref(false);
@@ -86,17 +88,31 @@ const serviceStatusConfig = computed(() => {
   };
 });
 
-const handleServiceModeChange = async (mode: ServiceMode) => {
-  if (!isDevelopment) {
+const handleCustomServerUrlSave = async () => {
+  const inputUrl = customServerUrl.value.trim();
+  if (inputUrl && !/^https?:\/\//i.test(inputUrl)) {
     showToast({
       color: "warning",
       icon: "mdi-alert",
-      message: "生产环境不允许切换服务模式",
+      message: "服务地址必须以 http:// 或 https:// 开头",
     });
-    serviceMode.value = getServiceMode();
     return;
   }
 
+  setCustomServerUrl(inputUrl);
+  updateApiBaseUrl(getApiBaseByMode(serviceMode.value));
+  if (serviceMode.value === "remote") {
+    websocketClient.setEndpoint(getWsEndpointByMode("remote"));
+  }
+
+  showToast({
+    color: "success",
+    icon: "mdi-check-circle",
+    message: inputUrl ? "私有服务地址已更新并生效" : "已恢复为默认官方服务地址",
+  });
+};
+
+const handleServiceModeChange = async (mode: ServiceMode) => {
   try {
     await ElMessageBox.confirm(
       "切换服务后可能需要重新登录，是否继续？",
@@ -437,11 +453,26 @@ onBeforeUnmount(() => {
           <span class="settings-addr-row__value">{{ currentWsEndpoint }}</span>
           <span class="settings-addr-row__tag" :class="`is-${serviceStatusConfig.tone}`">{{ serviceStatusConfig.text }}</span>
         </div>
-        <div v-if="isDevelopment" class="settings-row__btns" style="margin-top:4px">
+        <div class="settings-row__btns" style="margin-top: 6px">
           <el-radio-group v-model="serviceMode" class="seg" @change="handleServiceModeChange">
-            <el-radio-button label="local">本地</el-radio-button>
-            <el-radio-button label="remote">远程</el-radio-button>
+            <el-radio-button label="local">本地服务 (1520)</el-radio-button>
+            <el-radio-button label="remote">远程/私有服务</el-radio-button>
           </el-radio-group>
+        </div>
+        <div v-if="serviceMode === 'remote'" style="margin-top: 10px; width: 100%">
+          <el-input
+            v-model="customServerUrl"
+            size="small"
+            placeholder="默认：https://api.1s.design（可输入私有部署地址，如 http://192.168.1.100:1520）"
+            clearable
+          >
+            <template #append>
+              <el-button size="small" type="primary" @click="handleCustomServerUrlSave">保存</el-button>
+            </template>
+          </el-input>
+          <div class="settings-row__meta" style="margin-top: 4px">
+            <span>留空使用官方云服务；私有部署请输入内网或专属服务地址（包含 http/https）</span>
+          </div>
         </div>
       </div>
     </div>

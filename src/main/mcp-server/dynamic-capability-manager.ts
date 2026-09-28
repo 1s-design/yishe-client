@@ -55,25 +55,31 @@ export class DynamicCapabilityManager {
     }
   }
 
-  public static resolveServerUrl(): string {
-    if (process.env.VITE_BASE_URL) return process.env.VITE_BASE_URL;
-    if (process.env.SERVER_URL) return process.env.SERVER_URL;
-    return process.env.NODE_ENV === 'development'
-      ? 'http://localhost:1520'
-      : 'https://api.1s.design';
+  public static async resolveServerUrl(): Promise<string> {
+    if (process.env.VITE_BASE_URL) return process.env.VITE_BASE_URL.replace(/\/api$/, '');
+    if (process.env.SERVER_URL) return process.env.SERVER_URL.replace(/\/api$/, '');
+    try {
+      const { getBackendApiBase } = await import('../cos');
+      const base = await getBackendApiBase();
+      return base.replace(/\/api$/, '');
+    } catch {
+      return process.env.NODE_ENV === 'development'
+        ? 'http://localhost:1520'
+        : 'https://api.1s.design';
+    }
   }
 
   /**
    * 从服务端拉取指定节点能力的最新脚本定义
    */
   public static async fetchCapabilityFromServer(type: string): Promise<CachedCapability> {
-    const serverUrl = this.resolveServerUrl();
+    const serverUrl = await this.resolveServerUrl();
     const endpoint = `${serverUrl}/api/workflow/node-capabilities/${type}`;
 
     console.log(`[DynamicCapability] 🌐 正在从服务端拉取节点能力定义: ${type} -> ${endpoint}`);
 
-    // 使用客户端统一的 token（如果已登录），否则使用内置 super token
-    let authHeader = 'Bearer 1sdesign';
+    // 使用客户端统一的 token（如果已登录）
+    let authHeader = '';
     try {
       const { getTokenValue } = await import('../server');
       const clientToken = getTokenValue?.();
@@ -81,14 +87,12 @@ export class DynamicCapabilityManager {
         authHeader = `Bearer ${clientToken}`;
       }
     } catch {
-      // 无法导入 getTokenValue 时使用内置 token
+      // 无法导入或未登录
     }
 
     const res = await axios.get(endpoint, {
       timeout: 8000,
-      headers: {
-        authorization: authHeader,
-      },
+      headers: authHeader ? { authorization: authHeader } : {},
     });
 
     const body = res.data;

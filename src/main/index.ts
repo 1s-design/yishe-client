@@ -1029,9 +1029,11 @@ function createTray(): void {
           label: "检查远程服务",
           click: async () => {
             try {
-              const response = await fetch("https://api.1s.design/api/test");
+              const { getBackendApiBase } = await import("./cos");
+              const apiBase = await getBackendApiBase();
+              const response = await fetch(`${apiBase}/test`);
               if (response.ok) {
-                console.log("远程服务连接正常");
+                console.log("远程服务连接正常:", apiBase);
               }
             } catch (error) {
               console.log("远程服务连接失败");

@@ -81,20 +81,15 @@ export function registerHotSearchRoutes(
   });
 
   // 代理远程热搜数据接口（避免 CORS 问题）
-  const REMOTE_BASE =
-    process.env.NODE_ENV === "development"
-      ? "http://localhost:1520/api"
-      : "https://api.1s.design/api";
-  const FALLBACK_BASE =
-    process.env.NODE_ENV === "development" ? "http://localhost:1520/api" : REMOTE_BASE;
-
-  /** 带 fallback 的 fetch */
+  /** 带动态后端地址解析的 fetch */
   async function fetchWithFallback(path: string, init?: RequestInit): Promise<any> {
+    const { getBackendApiBase } = await import("../cos");
+    const remoteBase = await getBackendApiBase();
     try {
-      return await fetch(`${REMOTE_BASE}${path}`, init);
+      return await fetch(`${remoteBase}${path}`, init);
     } catch (primaryErr: any) {
-      console.warn(`[HotSearch Proxy] 主地址失败 (${primaryErr?.cause?.code || primaryErr?.message}), fallback → ${FALLBACK_BASE}${path}`);
-      return fetch(`${FALLBACK_BASE}${path}`, init);
+      console.warn(`[HotSearch Proxy] 请求 ${remoteBase}${path} 失败:`, primaryErr?.message);
+      throw primaryErr;
     }
   }
 

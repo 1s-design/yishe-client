@@ -19,11 +19,28 @@ const LOCAL_CALLBACK_PORT = 1519
 
 /** 获取授权页面 URL */
 function getAuthorizeBaseUrl(): string {
+  try {
+    const customAdminUrl = localStorage.getItem('yishe.customAdminUrl')
+    if (customAdminUrl && typeof customAdminUrl === 'string' && customAdminUrl.trim()) {
+      return customAdminUrl.trim().replace(/\/+$/, '')
+    }
+  } catch {}
+
   const apiBase = getRemoteApiBase()
-  if (apiBase.includes('localhost')) {
+  if (apiBase.includes('localhost') || apiBase.includes('127.0.0.1')) {
     return 'http://localhost:1521'
   }
-  return 'http://admin.1s.design'
+
+  try {
+    const url = new URL(apiBase)
+    if (url.hostname === 'api.1s.design') {
+      return 'http://admin.1s.design'
+    }
+    // 私有部署：若有指定端口或标准端口，派生到同域名的 1521 端口或同主机
+    return `${url.protocol}//${url.hostname}:1521`
+  } catch {
+    return 'http://admin.1s.design'
+  }
 }
 
 /** 获取回调地址（指向本地服务器） */

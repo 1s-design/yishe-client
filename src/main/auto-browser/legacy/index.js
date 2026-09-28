@@ -41,7 +41,7 @@ program
 
 // 解析命令行参数
 const env = process.argv[2] === 'dev' ? 'dev' : 'prod';
-const baseUrl = env === 'dev' ? 'http://localhost:1520' : 'https://api.1s.design';
+const baseUrl = env === 'dev' ? 'http://localhost:1520' : (process.env.YISHE_REMOTE_API_BASE ? process.env.YISHE_REMOTE_API_BASE.replace(/\/api$/, '') : 'https://api.1s.design');
 
 // 数据源配置
 const DATA_SOURCES = {

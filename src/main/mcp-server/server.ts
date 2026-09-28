@@ -705,10 +705,10 @@ export class McpServerManager {
     }
 
     try {
+      const { getBackendApiBase } = await import("../cos");
+      const apiBase = await getBackendApiBase();
       const resp = await fetch(
-        process.env.NODE_ENV !== "development"
-          ? "https://api.1s.design/api/ai/runtime-config?featureCode=ai.client-agent.execute"
-          : "http://localhost:1521/api/ai/runtime-config?featureCode=ai.client-agent.execute",
+        `${apiBase}/ai/runtime-config?featureCode=ai.client-agent.execute`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       const json = (await resp.json()) as any;

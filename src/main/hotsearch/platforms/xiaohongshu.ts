@@ -17,10 +17,10 @@ import axios from 'axios';
  * 通过服务端执行（server 模式）
  */
 async function executeViaServer(params: Record<string, any>): Promise<any> {
-  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const serverUrl = await DynamicCapabilityManager.resolveServerUrl();
   const endpoint = `${serverUrl}/api/workflow/node-capabilities/hotsearch_xiaohongshu/execute`;
 
-  let authHeader = 'Bearer 1sdesign';
+  let authHeader = '';
   try {
     const { getTokenValue } = await import('../../server');
     const clientToken = getTokenValue?.();
@@ -33,7 +33,7 @@ async function executeViaServer(params: Record<string, any>): Promise<any> {
     params: params || {},
   }, {
     timeout: 15000,
-    headers: { authorization: authHeader },
+    headers: authHeader ? { authorization: authHeader } : {},
   });
 
   const body = res.data;

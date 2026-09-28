@@ -17,11 +17,11 @@ import axios from 'axios';
  * 通过服务端执行（server 模式）
  */
 async function executeViaServer(params: Record<string, any>): Promise<any> {
-  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const serverUrl = await DynamicCapabilityManager.resolveServerUrl();
   const endpoint = `${serverUrl}/api/workflow/node-capabilities/hotsearch_douyin/execute`;
 
   // 使用客户端统一的 token（如果已登录），否则使用内置 super token
-  let authHeader = 'Bearer 1sdesign';
+  let authHeader = '';
   try {
     const { getTokenValue } = await import('../../server');
     const clientToken = getTokenValue?.();

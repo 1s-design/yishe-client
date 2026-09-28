@@ -57,13 +57,13 @@ import axios from 'axios';
  * 通过服务端执行节点能力（server 模式）
  */
 async function executeViaServer(type: string, params: Record<string, any>): Promise<any> {
-  const serverUrl = DynamicCapabilityManager.resolveServerUrl();
+  const serverUrl = await DynamicCapabilityManager.resolveServerUrl();
   const endpoint = `${serverUrl}/api/workflow/node-capabilities/${type}/execute`;
 
   console.log(`[MCP] 🔄 通过服务端执行节点能力: ${type} -> ${endpoint}`);
 
-  // 使用客户端统一的 token（如果已登录），否则使用内置 super token
-  let authHeader = 'Bearer 1sdesign';
+  // 使用客户端统一的 token（如果已登录）
+  let authHeader = '';
   try {
     const { getTokenValue } = await import('../../server');
     const clientToken = getTokenValue?.();
@@ -71,16 +71,14 @@ async function executeViaServer(type: string, params: Record<string, any>): Prom
       authHeader = `Bearer ${clientToken}`;
     }
   } catch {
-    // 无法导入 getTokenValue 时使用内置 token
+    // 无法导入或未登录
   }
 
   const res = await axios.post(endpoint, {
     params: params || {},
   }, {
     timeout: 15000,
-    headers: {
-      authorization: authHeader,
-    },
+    headers: authHeader ? { authorization: authHeader } : {},
   });
 
   const body = res.data;

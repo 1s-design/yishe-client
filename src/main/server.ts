@@ -17,7 +17,7 @@ import { createServer } from "http";
 import fs from "fs";
 import path from "path";
 import ElectronStore from "electron-store";
-import { uploadFileToCos, generateCosKey, getCurrentUserIdentity } from "./cos";
+import { uploadFileToCos, generateCosKey, getCurrentUserIdentity, getBackendApiBase } from "./cos";
 import { crawlerCollectorService } from "./crawlerCollector";
 import { registerHotSearchRoutes } from "./hotsearch/hotsearch.routes";
 import { hotSearchService } from "./hotsearch/hotsearch.service";
@@ -1187,10 +1187,7 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       }
 
       // 获取远程API地址
-      const isDev = process.env.NODE_ENV === "development";
-      const REMOTE_API_BASE = isDev
-        ? "http://localhost:1520/api"
-        : "https://api.1s.design/api";
+      const REMOTE_API_BASE = await getBackendApiBase();
 
       // 构建查询参数
       const queryParams = new URLSearchParams();
@@ -1342,10 +1339,7 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       }
 
       // 获取远程API地址
-      const isDev = process.env.NODE_ENV === "development";
-      const REMOTE_API_BASE = isDev
-        ? "http://localhost:1520/api"
-        : "https://api.1s.design/api";
+      const REMOTE_API_BASE = await getBackendApiBase();
 
       // 调用远程API
       const response = await fetch(`${REMOTE_API_BASE}/queue/message/status`, {

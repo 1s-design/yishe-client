@@ -17,11 +17,8 @@ export async function executeImageToolPlan(args: {
         const http = await import('http');
         
         const fileName = result.outputFile || `processed_${Date.now()}.jpg`;
-        const serverUrl =
-          process.env.VITE_BASE_URL ||
-          (process.env.NODE_ENV === "development"
-            ? "http://localhost:1520"
-            : "https://api.1s.design");
+        const { DynamicCapabilityManager } = await import('../dynamic-capability-manager');
+        const serverUrl = await DynamicCapabilityManager.resolveServerUrl();
         
         const postData = JSON.stringify({
           title: `MCP处理 · ${fileName}`,
