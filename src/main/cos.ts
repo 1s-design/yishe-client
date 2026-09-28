@@ -415,7 +415,8 @@ async function fetchStsCredential(): Promise<StsCredential | null> {
         TmpSecretId: String(data.TmpSecretId),
         TmpSecretKey: String(data.TmpSecretKey),
         SecurityToken: String(data.SecurityToken),
-        ExpiredTime: Number(data.ExpiredTime),
+        // COS SDK 要求 10 位秒级时间戳
+        ExpiredTime: Math.floor(Number(data.ExpiredTime) || 0),
         Bucket: String(data.Bucket || data.bucket || ''),
         Region: String(data.Region || data.region || ''),
       }
