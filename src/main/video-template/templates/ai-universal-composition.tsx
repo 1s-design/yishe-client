@@ -9,6 +9,7 @@ import {
   useVideoConfig,
   interpolate,
   spring,
+  Easing,
   Audio,
 } from "remotion";
 import { z } from "zod";
@@ -34,11 +35,16 @@ import {
   MediaSurface,
   MetricGrid,
   FeatureStack,
+  FooterNote,
   ProgressBarRow,
   SectionEyebrow,
+  StageFrame,
   TagPill,
   TYPOGRAPHY_STACKS,
   alpha,
+  clamp01,
+  formatDurationLabel,
+  isCyberPalette,
   isLightPalette,
   mix,
   useArtDirection,
@@ -793,7 +799,14 @@ const DynamicCodeRenderer: React.FC<{
   palette: Palette;
   frame: number;
   fps: number;
-}> = ({ code, props = {}, palette, frame, fps }) => {
+  width?: number;
+  height?: number;
+  durationInFrames?: number;
+}> = ({ code, props = {}, palette, frame, fps, width, height, durationInFrames }) => {
+  const videoConfig = useVideoConfig();
+  const w = width ?? videoConfig.width;
+  const h = height ?? videoConfig.height;
+  const d = durationInFrames ?? videoConfig.durationInFrames;
   try {
     const exportsObj: Record<string, any> = {};
     const moduleObj = { exports: exportsObj };
@@ -814,7 +827,7 @@ const DynamicCodeRenderer: React.FC<{
       ...RemotionModule,
       // Remotion hook and context bridges
       useCurrentFrame: () => frame,
-      useVideoConfig: () => ({ fps, width: 1080, height: 1920, durationInFrames: 300 }),
+      useVideoConfig: () => ({ fps, width: w, height: h, durationInFrames: d }),
       AbsoluteFill,
       Img,
       OffthreadVideo,
@@ -822,13 +835,32 @@ const DynamicCodeRenderer: React.FC<{
       Audio,
       interpolate,
       spring,
+      Easing,
       frame,
       fps,
+      width: w,
+      height: h,
+      durationInFrames: d,
       palette,
       props,
       alpha,
       mix,
+      clamp01,
       isLightPalette,
+      isCyberPalette,
+      formatDurationLabel,
+      // shared template building blocks (for component templates)
+      GradientStage,
+      StageFrame,
+      TagPill,
+      SectionEyebrow,
+      MediaSurface,
+      MetricGrid,
+      FeatureStack,
+      ProgressBarRow,
+      FooterNote,
+      sceneWindow,
+      useEntrance,
       require: virtualRequire,
       exports: exportsObj,
       module: moduleObj,
@@ -849,13 +881,31 @@ const DynamicCodeRenderer: React.FC<{
         Audio,
         interpolate,
         spring,
+        Easing,
         frame,
         fps,
+        width,
+        height,
+        durationInFrames,
         palette,
         props,
         alpha,
         mix,
+        clamp01,
         isLightPalette,
+        isCyberPalette,
+        formatDurationLabel,
+        GradientStage,
+        StageFrame,
+        TagPill,
+        SectionEyebrow,
+        MediaSurface,
+        MetricGrid,
+        FeatureStack,
+        ProgressBarRow,
+        FooterNote,
+        sceneWindow,
+        useEntrance,
         require,
         exports,
         module,
