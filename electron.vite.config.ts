@@ -175,7 +175,8 @@ export default defineConfig({
             'puppeteer-extra-plugin-stealth',
             'electron-store',
             'swagger-jsdoc',
-            'swagger-ui-express'
+            'swagger-ui-express',
+            'esbuild'
           ]
         }
     }

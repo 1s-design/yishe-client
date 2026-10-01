@@ -370,6 +370,7 @@ export function makeRenderQueue({
     );
 
 function precompileTsxLayers(inputProps: Record<string, unknown>): Record<string, unknown> {
+  // 标记需要编译的 custom-code 图层，实际编译在 generateVideo 中通过 esbuild 完成
   try {
     const config = (inputProps?.videoConfig || {}) as Record<string, unknown>;
     const scenes = Array.isArray(config?.scenes) ? config.scenes : [];
@@ -381,19 +382,9 @@ function precompileTsxLayers(inputProps: Record<string, unknown>): Record<string
             typeof layer?.code === "string" &&
             layer.code.trim()
           ) {
-            try {
-              const transpiled = ts.transpileModule(layer.code, {
-                compilerOptions: {
-                  jsx: ts.JsxEmit.React,
-                  target: ts.ScriptTarget.ES2020,
-                  module: ts.ModuleKind.CommonJS,
-                  esModuleInterop: true,
-                },
-              }).outputText;
-              layer.code = transpiled;
-            } catch (err: any) {
-              console.warn("[TSX Precompile] Failed to transpile layer code:", err?.message);
-            }
+            // 标记为需要 esbuild 编译
+            layer._needsCompile = true;
+            layer._compiledCode = null;
           }
         }
       }
@@ -402,6 +393,40 @@ function precompileTsxLayers(inputProps: Record<string, unknown>): Record<string
     // Ignore error
   }
   return inputProps;
+}
+
+/**
+ * 用 esbuild 将 custom-code 图层编译为真实 React 模块
+ */
+async function compileCustomCodeLayers(inputProps: Record<string, unknown>): Promise<void> {
+  const { compileCustomCode } = await import("./compile-custom-code");
+  const config = (inputProps?.videoConfig || {}) as Record<string, unknown>;
+  const scenes = Array.isArray(config?.scenes) ? config.scenes : [];
+  for (const scene of scenes) {
+    if (!Array.isArray(scene?.layers)) continue;
+    for (const layer of scene.layers) {
+      if (
+        (layer?.type === "custom-code" || layer?.type === "tsx-component") &&
+        typeof layer?.code === "string" &&
+        layer.code.trim() &&
+        layer._needsCompile
+      ) {
+        try {
+          const result = await compileCustomCode(layer.code);
+          if (result.success) {
+            layer._compiledCode = result.code;
+            console.log(`[esbuild] custom-code 编译成功，输出 ${result.code.length} 字节`);
+          } else {
+            console.warn(`[esbuild] custom-code 编译失败: ${result.error}`);
+            layer._compiledError = result.error;
+          }
+        } catch (err: any) {
+          console.warn(`[esbuild] 编译异常: ${err?.message}`);
+          layer._compiledError = err?.message;
+        }
+      }
+    }
+  }
 }
 
 async function probeUrl(url: string, mode: "HEAD" | "RANGE"): Promise<Response | null> {
@@ -550,6 +575,9 @@ async function sanitizeAndValidateInputMedia(inputProps: Record<string, any>): P
     try {
       const transpiledProps = precompileTsxLayers(job.data.inputProps);
       const inputProps = await sanitizeAndValidateInputMedia(transpiledProps);
+
+      // ── esbuild 编译 custom-code 为真实 React 模块 ──
+      await compileCustomCodeLayers(inputProps);
       const serveUrl = await resolveServeUrl(job.data);
       setJob(
         {

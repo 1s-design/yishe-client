@@ -741,7 +741,19 @@ function sanitizeInputProps(
     (templateId === aiUniversalTemplateMetadata.id || templateId === "ai-universal-composition"
       ? aiUniversalTemplateMetadata
       : null);
+
   if (!template) {
+    // 用户自定义模板（数据库模板）：用 ai-universal 组合渲染
+    // inputProps 中已包含 videoConfig（SceneGraph），可直接渲染
+    if (inputProps?.videoConfig) {
+      return {
+        template: aiUniversalTemplateMetadata,
+        inputProps: {
+          ...aiUniversalTemplateMetadata.defaultInputProps,
+          ...inputProps,
+        },
+      };
+    }
     throw new Error(`Template ${templateId} not found`);
   }
 

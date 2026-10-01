@@ -49,8 +49,9 @@ export const mix = (from: number, to: number, progress: number) => {
   return from + (to - from) * clamp01(progress);
 };
 
-export const alpha = (hex: string, opacity: number) => {
-  const cleaned = hex.replace("#", "");
+export const alpha = (hex: string | undefined | null, opacity: number) => {
+  const safeHex = hex || "#000000";
+  const cleaned = safeHex.replace("#", "");
   const normalized =
     cleaned.length === 3
       ? cleaned
@@ -204,328 +205,62 @@ export const sceneWindow = ({
   return Math.min(enter, exit);
 };
 
+/**
+ * 基础背景容器 — 引擎只负责「把背景画出来」，不定义任何风格。
+ *
+ * `stageStyle` 是自由 CSS background 值（可多层渐变/颜色/图片），
+ * 由 AI 或模板自行设计；未提供时仅用 palette 做最简两色渐变兜底。
+ */
+/**
+ * AI 输出容错：把被误包成 `{ text|title|label|... }` 的字符串解包回字符串。
+ * 引擎只做渲染，AI 输出形状不作强约束，因此在渲染前统一归一化，避免
+ * React #31（对象当子元素）崩溃。
+ */
+const TEXT_KEYS = new Set([
+  "text", "title", "label", "value", "caption", "name", "eyebrow",
+  "subtext", "detail", "author", "role", "quote", "price", "originalPrice",
+  "headline", "subtitle",
+]);
+
+export function normalizeAiValue(value: unknown): unknown {
+  if (value == null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(normalizeAiValue);
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (
+    keys.length === 1 &&
+    TEXT_KEYS.has(keys[0]) &&
+    typeof obj[keys[0]] === "string"
+  ) {
+    return obj[keys[0]];
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) out[k] = normalizeAiValue(v);
+  return out;
+}
+
 export const GradientStage: React.FC<{
   palette: Palette;
   frame?: number;
+  /** 自由 CSS background 值，引擎原样渲染 */
   stageStyle?: string;
   children?: React.ReactNode;
-}> = ({ palette, frame = 0, stageStyle, children }) => {
-  const isLight = isLightPalette(palette);
-  const driftA = Math.sin(frame / 48) * 6;
-  const driftB = Math.cos(frame / 62) * 5;
-  const shimmerX = ((frame * 1.4) % 180) - 40;
-  const shimmerY = Math.sin(frame / 42) * 10;
-  const pulse = 0.24 + ((Math.sin(frame / 56) + 1) / 2) * 0.12;
-  const grainOffset = (frame * 0.8) % 120;
+}> = ({ palette, stageStyle, children }) => {
+  const css =
+    typeof stageStyle === "string" ? stageStyle.trim().slice(0, 2000) : "";
+  const looksLikeCss =
+    css.length > 0 && /(gradient\(|#|rgb|hsl|url\()/i.test(css);
+  const background = looksLikeCss
+    ? css.replace(/[;{}<>]/g, "")
+    : `linear-gradient(180deg, ${palette.background} 0%, ${palette.backgroundAlt} 100%)`;
 
-  // Determine effective style
-  const effectiveStyle = stageStyle || (isLight ? "clean-studio" : undefined);
-
-  // 1. Light mode / Clean Studio stage
-  if (effectiveStyle === "clean-studio" || (isLight && effectiveStyle !== "aurora" && effectiveStyle !== "cyber-grid")) {
-    // Detect warm/cream palette by accent hue for special warm treatment
-    const isWarm = palette.background.startsWith("#fcf8") || palette.background.startsWith("#fcf9") || palette.background.startsWith("#faf9");
-    const isNordic = palette.accent === "#059669" || palette.accent === "#10b981";
-    const isVibrant = palette.accent === "#ff2a70" || palette.accent === "#e11d48";
-    const sweepAngle = isWarm ? "160deg" : isNordic ? "145deg" : isVibrant ? "140deg" : "150deg";
-    const midColor = isWarm ? palette.backgroundAlt : isNordic ? palette.backgroundAlt : palette.backgroundAlt;
-    return (
-      <AbsoluteFill
-        style={{
-          background: `linear-gradient(${sweepAngle}, ${palette.background} 0%, ${midColor} 55%, ${palette.surface} 100%)`,
-          overflow: "hidden",
-        }}
-      >
-        {/* Primary accent glow blob */}
-        <div
-          style={{
-            position: "absolute",
-            inset: "-20% auto auto -10%",
-            width: "65%",
-            height: "65%",
-            borderRadius: "50%",
-            background: `radial-gradient(circle, ${alpha(palette.accent, isVibrant ? 0.18 : 0.12)} 0%, ${alpha(palette.glow, 0.05)} 48%, transparent 70%)`,
-            filter: `blur(${isVibrant ? 60 : 70}px)`,
-            transform: `translateY(${driftA}px)`,
-          }}
-        />
-        {/* Secondary accent blob */}
-        <div
-          style={{
-            position: "absolute",
-            inset: "auto -10% -20% auto",
-            width: "60%",
-            height: "60%",
-            borderRadius: "50%",
-            background: `radial-gradient(circle, ${alpha(palette.accentAlt, isWarm ? 0.14 : 0.1)} 0%, transparent 65%)`,
-            filter: `blur(${isWarm ? 60 : 80}px)`,
-            transform: `translateY(${driftB}px)`,
-          }}
-        />
-        {/* Subtle grid pattern */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            backgroundImage: `linear-gradient(${alpha(palette.text, 0.024)} 1px, transparent 1px), linear-gradient(90deg, ${alpha(palette.text, 0.024)} 1px, transparent 1px)`,
-            backgroundSize: isNordic ? "70px 70px" : "80px 80px",
-            opacity: 0.8,
-            pointerEvents: "none",
-          }}
-        />
-        {children}
-      </AbsoluteFill>
-    );
-  }
-
-  // 2. Aurora Fluid Mesh stage
-  if (effectiveStyle === "aurora") {
-    const waveX = Math.sin(frame / 36) * 40;
-    const waveY = Math.cos(frame / 44) * 24;
-    const rotAngle = (frame / 120) * 4;
-    return (
-      <AbsoluteFill
-        style={{
-          background: palette.background,
-          overflow: "hidden",
-        }}
-      >
-        {/* Main aurora blobs */}
-        <div
-          style={{
-            position: "absolute",
-            inset: "-30% -20% -30% -20%",
-            background: `radial-gradient(ellipse at 30% 40%, ${alpha(palette.accent, 0.5)} 0%, transparent 50%), radial-gradient(ellipse at 70% 60%, ${alpha(palette.accentAlt, 0.45)} 0%, transparent 50%), radial-gradient(ellipse at 50% 80%, ${alpha(palette.glow, 0.4)} 0%, transparent 60%)`,
-            filter: "blur(90px)",
-            transform: `translateX(${waveX}px) translateY(${waveY}px) scale(1.1)`,
-          }}
-        />
-        {/* Overlay shimmer layer */}
-        <div
-          style={{
-            position: "absolute",
-            inset: "-20% -20% -20% -20%",
-            background: `radial-gradient(ellipse at 80% 20%, ${alpha(palette.glow, 0.3)} 0%, transparent 45%), radial-gradient(ellipse at 20% 80%, ${alpha(palette.accent, 0.25)} 0%, transparent 40%)`,
-            filter: "blur(70px)",
-            transform: `rotate(${rotAngle}deg)`,
-          }}
-        />
-        {/* Noise texture overlay */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            backgroundImage: `repeating-linear-gradient(0deg, ${alpha("#ffffff", 0.015)} 0px, ${alpha("#ffffff", 0.015)} 1px, transparent 1px, transparent 3px)`,
-            opacity: 0.4,
-            pointerEvents: "none",
-          }}
-        />
-        {children}
-      </AbsoluteFill>
-    );
-  }
-
-  // 3. Cyber Grid stage — neon lines on dark
-  if (effectiveStyle === "cyber-grid") {
-    const scanlineOffset = (frame * 2) % 120;
-    const gridPulse = 0.3 + Math.sin(frame / 30) * 0.15;
-    const neonGlowX = Math.sin(frame / 40) * 30;
-    return (
-      <AbsoluteFill
-        style={{
-          background: `linear-gradient(160deg, ${palette.background} 0%, ${palette.backgroundAlt} 60%, ${palette.surface} 100%)`,
-          overflow: "hidden",
-        }}
-      >
-        {/* Cyber perspective grid floor */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: "-10%",
-            left: "-20%",
-            right: "-20%",
-            height: "60%",
-            backgroundImage: `linear-gradient(${alpha(palette.accent, 0.35)} 1px, transparent 1px), linear-gradient(90deg, ${alpha(palette.accent, 0.35)} 1px, transparent 1px)`,
-            backgroundSize: "60px 60px",
-            transform: "perspective(600px) rotateX(62deg)",
-            opacity: gridPulse,
-            maskImage: "linear-gradient(0deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.2) 80%, transparent 100%)",
-          }}
-        />
-        {/* Top grid */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            backgroundImage: `linear-gradient(${alpha(palette.accent, 0.08)} 1px, transparent 1px), linear-gradient(90deg, ${alpha(palette.accent, 0.08)} 1px, transparent 1px)`,
-            backgroundSize: "80px 80px",
-            opacity: 0.6,
-            pointerEvents: "none",
-          }}
-        />
-        {/* Neon accent glow */}
-        <div
-          style={{
-            position: "absolute",
-            top: "20%",
-            left: "10%",
-            width: "50%",
-            height: "40%",
-            background: `radial-gradient(ellipse, ${alpha(palette.glow, 0.4)} 0%, transparent 60%)`,
-            filter: "blur(60px)",
-            transform: `translateX(${neonGlowX}px)`,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            top: "40%",
-            right: "5%",
-            width: "40%",
-            height: "40%",
-            background: `radial-gradient(ellipse, ${alpha(palette.accentAlt, 0.35)} 0%, transparent 55%)`,
-            filter: "blur(50px)",
-            transform: `translateX(${-neonGlowX * 0.6}px)`,
-          }}
-        />
-        {/* Horizontal scan line */}
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: `${scanlineOffset * 0.8}%`,
-            height: 2,
-            background: `linear-gradient(90deg, transparent, ${alpha(palette.accent, 0.6)}, ${alpha(palette.glow, 0.8)}, ${alpha(palette.accent, 0.6)}, transparent)`,
-            opacity: 0.5,
-            pointerEvents: "none",
-          }}
-        />
-        {/* Corner accent marks */}
-        <div style={{ position: "absolute", top: 32, left: 32, width: 40, height: 2, background: palette.accent, opacity: 0.7 }} />
-        <div style={{ position: "absolute", top: 32, left: 32, width: 2, height: 40, background: palette.accent, opacity: 0.7 }} />
-        <div style={{ position: "absolute", top: 32, right: 32, width: 40, height: 2, background: palette.accentAlt, opacity: 0.7 }} />
-        <div style={{ position: "absolute", top: 32, right: 32, width: 2, height: 40, background: palette.accentAlt, opacity: 0.7 }} />
-        <div style={{ position: "absolute", bottom: 32, left: 32, width: 40, height: 2, background: palette.accentAlt, opacity: 0.7 }} />
-        <div style={{ position: "absolute", bottom: 32, left: 32, width: 2, height: 40, background: palette.accentAlt, opacity: 0.7 }} />
-        <div style={{ position: "absolute", bottom: 32, right: 32, width: 40, height: 2, background: palette.accent, opacity: 0.7 }} />
-        <div style={{ position: "absolute", bottom: 32, right: 32, width: 2, height: 40, background: palette.accent, opacity: 0.7 }} />
-        {children}
-      </AbsoluteFill>
-    );
-  }
-
-  // 4. Dark Cyber / Dramatic stage (default for dark palettes)
   return (
-    <AbsoluteFill
-      style={{
-        background: `linear-gradient(135deg, ${palette.background} 0%, ${palette.backgroundAlt} 52%, ${palette.surface} 100%)`,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          position: "absolute",
-          inset: "-18% auto auto -12%",
-          width: "58%",
-          height: "58%",
-          borderRadius: "50%",
-          background: `radial-gradient(circle, ${alpha(palette.glow, 0.72)} 0%, ${alpha(palette.accent, 0.18)} 42%, transparent 72%)`,
-          filter: "blur(40px)",
-          transform: `translateY(${driftA}px)`,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: "auto -8% -18% auto",
-          width: "50%",
-          height: "50%",
-          borderRadius: "50%",
-          background: `radial-gradient(circle, ${alpha(palette.accentAlt, 0.44)} 0%, transparent 66%)`,
-          filter: "blur(56px)",
-          transform: `translateY(${driftB}px)`,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: "-12% -8% auto auto",
-          width: "48%",
-          height: "32%",
-          background: `linear-gradient(112deg, transparent 0%, ${alpha("#ffffff", 0.1)} 36%, transparent 72%)`,
-          transform: `translate(${shimmerX}px, ${shimmerY}px) rotate(-9deg)`,
-          opacity: pulse,
-          filter: "blur(12px)",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage: `linear-gradient(${alpha("#ffffff", 0.05)} 1px, transparent 1px), linear-gradient(90deg, ${alpha("#ffffff", 0.05)} 1px, transparent 1px)`,
-          backgroundSize: "96px 96px",
-          maskImage:
-            "radial-gradient(circle at center, rgba(0,0,0,0.95), rgba(0,0,0,0.4) 58%, transparent 100%)",
-          opacity: 0.22,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage: `repeating-linear-gradient(0deg, ${alpha("#ffffff", 0.028)} 0px, ${alpha("#ffffff", 0.028)} 1px, transparent 1px, transparent 4px), repeating-linear-gradient(90deg, ${alpha("#000000", 0.028)} 0px, ${alpha("#000000", 0.028)} 1px, transparent 1px, transparent 5px)`,
-          backgroundPosition: `${grainOffset}px ${grainOffset / 2}px`,
-          opacity: 0.22,
-          mixBlendMode: "soft-light",
-          pointerEvents: "none",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: `radial-gradient(circle at center, transparent 42%, ${alpha(palette.background, 0.32)} 100%)`,
-          pointerEvents: "none",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: `linear-gradient(180deg, ${alpha("#ffffff", 0.06)} 0%, transparent 18%, transparent 72%, ${alpha("#000000", 0.22)} 100%)`,
-          pointerEvents: "none",
-        }}
-      />
-      {/* Floating gallery dust/gold particles */}
-      {[...Array(12)].map((_, idx) => {
-        const pX = (idx * 83 + frame * 0.35) % 100;
-        const pY = (idx * 137 + Math.sin(frame / (28 + idx * 4)) * 36 + 100) % 100;
-        const pAlpha = 0.12 + ((Math.sin(frame / (18 + idx * 3)) + 1) / 2) * 0.18;
-        const pSize = 3 + (idx % 3) * 2.5;
-        return (
-          <div
-            key={idx}
-            style={{
-              position: "absolute",
-              left: `${pX}%`,
-              top: `${pY}%`,
-              width: pSize,
-              height: pSize,
-              borderRadius: "50%",
-              backgroundColor: palette.glow || palette.accent,
-              opacity: pAlpha,
-              filter: "blur(1px)",
-              boxShadow: `0 0 10px ${palette.glow || palette.accent}`,
-              pointerEvents: "none",
-            }}
-          />
-        );
-      })}
+    <AbsoluteFill style={{ background, overflow: "hidden" }}>
       {children}
     </AbsoluteFill>
   );
 };
+  // (引擎不再内置背景风格：背景由 AI 通过自由 CSS 或 custom-code 定义)
 
 export const StageFrame: React.FC<{
   palette: Palette;

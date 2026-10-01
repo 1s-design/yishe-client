@@ -2,7 +2,7 @@ import React from "react";
 import * as RemotionModule from "remotion";
 import {
   AbsoluteFill,
-  Img,
+  Img as RawImg,
   OffthreadVideo,
   Sequence,
   useCurrentFrame,
@@ -11,8 +11,37 @@ import {
   spring,
   Easing,
   Audio,
+  random,
 } from "remotion";
 import { z } from "zod";
+
+// ── 安全 Img 包装：无 src 时返回占位符，防止渲染崩溃 ──
+const Img: React.FC<any> = (props) => {
+  if (!props?.src) {
+    return React.createElement("div", {
+      style: {
+        width: props?.width || "100%",
+        height: props?.height || "100%",
+        background: "rgba(128,128,128,0.15)",
+        borderRadius: props?.style?.borderRadius || 0,
+        ...(props?.style || {}),
+      },
+    });
+  }
+  return React.createElement(RawImg, props);
+};
+
+// === Advanced visual libraries for AI free-form code ===
+import * as THREE from "three";
+import * as R3F from "@react-three/fiber";
+import * as DreiModule from "@react-three/drei";
+import { createNoise2D, createNoise3D, createNoise4D } from "simplex-noise";
+import chroma from "chroma-js";
+// Advanced visual libraries for AI free-form code
+import * as LucideIcons from "lucide-react";
+import * as FramerMotion from "framer-motion";
+import * as D3 from "d3";
+import confetti from "canvas-confetti";
 
 import type {
   AiVideoProps,
@@ -50,6 +79,7 @@ import {
   useArtDirection,
   useEntrance,
   sceneWindow,
+  normalizeAiValue,
 } from "./shared";
 import type { Palette, MetricItem, FeatureItem, MediaSource } from "./shared";
 
@@ -303,7 +333,17 @@ const PALETTE_PRESETS: Record<string, Palette> = {
   },
 };
 
-const FALLBACK_PALETTE: Palette = PALETTE_PRESETS.noirGold;
+// 引擎不定义配色风格：缺省仅用中性灰，配色完全由 AI 的 palette 决定
+const FALLBACK_PALETTE: Palette = {
+  background: "#1c1c1e",
+  backgroundAlt: "#2a2a2c",
+  surface: "#3a3a3c",
+  text: "#f5f5f7",
+  mutedText: "#a1a1aa",
+  accent: "#e4e4e7",
+  accentAlt: "#d4d4d8",
+  glow: "#ffffff",
+};
 
 function resolvePalette(config?: PaletteConfig): Palette {
   if (!config) return FALLBACK_PALETTE;
@@ -554,7 +594,7 @@ const LayerSchema: z.ZodType<SceneLayer> = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("custom-code"),
     code: z.string(),
-    props: z.record(z.any()).optional(),
+    props: z.record(z.string(), z.any()).optional(),
     delayFrames: z.number().optional(),
     animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
     opacity: z.number().min(0).max(1).optional(),
@@ -562,7 +602,7 @@ const LayerSchema: z.ZodType<SceneLayer> = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("dynamic-component"),
     componentName: z.string(),
-    props: z.record(z.any()).optional(),
+    props: z.record(z.string(), z.any()).optional(),
     delayFrames: z.number().optional(),
     animation: z.enum(["fade-up", "fade-in", "slide-left", "slide-right", "zoom-in", "zoom-out", "rotate-in", "bounce", "typewriter"]).optional(),
     opacity: z.number().min(0).max(1).optional(),
@@ -619,35 +659,21 @@ const LayerSchema: z.ZodType<SceneLayer> = z.discriminatedUnion("type", [
   }),
 ]) as unknown as z.ZodType<SceneLayer>;
 
+// 放宽图层校验：允许 AI 添加自定义字段（不限制创造力）
+const LayerSchemaRelaxed = z.object({ type: z.string() }).passthrough();
+
 const SceneSchema: z.ZodType<SceneConfig> = z.object({
   duration: z.number().min(0.1),
-  background: z
-    .discriminatedUnion("type", [
-      z.object({ type: z.literal("gradient"), style: z.string().optional() }).passthrough(),
-      z.object({ type: z.literal("solid"), color: z.string().optional() }).passthrough(),
-      z.object({
-        type: z.literal("media"),
-        media: MediaSourceSchema,
-        opacity: z.number().min(0).max(1).optional(),
-      }).passthrough(),
-    ])
-    .optional(),
-  layers: z.array(LayerSchema),
-  transition: z.enum(["cut", "fade", "slide-left", "slide-right", "zoom"]).optional(),
-  camera: z.enum(["none", "dolly-in", "dolly-out", "pan-left", "pan-right", "shake", "zoom-twist"]).optional(),
-  decorations: z
-    .object({
-      watermark: z.string().optional(),
-      headerBadge: z.string().optional(),
-      footerText: z.string().optional(),
-      showExhibition: z.boolean().optional(),
-    })
-    .optional(),
-  layout: z.enum(["centered", "top", "bottom", "split-left", "split-right", "fullscreen", "grid"]).optional(),
+  background: z.any().optional(),
+  layers: z.array(LayerSchemaRelaxed),
+  transition: z.string().optional(),
+  camera: z.string().optional(),
+  decorations: z.any().optional(),
+  layout: z.string().optional(),
   paddingY: z.number().optional(),
   paddingX: z.number().optional(),
   gap: z.number().optional(),
-});
+}).passthrough();
 
 const PaletteConfigSchema: z.ZodType<PaletteConfig> = z.union([
   z.object({
@@ -671,20 +697,13 @@ const PaletteConfigSchema: z.ZodType<PaletteConfig> = z.union([
 const ArtDirectionSchema: z.ZodType<ArtDirection> = z
   .object({
     mood: z.string().optional(),
-    motionEnergy: z.enum(["low", "medium", "high"]).optional(),
-    density: z.enum(["airy", "balanced", "packed"]).optional(),
-    typography: z
-      .enum([
-        "serif-editorial",
-        "sans-modern",
-        "mono-tech",
-        "display-condensed",
-        "rounded-friendly",
-      ])
-      .optional(),
-    transitionStyle: z.enum(["soft", "punchy", "geometric"]).optional(),
+    motionEnergy: z.string().optional(),
+    density: z.string().optional(),
+    typography: z.string().optional(),
+    transitionStyle: z.string().optional(),
     signature: z.string().optional(),
   })
+  .passthrough()
   .optional();
 
 export const AiVideoSchema = z.object({
@@ -698,7 +717,7 @@ export const AiVideoSchema = z.object({
         })
         .optional()
         .default({ title: "AI Video", orientation: "portrait", fps: 30 }),
-      palette: PaletteConfigSchema.optional().default({ preset: "cyberpunk" }),
+      palette: PaletteConfigSchema.optional(),
       artDirection: ArtDirectionSchema,
       scenes: z.array(SceneSchema).min(1),
       audio: z
@@ -718,12 +737,14 @@ export const AiVideoSchema = z.object({
 
 import type { AnimationStyle, SceneLayout } from "./ai-types";
 
+// 入场动画辅助 — 仅提供默认入场效果，不限制动画能力
 function computeAnimation(
   style: AnimationStyle | undefined,
   entrance: number,
   _frame: number,
 ): React.CSSProperties {
   const progress = clamp01(entrance);
+  // 默认 fade-up，指定 style 时用对应效果
   switch (style) {
     case "fade-in":
       return { opacity: progress };
@@ -741,7 +762,6 @@ function computeAnimation(
       return { opacity: progress, transform: `translateY(${mix(40, 0, progress)}px) scale(${1 + Math.sin(progress * Math.PI) * 0.05})` };
     case "typewriter":
       return { opacity: progress };
-    case "fade-up":
     default:
       return { opacity: progress, transform: `translateY(${mix(28, 0, progress)}px)` };
   }
@@ -759,34 +779,9 @@ const textBase: React.CSSProperties = {
   textAlign: "center",
 };
 
-// Palette-aware font families
+// Palette-aware font families — 仅提供默认值，不限制 AI 的字体选择
 function getPaletteFont(palette: Palette): string {
-  // artDirection.typography override wins — the director's explicit voice
-  if (palette.fontFamily) return palette.fontFamily;
-  const bg = palette.background.toLowerCase();
-  const accent = palette.accent.toLowerCase();
-  // Warm / editorial style → elegant serif
-  if (bg.startsWith("#faf9") || accent === "#e11d48" || accent === "#c86b3c") {
-    return "'Playfair Display', 'Songti SC', 'STSong', Georgia, serif";
-  }
-  // Nordic / natural → rounded geo-sans
-  if (accent === "#059669" || accent === "#10b981") {
-    return "'Nunito', 'PingFang SC', 'Helvetica Neue', system-ui, sans-serif";
-  }
-  // Vibrant / dopamine → playful display
-  if (accent === "#ff2a70" || accent === "#7c3aed") {
-    return "'Outfit', 'Poppins', 'PingFang SC', system-ui, sans-serif";
-  }
-  // Cyber / neon → mono-techy
-  if (bg === "#080318" || bg === "#061018" || accent === "#00f5d4" || accent === "#51d0ff") {
-    return "'JetBrains Mono', 'Courier New', 'SF Mono', monospace";
-  }
-  // Solar yellow / high energy → condensed bold
-  if (accent === "#facc15" || accent === "#fb923c" || accent === "#ff7e52") {
-    return "'Barlow Condensed', 'Arial Narrow', 'PingFang SC', system-ui, sans-serif";
-  }
-  // Default: modern sans
-  return "'Inter', 'Segoe UI', 'PingFang SC', system-ui, sans-serif";
+  return palette.fontFamily || "'Inter', 'Segoe UI', 'PingFang SC', system-ui, sans-serif";
 }
 
 // ---------------------------------------------------------------------------
@@ -802,11 +797,93 @@ const DynamicCodeRenderer: React.FC<{
   width?: number;
   height?: number;
   durationInFrames?: number;
-}> = ({ code, props = {}, palette, frame, fps, width, height, durationInFrames }) => {
+  _compiledCode?: string;
+  _compiledError?: string;
+}> = ({ code, props = {}, palette, frame, fps, width, height, durationInFrames, _compiledCode, _compiledError }) => {
   const videoConfig = useVideoConfig();
   const w = width ?? videoConfig.width;
   const h = height ?? videoConfig.height;
   const d = durationInFrames ?? videoConfig.durationInFrames;
+
+  // ── 优先使用 esbuild 编译后的 JS（scope 注入执行） ──
+  if (_compiledCode) {
+    try {
+      // 构建 scope（和回退路径一致）
+      const exportsObj: Record<string, any> = {};
+      const moduleObj = { exports: exportsObj };
+      const reactModule = Object.assign({}, React, { default: React, __esModule: true });
+      const remModule = Object.assign({}, RemotionModule, { default: RemotionModule, __esModule: true });
+      const threeModule = Object.assign({}, THREE, { default: THREE, __esModule: true });
+      const r3fModule = Object.assign({}, R3F, { default: R3F, __esModule: true });
+      const dreiMod = Object.assign({}, DreiModule, { default: DreiModule, __esModule: true });
+      const simplexModule = { createNoise2D, createNoise3D, createNoise4D, default: { createNoise2D, createNoise3D, createNoise4D }, __esModule: true };
+      const chromaModule = Object.assign(chroma, { default: chroma, __esModule: true });
+
+      const scope = {
+        React, ...React,
+        AbsoluteFill, Sequence, Img, OffthreadVideo, Audio,
+        useCurrentFrame: () => frame,
+        useVideoConfig: () => ({ fps, width: w, height: h, durationInFrames: d }),
+        interpolate, spring, Easing, random,
+        frame, fps, width: w, height: h, durationInFrames: d,
+        palette, props,
+        THREE: threeModule, three: threeModule,
+        R3F: r3fModule,
+        Drei: dreiMod, drei: dreiMod,
+        createNoise2D, createNoise3D, createNoise4D,
+        chroma: chromaModule,
+        Lucide: LucideIcons, lucide: LucideIcons,
+        FramerMotion, framer: FramerMotion, motion: FramerMotion,
+        D3, d3: D3, confetti,
+        Math,
+        alpha, mix, clamp01,
+        isLightPalette, isCyberPalette, formatDurationLabel,
+        GradientStage, StageFrame, TagPill, SectionEyebrow,
+        MediaSurface, MetricGrid, FeatureStack, ProgressBarRow,
+        FooterNote, sceneWindow, useEntrance,
+        require: (mod: string) => {
+          const map: Record<string, any> = {
+            react: reactModule, remotion: remModule, three: threeModule,
+            "@react-three/fiber": r3fModule, "@react-three/drei": dreiMod,
+            "simplex-noise": simplexModule, "chroma-js": chromaModule,
+          };
+          return map[mod] || {};
+        },
+        exports: exportsObj, module: moduleObj,
+      };
+
+      // 执行编译后的 JS（scope 注入）
+      const keys = Object.keys(scope);
+      const values = keys.map((k) => (scope as any)[k]);
+      const fn = new Function(...keys, _compiledCode);
+      const result = fn(...values);
+
+      if (React.isValidElement(result)) return result;
+      if (typeof result === "function") {
+        return React.createElement(result, {
+          ...props, palette, frame, fps, width: w, height: h, durationInFrames: d,
+        });
+      }
+    } catch (err: any) {
+      console.warn("[DynamicCodeRenderer] 编译模块执行失败:", err?.message);
+    }
+  }
+
+  // 编译失败提示
+  if (_compiledError) {
+    return React.createElement("div", {
+      style: {
+        padding: 24,
+        color: "#ff6b6b",
+        background: "rgba(255,0,0,0.1)",
+        borderRadius: 8,
+        fontSize: 14,
+        fontFamily: "monospace",
+      },
+    }, `代码编译失败: ${_compiledError}`);
+  }
+
+  // ── 回退：旧的 new Function() 沙箱模式 ──
   try {
     const exportsObj: Record<string, any> = {};
     const moduleObj = { exports: exportsObj };
@@ -814,9 +891,20 @@ const DynamicCodeRenderer: React.FC<{
     const reactModule = Object.assign({}, React, { default: React, __esModule: true });
     const remModule = Object.assign({}, RemotionModule, { default: RemotionModule, __esModule: true });
 
+    const threeModule = Object.assign({}, THREE, { default: THREE, __esModule: true });
+    const r3fModule = Object.assign({}, R3F, { default: R3F, __esModule: true });
+    const dreiMod = Object.assign({}, DreiModule, { default: DreiModule, __esModule: true });
+    const simplexModule = { createNoise2D, createNoise3D, createNoise4D, default: { createNoise2D, createNoise3D, createNoise4D }, __esModule: true };
+    const chromaModule = Object.assign(chroma, { default: chroma, __esModule: true });
+
     const virtualRequire = (mod: string) => {
       if (mod === "react") return reactModule;
       if (mod === "remotion" || mod === "@remotion/core") return remModule;
+      if (mod === "three") return threeModule;
+      if (mod === "@react-three/fiber") return r3fModule;
+      if (mod === "@react-three/drei") return dreiMod;
+      if (mod === "simplex-noise") return simplexModule;
+      if (mod === "chroma-js") return chromaModule;
       return {};
     };
 
@@ -829,13 +917,28 @@ const DynamicCodeRenderer: React.FC<{
       useCurrentFrame: () => frame,
       useVideoConfig: () => ({ fps, width: w, height: h, durationInFrames: d }),
       AbsoluteFill,
-      Img,
+      Img: (props: any) => {
+        // 安全包装：无 src 时返回占位符，不崩溃
+        if (!props?.src) {
+          return React.createElement("div", {
+            style: {
+              width: props?.width || "100%",
+              height: props?.height || "100%",
+              background: "rgba(128,128,128,0.15)",
+              borderRadius: props?.style?.borderRadius || 0,
+              ...(props?.style || {}),
+            },
+          });
+        }
+        return React.createElement(Img, props);
+      },
       OffthreadVideo,
       Sequence,
       Audio,
       interpolate,
       spring,
       Easing,
+      random,
       frame,
       fps,
       width: w,
@@ -861,6 +964,38 @@ const DynamicCodeRenderer: React.FC<{
       FooterNote,
       sceneWindow,
       useEntrance,
+      // === Advanced visual libraries (AI free-form code) ===
+      THREE: threeModule,
+      three: threeModule,
+      R3F: r3fModule,
+      Drei: dreiMod,
+      Canvas: R3F.Canvas,
+      useFrame: R3F.useFrame,
+      useThree: R3F.useThree,
+      OrbitControls: DreiModule.OrbitControls,
+      Text3D: DreiModule.Text3D,
+      Float: DreiModule.Float,
+      MeshDistortMaterial: DreiModule.MeshDistortMaterial,
+      MeshWobbleMaterial: DreiModule.MeshWobbleMaterial,
+      Environment: DreiModule.Environment,
+      Stars: DreiModule.Stars,
+      Sparkles: DreiModule.Sparkles,
+      Cloud: DreiModule.Cloud,
+      createNoise2D,
+      createNoise3D,
+      createNoise4D,
+      chroma: chromaModule,
+      // Advanced visual libraries
+      Lucide: LucideIcons,
+      lucide: LucideIcons,
+      FramerMotion,
+      framer: FramerMotion,
+      motion: FramerMotion,
+      D3,
+      d3: D3,
+      confetti,
+      // Math utilities for procedural animation
+      Math,
       require: virtualRequire,
       exports: exportsObj,
       module: moduleObj,
@@ -882,6 +1017,7 @@ const DynamicCodeRenderer: React.FC<{
         interpolate,
         spring,
         Easing,
+        random,
         frame,
         fps,
         width,
@@ -906,6 +1042,36 @@ const DynamicCodeRenderer: React.FC<{
         FooterNote,
         sceneWindow,
         useEntrance,
+        // Advanced visual libraries
+        THREE,
+        three,
+        R3F,
+        Drei,
+        Canvas,
+        useFrame,
+        useThree,
+        OrbitControls,
+        Text3D,
+        Float,
+        MeshDistortMaterial,
+        MeshWobbleMaterial,
+        Environment,
+        Stars,
+        Sparkles,
+        Cloud,
+        createNoise2D,
+        createNoise3D,
+        createNoise4D,
+        chroma,
+        Lucide,
+        lucide,
+        FramerMotion,
+        framer,
+        motion,
+        D3,
+        d3,
+        confetti,
+        Math,
         require,
         exports,
         module,
@@ -1332,7 +1498,7 @@ const DynamicComponentRenderer: React.FC<{
   }
 
   if (props.code) {
-    return <DynamicCodeRenderer code={props.code} props={props} palette={palette} frame={frame} fps={fps} />;
+    return <DynamicCodeRenderer code={props.code} props={props} palette={palette} frame={frame} fps={fps} _compiledCode={(props as any)._compiledCode} _compiledError={(props as any)._compiledError} />;
   }
 
   return (
@@ -2270,28 +2436,32 @@ const LayerRenderer: React.FC<{
     // === SCHEME 3: DYNAMIC REMOTION ENGINE LAYER DISPATCH ===
 
     case "custom-code":
+      // wrapper 必须全幅：transform 会让其成为内部 AbsoluteFill 的包含块，
+      // 若 wrapper 无显式尺寸，代码返回的 AbsoluteFill 会塌缩成 0 宽
       return (
-        <div style={wrapper}>
+        <AbsoluteFill style={wrapper}>
           <DynamicCodeRenderer
             code={layer.code}
             props={layer.props}
             palette={palette}
             frame={frame}
             fps={fps}
+            _compiledCode={(layer as any)._compiledCode}
+            _compiledError={(layer as any)._compiledError}
           />
-        </div>
+        </AbsoluteFill>
       );
 
     case "dynamic-component":
       return (
-        <div style={wrapper}>
+        <AbsoluteFill style={wrapper}>
           <DynamicComponentRenderer
             layer={layer}
             palette={palette}
             frame={frame}
             fps={fps}
           />
-        </div>
+        </AbsoluteFill>
       );
 
     case "kinetic-text":
@@ -2334,8 +2504,26 @@ const LayerRenderer: React.FC<{
         </div>
       );
 
-    default:
+    default: {
+      // 引擎不限制图层类型：未注册的 type 只要带 code 就当自定义代码渲染
+      const freeLayer = layer as any;
+      if (freeLayer?.code) {
+        return (
+          <AbsoluteFill style={wrapper}>
+            <DynamicCodeRenderer
+              code={freeLayer.code}
+              props={freeLayer.props}
+              palette={palette}
+              frame={frame}
+              fps={fps}
+              _compiledCode={freeLayer._compiledCode}
+              _compiledError={freeLayer._compiledError}
+            />
+          </AbsoluteFill>
+        );
+      }
       return null;
+    }
   }
 };
 
@@ -2369,6 +2557,7 @@ const SceneRenderer: React.FC<{
   sceneFrames: number;
 }> = ({ scene, palette, sceneFrames }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const art = useArtDirection();
   const density = DENSITY_PRESETS[art.density] ?? DENSITY_PRESETS.balanced;
   const padY = scene.paddingY ?? density.paddingY;
@@ -2395,41 +2584,60 @@ const SceneRenderer: React.FC<{
     sceneTransform = `scale(${mix(0.8, 1, sceneOpacity)})`;
   }
 
-  // Camera motion transforms (Scheme 3: Remotion Cinematic Camera)
-  const camera = scene.camera || "none";
+  // Camera motion — 运镜完全自由：
+  // 预设名（dolly-in 等）只是便捷别名；任意 CSS transform 模板原样渲染，
+  // 可用 {{frame}}/{{fps}}/{{sceneFrames}}/{{progress}} 变量。
+  const camera = String((scene as any).camera || "none");
   let cameraTransform = "";
-  if (camera === "dolly-in") {
-    const scale = interpolate(frame, [0, sceneFrames], [1.0, 1.12], {
-      extrapolateRight: "clamp",
-    });
-    cameraTransform = `scale(${scale})`;
-  } else if (camera === "dolly-out") {
-    const scale = interpolate(frame, [0, sceneFrames], [1.14, 1.0], {
-      extrapolateRight: "clamp",
-    });
-    cameraTransform = `scale(${scale})`;
-  } else if (camera === "pan-left") {
-    const tx = interpolate(frame, [0, sceneFrames], [24, -24], {
-      extrapolateRight: "clamp",
-    });
-    cameraTransform = `scale(1.05) translateX(${tx}px)`;
-  } else if (camera === "pan-right") {
-    const tx = interpolate(frame, [0, sceneFrames], [-24, 24], {
-      extrapolateRight: "clamp",
-    });
-    cameraTransform = `scale(1.05) translateX(${tx}px)`;
-  } else if (camera === "shake") {
-    const offsetX = Math.sin(frame * 0.4) * 4 + Math.cos(frame * 0.7) * 2;
-    const offsetY = Math.cos(frame * 0.35) * 4 + Math.sin(frame * 0.8) * 2;
-    cameraTransform = `translate(${offsetX}px, ${offsetY}px)`;
-  } else if (camera === "zoom-twist") {
-    const scale = interpolate(frame, [0, sceneFrames], [1.0, 1.1], {
-      extrapolateRight: "clamp",
-    });
-    const rot = interpolate(frame, [0, sceneFrames], [-0.8, 0.8], {
-      extrapolateRight: "clamp",
-    });
-    cameraTransform = `scale(${scale}) rotate(${rot}deg)`;
+  if (/^[a-z][a-z0-9-]*$/.test(camera)) {
+    if (camera === "dolly-in") {
+      const scale = interpolate(frame, [0, sceneFrames], [1.0, 1.12], {
+        extrapolateRight: "clamp",
+      });
+      cameraTransform = `scale(${scale})`;
+    } else if (camera === "dolly-out") {
+      const scale = interpolate(frame, [0, sceneFrames], [1.14, 1.0], {
+        extrapolateRight: "clamp",
+      });
+      cameraTransform = `scale(${scale})`;
+    } else if (camera === "pan-left") {
+      const tx = interpolate(frame, [0, sceneFrames], [24, -24], {
+        extrapolateRight: "clamp",
+      });
+      cameraTransform = `scale(1.05) translateX(${tx}px)`;
+    } else if (camera === "pan-right") {
+      const tx = interpolate(frame, [0, sceneFrames], [-24, 24], {
+        extrapolateRight: "clamp",
+      });
+      cameraTransform = `scale(1.05) translateX(${tx}px)`;
+    } else if (camera === "shake") {
+      const offsetX = Math.sin(frame * 0.4) * 4 + Math.cos(frame * 0.7) * 2;
+      const offsetY = Math.cos(frame * 0.35) * 4 + Math.sin(frame * 0.8) * 2;
+      cameraTransform = `translate(${offsetX}px, ${offsetY}px)`;
+    } else if (camera === "zoom-twist") {
+      const scale = interpolate(frame, [0, sceneFrames], [1.0, 1.1], {
+        extrapolateRight: "clamp",
+      });
+      const rot = interpolate(frame, [0, sceneFrames], [-0.8, 0.8], {
+        extrapolateRight: "clamp",
+      });
+      cameraTransform = `scale(${scale}) rotate(${rot}deg)`;
+    }
+    // 其余预设名：无对应实现，不加 transform（不报错）
+  } else {
+    // 自由 CSS transform 模板：支持 {{frame}} 模板语法与裸标识符（calc 内直接写 progress/frame）
+    const progress = clamp01(sceneFrames > 0 ? frame / sceneFrames : 0);
+    const vars: Record<string, number> = { frame, fps, sceneFrames, progress };
+    const subst = (s: string) =>
+      s
+        .replace(/\{\{\s*(frame|fps|sceneFrames|progress)\s*\}\}/g, (_m, k) =>
+          String(vars[k]),
+        )
+        .replace(/\b(frame|fps|sceneFrames|progress)\b/g, (_m, k) =>
+          String(vars[k]),
+        )
+        .replace(/[;{}<>]/g, "");
+    cameraTransform = subst(camera);
   }
 
   const combinedTransform = [sceneTransform, cameraTransform]
@@ -2696,7 +2904,12 @@ export const AiUniversalComposition: React.FC<AiVideoProps> = ({
   const { fps } = useVideoConfig();
   void fps; // fps used by child SceneRenderer via useVideoConfig context
   const palette = resolvePalette(videoConfig?.palette);
-  const scenes = videoConfig?.scenes ?? [];
+  // AI 输出容错：渲染前解包被误包成对象的字符串字段（如 {text:"..."}）
+  const scenes = React.useMemo(
+    () =>
+      (normalizeAiValue(videoConfig?.scenes ?? []) as SceneConfig[]) ?? [],
+    [videoConfig],
+  );
 
   // Style DNA from artDirection — typography voice, motion energy, density
   const art = videoConfig?.artDirection;
@@ -2708,8 +2921,10 @@ export const AiUniversalComposition: React.FC<AiVideoProps> = ({
     }),
     [art?.motionEnergy, art?.density, art?.typography],
   );
-  if (art?.typography && TYPOGRAPHY_STACKS[art.typography] && !palette.fontFamily) {
-    palette.fontFamily = TYPOGRAPHY_STACKS[art.typography];
+  // typography：预设 key 或任意 CSS font-family 字符串，都可直接生效
+  if (art?.typography && !palette.fontFamily) {
+    palette.fontFamily =
+      TYPOGRAPHY_STACKS[art.typography] ?? String(art.typography).slice(0, 200);
   }
 
   // Pre-compute cumulative frame offsets

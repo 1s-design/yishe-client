@@ -13749,209 +13749,7 @@ registerLocalService({
 // ══════════════════════════════════════════════════════════════
 
 const newsServicesConfig = [
-  {
-    key: "hackernews",
-    label: "Hacker News 热帖",
-    searchFn: (api: any, p: any) =>
-      api.searchHN({
-        type: p.type || p.keyword || p.query || "ai",
-        options: { maxCount: p.maxCount || 10, minScore: p.minScore },
-      }),
-    statusFn: (api: any) => api.getHNStatus(),
-  },
-  {
-    key: "arxiv",
-    label: "arXiv 学术论文",
-    searchFn: (api: any, p: any) =>
-      api.searchArxiv({
-        query: p.keyword || p.query || "ai",
-        options: {
-          maxCount: p.maxCount || 10,
-          category: p.category,
-          sortBy: p.sortBy,
-        },
-      }),
-    statusFn: (api: any) => api.getArxivStatus(),
-  },
-  {
-    key: "github",
-    label: "GitHub 趋势仓库",
-    searchFn: (api: any, p: any) =>
-      api.searchGithub({
-        query: p.keyword || p.query || "ai",
-        options: {
-          maxCount: p.maxCount || 10,
-          language: p.language,
-          sort: p.sort,
-        },
-      }),
-    statusFn: (api: any) => api.getGithubStatus(),
-  },
-  {
-    key: "producthunt",
-    label: "Product Hunt 产品",
-    searchFn: (api: any, p: any) =>
-      api.searchPH({
-        accessToken: p.accessToken || "",
-        options: {
-          query: p.keyword || p.query,
-          maxCount: p.maxCount || 10,
-          order: p.order,
-          topics: p.topics,
-        },
-      }),
-    statusFn: (api: any) => api.getPHStatus(),
-  },
-  {
-    key: "gdelt",
-    label: "GDELT 全球事件",
-    searchFn: (api: any, p: any) =>
-      api.searchGdelt({
-        query: p.keyword || p.query || "ai",
-        options: {
-          maxrecords: p.maxCount || p.maxrecords || 10,
-          mode: p.mode,
-          timespan: p.timespan,
-          sourceLang: p.sourceLang,
-          sourceCountry: p.sourceCountry,
-        },
-      }),
-    statusFn: (api: any) => api.getGdeltStatus(),
-  },
-  {
-    key: "googlenews",
-    label: "Google News",
-    searchFn: (api: any, p: any) =>
-      api.searchGoogleNews({
-        query: p.keyword || p.query || "ai",
-        options: {
-          maxCount: p.maxCount || 10,
-          hl: p.hl,
-          gl: p.gl,
-          topic: p.topic,
-        },
-      }),
-    statusFn: (api: any) => api.getGoogleNewsStatus(),
-  },
-  {
-    key: "reddit",
-    label: "Reddit 社区热帖",
-    searchFn: (api: any, p: any) =>
-      api.searchReddit({
-        query: p.keyword || p.query || "ai",
-        options: {
-          subreddit: p.subreddit,
-          sort: p.sort,
-          t: p.t,
-          maxCount: p.maxCount || 10,
-        },
-      }),
-    statusFn: (api: any) => api.getRedditStatus(),
-  },
-  {
-    key: "theguardian",
-    label: "The Guardian",
-    searchFn: (api: any, p: any) =>
-      api.searchGuardian({
-        apiKey: p.apiKey || "",
-        options: {
-          query: p.keyword || p.query || "ai",
-          maxCount: p.maxCount || 10,
-          section: p.section,
-          "from-date": p.fromDate,
-          "to-date": p.toDate,
-        },
-      }),
-    statusFn: (api: any) => api.getGuardianStatus(),
-  },
-  {
-    key: "bbcnews",
-    label: "BBC News",
-    searchFn: (api: any, p: any) =>
-      api.fetchBBC({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getBBCStatus(),
-  },
-  {
-    key: "npr",
-    label: "NPR 新闻",
-    searchFn: (api: any, p: any) =>
-      api.fetchNPR({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getNPRStatus(),
-  },
-  {
-    key: "reuters",
-    label: "Reuters 路透社",
-    searchFn: (api: any, p: any) =>
-      api.fetchReuters({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getReutersStatus(),
-  },
-  {
-    key: "techcrunch",
-    label: "TechCrunch",
-    searchFn: (api: any, p: any) =>
-      api.fetchTC({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getTCStatus(),
-  },
-  {
-    key: "theverge",
-    label: "The Verge",
-    searchFn: (api: any, p: any) =>
-      api.fetchVerge({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getVergeStatus(),
-  },
-  {
-    key: "arstechnica",
-    label: "Ars Technica",
-    searchFn: (api: any, p: any) =>
-      api.fetchArs({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getArsStatus(),
-  },
-  {
-    key: "mittechreview",
-    label: "MIT Technology Review",
-    searchFn: (api: any, p: any) =>
-      api.fetchMIT({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getMITStatus(),
-  },
-  {
-    key: "chinadaily",
-    label: "中国日报",
-    searchFn: (api: any, p: any) =>
-      api.fetchChinaDaily({
-        category: p.category || p.keyword || p.query || "china",
-      }),
-    statusFn: (api: any) => api.getChinaDailyStatus(),
-  },
-  {
-    key: "govcn",
-    label: "中国政府网",
-    searchFn: (api: any, p: any) =>
-      api.fetchGovCN({
-        category: p.category || p.keyword || p.query || "policy",
-      }),
-    statusFn: (api: any) => api.getGovCNStatus(),
-  },
-  {
-    key: "xinhuanet",
-    label: "新华网",
-    searchFn: (api: any, p: any) =>
-      api.fetchXH({ category: p.category || p.keyword || p.query || "tech" }),
-    statusFn: (api: any) => api.getXHStatus(),
-  },
+  // ── 国内新闻 ──────────────────────────────────────────────
   {
     key: "thepaper",
     label: "澎湃新闻",
@@ -13985,31 +13783,49 @@ const newsServicesConfig = [
     statusFn: (api: any) => api.getHuxiuStatus(),
   },
   {
-    key: "techcrunchrss",
-    label: "TechCrunch RSS",
+    key: "sspai",
+    label: "少数派",
     searchFn: (api: any, p: any) =>
-      api.fetchTechcrunchrss({
+      api.fetchSspai({
         category: p.category || p.keyword || p.query || "all",
+        options: { maxCount: p.maxCount || 10 },
       }),
-    statusFn: (api: any) => api.getTechcrunchrssStatus(),
+    statusFn: (api: any) => api.getSspaiStatus(),
   },
   {
-    key: "arstechnicarss",
-    label: "Ars Technica RSS",
+    key: "govcn",
+    label: "中国政府网",
     searchFn: (api: any, p: any) =>
-      api.fetchArstechnicarss({
-        category: p.category || p.keyword || p.query || "all",
+      api.fetchGovCN({
+        category: p.category || p.keyword || p.query || "policy",
       }),
-    statusFn: (api: any) => api.getArstechnicarssStatus(),
+    statusFn: (api: any) => api.getGovCNStatus(),
+  },
+
+  // ── 国外新闻 ──────────────────────────────────────────────
+  {
+    key: "hackernews",
+    label: "Hacker News 热帖",
+    searchFn: (api: any, p: any) =>
+      api.searchHN({
+        type: p.type || p.keyword || p.query || "ai",
+        options: { maxCount: p.maxCount || 10, minScore: p.minScore },
+      }),
+    statusFn: (api: any) => api.getHNStatus(),
   },
   {
-    key: "thevergerss",
-    label: "The Verge RSS",
+    key: "github",
+    label: "GitHub 趋势仓库",
     searchFn: (api: any, p: any) =>
-      api.fetchThevergerss({
-        category: p.category || p.keyword || p.query || "all",
+      api.searchGithub({
+        query: p.keyword || p.query || "ai",
+        options: {
+          maxCount: p.maxCount || 10,
+          language: p.language,
+          sort: p.sort,
+        },
       }),
-    statusFn: (api: any) => api.getThevergerssStatus(),
+    statusFn: (api: any) => api.getGithubStatus(),
   },
   {
     key: "wired",
@@ -14021,49 +13837,13 @@ const newsServicesConfig = [
     statusFn: (api: any) => api.getWiredStatus(),
   },
   {
-    key: "mittechreviewrss",
-    label: "MIT Tech Review RSS",
+    key: "mittechreview",
+    label: "MIT Technology Review",
     searchFn: (api: any, p: any) =>
-      api.fetchMittechreviewrss({
+      api.fetchMIT({
         category: p.category || p.keyword || p.query || "all",
       }),
-    statusFn: (api: any) => api.getMittechreviewrssStatus(),
-  },
-  {
-    key: "engadget",
-    label: "Engadget",
-    searchFn: (api: any, p: any) =>
-      api.fetchEngadget({
-        category: p.category || p.keyword || p.query || "all",
-      }),
-    statusFn: (api: any) => api.getEngadgetStatus(),
-  },
-  {
-    key: "bbctechnology",
-    label: "BBC Technology",
-    searchFn: (api: any, p: any) =>
-      api.fetchBbctechnology({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getBbctechnologyStatus(),
-  },
-  {
-    key: "guardiantechnology",
-    label: "Guardian Technology",
-    searchFn: (api: any, p: any) =>
-      api.fetchGuardiantechnology({
-        category: p.category || p.keyword || p.query || "technology",
-      }),
-    statusFn: (api: any) => api.getGuardiantechnologyStatus(),
-  },
-  {
-    key: "time",
-    label: "TIME",
-    searchFn: (api: any, p: any) =>
-      api.fetchTime({
-        category: p.category || p.keyword || p.query || "all",
-      }),
-    statusFn: (api: any) => api.getTimeStatus(),
+    statusFn: (api: any) => api.getMITStatus(),
   },
   {
     key: "apnews",
@@ -14075,6 +13855,15 @@ const newsServicesConfig = [
     statusFn: (api: any) => api.getApnewsStatus(),
   },
   {
+    key: "npr",
+    label: "NPR 新闻",
+    searchFn: (api: any, p: any) =>
+      api.fetchNPR({
+        category: p.category || p.keyword || p.query || "all",
+      }),
+    statusFn: (api: any) => api.getNPRStatus(),
+  },
+  {
     key: "nprtechnology",
     label: "NPR Technology",
     searchFn: (api: any, p: any) =>
@@ -14084,84 +13873,35 @@ const newsServicesConfig = [
     statusFn: (api: any) => api.getNprtechnologyStatus(),
   },
   {
-    key: "sciencedaily",
-    label: "ScienceDaily",
+    key: "bbctechnology",
+    label: "BBC Technology",
     searchFn: (api: any, p: any) =>
-      api.fetchScienceDaily({
-        category: p.category || p.keyword || p.query || "all",
+      api.fetchBbctechnology({
+        category: p.category || p.keyword || p.query || "technology",
+      }),
+    statusFn: (api: any) => api.getBbctechnologyStatus(),
+  },
+
+  // ── 娱乐影视 ──────────────────────────────────────────────
+  {
+    key: "douban_movie",
+    label: "豆瓣电影",
+    searchFn: (api: any, p: any) =>
+      api.fetchDoubanMovie({
+        category: p.category || p.keyword || p.query || "hot",
         options: { maxCount: p.maxCount || 10 },
       }),
-    statusFn: (api: any) => api.getScienceDailyStatus(),
+    statusFn: (api: any) => api.getDoubanMovieStatus(),
   },
   {
-    key: "physorg",
-    label: "Phys.org",
+    key: "douban_book",
+    label: "豆瓣读书",
     searchFn: (api: any, p: any) =>
-      api.fetchPhysorg({
-        category: p.category || p.keyword || p.query || "breaking",
+      api.fetchDoubanBook({
+        category: p.category || p.keyword || p.query || "hot",
         options: { maxCount: p.maxCount || 10 },
       }),
-    statusFn: (api: any) => api.getPhysorgStatus(),
-  },
-  {
-    key: "quantamagazine",
-    label: "Quanta Magazine",
-    searchFn: (api: any, p: any) =>
-      api.fetchQuanta({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getQuantaStatus(),
-  },
-  {
-    key: "spacecom",
-    label: "Space.com",
-    searchFn: (api: any, p: any) =>
-      api.fetchSpacecom({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getSpacecomStatus(),
-  },
-  {
-    key: "nature",
-    label: "Nature",
-    searchFn: (api: any, p: any) =>
-      api.fetchNature({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getNatureStatus(),
-  },
-  {
-    key: "scienceaaas",
-    label: "Science AAAS",
-    searchFn: (api: any, p: any) =>
-      api.fetchScienceAaas({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getScienceAaasStatus(),
-  },
-  {
-    key: "jiqizhixin",
-    label: "机器之心",
-    searchFn: (api: any, p: any) =>
-      api.fetchJiqizhixin({
-        category: p.category || p.keyword || p.query || "ai",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getJiqizhixinStatus(),
-  },
-  {
-    key: "sspai",
-    label: "少数派",
-    searchFn: (api: any, p: any) =>
-      api.fetchSspai({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getSspaiStatus(),
+    statusFn: (api: any) => api.getDoubanBookStatus(),
   },
   {
     key: "variety",
@@ -14172,16 +13912,6 @@ const newsServicesConfig = [
         options: { maxCount: p.maxCount || 10 },
       }),
     statusFn: (api: any) => api.getVarietyStatus(),
-  },
-  {
-    key: "hollywood_reporter",
-    label: "Hollywood Reporter",
-    searchFn: (api: any, p: any) =>
-      api.fetchHollywoodReporter({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getHollywoodReporterStatus(),
   },
   {
     key: "deadline",
@@ -14204,16 +13934,6 @@ const newsServicesConfig = [
     statusFn: (api: any) => api.getBillboardStatus(),
   },
   {
-    key: "tmz",
-    label: "TMZ",
-    searchFn: (api: any, p: any) =>
-      api.fetchTmz({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getTmzStatus(),
-  },
-  {
     key: "ign",
     label: "IGN",
     searchFn: (api: any, p: any) =>
@@ -14223,76 +13943,8 @@ const newsServicesConfig = [
       }),
     statusFn: (api: any) => api.getIGNStatus(),
   },
-  {
-    key: "polygon",
-    label: "Polygon",
-    searchFn: (api: any, p: any) =>
-      api.fetchPolygon({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getPolygonStatus(),
-  },
-  {
-    key: "douban_movie",
-    label: "豆瓣电影",
-    searchFn: (api: any, p: any) =>
-      api.fetchDoubanMovie({
-        category: p.category || p.keyword || p.query || "hot",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getDoubanMovieStatus(),
-  },
-  {
-    key: "douban_book",
-    label: "豆瓣读书",
-    searchFn: (api: any, p: any) =>
-      api.fetchDoubanBook({
-        category: p.category || p.keyword || p.query || "hot",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getDoubanBookStatus(),
-  },
-  {
-    key: "douban_gallery",
-    label: "豆瓣广场",
-    searchFn: (api: any, p: any) =>
-      api.fetchDoubanGallery({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getDoubanGalleryStatus(),
-  },
-  {
-    key: "zhibo8",
-    label: "直播吧",
-    searchFn: (api: any, p: any) =>
-      api.fetchZhibo8({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getZhibo8Status(),
-  },
-  {
-    key: "hupu",
-    label: "虎扑",
-    searchFn: (api: any, p: any) =>
-      api.fetchHuPu({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getHuPuStatus(),
-  },
-  {
-    key: "bbc_sport",
-    label: "BBC Sport",
-    searchFn: (api: any, p: any) =>
-      api.fetchBBCSport({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getBBCSportStatus(),
-  },
+
+  // ── 体育 ─────────────────────────────────────────────────
   {
     key: "flashscore",
     label: "Flashscore",
@@ -14303,56 +13955,8 @@ const newsServicesConfig = [
       }),
     statusFn: (api: any) => api.getFlashScoreStatus(),
   },
-  {
-    key: "lagou",
-    label: "拉勾",
-    searchFn: (api: any, p: any) =>
-      api.fetchLagou({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getLagouStatus(),
-  },
-  {
-    key: "zhipin",
-    label: "BOSS直聘",
-    searchFn: (api: any, p: any) =>
-      api.fetchZhipin({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getZhipinStatus(),
-  },
-  {
-    key: "51job",
-    label: "前程无忧",
-    searchFn: (api: any, p: any) =>
-      api.fetch51Job({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.get51JobStatus(),
-  },
-  {
-    key: "linkedin_jobs",
-    label: "LinkedIn Jobs",
-    searchFn: (api: any, p: any) =>
-      api.fetchLinkedInJobs({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getLinkedInJobsStatus(),
-  },
-  {
-    key: "stats_gov",
-    label: "国家统计局",
-    searchFn: (api: any, p: any) =>
-      api.fetchStatsGov({
-        category: p.category || p.keyword || p.query || "news",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getStatsGovStatus(),
-  },
+
+  // ── 政府数据 ─────────────────────────────────────────────
   {
     key: "sse",
     label: "上交所",
@@ -14362,16 +13966,6 @@ const newsServicesConfig = [
         options: { maxCount: p.maxCount || 10 },
       }),
     statusFn: (api: any) => api.getSSEStatus(),
-  },
-  {
-    key: "chinamoney",
-    label: "中国货币网",
-    searchFn: (api: any, p: any) =>
-      api.fetchChinaMoney({
-        category: p.category || p.keyword || p.query || "news",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getChinaMoneyStatus(),
   },
   {
     key: "worldometers",
@@ -14392,16 +13986,6 @@ const newsServicesConfig = [
         options: { maxCount: p.maxCount || 10 },
       }),
     statusFn: (api: any) => api.getOurWorldInDataStatus(),
-  },
-  {
-    key: "medrxiv",
-    label: "medRxiv",
-    searchFn: (api: any, p: any) =>
-      api.fetchMedRxiv({
-        category: p.category || p.keyword || p.query || "all",
-        options: { maxCount: p.maxCount || 10 },
-      }),
-    statusFn: (api: any) => api.getMedRxivStatus(),
   },
 ];
 
