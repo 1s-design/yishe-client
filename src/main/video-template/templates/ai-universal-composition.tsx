@@ -797,13 +797,17 @@ const DynamicCodeRenderer: React.FC<{
   width?: number;
   height?: number;
   durationInFrames?: number;
+  sceneFrames?: number;
   _compiledCode?: string;
   _compiledError?: string;
-}> = ({ code, props = {}, palette, frame, fps, width, height, durationInFrames, _compiledCode, _compiledError }) => {
+}> = ({ code, props = {}, palette, frame, fps, width, height, durationInFrames, sceneFrames, _compiledCode, _compiledError }) => {
   const videoConfig = useVideoConfig();
   const w = width ?? videoConfig.width;
   const h = height ?? videoConfig.height;
   const d = durationInFrames ?? videoConfig.durationInFrames;
+  // 本幕总帧数与幕内进度（AI 可直接使用 sceneFrames / progress）
+  const sf = sceneFrames ?? d;
+  const progress = clamp01(sf > 0 ? frame / sf : 0);
 
   // ── 优先使用 esbuild 编译后的 JS（scope 注入执行） ──
   if (_compiledCode) {
@@ -826,6 +830,7 @@ const DynamicCodeRenderer: React.FC<{
         useVideoConfig: () => ({ fps, width: w, height: h, durationInFrames: d }),
         interpolate, spring, Easing, random,
         frame, fps, width: w, height: h, durationInFrames: d,
+        sceneFrames: sf, progress,
         palette, props,
         THREE: threeModule, three: threeModule,
         R3F: r3fModule,
@@ -944,6 +949,8 @@ const DynamicCodeRenderer: React.FC<{
       width: w,
       height: h,
       durationInFrames: d,
+      sceneFrames: sf,
+      progress,
       palette,
       props,
       alpha,
@@ -1023,6 +1030,8 @@ const DynamicCodeRenderer: React.FC<{
         width,
         height,
         durationInFrames,
+        sceneFrames,
+        progress,
         palette,
         props,
         alpha,
@@ -1512,9 +1521,11 @@ const LayerRenderer: React.FC<{
   layer: SceneLayer;
   palette: Palette;
   index: number;
-}> = ({ layer, palette, index }) => {
+  sceneFrames?: number;
+}> = ({ layer, palette, index, sceneFrames }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, durationInFrames } = useVideoConfig();
+  const sf = sceneFrames ?? durationInFrames;
   const delay = layer.delayFrames ?? index * 6;
   const entrance = useEntrance(delay);
   const anim = computeAnimation(layer.animation, entrance, frame);
@@ -2446,6 +2457,7 @@ const LayerRenderer: React.FC<{
             palette={palette}
             frame={frame}
             fps={fps}
+            sceneFrames={sf}
             _compiledCode={(layer as any)._compiledCode}
             _compiledError={(layer as any)._compiledError}
           />
@@ -2516,6 +2528,7 @@ const LayerRenderer: React.FC<{
               palette={palette}
               frame={frame}
               fps={fps}
+              sceneFrames={sf}
               _compiledCode={freeLayer._compiledCode}
               _compiledError={freeLayer._compiledError}
             />
@@ -2714,8 +2727,8 @@ const SceneRenderer: React.FC<{
       {/* Background */}
       {bgNode}
 
-      {/* Background watermark - ONLY if explicitly configured or exhibition */}
-      {scene.decorations?.watermark || scene.decorations?.showExhibition ? (
+      {/* Background watermark — 仅当 AI 显式给出文字才渲染，引擎不预设展览风格 */}
+      {scene.decorations?.watermark ? (
         <div
           style={{
             position: "absolute",
@@ -2734,12 +2747,12 @@ const SceneRenderer: React.FC<{
             zIndex: 1,
           }}
         >
-          {scene.decorations?.watermark || "MASTERWORK"}
+          {scene.decorations.watermark}
         </div>
       ) : null}
 
-      {/* Top Header Bar - ONLY if explicitly configured or exhibition */}
-      {scene.decorations?.headerBadge || scene.decorations?.showExhibition ? (
+      {/* Top Header Bar — 仅当 AI 显式给出 headerBadge 才渲染 */}
+      {scene.decorations?.headerBadge ? (
         <div
           style={{
             position: "absolute",
@@ -2747,7 +2760,7 @@ const SceneRenderer: React.FC<{
             left: 52,
             right: 52,
             display: "flex",
-            justifyContent: "space-between",
+            justifyContent: "flex-start",
             alignItems: "center",
             pointerEvents: "none",
             zIndex: 20,
@@ -2772,24 +2785,14 @@ const SceneRenderer: React.FC<{
                 textTransform: "uppercase",
               }}
             >
-              {scene.decorations?.headerBadge || "CURATION · MASTERPIECE"}
+              {scene.decorations.headerBadge}
             </span>
-          </div>
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: 2,
-              color: alpha(palette.text, 0.4),
-            }}
-          >
-            ✦ 4K CINEMATIC
           </div>
         </div>
       ) : null}
 
-      {/* Bottom Footer - ONLY if explicitly configured or exhibition */}
-      {scene.decorations?.footerText || scene.decorations?.showExhibition ? (
+      {/* Bottom Footer — 仅当 AI 显式给出 footerText 才渲染 */}
+      {scene.decorations?.footerText ? (
         <div
           style={{
             position: "absolute",
@@ -2797,24 +2800,12 @@ const SceneRenderer: React.FC<{
             left: 52,
             right: 52,
             display: "flex",
-            justifyContent: "space-between",
+            justifyContent: "center",
             alignItems: "center",
             pointerEvents: "none",
             zIndex: 20,
           }}
         >
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            {[...Array(8)].map((_, i) => (
-              <div
-                key={i}
-                style={{
-                  width: 2,
-                  height: i % 2 === 0 ? 12 : 6,
-                  backgroundColor: alpha(palette.text, 0.28),
-                }}
-              />
-            ))}
-          </div>
           <div
             style={{
               fontSize: 11,
@@ -2823,7 +2814,7 @@ const SceneRenderer: React.FC<{
               color: alpha(palette.text, 0.45),
             }}
           >
-            {scene.decorations?.footerText || "MUSEUM ARCHIVE COLLECTION"}
+            {scene.decorations.footerText}
           </div>
         </div>
       ) : null}
@@ -2853,7 +2844,7 @@ const SceneRenderer: React.FC<{
             }}
           >
             {leftLayers.map((layer, i) => (
-              <LayerRenderer key={i} layer={layer} palette={palette} index={i} />
+              <LayerRenderer key={i} layer={layer} palette={palette} index={i} sceneFrames={sceneFrames} />
             ))}
           </div>
           {/* Right column */}
@@ -2870,7 +2861,7 @@ const SceneRenderer: React.FC<{
               }}
             >
               {rightLayers.map((layer, i) => (
-                <LayerRenderer key={i} layer={layer} palette={palette} index={splitIndex + i} />
+                <LayerRenderer key={i} layer={layer} palette={palette} index={splitIndex + i} sceneFrames={sceneFrames} />
               ))}
             </div>
           )}
@@ -2886,7 +2877,7 @@ const SceneRenderer: React.FC<{
           }}
         >
           {scene.layers.map((layer, i) => (
-            <LayerRenderer key={i} layer={layer} palette={palette} index={i} />
+            <LayerRenderer key={i} layer={layer} palette={palette} index={i} sceneFrames={sceneFrames} />
           ))}
         </AbsoluteFill>
       )}
