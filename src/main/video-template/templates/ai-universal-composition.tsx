@@ -788,6 +788,22 @@ function getPaletteFont(palette: Palette): string {
 // Dynamic Component Renderers (Scheme 3: Remotion Open Engine)
 // ---------------------------------------------------------------------------
 
+// AI 出码常写 `const {...} = window` 取运行时变量，但沙箱是按参数/解构注入的，
+// window 上并无这些值 → 解构出 undefined 并遮蔽已注入的同名变量。
+// 用 Proxy 把注入 scope 桥接到 window：先查 scope，查不到再回落真实 window。
+function createWindowBridge(scope: Record<string, any>) {
+  const realWindow: any = typeof window !== "undefined" ? window : undefined;
+  return new Proxy(scope, {
+    get: (target, key) => {
+      if (typeof key === "string" && key in target) return target[key];
+      return realWindow ? realWindow[key] : undefined;
+    },
+    has: (target, key) =>
+      (typeof key === "string" && key in target) ||
+      !!(realWindow && key in realWindow),
+  });
+}
+
 const DynamicCodeRenderer: React.FC<{
   code: string;
   props?: Record<string, any>;
@@ -856,11 +872,15 @@ const DynamicCodeRenderer: React.FC<{
         },
         exports: exportsObj, module: moduleObj,
       };
+      // window 桥接：兼容 AI 出码 `const {...} = window` 的取值习惯
+      (scope as any).window = createWindowBridge(scope);
 
-      // 执行编译后的 JS（scope 注入）
+      // 执行编译后的 JS（scope 注入）。
+      // 代码体套一层块作用域：AI 出码常写 `const { frame } = window`，
+      // 会与参数名（frame/spring/...）冲突导致 SyntaxError，块级 const 可正常遮蔽
       const keys = Object.keys(scope);
       const values = keys.map((k) => (scope as any)[k]);
-      const fn = new Function(...keys, _compiledCode);
+      const fn = new Function(...keys, `{\n${_compiledCode}\n}`);
       const result = fn(...values);
 
       if (React.isValidElement(result)) return result;
@@ -1007,6 +1027,8 @@ const DynamicCodeRenderer: React.FC<{
       exports: exportsObj,
       module: moduleObj,
     };
+    // window 桥接：兼容 AI 出码 `const {...} = window` 的取值习惯
+    (scope as any).window = createWindowBridge(scope);
 
     const fn = new Function(
       "scope",
@@ -1084,6 +1106,7 @@ const DynamicCodeRenderer: React.FC<{
         require,
         exports,
         module,
+        window,
       } = scope;
 
       try {
