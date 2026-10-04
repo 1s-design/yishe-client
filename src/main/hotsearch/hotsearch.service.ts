@@ -103,6 +103,44 @@ class HotSearchService {
     const startTime = Date.now();
     this.progress[key] = { status: "fetching" };
 
+    // ── 优先：采集引擎（服务端源定义）──
+    // 与工作流双端设计兼容：客户端执行统一走源定义，消除多份采集实现
+    try {
+      const { sourceBridgeCall } = await import("../capabilities/source-bridge");
+      const bridged = await sourceBridgeCall("hotsearch", "search", {
+        platform: key,
+        maxCount: 50,
+      });
+      if (bridged.handled && bridged.result?.success) {
+        const data = bridged.result.data || {};
+        const items = (data.items || []).map((it: any) => ({
+          rank: it.rank,
+          title: it.title,
+          hot: it.hot ?? it.heat,
+          url: it.link || it.url || "",
+        }));
+        const duration = Date.now() - startTime;
+        this.progress[key] = { status: "done", duration };
+        console.log(`✅ [HotSearch] ${name} 采集成功(引擎): ${items.length} 条, ${duration}ms`);
+        return {
+          platform: key,
+          name,
+          success: true,
+          items,
+          timestamp: new Date().toISOString(),
+          duration,
+        };
+      }
+      if (bridged.handled && !bridged.result?.success) {
+        throw new Error(bridged.result?.error || "引擎采集失败");
+      }
+    } catch (engineErr: any) {
+      console.warn(
+        `⚠️ [HotSearch] ${name} 引擎采集失败，尝试旧实现: ${engineErr?.message || engineErr}`,
+      );
+    }
+
+    // ── 兜底：旧平台实现（迁移期保留）──
     const ctx: FetchContext = {
       userAgent: randomUA(),
       timeout,

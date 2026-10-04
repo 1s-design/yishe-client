@@ -12765,6 +12765,77 @@ function registerBuiltInLocalServices() {
       throw new Error(`未实现的 Iconify 命令: ${command.action}`);
     },
   });
+
+  // ── 通用采集引擎（Source-as-Code）─────────────────────────────
+  // 执行服务端下发的采集源代码；新增采集源无需更新客户端。
+  registerLocalService({
+    key: "collectEngine",
+    pluginKey: "collect-engine",
+    label: "通用采集引擎",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => ({
+      label: "通用采集引擎",
+      connected: true,
+      available: true,
+      status: "connected",
+      state: "idle",
+      busy: false,
+      message: "通用采集引擎可用",
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+      supportedCommands: ["refreshRuntime", "health", "run", "search", "list", "download"],
+    }),
+    execute: async (command) => {
+      const nativeApi = getNativeApi() as any;
+      const payload = command.payload || {};
+      const action = command.action;
+
+      if (action === "refreshRuntime" || action === "health") {
+        return { success: true, message: "通用采集引擎可用", data: { engineVersion: 1 } };
+      }
+
+      const sourceId = String(payload.sourceId || "").trim();
+      if (!sourceId) {
+        throw new Error("缺少 sourceId");
+      }
+      const hookAction =
+        action === "run"
+          ? String(payload.action || "search")
+          : ["search", "list", "download"].includes(action)
+            ? action
+            : "";
+      if (!hookAction) {
+        throw new Error(`未实现的采集命令: ${action}`);
+      }
+
+      // 从服务端拉取源代码（request 封装自带鉴权）
+      const requestMod = await import("../api/request");
+      const request = (requestMod as any).default || requestMod;
+      const codePayload = await request.get({
+        url: `/collect/sources/${encodeURIComponent(sourceId)}/code`,
+      });
+      const codeData = codePayload?.data || codePayload;
+      if (!codeData?.code) {
+        throw new Error(`拉取采集源代码失败: ${sourceId}`);
+      }
+
+      if (!nativeApi?.executeCapability) {
+        throw new Error("当前环境未注入能力执行桥");
+      }
+      const result = await nativeApi.executeCapability("collect", "run", {
+        sourceId,
+        sourceVersion: codeData.version,
+        code: codeData.code,
+        action: hookAction,
+        params: payload.params || {},
+        meta: codeData.meta,
+        secrets: payload.secrets || {},
+      });
+      if (!result?.success) {
+        throw new Error(result?.error || "采集执行失败");
+      }
+      return { success: true, message: result?.message || "采集完成", data: result?.data };
+    },
+  });
 }
 
 registerLocalService({

@@ -1,7 +1,7 @@
 /** 少数派 - https://sspai.com/ */
 import { fetchAndParseRss, RssResult } from './rss-common';
 import { checkSiteAvailability } from './siteAvailability';
-import sspaiPlatform from './hotsearch/platforms/sspai';
+import { sourceBridgeCall } from './capabilities/source-bridge';
 
 export async function getSspaiStatus() {
   const s = await checkSiteAvailability('https://sspai.com', { timeoutMs: 8000 });
@@ -36,9 +36,10 @@ export async function fetchSspai(category: string = 'all', options: { query?: st
     }
   }
 
-  // Fallback to platform scraper
+  // Fallback to collect engine（服务端源定义 hotsearch-sspai）
   try {
-    const items = await sspaiPlatform.fetch({ options: {} } as any);
+    const bridged = await sourceBridgeCall('hotsearch_sspai', 'search', {});
+    const items = (bridged.result?.data?.items || []) as any[];
     const filtered = query
       ? items.filter((it: any) => it.title?.toLowerCase().includes(query!.toLowerCase()))
       : items;

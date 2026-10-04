@@ -38,6 +38,18 @@ class CapabilityRegistryImpl {
     args: any = {},
     context?: CapabilityCallContext,
   ): Promise<CapabilityResult<T>> {
+    // ── 采集能力优先走「服务端源定义 + 客户端采集引擎」桥 ──
+    // 未命中源定义时回退旧 handler（googleArt/pinterest 等定制能力）
+    try {
+      const { sourceBridgeCall } = await import("./source-bridge");
+      const bridged = await sourceBridgeCall(namespace, name, args);
+      if (bridged.handled) {
+        return bridged.result as CapabilityResult<T>;
+      }
+    } catch (bridgeErr: any) {
+      console.error(`[CapabilityRegistry] 源桥执行异常，回退旧能力: ${namespace}.${name}`, bridgeErr?.message || bridgeErr);
+    }
+
     const key = `${namespace}.${name}`;
     console.log(`[CapabilityRegistry] call: ${key}, args=`, args)
     const capability = this.capabilities.get(key);

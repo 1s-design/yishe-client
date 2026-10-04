@@ -1,5 +1,169 @@
 // Yishe Client Main Process - Pure Direct Image Download 2026-08-01
 import {
+  downloadEmojipediaItem,
+  downloadGoogleIcon,
+  downloadIconifyIcon,
+  downloadKaboompicsImage,
+  downloadMagnificFile,
+  downloadNounProjectAsset,
+  downloadOpenMojiEmoji,
+  downloadOpenclipartImage,
+  downloadOpenverseImage,
+  downloadPexelsImage,
+  downloadPixabayImage,
+  downloadRawpixelImage,
+  downloadStockSnapImage,
+  downloadSvgrepoImage,
+  downloadUndrawImage,
+  downloadVecteezyAsset,
+  downloadWikimediaImage,
+  fetch36Kr,
+  fetchArs,
+  fetchBBC,
+  fetchChinaDaily,
+  fetchGovCN,
+  fetchHuxiu,
+  fetchMIT,
+  fetchNPR,
+  fetchReuters,
+  fetchTC,
+  fetchThePaper,
+  fetchVerge,
+  fetchXH,
+  get36KrStatus,
+  getArsStatus,
+  getArxivStatus,
+  getBBCStatus,
+  getChinaDailyStatus,
+  getCoinGeckoStatus,
+  getColorApiStatus,
+  getCountryIsStatus,
+  getDictionaryStatus,
+  getEmojipediaStatus,
+  getErApiStatus,
+  getFawazahmedStatus,
+  getFrankfurterStatus,
+  getGdeltStatus,
+  getGithubStatus,
+  getGoogleIconsStatus,
+  getGoogleNewsStatus,
+  getGovCNStatus,
+  getGuardianStatus,
+  getHNStatus,
+  getHuxiuStatus,
+  getIconifyStatus,
+  getIpifyStatus,
+  getJokeStatus,
+  getKaboompicsStatus,
+  getMITStatus,
+  getMagnificStatus,
+  getNPRStatus,
+  getNounProjectStatus,
+  getOpenMeteoStatus,
+  getOpenMojiStatus,
+  getOpenclipartStatus,
+  getOpenverseStatus,
+  getPHStatus,
+  getPexelsStatus,
+  getPixabayStatus,
+  getRawpixelStatus,
+  getRedditStatus,
+  getReutersStatus,
+  getStockSnapStatus,
+  getSunriseStatus,
+  getSvgrepoStatus,
+  getTCStatus,
+  getThePaperStatus,
+  getTimeApiStatus,
+  getUndrawStatus,
+  getVecteezyStatus,
+  getVergeStatus,
+  getWikimediaStatus,
+  getWttrStatus,
+  getXHStatus,
+  getZippopotamStatus,
+  importMedia,
+  listSources,
+  searchArxiv,
+  searchCoinGecko,
+  searchColorApi,
+  searchCountryIs,
+  searchDictionary,
+  searchEmojipedia,
+  searchErApi,
+  searchFawazahmed,
+  searchFrankfurter,
+  searchGdeltNews,
+  searchGithubRepos,
+  searchGoogleIcons,
+  searchGoogleNews,
+  searchGuardian,
+  searchHN,
+  searchIconify,
+  searchIpify,
+  searchJoke,
+  searchKaboompics,
+  searchMagnific,
+  searchMedia,
+  searchNounProject,
+  searchOpenMeteo,
+  searchOpenMoji,
+  searchOpenclipart,
+  searchOpenverse,
+  searchPH,
+  searchPexels,
+  searchPixabay,
+  searchRawpixel,
+  searchReddit,
+  searchStockSnap,
+  searchSunrise,
+  searchSvgrepo,
+  searchTimeApi,
+  searchUndraw,
+  searchVecteezy,
+  searchWikimedia,
+  searchWttr,
+  searchZippopotam,
+  sync36KrToLibrary,
+  syncArsToLibrary,
+  syncArxivToLibrary,
+  syncBBCToLibrary,
+  syncChinaDailyToLibrary,
+  syncEmojipediaToMaterialLibrary,
+  syncGdeltToLibrary,
+  syncGithubToLibrary,
+  syncGoogleIconsToMaterialLibrary,
+  syncGoogleNewsToLibrary,
+  syncGovCNToLibrary,
+  syncGuardianToLibrary,
+  syncHNToLibrary,
+  syncHuxiuToLibrary,
+  syncIconifyToMaterialLibrary,
+  syncKaboompicsToMaterialLibrary,
+  syncMITToLibrary,
+  syncMagnificToMaterialLibrary,
+  syncNPRToLibrary,
+  syncNounProjectToMaterialLibrary,
+  syncOpenMojiToMaterialLibrary,
+  syncOpenclipartToMaterialLibrary,
+  syncOpenverseToMaterialLibrary,
+  syncPHToLibrary,
+  syncPexelsToMaterialLibrary,
+  syncPixabayToMaterialLibrary,
+  syncRawpixelToMaterialLibrary,
+  syncRedditToLibrary,
+  syncReutersToLibrary,
+  syncStockSnapToMaterialLibrary,
+  syncSvgrepoToMaterialLibrary,
+  syncTCToLibrary,
+  syncThePaperToLibrary,
+  syncUndrawToMaterialLibrary,
+  syncVecteezyToMaterialLibrary,
+  syncVergeToLibrary,
+  syncWikimediaToMaterialLibrary,
+  syncXHToLibrary,
+} from "./collect-compat";
+import {
   app,
   shell,
   BrowserWindow,
@@ -44,136 +208,7 @@ import {
   getPinterestStatus,
   syncPinterestToMaterialLibrary,
   PinterestClient,
-} from "./pinterest";
-import {
-  searchWikimedia,
-  getWikimediaStatus,
-  syncWikimediaToMaterialLibrary,
-  downloadWikimediaImage,
-} from "./wikimedia";
-import {
-  searchPexels,
-  getPexelsStatus,
-  syncPexelsToMaterialLibrary,
-  downloadPexelsImage,
-} from "./pexels";
-import {
-  searchPixabay,
-  getPixabayStatus,
-  syncPixabayToMaterialLibrary,
-  downloadPixabayImage,
-} from "./pixabay";
-import {
-  searchRawpixel,
-  getRawpixelStatus,
-  syncRawpixelToMaterialLibrary,
-  downloadRawpixelImage,
-} from "./rawpixel";
-import {
-  searchStockSnap,
-  getStockSnapStatus,
-  syncStockSnapToMaterialLibrary,
-  downloadStockSnapImage,
-} from "./stocksnap";
-import {
-  searchOpenverse,
-  getOpenverseStatus,
-  syncOpenverseToMaterialLibrary,
-  downloadOpenverseImage,
-} from "./openverse";
-import {
-  searchKaboompics,
-  getKaboompicsStatus,
-  syncKaboompicsToMaterialLibrary,
-  downloadKaboompicsImage,
-} from "./kaboompics";
-import {
-  searchMagnific,
-  getMagnificStatus,
-  syncMagnificToMaterialLibrary,
-  downloadMagnificFile,
-} from "./magnific";
-import {
-  searchOpenclipart,
-  getOpenclipartStatus,
-  syncOpenclipartToMaterialLibrary,
-  downloadOpenclipartImage,
-} from "./openclipart";
-import {
-  searchUndraw,
-  getUndrawStatus,
-  syncUndrawToMaterialLibrary,
-  downloadUndrawImage,
-} from "./undraw";
-import {
-  searchVecteezy,
-  getVecteezyStatus,
-  syncVecteezyToMaterialLibrary,
-  downloadVecteezyAsset,
-} from "./vecteezy";
-import {
-  searchOpenMoji,
-  getOpenMojiStatus,
-  syncOpenMojiToMaterialLibrary,
-  downloadOpenMojiEmoji,
-} from "./openmoji";
-import {
-  searchGoogleIcons,
-  getGoogleIconsStatus,
-  syncGoogleIconsToMaterialLibrary,
-  downloadGoogleIcon,
-} from "./googleicons";
-import {
-  searchEmojipedia,
-  getEmojipediaStatus,
-  syncEmojipediaToMaterialLibrary,
-  downloadEmojipediaItem,
-} from "./emojipedia";
-import { searchHN, getHNStatus, syncHNToLibrary } from "./hackernews";
-import { searchArxiv, getArxivStatus, syncArxivToLibrary } from "./arxiv";
-import {
-  searchGithubRepos,
-  getGithubStatus,
-  syncGithubToLibrary,
-} from "./github";
-import { searchGdeltNews, getGdeltStatus, syncGdeltToLibrary } from "./gdelt";
-import {
-  searchGoogleNews,
-  getGoogleNewsStatus,
-  syncGoogleNewsToLibrary,
-} from "./googlenews";
-import { searchReddit, getRedditStatus, syncRedditToLibrary } from "./reddit";
-import { searchPH, getPHStatus, syncPHToLibrary } from "./producthunt";
-import {
-  searchGuardian,
-  getGuardianStatus,
-  syncGuardianToLibrary,
-} from "./theguardian";
-import { fetchBBC, getBBCStatus, syncBBCToLibrary } from "./bbcnews";
-import { fetchNPR, getNPRStatus, syncNPRToLibrary } from "./npr";
-import { fetchTC, getTCStatus, syncTCToLibrary } from "./techcrunch";
-import { fetchVerge, getVergeStatus, syncVergeToLibrary } from "./theverge";
-import { fetchArs, getArsStatus, syncArsToLibrary } from "./arstechnica";
-import { fetchMIT, getMITStatus, syncMITToLibrary } from "./mittechreview";
-import {
-  fetchReuters,
-  getReutersStatus,
-  syncReutersToLibrary,
-} from "./reuters";
-import {
-  fetchChinaDaily,
-  getChinaDailyStatus,
-  syncChinaDailyToLibrary,
-} from "./chinadaily";
-import { fetchGovCN, getGovCNStatus, syncGovCNToLibrary } from "./govcn";
-import { fetchXH, getXHStatus, syncXHToLibrary } from "./xinhuanet";
-import {
-  fetchThePaper,
-  getThePaperStatus,
-  syncThePaperToLibrary,
-} from "./thepaper";
-import { fetch36Kr, get36KrStatus, sync36KrToLibrary } from "./36kr";
-import { fetchHuxiu, getHuxiuStatus, syncHuxiuToLibrary } from "./huxiu";
+} from "./collect-compat";
 import { fetchIGN, getIGNStatus, syncIGNToLibrary } from "./ign";
 import { fetchPolygon, getPolygonStatus, syncPolygonToLibrary } from "./polygon";
 import { fetchDoubanMovie, getDoubanMovieStatus, syncDoubanMovieToLibrary } from "./douban_movie";
@@ -217,20 +252,6 @@ import { fetchHollywoodReporter, getHollywoodReporterStatus, syncHollywoodReport
 import { fetchDeadline, getDeadlineStatus, syncDeadlineToLibrary } from "./deadline";
 import { fetchBillboard, getBillboardStatus, syncBillboardToLibrary } from "./billboard";
 import { fetchTmz, getTmzStatus, syncTmzToLibrary } from "./tmz";
-import { searchOpenMeteo, getOpenMeteoStatus } from "./openmeteo";
-import { searchWttr, getWttrStatus } from "./wttr";
-import { searchCoinGecko, getCoinGeckoStatus } from "./coingecko";
-import { searchFrankfurter, getFrankfurterStatus } from "./frankfurter";
-import { searchDictionary, getDictionaryStatus } from "./dictionary";
-import { searchJoke, getJokeStatus } from "./joke";
-import { searchIpify, getIpifyStatus } from "./ipify";
-import { searchSunrise, getSunriseStatus } from "./sunrisesunset";
-import { searchTimeApi, getTimeApiStatus } from "./timeapi";
-import { searchZippopotam, getZippopotamStatus } from "./zippopotam";
-import { searchCountryIs, getCountryIsStatus } from "./countryis";
-import { searchErApi, getErApiStatus } from "./erapi";
-import { searchFawazahmed, getFawazahmedStatus } from "./fawazahmed";
-import { searchColorApi, getColorApiStatus } from "./colorapi";
 import { searchWeatherCn, getWeatherCnStatus } from "./weather_cn";
 import { searchWeatherCom, getWeatherComStatus } from "./weather_com";
 import { searchYahooFinance, getYahooFinanceStatus } from "./yahoo_finance";
@@ -241,26 +262,7 @@ import { searchCoinmarketcap, getCoinmarketcapStatus } from "./coinmarketcap";
 import { hotSearchService } from "./hotsearch/hotsearch.service";
 import { getPlatform } from "./hotsearch/platforms";
 
-import {
-  searchSvgrepo,
-  getSvgrepoStatus,
-  syncSvgrepoToMaterialLibrary,
-  downloadSvgrepoImage,
-} from "./svgrepo";
-import {
-  searchIconify,
-  getIconifyStatus,
-  syncIconifyToMaterialLibrary,
-  downloadIconifyIcon,
-} from "./iconify";
-import {
-  searchNounProject,
-  getNounProjectStatus,
-  syncNounProjectToMaterialLibrary,
-  downloadNounProjectAsset,
-} from "./nounproject";
 import { generateCosKey, uploadFileToCos } from "./cos";
-import { listSources, searchMedia, importMedia } from "./mediaCollector";
 import { createHash, randomUUID } from "crypto";
 import ElectronStore from "electron-store";
 import {
