@@ -21,12 +21,14 @@ try:
     from .utils.permission_utils import check_write_permission
     from .smart_object_replacer import replace_smart_object_content
     from .utils import create_photoshop_session
+    from .utils.image_utils import apply_overlays_to_image, match_overlay_for_artboard
     from .layer_finder import find_smart_object_layers
 except ImportError:
     try:
         from src.utils.permission_utils import check_write_permission
         from src.smart_object_replacer import replace_smart_object_content
         from src.utils import create_photoshop_session
+        from src.utils.image_utils import apply_overlays_to_image, match_overlay_for_artboard
         from src.layer_finder import find_smart_object_layers
     except ImportError:
         raise ImportError("无法导入必要的模块")
@@ -41,6 +43,43 @@ def _log_detail(message: str) -> None:
     """Verbose Photoshop automation diagnostics. Enable with YISHE_PS_VERBOSE=1."""
     if PS_VERBOSE_LOG:
         print(message)
+
+
+def _apply_overlays_to_export(
+    export_path: Optional[Path],
+    overlays: Optional[list],
+    artboard_index: int,
+    artboard_name: Optional[str] = None,
+) -> None:
+    """把命中当前画板的贴片叠到导出的 PNG 上（只动导出后的文件）。"""
+    if not overlays:
+        return
+    if export_path is None or not Path(export_path).exists():
+        return
+
+    matched = match_overlay_for_artboard(overlays, artboard_index, artboard_name)
+    if not matched:
+        return
+
+    from PIL import Image
+
+    path = Path(export_path)
+    try:
+        with Image.open(path) as base_img:
+            composed = apply_overlays_to_image(base_img, matched)
+        try:
+            composed.save(path, "PNG")
+        finally:
+            composed.close()
+        print(
+            f"    🏷️ 已为画板 [{artboard_index}]"
+            f"{f' {artboard_name}' if artboard_name else ''} "
+            f"叠加 {len(matched)} 个贴片: {path.name}"
+        )
+    except FileNotFoundError:
+        raise
+    except Exception as e:
+        print(f"    ⚠️ 画板 [{artboard_index}] 贴片合成失败（导出文件保留）: {e}")
 
 
 def _safe_filename_part(value: Optional[str], fallback: str = "item", max_length: int = 80) -> str:
@@ -119,17 +158,20 @@ def replace_and_export_psd_multi(
     export_dir: Path,
     smart_objects_config: list[dict],
     color_layer_configs: Optional[list[dict]] = None,
-    output_filename: Optional[str] = None
+    output_filename: Optional[str] = None,
+    overlays: Optional[list[dict]] = None,
 ) -> tuple[List[Path], float]:
     """
     处理 PSD 文件，支持多个智能对象的不同配置
-    
+
     Args:
         psd_path: PSD 文件路径
         export_dir: 导出目录
         smart_objects_config: 智能对象配置数组
         output_filename: 导出文件名（可选）
-    
+        overlays: 导出后贴片配置数组（可选）。每项 {artboard: 1|"名字", images: [...]}，
+                  在每个画板 PNG 导出完成后叠加到成品图最上层
+
     Returns:
         tuple: (导出的图片文件路径列表, 处理时间(秒))
     """
@@ -758,7 +800,24 @@ def replace_and_export_psd_multi(
                 traceback.print_exc()
                 doc.close()
                 raise
-        
+
+        # ========== 导出后贴片合成（只动导出出来的 PNG） ==========
+        if overlays:
+            print(f"\n🏷️ 开始叠加贴片（overlays 配置 {len(overlays)} 条）")
+            if layer_sets:
+                for idx, export_path in enumerate(export_paths, 1):
+                    artboard_name = None
+                    try:
+                        if idx - 1 < len(layer_sets):
+                            artboard_name = layer_sets[idx - 1].name
+                    except Exception:
+                        artboard_name = None
+                    _apply_overlays_to_export(export_path, overlays, idx, artboard_name)
+            else:
+                # 无画板：视为第 1 张
+                if export_paths:
+                    _apply_overlays_to_export(export_paths[0], overlays, 1, None)
+
         print(f"\n" + "=" * 70)
         print("✅ 最终处理结果")
         print("=" * 70)

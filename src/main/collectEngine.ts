@@ -92,6 +92,7 @@ async function renderWithBrowser(
     waitFor?: string;
     waitMs?: number;
     timeoutMs?: number;
+    headers?: Record<string, string>;
   } = {},
 ): Promise<{ html: string; finalUrl: string; title: string }> {
   const run = async () => {
@@ -120,6 +121,8 @@ async function renderWithBrowser(
         viewport: { width: 1280, height: 800 },
         userAgent:
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        // 自定义请求头注入（如 Referer），部分 API 校验来源头
+        extraHTTPHeaders: options.headers,
       });
       const page = await context.newPage();
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
@@ -291,7 +294,7 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
        */
       async render(
         url: string,
-        options: { waitFor?: string; waitMs?: number; timeoutMs?: number } = {},
+        options: { waitFor?: string; waitMs?: number; timeoutMs?: number; headers?: Record<string, string> } = {},
       ): Promise<{ html: string; finalUrl: string; title: string }> {
         assertDomainAllowed(url, domains);
         console.log(`[CollectEngine] browser.render: ${url}`);
@@ -308,9 +311,14 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
         options: {
           referer?: string;
           filename?: string;
-          /** 同步写入素材库（sticker 表） */
+          /** 同步写入素材库（crawler_material 或 collect_file） */
           toMaterial?: boolean;
+          /** 入库目标：crawler_material（默认）| collect_file（媒体采集→采集文件） */
+          materialTarget?: string;
           title?: string;
+          source?: string;
+          originUrl?: string;
+          meta?: Record<string, unknown>;
         } = {},
       ): Promise<{ cosUrl: string; size: number; materialOk?: boolean }> {
         assertDomainAllowed(url, domains);
@@ -335,9 +343,19 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           if (options.toMaterial) {
             try {
               const { uploadToMaterialLibrary } = await import("./materialLibrary");
+              // 入库目标优先级：调用方显式指定 > 任务/源 meta 注入 > 默认 crawler_material
+              const materialTarget =
+                options.materialTarget ||
+                (args.params as any)?.materialTarget ||
+                (args.meta as any)?.materialTarget ||
+                "crawler_material";
               const matRes: any = await uploadToMaterialLibrary(tmpPath, safeName, {
                 name: options.title || safeName,
                 category: "uncategorized",
+                source: options.source || args.sourceId,
+                originUrl: options.originUrl,
+                meta: options.meta,
+                materialTarget,
               } as any);
               materialOk = !!matRes?.ok;
             } catch (matErr: any) {

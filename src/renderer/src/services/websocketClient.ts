@@ -7156,6 +7156,34 @@ async function handlePsdSetProduction(
       }
     }
 
+    // 导出后贴片（overlays）：解析路径（支持 URL 下载）并做文件就绪校验
+    if (Array.isArray(processPayload.overlays) && processPayload.overlays.length) {
+      for (let oi = 0; oi < processPayload.overlays.length; oi++) {
+        const overlayEntry = processPayload.overlays[oi] || {};
+        const overlayImages = Array.isArray(overlayEntry.images)
+          ? overlayEntry.images
+          : [];
+        for (let ii = 0; ii < overlayImages.length; ii++) {
+          const rawOverlayPath = String(overlayImages[ii]?.image_path || "").trim();
+          if (!rawOverlayPath) {
+            continue;
+          }
+          const resolvedOverlayPath = await resolveImagePathForProcess(
+            rawOverlayPath,
+            `画板贴片[${oi + 1}].images[${ii + 1}]`,
+          );
+          overlayImages[ii].image_path = await processImageToPngIfNeeded(
+            resolvedOverlayPath,
+          );
+          await assertProcessFileReady(
+            `画板贴片[${oi + 1}].images[${ii + 1}]`,
+            overlayImages[ii].image_path,
+          );
+        }
+        processPayload.overlays[oi] = { ...overlayEntry, images: overlayImages };
+      }
+    }
+
     // 打印即将发送给 Photoshop 服务的参数，便于排查多素材 / smart_objects 问题
     // 简化 smart_objects 输出，避免日志过大
     const logSmartObjects = processPayload.smart_objects.map((so: any) => {
@@ -7218,6 +7246,7 @@ async function handlePsdSetProduction(
       exportDir: processPayload.export_dir,
       smartObjectCount: processPayload.smart_objects.length,
       smartObjects: logSmartObjects,
+      overlays: Array.isArray(processPayload.overlays) ? processPayload.overlays : [],
       defaults: processPayload.defaults || null,
       verbose: processPayload.verbose ?? null,
     });

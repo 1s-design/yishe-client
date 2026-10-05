@@ -576,6 +576,7 @@ def process_psd_with_image_multi(
         'smart_objects_config': None,  # 必需参数
         'color_layer_configs': None,
         'output_filename': None,
+        'overlays': None,
         'verbose': True
     }
     
@@ -608,7 +609,8 @@ def process_psd_with_image_multi(
                 export_dir=export_dir,
                 smart_objects_config=smart_objects_config,
                 color_layer_configs=color_layer_configs,
-                output_filename=final_config['output_filename']
+                output_filename=final_config['output_filename'],
+                overlays=final_config.get('overlays')
             )
     else:
         return replace_and_export_psd_multi(
@@ -616,7 +618,8 @@ def process_psd_with_image_multi(
             export_dir=export_dir,
             smart_objects_config=smart_objects_config,
             color_layer_configs=color_layer_configs,
-            output_filename=final_config['output_filename']
+            output_filename=final_config['output_filename'],
+            overlays=final_config.get('overlays')
         )
 
 

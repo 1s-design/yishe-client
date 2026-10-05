@@ -1,7 +1,12 @@
 """通用工具函数包。"""
 
 from .file_utils import validate_job_inputs
-from .image_utils import compose_contain_with_cover_background, resize_image_in_tiles
+from .image_utils import (
+    apply_overlays_to_image,
+    compose_contain_with_cover_background,
+    match_overlay_for_artboard,
+    resize_image_in_tiles,
+)
 from .photoshop_process import (
     close_photoshop_process,
     ensure_photoshop_running,
@@ -17,6 +22,8 @@ __all__ = [
     # 图像工具
     "compose_contain_with_cover_background",
     "resize_image_in_tiles",
+    "apply_overlays_to_image",
+    "match_overlay_for_artboard",
     # Photoshop 进程管理
     "is_photoshop_running",
     "find_photoshop_executable",

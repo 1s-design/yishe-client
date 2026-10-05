@@ -1,8 +1,9 @@
 """图像处理相关的工具函数。"""
 
+from pathlib import Path
 from PIL import Image
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 
 class ResizeMode(str, Enum):
@@ -295,4 +296,156 @@ def compose_contain_with_cover_background(
             "height": target_height,
         },
     }
+
+
+def _resolve_px(value: float, unit: str, base: int) -> int:
+    """把 px / % 值换算成像素。"""
+    if unit == "%":
+        return int(round(value / 100.0 * base))
+    return int(round(value))
+
+
+def match_overlay_for_artboard(
+    overlays: list,
+    artboard_index: int,
+    artboard_name: Optional[str] = None,
+) -> list:
+    """从 overlays 配置里挑出命中当前画板的贴片列表。
+
+    overlays 每项形如 {artboard: 1|"名字", images: [...]}。
+    artboard 为数字时按导出序号（从 1 起）匹配；为字符串时按根图层名精确匹配。
+    多条配置命中同一画板时，按 overlays 数组顺序合并 images。
+    """
+    if not overlays:
+        return []
+
+    matched = []
+    for entry in overlays:
+        if not isinstance(entry, dict):
+            continue
+        target = entry.get("artboard")
+        hit = False
+        if isinstance(target, bool):
+            hit = False
+        elif isinstance(target, int):
+            hit = target == artboard_index
+        elif isinstance(target, str):
+            name = target.strip()
+            if name == "*":
+                hit = True
+            elif artboard_name is not None:
+                hit = name == artboard_name.strip()
+        if hit:
+            images = entry.get("images") or []
+            if isinstance(images, list):
+                matched.extend(images)
+    return matched
+
+
+def apply_overlays_to_image(
+    img: Image.Image,
+    overlay_images: list,
+    verbose: bool = True,
+) -> Image.Image:
+    """把贴片按顺序叠到图片最上层（后者盖前者），返回合成后的 RGBA 图片。
+
+    调用方负责关闭返回图片；传入的 img 不会被就地修改。
+
+    每个贴片配置形如：
+      {
+        "image_path": "D:/badges/sale.png",
+        "position": {"x": 82, "y": 4, "unit": "%"},
+        "size": {"width": 15, "unit": "%"},   # height 可省略 = 按宽等比
+        "opacity": 100
+      }
+    """
+    if not overlay_images:
+        return img if img.mode == "RGBA" else img.convert("RGBA")
+
+    canvas = img.convert("RGBA")
+    canvas_width, canvas_height = canvas.size
+
+    for idx, item in enumerate(overlay_images, 1):
+        if not isinstance(item, dict):
+            if verbose:
+                print(f"    ⚠️ 贴片[{idx}] 配置格式不正确，已跳过")
+            continue
+
+        stamp_path = item.get("image_path")
+        if not stamp_path:
+            if verbose:
+                print(f"    ⚠️ 贴片[{idx}] 缺少 image_path，已跳过")
+            continue
+
+        path = Path(stamp_path)
+        if not path.exists():
+            raise FileNotFoundError(f"贴片图文件不存在: {path}")
+
+        with Image.open(path) as stamp_src:
+            stamp = stamp_src.convert("RGBA")
+
+        try:
+            # ---------- 尺寸 ----------
+            size_cfg = item.get("size") or {}
+            size_unit = size_cfg.get("unit") or "px"
+            width_val = size_cfg.get("width")
+            height_val = size_cfg.get("height")
+
+            if width_val is not None and str(width_val) != "":
+                target_w = max(1, _resolve_px(float(width_val), size_unit, canvas_width))
+                if height_val is not None and str(height_val) != "":
+                    target_h = max(1, _resolve_px(float(height_val), size_unit, canvas_height))
+                    stamp = stamp.resize((target_w, target_h), Image.LANCZOS)
+                else:
+                    # 只给宽度：高度按原图等比
+                    aspect = stamp.height / max(1, stamp.width)
+                    target_h = max(1, int(round(target_w * aspect)))
+                    stamp = stamp.resize((target_w, target_h), Image.LANCZOS)
+            # 都不给：保持徽章原分辨率
+
+            # 大于画布时等比缩到能放下，避免夹取后看不见
+            if stamp.width > canvas_width or stamp.height > canvas_height:
+                scale = min(canvas_width / stamp.width, canvas_height / stamp.height)
+                stamp = stamp.resize(
+                    (max(1, int(stamp.width * scale)), max(1, int(stamp.height * scale))),
+                    Image.LANCZOS,
+                )
+                if verbose:
+                    print(f"    ⚠️ 贴片[{idx}] 超出画布，已等比缩小到 {stamp.width}x{stamp.height}")
+
+            # ---------- 位置（徽章左上角） ----------
+            pos_cfg = item.get("position") or {}
+            pos_unit = pos_cfg.get("unit") or "px"
+            pos_x = float(pos_cfg.get("x", 0))
+            pos_y = float(pos_cfg.get("y", 0))
+            paste_x = _resolve_px(pos_x, pos_unit, canvas_width)
+            paste_y = _resolve_px(pos_y, pos_unit, canvas_height)
+
+            # 夹取到画布内
+            paste_x = max(0, min(paste_x, canvas_width - stamp.width))
+            paste_y = max(0, min(paste_y, canvas_height - stamp.height))
+
+            # ---------- 透明度 ----------
+            opacity = item.get("opacity", 100)
+            try:
+                opacity = float(opacity)
+            except (TypeError, ValueError):
+                opacity = 100.0
+            opacity = max(0.0, min(100.0, opacity))
+            if opacity < 100:
+                alpha = stamp.getchannel("A")
+                alpha = alpha.point(lambda p: int(p * opacity / 100.0))
+                stamp.putalpha(alpha)
+
+            # ---------- 合成 ----------
+            canvas.alpha_composite(stamp, dest=(paste_x, paste_y))
+            if verbose:
+                print(
+                    f"    🏷️ 贴片[{idx}] '{path.name}' → 位置({paste_x},{paste_y}) "
+                    f"尺寸{stamp.width}x{stamp.height} 透明度{opacity:g}%"
+                )
+        finally:
+            stamp.close()
+
+    return canvas
 

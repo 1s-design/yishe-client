@@ -7,7 +7,7 @@ import os
 import sys
 import re
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 
 # 设置标准输出和错误输出为 UTF-8 编码且开启行缓冲，避免 Windows 缓冲延迟问题
@@ -511,6 +511,88 @@ class DefaultOptions(BaseModel):
         return v
 
 
+class OverlaySize(BaseModel):
+    """贴片尺寸配置（height 可省略 = 按宽等比）"""
+    width: float = Field(..., gt=0, description="宽度", example=15)
+    height: Optional[float] = Field(None, gt=0, description="高度（省略则按宽等比）", example=None)
+    unit: str = Field("px", description="单位：'px'（像素）或 '%'（百分比）", example="%")
+
+    @validator('unit')
+    def validate_unit(cls, v):
+        if v not in {'px', '%'}:
+            raise ValueError(f"单位必须是 'px' 或 '%'，当前值: {v}")
+        return v
+
+
+class OverlayImageConfig(BaseModel):
+    """导出后贴片（徽章）图片配置"""
+    image_path: str = Field(
+        ...,
+        description="贴片图片路径（建议带透明通道的 PNG）",
+        example=r"D:\badges\sale.png"
+    )
+    position: Optional[Position] = Field(
+        None,
+        description="贴片左上角在成品图上的位置（可选，默认左上角 0,0）",
+        example={"x": 82, "y": 4, "unit": "%"}
+    )
+    size: Optional[OverlaySize] = Field(
+        None,
+        description=(
+            "贴片尺寸（可选）。只给 width 时高度按原图等比；"
+            "width/height 都给则按给定值缩放；省略则使用贴片原图分辨率"
+        ),
+        example={"width": 15, "unit": "%"}
+    )
+    opacity: float = Field(
+        100,
+        ge=0,
+        le=100,
+        description="透明度 0-100，默认 100（不透明）",
+        example=100
+    )
+
+    @validator('image_path')
+    def validate_image(cls, v):
+        path = Path(v)
+        valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        if path.suffix.lower() not in valid_extensions:
+            raise ValueError(f"不支持的贴片图片格式: {v}，支持的格式: {', '.join(valid_extensions)}")
+        return v
+
+
+class OverlayConfig(BaseModel):
+    """单个画板（根图层）的贴片配置"""
+    artboard: Union[int, str] = Field(
+        ...,
+        description=(
+            "目标画板：数字 = 第 N 张（从 1 起，对齐导出文件名 artboard1/2/3）；"
+            "字符串 = 根图层名称精确匹配"
+        ),
+        example=1
+    )
+    images: List[OverlayImageConfig] = Field(
+        default_factory=list,
+        description="该画板上的贴片列表，按数组顺序从下往上叠（后面的盖住前面的）",
+        example=[]
+    )
+
+    @validator('artboard', pre=True)
+    def validate_artboard(cls, v):
+        if isinstance(v, bool):
+            raise ValueError("artboard 不能是布尔值")
+        if isinstance(v, int):
+            if v < 1:
+                raise ValueError(f"artboard 序号从 1 开始，当前值: {v}")
+            return v
+        if isinstance(v, str):
+            name = v.strip()
+            if not name:
+                raise ValueError("artboard 图层名不能为空")
+            return name
+        raise ValueError(f"artboard 必须是数字或字符串，当前值: {v}")
+
+
 class ProcessRequest(BaseModel):
     """处理请求模型（支持新旧两种格式）"""
     psd_path: str = Field(
@@ -603,6 +685,55 @@ class ProcessRequest(BaseModel):
             {
               "image_path": "D:\\images\\img1.png"
               // resize_mode 和 tile_size 会使用 defaults 中的值
+            }
+          ]
+        }
+        ```
+        """,
+        example=None
+    )
+    # ========== 导出后贴片（徽章） ==========
+    overlays: Optional[list[OverlayConfig]] = Field(
+        None,
+        description="""
+        导出后贴片（徽章）配置数组（可选）
+
+        **作用**：所有智能对象处理完成、按根图层导出成品图后，再把贴片叠到成品图**最上层**。
+        与 `background_image_path`（作用于智能对象内容、垫在下面）不同，本字段只影响最终导出的图片。
+
+        **使用说明**：
+        - 一条配置对应一个画板（根图层）：`artboard` 指定目标，`images` 是该画板上的贴片列表
+        - 不在 `overlays` 中出现的画板 = 不贴任何贴片
+        - `images` 数组按顺序从下往上叠（后面的盖住前面的）
+        - 支持多个贴片、不同画板贴不同贴片
+
+        **artboard 取值**：
+        - 数字：第 N 张（从 1 起，对齐导出文件名中的 artboard1/2/3）
+        - 字符串：根图层名称精确匹配
+
+        **示例**：只给第 1、3 张贴促销角标
+        ```json
+        {
+          "overlays": [
+            {
+              "artboard": 1,
+              "images": [
+                {
+                  "image_path": "D:\\\\badges\\\\sale.png",
+                  "position": {"x": 82, "y": 4, "unit": "%"},
+                  "size": {"width": 15, "unit": "%"}
+                }
+              ]
+            },
+            {
+              "artboard": 3,
+              "images": [
+                {
+                  "image_path": "D:\\\\badges\\\\sale.png",
+                  "position": {"x": 82, "y": 4, "unit": "%"},
+                  "size": {"width": 15, "unit": "%"}
+                }
+              ]
             }
           ]
         }
@@ -1620,7 +1751,12 @@ async def process_psd(request: ProcessRequest, response: Response):
             print(
                 f"⚠️ API层: 颜色图层处理已临时停用，已忽略 {len(color_layer_configs)} 个颜色图层配置"
             )
-        
+
+        # 导出后贴片（徽章）配置
+        overlays_config = [item.dict() for item in request.overlays] if request.overlays else None
+        if overlays_config:
+            print(f"🏷️ API层: 收到 {len(overlays_config)} 条导出后贴片(overlays)配置")
+
         # 判断使用新格式还是旧格式
         if request.smart_objects is not None:
             # ========== 新格式：多个智能对象 ==========
@@ -1675,9 +1811,10 @@ async def process_psd(request: ProcessRequest, response: Response):
                 'output_filename': unique_filename,
                 'verbose': request.verbose,
                 'smart_objects_config': smart_objects_config,  # 新格式：传递配置数组
-                'color_layer_configs': None
+                'color_layer_configs': None,
+                'overlays': overlays_config
             }
-            
+
             # 调用处理函数（新格式）
             export_paths, processing_time = process_psd_with_image_multi(
                 psd_path=request.psd_path,
@@ -1712,9 +1849,10 @@ async def process_psd(request: ProcessRequest, response: Response):
                 'output_filename': unique_filename,
                 'verbose': request.verbose,
                 'smart_objects_config': smart_objects_config,
-                'color_layer_configs': None
+                'color_layer_configs': None,
+                'overlays': overlays_config
             }
-            
+
             # 统一使用 process_psd_with_image_multi（默认方法）
             export_paths, processing_time = process_psd_with_image_multi(
                 psd_path=request.psd_path,

@@ -46,6 +46,10 @@ export interface MaterialLibraryPayload {
   isCustom?: boolean;
   /** 平台扩展元数据（写入 meta 字段） */
   meta?: Record<string, unknown>;
+  /**
+   * 入库目标：crawler_material（采集素材，默认）| collect_file（采集文件，媒体采集）
+   */
+  materialTarget?: string;
 }
 
 export interface MaterialLibraryResult {
@@ -69,7 +73,8 @@ export async function uploadToMaterialLibrary(
   payload: MaterialLibraryPayload,
 ): Promise<MaterialLibraryResult> {
   const category = payload?.category || "uncategorized";
-  console.log(`[MaterialLibrary] 准备入库: localPath=${localPath}, fileName=${fileName}, category=${category}`);
+  const materialTarget = payload?.materialTarget === "collect_file" ? "collect_file" : "crawler_material";
+  console.log(`[MaterialLibrary] 准备入库: localPath=${localPath}, fileName=${fileName}, category=${category}, target=${materialTarget}`);
 
   // 1. 上传 COS
   const cosKey = await generateCosKey({ category, filename: fileName });
@@ -108,25 +113,30 @@ export async function uploadToMaterialLibrary(
     const keywordsEn = clean4ByteEmoji(payload?.keywordsEn || payload?.keywords || "").slice(0, 990);
     const group = clean4ByteEmoji(payload?.group || category).slice(0, 500);
 
-    // 入库到 crawler_material（不再使用 sticker）
+    // 入库目标：collect_file（采集文件）或 crawler_material（采集素材，默认）
+    const importItem = {
+      url: cosResult.url,
+      originUrl: (payload?.originUrl || "").slice(0, 1000),
+      name,
+      description,
+      suffix: payload?.suffix || "jpg",
+      source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
+      meta: {
+        collectedAt: new Date().toISOString(),
+        cosKey: cosResult.key,
+        ...(payload?.meta || {}),
+      },
+    };
     const postData = JSON.stringify({
-      items: [{
-        url: cosResult.url,
-        originUrl: (payload?.originUrl || "").slice(0, 1000),
-        name,
-        description,
-        suffix: payload?.suffix || "jpg",
-        source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
-        meta: {
-          collectedAt: new Date().toISOString(),
-          cosKey: cosResult.key,
-          ...(payload?.meta || {}),
-        },
-      }],
+      items: [materialTarget === "collect_file" ? { ...importItem, keywords: clean4ByteEmoji(payload?.keywords || "").slice(0, 1000) } : importItem],
     });
 
-    const apiUrl = new URL(`${apiBase}/crawler/material/import-from-cos`);
-    console.log(`[MaterialLibrary] 发起 crawler/material/import-from-cos 请求: ${apiUrl.toString()}, tokenPresent=${Boolean(token)}`);
+    const apiUrl = new URL(
+      materialTarget === "collect_file"
+        ? `${apiBase}/collect-file/import-from-cos`
+        : `${apiBase}/crawler/material/import-from-cos`,
+    );
+    console.log(`[MaterialLibrary] 发起入库请求(${materialTarget}): ${apiUrl.toString()}, tokenPresent=${Boolean(token)}`);
     const options = {
       hostname: apiUrl.hostname,
       port: apiUrl.port || (apiUrl.protocol === "https:" ? 443 : 80),
@@ -150,9 +160,9 @@ export async function uploadToMaterialLibrary(
         });
         res.on("end", () => {
           try {
-            console.log(`[MaterialLibrary] crawler/material/import-from-cos 响应状态码: ${res.statusCode}, 响应体: ${data.slice(0, 300)}`);
+            console.log(`[MaterialLibrary] 入库响应(${materialTarget}) 状态码: ${res.statusCode}, 响应体: ${data.slice(0, 300)}`);
             if (res.statusCode && res.statusCode >= 400) {
-              console.error(`[MaterialLibrary] ❌ crawler/material/import-from-cos 响应 HTTP ${res.statusCode}: ${data}`);
+              console.error(`[MaterialLibrary] ❌ 入库响应(${materialTarget}) HTTP ${res.statusCode}: ${data}`);
               resolve({ ok: false, msg: `HTTP ${res.statusCode}: 请求失败 (${data || '无详情'})` });
               return;
             }
@@ -161,28 +171,28 @@ export async function uploadToMaterialLibrary(
             const innerData = result.data || result;
             if (innerData.success > 0 && innerData.items?.length > 0) {
               const created = innerData.items[0];
-              console.log(`[MaterialLibrary] ✅ crawler_material 创建成功: id=${created?.id}, url=${created?.url}`);
+              console.log(`[MaterialLibrary] ✅ ${materialTarget} 创建成功: id=${created?.id}, url=${created?.url}`);
               resolve({
                 ok: true,
                 materialId: created?.id || undefined,
                 materialUrl: created?.url || undefined,
               });
             } else {
-              console.error(`[MaterialLibrary] ❌ crawler_material 创建失败:`, result);
+              console.error(`[MaterialLibrary] ❌ ${materialTarget} 创建失败:`, result);
               resolve({
                 ok: false,
                 msg: (innerData.errors?.[0]?.error) || innerData.message || "素材库保存失败",
               });
             }
           } catch (e: any) {
-            console.error(`[MaterialLibrary] ❌ crawler_material 响应解析异常: ${e?.message}`);
+            console.error(`[MaterialLibrary] ❌ 入库响应解析异常(${materialTarget}): ${e?.message}`);
             resolve({ ok: false, msg: "素材库 API 响应解析失败" });
           }
         });
       });
 
       req.on("error", (err: Error) => {
-        console.error(`[MaterialLibrary] ❌ sticker API 请求网络异常: ${err.message}`);
+        console.error(`[MaterialLibrary] ❌ 入库 API 请求网络异常(${materialTarget}): ${err.message}`);
         resolve({ ok: false, msg: `素材库 API 请求失败: ${err.message}` });
       });
 
