@@ -37,6 +37,12 @@ export interface CapabilityDefinition<TArgs = any, TResult = any> {
   riskLevel: RiskLevel;
   argsSchema: z.ZodType<TArgs>;
   handler: (args: TArgs, context?: CapabilityCallContext) => Promise<CapabilityResult<TResult>>;
+  /**
+   * 对 AI/MCP 工具面隐藏（仍可被内部 registry.call / REST 调用）。
+   * 用于「工具检索」模式：大量同构能力（如 257 个采集源）不直接暴露，
+   * 改由 collect_discover 发现后经 collect_run 执行。
+   */
+  hidden?: boolean;
 }
 
 /** 注册的能力（不含 schema，对外暴露） */

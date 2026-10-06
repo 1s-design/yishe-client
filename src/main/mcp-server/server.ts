@@ -482,6 +482,9 @@ export class McpServerManager {
           capability.name,
         );
         if (!definition) continue;
+        // 工具检索模式：隐藏能力（如逐源采集工具）不直接暴露，
+        // 由 collect_discover 发现、collect_run 执行
+        if ((definition as any).hidden) continue;
 
         const toolName = `${capability.namespace}_${capability.name}`;
         const inputShape = getZodObjectShape(definition.argsSchema);

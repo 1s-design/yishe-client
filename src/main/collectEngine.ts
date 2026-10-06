@@ -349,12 +349,28 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
                 (args.params as any)?.materialTarget ||
                 (args.meta as any)?.materialTarget ||
                 "crawler_material";
+              // 溯源信息自动注入：download hook 的 params.item 携带详情链/标题时默认记录，
+              // 便于素材库/采集文件回溯原页面；显式传 options.originUrl / options.meta 优先
+              const itemParams = (args.params as any)?.item || {};
+              const originUrl =
+                options.originUrl ||
+                itemParams.link ||
+                itemParams.url ||
+                itemParams.detailUrl ||
+                "";
+              const meta = {
+                ...(options.meta || {}),
+                sourceImageUrl: options.meta?.sourceImageUrl || url,
+                ...(itemParams.title
+                  ? { sourceTitle: String(itemParams.title).slice(0, 300) }
+                  : {}),
+              };
               const matRes: any = await uploadToMaterialLibrary(tmpPath, safeName, {
                 name: options.title || safeName,
                 category: "uncategorized",
                 source: options.source || args.sourceId,
-                originUrl: options.originUrl,
-                meta: options.meta,
+                originUrl,
+                meta,
                 materialTarget,
               } as any);
               materialOk = !!matRes?.ok;

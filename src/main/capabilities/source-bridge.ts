@@ -115,6 +115,18 @@ function mapParams(
   }
   // 数据工具：工具名注入
   if (DATA_TOOL_NAMESPACES.has(namespace)) params.tool = namespace;
+  // download 归一化：允许扁平 image/title/link 字段合成 item（源 hook 读 params.item）
+  if (action === "download") {
+    const flatImage = (a.image || a.image_url || a.imageUrl || "").trim?.() || a.image;
+    if (!params.item && flatImage) {
+      params.item = {
+        image: flatImage,
+        title: a.title || a.name || "",
+        link: a.link || a.url || "",
+        id: a.id || "",
+      };
+    }
+  }
   return params;
 }
 
@@ -148,10 +160,29 @@ function toLegacyEnvelope(
   };
 }
 
-/** 从服务端拉源代码（带鉴权；内容 hash 即版本） */
-async function fetchSourceCode(
+/** 从服务端拉源代码（带鉴权；内容 hash 即版本）。带内存缓存 + 失败时回退陈旧缓存。 */
+export interface SourceCodeFetchResult {
+  code: string;
+  version: string;
+  meta: any;
+  fromCache?: boolean;
+  error?: string;
+}
+
+const SOURCE_CODE_CACHE_TTL_MS = 30 * 60 * 1000;
+const sourceCodeCache = new Map<
+  string,
+  { code: string; version: string; meta: any; fetchedAt: number }
+>();
+
+export async function fetchSourceCode(
   sourceId: string,
-): Promise<{ code: string; version: string; meta: any } | null> {
+): Promise<SourceCodeFetchResult | null> {
+  const cached = sourceCodeCache.get(sourceId);
+  if (cached && Date.now() - cached.fetchedAt < SOURCE_CODE_CACHE_TTL_MS) {
+    return { code: cached.code, version: cached.version, meta: cached.meta, fromCache: true };
+  }
+
   try {
     const base = (await getBackendApiBase()).replace(/\/+$/, "");
     // base 可能已含 /api（本地 DEV_REMOTE_API_BASE），也可能只有域名（远程）
@@ -162,19 +193,49 @@ async function fetchSourceCode(
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) {
-      console.warn(`[SourceBridge] 拉取源代码失败 ${sourceId}: HTTP ${res.status} (${url})`);
-      return null;
+      const reason =
+        res.status === 401 || res.status === 403
+          ? `未登录或登录已失效（HTTP ${res.status}）`
+          : `HTTP ${res.status}`;
+      console.warn(`[SourceBridge] 拉取源代码失败 ${sourceId}: ${reason} (${url})`);
+      // 陈旧缓存兜底：token 失效/网络抖动时采集能力不致全瘫
+      if (cached?.code) {
+        console.warn(`[SourceBridge] 使用陈旧缓存兜底: ${sourceId}（版本 ${cached.version}）`);
+        return {
+          code: cached.code,
+          version: cached.version,
+          meta: cached.meta,
+          fromCache: true,
+          error: `源代码刷新失败（${reason}），已使用本地缓存`,
+        };
+      }
+      return { code: "", version: "", meta: null, error: `拉取源代码失败: ${reason}` };
     }
     const body = await res.json();
     const payload = (body && (body as any).data) || body;
     if (!payload?.code) {
       console.warn(`[SourceBridge] 源代码响应为空: ${sourceId}`);
-      return null;
+      return { code: "", version: "", meta: null, error: "源代码响应为空" };
     }
+    sourceCodeCache.set(sourceId, {
+      code: payload.code,
+      version: payload.version,
+      meta: payload.meta,
+      fetchedAt: Date.now(),
+    });
     return { code: payload.code, version: payload.version, meta: payload.meta };
   } catch (err: any) {
     console.warn(`[SourceBridge] 拉取源代码异常 ${sourceId}:`, err?.message || err);
-    return null;
+    if (cached?.code) {
+      return {
+        code: cached.code,
+        version: cached.version,
+        meta: cached.meta,
+        fromCache: true,
+        error: `源代码刷新异常（${err?.message || err}），已使用本地缓存`,
+      };
+    }
+    return { code: "", version: "", meta: null, error: `拉取源代码异常: ${err?.message || err}` };
   }
 }
 
@@ -200,7 +261,15 @@ export async function sourceBridgeCall(
   // status：直接由源 meta 应答，不跑任务
   if (action === "status") {
     const fetched = await fetchSourceCode(sourceId);
-    if (!fetched?.meta) return { handled: false };
+    if (!fetched?.meta) {
+      return {
+        handled: true,
+        result: {
+          success: false,
+          error: fetched?.error || `采集源不可用: ${sourceId}（无法获取源定义）`,
+        },
+      };
+    }
     return {
       handled: true,
       result: {
@@ -217,15 +286,18 @@ export async function sourceBridgeCall(
           message:
             fetched.meta.available === false
               ? fetched.meta.unavailableReason || "当前不可用"
-              : "采集引擎就绪（源定义来自服务端）",
+              : fetched.fromCache
+                ? "采集引擎就绪（源定义来自本地缓存）"
+                : "采集引擎就绪（源定义来自服务端）",
           lastCheckedAt: new Date().toISOString(),
-          lastError: null,
+          lastError: fetched.error || null,
           supportedCommands: ["search", "download", "collect", "status"],
           details: {
             runtime: "collect-engine",
             sourceId,
             sourceVersion: fetched.version,
             engineVersion: COLLECT_ENGINE_VERSION,
+            fromCache: !!fetched.fromCache,
           },
         },
       },
@@ -233,7 +305,16 @@ export async function sourceBridgeCall(
   }
 
   const fetched = await fetchSourceCode(sourceId);
-  if (!fetched?.code) return { handled: false };
+  if (!fetched?.code) {
+    // 源已识别但取码失败：明确报因，避免笼统的「暂不可用」
+    return {
+      handled: true,
+      result: {
+        success: false,
+        error: fetched?.error || `采集源执行失败: 无法获取 ${sourceId} 的源代码`,
+      },
+    };
+  }
 
   const params = mapParams(namespace, action, args);
   const runAction = action === "list" ? "list" : action;
@@ -250,7 +331,11 @@ export async function sourceBridgeCall(
   if (!result.success) {
     return {
       handled: true,
-      result: { success: false, error: result.error || "采集执行失败" },
+      result: {
+        success: false,
+        error: result.error || "采集执行失败",
+        ...(fetched.error ? { warning: fetched.error } : {}),
+      },
     };
   }
   return {
@@ -258,6 +343,7 @@ export async function sourceBridgeCall(
     result: {
       success: true,
       data: toLegacyEnvelope(namespace, action, args, result.data),
+      ...(fetched.error ? { warning: fetched.error } : {}),
     },
   };
 }

@@ -93,7 +93,11 @@ export function getCapabilityOpenAiTools(
   // Agent 可能在 app.whenReady 的异步注册完成前收到第一条消息，
   // 这里幂等补注册，避免 googleArt 等工具只出现在 MCP 目录而不在 Agent 工具集中。
   registerAllCapabilities();
-  const capabilities = CapabilityRegistry.list();
+  const capabilities = CapabilityRegistry.list().filter((item) => {
+    const definition = CapabilityRegistry.getDefinition(item.namespace, item.name);
+    // 工具检索模式：隐藏能力（逐源采集工具等）不进 AI 工具集
+    return !(definition as any)?.hidden;
+  });
   const filtered = namespaces?.length
     ? capabilities.filter((item) => namespaces.includes(item.namespace))
     : capabilities;
@@ -248,6 +252,9 @@ export function selectRelevantTools(
     "google-icons",
     "pinterest",
     "materialLibrary",
+    // 采集工具检索入口（discover/run/status，共 3 个）常驻：
+    // 257 个逐源工具已隐藏，采集任务统一经 collect_discover → collect_run
+    "collect",
   ].forEach((name) => selected.add(name));
   // 服务端能力：按目录里的 category 字段匹配关键词（客户端不复制工具实现）。
   // 服务端全部工具只有 20~30 个，且是衣设平台最核心的业务功能，始终挂载保证模型随时可调用。

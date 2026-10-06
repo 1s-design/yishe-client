@@ -47,13 +47,41 @@ interface SourceMetaLike {
 }
 
 /** meta.searchParams → zod 参数 schema（AI 可见的强类型参数） */
-function buildArgsSchema(meta: SourceMetaLike, withQuery: boolean): z.ZodType<any> {
+function buildArgsSchema(
+  meta: SourceMetaLike,
+  action: "search" | "download" | "status",
+): z.ZodType<any> {
   const shape: Record<string, z.ZodType<any>> = {};
-  if (withQuery) {
-    // 统一带 query/keyword 兼容口 + 分页
-    shape.query = z.string().optional().describe("搜索关键词");
-    shape.keyword = z.string().optional().describe("搜索关键词（别名）");
+
+  // download：暴露待入库条目契约（search 结果 → download 入库）
+  if (action === "download") {
+    shape.item = z
+      .object({
+        image: z.string().describe("素材直链（取自 search 结果的 image 字段，已还原原图）"),
+        title: z.string().optional().describe("标题"),
+        link: z.string().optional().describe("来源详情页（用于溯源）"),
+        id: z.string().optional().describe("条目 ID"),
+      })
+      .loose()
+      .optional()
+      .describe("待入库条目（取自 search 返回的 items）");
+    shape.image = z
+      .string()
+      .optional()
+      .describe("扁平写法：素材直链（与 item 二选一）");
+    shape.title = z.string().optional().describe("扁平写法：标题");
+    shape.link = z.string().optional().describe("扁平写法：来源详情页");
+    shape.resolution = z.string().optional().describe("分辨率/规格偏好（部分源支持）");
+    return z.object(shape).loose?.() ?? z.record(z.string(), z.any());
   }
+
+  if (action === "status") {
+    return z.object({}).loose?.() ?? z.record(z.string(), z.any());
+  }
+
+  // search：关键词 + 分页 + 源自定义筛选
+  shape.query = z.string().optional().describe("搜索关键词");
+  shape.keyword = z.string().optional().describe("搜索关键词（别名）");
   shape.page = z.number().optional().describe("页码，从 1 开始");
   shape.pageSize = z.number().optional().describe("每页数量");
   shape.limit = z.number().optional().describe("每页数量（别名）");
@@ -109,6 +137,13 @@ async function fetchSourceMetas(): Promise<SourceMetaLike[]> {
   return Array.isArray(list) ? list : [];
 }
 
+/** 最近一次同步到的源清单（供 collect_discover 工具检索使用） */
+let cachedSourceMetas: SourceMetaLike[] = [];
+
+export function getCachedSourceMetas(): SourceMetaLike[] {
+  return cachedSourceMetas;
+}
+
 function registerMetaTools(meta: SourceMetaLike) {
   const id = String(meta.id || "").trim();
   if (!id) return;
@@ -135,7 +170,7 @@ function registerMetaTools(meta: SourceMetaLike) {
     entries.push({
       namespace: `collect_${id.replace(/-/g, "_")}`,
       name: "download",
-      desc: `${meta.name || id} 采集入库：下载素材并保存到素材库。`,
+      desc: `${meta.name || id} 采集入库：传入 search 返回的条目（item 或扁平 image/title/link），下载素材并保存到素材库。`,
       action: "download",
       withQuery: false,
     });
@@ -155,7 +190,10 @@ function registerMetaTools(meta: SourceMetaLike) {
       name: e.name,
       description: e.desc,
       riskLevel: e.action === "download" ? "write" : "read",
-      argsSchema: buildArgsSchema(meta, e.withQuery),
+      argsSchema: buildArgsSchema(meta, e.action),
+      // 工具检索模式：单源工具不对 AI/MCP 直接暴露，
+      // 经 collect_discover 发现、collect_run 执行；内部 registry.call / REST 不受影响
+      hidden: true,
       handler: async (args: any) => {
         const bridged = await sourceBridgeCall(e.namespace, e.name, args || {});
         if (bridged.handled) return bridged.result;
@@ -179,9 +217,10 @@ export async function syncCollectToolsFromServer(force = false): Promise<void> {
     try {
       const metas = await fetchSourceMetas();
       for (const meta of metas) registerMetaTools(meta);
+      cachedSourceMetas = metas;
       synced = true;
       console.log(
-        `[DynamicToolSurface] 已同步采集工具面：${metas.length} 个源（AI/MCP 自动可用）`,
+        `[DynamicToolSurface] 已同步采集工具面：${metas.length} 个源（AI/MCP 经 collect_discover 检索）`,
       );
     } catch (err: any) {
       console.warn("[DynamicToolSurface] 同步采集工具面失败:", err?.message || err);
