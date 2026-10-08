@@ -186,8 +186,8 @@ const discoverDef: CapabilityDefinition = {
         count: sources.length,
         totalMatched: scored.length,
         hint:
-          "选定 sourceId 后调用 collect_run：action=search 带 searchParams 中的参数（通用 query/page/pageSize）；" +
-          "action=download 带 item=search 结果条目。query 只影响排序，试试换 module 或换源。",
+          "选定 sourceId 后调用 collect_run：action=search 时把参数放在 params 对象内（如 {params:{query,page,pageSize}}）；" +
+          "action=download 时在 params.item 传 search 结果条目。query 只影响排序，试试换 module 或换源。",
         sources,
       },
     };

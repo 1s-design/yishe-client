@@ -321,7 +321,8 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           meta?: Record<string, unknown>;
         } = {},
       ): Promise<{ cosUrl: string; size: number; materialOk?: boolean }> {
-        assertDomainAllowed(url, domains);
+        // 统一规范：domains 白名单只约束 search/list 的抓取请求；
+        // download 的 URL 来自搜索结果（如聚合源的第三方 CDN），不再限域
         const res = await fetchWithTimeout(url, {
           headers: {
             "User-Agent": UA,
@@ -336,7 +337,13 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
         const safeName =
           options.filename ||
           `collect-${Date.now()}.${(url.split("?")[0].split(".").pop() || "bin").slice(0, 8)}`;
-        const tmpPath = path.join(os.tmpdir(), `collect-engine-${Date.now()}-${safeName}`);
+        // 确保 tmp 目录存在（沙箱/清理后可能被删），文件名加随机后缀防并发碰撞
+        const tmpDir = os.tmpdir();
+        fs.mkdirSync(tmpDir, { recursive: true });
+        const tmpPath = path.join(
+          tmpDir,
+          `collect-engine-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`,
+        );
         fs.writeFileSync(tmpPath, buf);
         try {
           let materialOk = false;

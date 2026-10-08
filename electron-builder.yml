@@ -122,6 +122,11 @@ linux:
   category: Utility
   artifactName: yishe-client-${version}-${arch}.${ext}
   icon: resources/icon.png
+  extraResources:
+    - from: resources/google-art/linux
+      to: resources/google-art/linux
+      filter:
+        - dezoomify-rs-linux
   desktop:
     Name: Yishe Client
     Comment: 衣设客户端

@@ -55,7 +55,7 @@ function isGoogleArtAssetUrl(raw: string): boolean {
       (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
       hostname === 'artsandculture.google.com' &&
       segments[0] === 'asset' &&
-      segments.length >= 3
+      segments.length >= 2
     )
   } catch {
     return false
@@ -629,7 +629,7 @@ async function httpGetText(targetUrl: string, headers: Record<string, string>): 
       path: parsedUrl.pathname + parsedUrl.search,
       method: 'GET',
       headers,
-      agent,
+      agent: agent as any,
     }
 
     const req = https.request(options, (res) => {
