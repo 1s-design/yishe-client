@@ -334,9 +334,10 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           throw new Error(`下载失败 HTTP ${res.status}: ${url}`);
         }
         const buf = Buffer.from(await res.arrayBuffer());
-        const safeName =
-          options.filename ||
-          `collect-${Date.now()}.${(url.split("?")[0].split(".").pop() || "bin").slice(0, 8)}`;
+        // 文件名只保留 ASCII 安全字符，避免中文/特殊字符导致 ENOENT
+        const rawName = String(options.filename || "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
+        const ext = (url.split("?")[0].split(".").pop() || "bin").slice(0, 8).replace(/[^a-z0-9]/gi, "") || "bin";
+        const safeName = rawName || `collect-${Date.now()}.${ext}`;
         // 确保 tmp 目录存在（沙箱/清理后可能被删），文件名加随机后缀防并发碰撞
         const tmpDir = os.tmpdir();
         fs.mkdirSync(tmpDir, { recursive: true });
