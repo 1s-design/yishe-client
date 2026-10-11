@@ -5276,11 +5276,34 @@ function bindSocketEvents(currentSocket: Socket) {
       status: "error",
       lastError: message,
     });
-    void logoutToken().catch(() => undefined);
+    // 容错：网络不佳时 auth-error 可能是暂时的，连续 3 次才登出
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("auth:logout"));
+      (window as any).__wsAuthErrorCount = ((window as any).__wsAuthErrorCount || 0) + 1;
+      const count = (window as any).__wsAuthErrorCount;
+      if (count >= 3) {
+        logger.error("[ws] 连续 3 次 auth-error，清除登录态", { count });
+        void logoutToken().catch(() => undefined);
+        window.dispatchEvent(new CustomEvent("auth:logout"));
+        disconnect();
+      } else {
+        logger.warn(`[ws] auth-error 第 ${count}/3 次，暂不登出，稍后重连`, { message });
+        // 5 秒后重连（不登出）
+        setTimeout(() => {
+          if (typeof window !== "undefined") {
+            (window as any).__wsAuthErrorCount = 0;
+          }
+          try {
+            disconnect();
+            reconnect();
+          } catch (e) {
+            logger.warn("[ws] auth-error 后重连失败", e);
+          }
+        }, 5000);
+      }
+    } else {
+      void logoutToken().catch(() => undefined);
+      disconnect();
     }
-    disconnect();
   });
 
   currentSocket.on("error", (error) => {

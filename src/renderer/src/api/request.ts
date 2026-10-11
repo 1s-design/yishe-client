@@ -224,20 +224,29 @@ service.interceptors.response.use(
       // API 返回了 401
       if (error.response.status === 401) {
         const msg = String(error.response?.data?.message || error.response?.data?.error || '')
-        // 只有明确提示 token 过期/失效才登出
-        if (/token|未授权|未登录|登录|会话|过期|失效|unauthorized/i.test(msg)) {
-          try {
-            await fetch(`${LOCAL_API_BASE}/logoutToken`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' }
-            })
-            window.dispatchEvent(new CustomEvent('auth:logout'))
-          } catch (e) {
-            console.error('清除 token 失败:', e)
+        // 只有明确提示 token 过期/失效才登出（收紧匹配，避免误判）
+        if (/token.{0,4}(过期|失效|invalid|expired)|未授权|unauthorized/i.test(msg)) {
+          // 连续 3 次才登出，防止网络不佳时误触发
+          const w = window as any
+          w.__api401Count = (w.__api401Count || 0) + 1
+          if (w.__api401Count >= 3) {
+            console.warn('[Request] 连续 3 次 401，清除登录态:', msg)
+            try {
+              await fetch(`${LOCAL_API_BASE}/logoutToken`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              })
+              window.dispatchEvent(new CustomEvent('auth:logout'))
+            } catch (e) {
+              console.error('清除 token 失败:', e)
+            }
+            w.__api401Count = 0
+          } else {
+            console.warn(`[Request] 401 第 ${w.__api401Count}/3 次，暂不登出:`, msg)
           }
-        } else if (!msg) {
-          // 401 无消息体 → 可能是服务重启/维护，不登出
-          console.warn('[Request] 收到空消息 401，可能是服务维护中，不登出:', error.config?.url)
+        } else {
+          // 非 token 相关的 401（如服务重启、维护）→ 不登出
+          console.warn('[Request] 非 token 401，不登出:', msg || error.config?.url)
         }
       }
     }
