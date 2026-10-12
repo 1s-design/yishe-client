@@ -10,6 +10,7 @@ import path from "path";
 import http from "http";
 import https from "https";
 import { URL } from "url";
+import sharp from "sharp";
 import { uploadFileToCos, generateCosKey, getBackendApiBase, getCurrentAccessToken } from "./cos";
 
 type ServerModule = typeof import("./server");
@@ -50,6 +51,14 @@ export interface MaterialLibraryPayload {
    * 入库目标：crawler_material（采集素材，默认）| collect_file（采集文件，媒体采集）
    */
   materialTarget?: string;
+  /** 文件大小（字节），不传则从本地文件自动提取 */
+  fileSize?: number;
+  /** 图片宽度（像素），不传则从本地文件自动提取 */
+  width?: number;
+  /** 图片高度（像素），不传则从本地文件自动提取 */
+  height?: number;
+  /** 是否抠图素材 */
+  isCutout?: boolean;
 }
 
 export interface MaterialLibraryResult {
@@ -100,6 +109,23 @@ export async function uploadToMaterialLibrary(
     const clean4ByteEmoji = (s: any) =>
       typeof s === "string" ? s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "").trim() : s;
 
+    // 客户端本地提取图片基础信息（宽/高/大小/宽高比），避免服务端二次检测浪费算力
+    let fileSize = payload?.fileSize ?? 0;
+    let imgWidth = payload?.width ?? 0;
+    let imgHeight = payload?.height ?? 0;
+    try {
+      const stat = await fs.promises.stat(localPath);
+      if (!fileSize) fileSize = stat.size;
+      if (!imgWidth || !imgHeight) {
+        const meta = await sharp(localPath).metadata();
+        imgWidth = imgWidth || meta.width || 0;
+        imgHeight = imgHeight || meta.height || 0;
+      }
+    } catch (e: any) {
+      console.warn(`[MaterialLibrary] 图片信息提取失败: ${e?.message}`);
+    }
+    const aspectRatio = imgWidth && imgHeight ? Number((imgWidth / imgHeight).toFixed(6)) : null;
+
     const name = (
       clean4ByteEmoji(payload?.name) ||
       clean4ByteEmoji(payload?.nameEn) ||
@@ -121,6 +147,11 @@ export async function uploadToMaterialLibrary(
       description,
       suffix: payload?.suffix || "jpg",
       source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
+      fileSize: fileSize || null,
+      width: imgWidth || null,
+      height: imgHeight || null,
+      aspectRatio,
+      isCutout: payload?.isCutout ?? false,
       meta: {
         collectedAt: new Date().toISOString(),
         cosKey: cosResult.key,

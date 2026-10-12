@@ -319,21 +319,38 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           source?: string;
           originUrl?: string;
           meta?: Record<string, unknown>;
+          /** 自定义请求头（如 Accept、Accept-Language 等，部分站点防盗链需要） */
+          headers?: Record<string, string>;
         } = {},
       ): Promise<{ cosUrl: string; size: number; materialOk?: boolean }> {
         // 统一规范：domains 白名单只约束 search/list 的抓取请求；
         // download 的 URL 来自搜索结果（如聚合源的第三方 CDN），不再限域
-        const res = await fetchWithTimeout(url, {
-          headers: {
-            "User-Agent": UA,
-            ...(options.referer ? { Referer: options.referer } : {}),
-          },
-          timeoutMs: Math.min(120000, defaultTimeout),
-        });
-        if (!res.ok) {
-          throw new Error(`下载失败 HTTP ${res.status}: ${url}`);
+        const mergedHeaders: Record<string, string> = {
+          "User-Agent": UA,
+          ...(options.referer ? { Referer: options.referer } : {}),
+          ...(options.headers || {}),
+        };
+        let buf: Buffer;
+        try {
+          const res = await fetchWithTimeout(url, { headers: mergedHeaders, timeoutMs: 120000 });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          buf = Buffer.from(await res.arrayBuffer());
+        } catch {
+          // fetch(undici) 和 https.get 都被 TLS 指纹拦截时，降级用 curl（系统级 TLS 栈）
+          buf = await new Promise<Buffer>((resolve, reject) => {
+            const { execFile } = require("child_process");
+            const args = ["-sSL", "--max-time", "120"];
+            for (const [k, v] of Object.entries(mergedHeaders)) {
+              args.push("-H", `${k}: ${v}`);
+            }
+            args.push(url);
+            execFile("curl", args, { encoding: "buffer", maxBuffer: 200 * 1024 * 1024 }, (err: any, stdout: Buffer) => {
+              if (err) reject(new Error(`下载失败(curl): ${err.message}`));
+              else if (!stdout || !stdout.length) reject(new Error(`下载失败(curl): 空响应 ${url}`));
+              else resolve(stdout);
+            });
+          });
         }
-        const buf = Buffer.from(await res.arrayBuffer());
         // 文件名只保留 ASCII 安全字符，避免中文/特殊字符导致 ENOENT
         const rawName = String(options.filename || "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
         const ext = (url.split("?")[0].split(".").pop() || "bin").slice(0, 8).replace(/[^a-z0-9]/gi, "") || "bin";
