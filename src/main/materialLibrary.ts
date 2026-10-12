@@ -122,7 +122,11 @@ export async function uploadToMaterialLibrary(
         imgHeight = imgHeight || meta.height || 0;
       }
     } catch (e: any) {
-      console.warn(`[MaterialLibrary] 图片信息提取失败: ${e?.message}`);
+      // sharp 解析失败说明文件不是有效图片（HTML 错误页/损坏文件），拒绝入库
+      throw new Error(`图片解析失败，拒绝入库: ${e?.message || e}`);
+    }
+    if (!imgWidth || !imgHeight) {
+      throw new Error("图片解析失败（宽高为 0），拒绝入库");
     }
     const aspectRatio = imgWidth && imgHeight ? Number((imgWidth / imgHeight).toFixed(6)) : null;
 

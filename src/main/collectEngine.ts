@@ -339,7 +339,8 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           // fetch(undici) 和 https.get 都被 TLS 指纹拦截时，降级用 curl（系统级 TLS 栈）
           buf = await new Promise<Buffer>((resolve, reject) => {
             const { execFile } = require("child_process");
-            const args = ["-sSL", "--max-time", "120"];
+            // -f: HTTP 错误（404/500 等）时返回失败，避免把错误页面当图片保存
+            const args = ["-sSLf", "--max-time", "120"];
             for (const [k, v] of Object.entries(mergedHeaders)) {
               args.push("-H", `${k}: ${v}`);
             }
@@ -350,6 +351,18 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
               else resolve(stdout);
             });
           });
+        }
+        // 校验下载内容确实是图片（magic bytes），防止 HTML 错误页/空文件混入素材库
+        {
+          const isImage =
+            (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) || // JPEG
+            (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) || // PNG
+            (buf.length > 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) || // GIF
+            (buf.length > 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45) || // WEBP (RIFF....WEBP)
+            (buf.length > 4 && buf[0] === 0x42 && buf[1] === 0x4d); // BMP
+          if (!isImage) {
+            throw new Error(`下载内容不是有效图片（可能为错误页面）: ${url}`);
+          }
         }
         // 文件名只保留 ASCII 安全字符，避免中文/特殊字符导致 ENOENT
         const rawName = String(options.filename || "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
