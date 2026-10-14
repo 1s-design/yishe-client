@@ -443,11 +443,14 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           ...(options.headers || {}),
         };
         let buf: Buffer;
+        let fetchErr: any = null;
+        let curlErr: any = null;
         try {
           const res = await fetchWithTimeout(url, { headers: mergedHeaders, timeoutMs: 120000 });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           buf = Buffer.from(await res.arrayBuffer());
-        } catch {
+        } catch (e1: any) {
+          fetchErr = e1;
           // fetch(undici) 和 https.get 都被 TLS 指纹拦截时，降级用 curl（系统级 TLS 栈）
           try {
             buf = await new Promise<Buffer>((resolve, reject) => {
@@ -464,9 +467,22 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
                 else resolve(stdout);
               });
             });
-          } catch {
-            // 第三级：Cloudflare 等站点 fetch/curl 均被拦时，走系统浏览器内 fetch（带 CF cookie）
-            buf = await downloadViaBrowser(url);
+          } catch (e2: any) {
+            curlErr = e2;
+            // 第三级：仅当疑似被反爬拦截（403/挑战页）时才走系统浏览器内 fetch（带 CF cookie）；
+            // 404 等「资源不存在」不重试浏览器，直接抛原始错误，避免误报为「被拦截」
+            const bothFailed = `${fetchErr?.message || ""} ${curlErr?.message || ""}`;
+            const looksBlocked = /403|401|429|blocked|forbidden|challenge|cloudflare/i.test(bothFailed);
+            if (looksBlocked) {
+              buf = await downloadViaBrowser(url).catch((bErr: any) => {
+                throw new Error(
+                  `下载失败: fetch(${fetchErr?.message}) / curl(${curlErr?.message}) / 浏览器(${bErr?.message})`,
+                );
+              });
+            } else {
+              // 非拦截类错误（如 404）：保留原始错误
+              throw new Error(`下载失败: ${fetchErr?.message || curlErr?.message} (${url})`);
+            }
           }
         }
         // 校验下载内容确实是图片（magic bytes），防止 HTML 错误页/空文件混入素材库
