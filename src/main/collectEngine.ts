@@ -86,6 +86,59 @@ async function fetchWithTimeout(
 /** 浏览器任务串行锁：同一时刻只跑一个真浏览器渲染，避免资源风暴 */
 let browserChain: Promise<any> = Promise.resolve();
 
+/**
+ * 浏览器内下载（应对 Cloudflare 等站点 fetch/curl 均 403）。
+ * 复用系统已连接的浏览器（auto-browser），页面上下文带 CF cookie，
+ * 在页面内 fetch 图片 URL 取字节，再 base64 返回。
+ */
+async function downloadViaBrowser(url: string): Promise<Buffer> {
+  const autoBrowser = await import("./auto-browser/index.js");
+  const mod = autoBrowser as any;
+  // 自动发现已连接的 managed profile
+  let profileId = "";
+  try {
+    const pool = await import("./auto-browser/legacy/services/ManagedProfileBrowserPool.js");
+    const status = await (pool as any).getManagedProfileBrowserStatus?.({});
+    const connected = (status?.instances || []).find((x: any) => x?.isConnected || x?.browserStatus?.isConnected);
+    if (connected?.profileId) profileId = String(connected.profileId);
+  } catch {
+    /* legacy 路径 */
+  }
+  let page = await mod.getBrowserPage?.(0, profileId ? { profileId } : {});
+  if (!page) page = await mod.createBrowserPage?.(profileId ? { profileId } : {});
+  if (!page?.goto) {
+    throw new Error(`下载失败: fetch/curl 均被拦截，且系统浏览器不可用（${url}）`);
+  }
+  // 先导航到同源页面建立 CF cookie（若已有会话则快速跳过）
+  try {
+    const origin = new URL(url).origin;
+    await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // CF 挑战等待
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const t = (await page.title?.().catch(() => "")) || "";
+      if (/Security Checkpoint|Just a moment|请稍候|Cloudflare/i.test(t)) continue;
+      break;
+    }
+  } catch {
+    /* 同源导航失败仍尝试直接 fetch */
+  }
+  // 页面内 fetch 取字节（带 cookie），大图分块 base64
+  const b64 = await page.evaluate(async (target: string) => {
+    const r = await fetch(target);
+    if (!r.ok) return null;
+    const buf = new Uint8Array(await r.arrayBuffer());
+    let bin = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < buf.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + chunk)) as any);
+    }
+    return btoa(bin);
+  }, url);
+  if (!b64) throw new Error(`下载失败(浏览器fetch): ${url}`);
+  return Buffer.from(b64, "base64");
+}
+
 async function renderWithBrowser(
   url: string,
   options: {
@@ -93,9 +146,62 @@ async function renderWithBrowser(
     waitMs?: number;
     timeoutMs?: number;
     headers?: Record<string, string>;
+    profileId?: string;
   } = {},
 ): Promise<{ html: string; finalUrl: string; title: string }> {
   const run = async () => {
+    // ── 优先使用系统已连接的浏览器实例（真实有头浏览器，可过 Cloudflare）──
+    // 与 svgrepo/artvee 等源同一通道：auto-browser 由用户经 browser_automation.connect 建立
+    try {
+      const autoBrowser = await import("./auto-browser/index.js");
+      const mod = autoBrowser as any;
+      // 先按显式 profileId 取；未传时自动发现已连接的 managed profile
+      let profileId = options.profileId || "";
+      if (!profileId) {
+        try {
+          const pool = await import("./auto-browser/legacy/services/ManagedProfileBrowserPool.js");
+          const status = await (pool as any).getManagedProfileBrowserStatus?.({});
+          const connected = (status?.instances || []).find((x: any) => x?.isConnected || x?.browserStatus?.isConnected);
+          if (connected?.profileId) profileId = String(connected.profileId);
+        } catch {
+          /* 无 managed pool 时走 legacy */
+        }
+      }
+      let page = await mod.getBrowserPage?.(0, profileId ? { profileId } : {});
+      if (!page) page = await mod.createBrowserPage?.(profileId ? { profileId } : {});
+      if (page?.goto) {
+        console.log(`[CollectEngine] browser.render(system${profileId ? ` profile=${profileId}` : ""}): ${url}`);
+        await page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout: Math.min(options.timeoutMs || 60000, 180000),
+        });
+        // Cloudflare / 安全检查点轮询（最多 25 秒）
+        for (let i = 0; i < 25; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const t = (await page.title?.().catch(() => "")) || "";
+          if (/Security Checkpoint|Just a moment|请稍候|Cloudflare/i.test(t)) continue;
+          break;
+        }
+        if (options.waitFor) {
+          try {
+            await page.waitForSelector?.(options.waitFor, { timeout: 20000 });
+          } catch {
+            /* 选择器超时继续取 HTML */
+          }
+        }
+        if (options.waitMs) {
+          await new Promise((r) => setTimeout(r, Math.min(options.waitMs, 15000)));
+        }
+        const html = await page.content();
+        const finalUrl = page.url?.() || url;
+        const title = (await page.title?.().catch(() => "")) || "";
+        return { html, finalUrl, title };
+      }
+    } catch (e: any) {
+      console.warn(`[CollectEngine] 系统浏览器不可用，降级 headless: ${e?.message || e}`);
+    }
+
+    // ── 降级：独立 headless Chromium（部分站点 CF 挑战过不去）──
     const timeoutMs = Math.min(options.timeoutMs || 60000, 180000);
     let chromium: any;
     let executablePath: string | undefined;
@@ -294,7 +400,13 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
        */
       async render(
         url: string,
-        options: { waitFor?: string; waitMs?: number; timeoutMs?: number; headers?: Record<string, string> } = {},
+        options: {
+          waitFor?: string;
+          waitMs?: number;
+          timeoutMs?: number;
+          headers?: Record<string, string>;
+          profileId?: string;
+        } = {},
       ): Promise<{ html: string; finalUrl: string; title: string }> {
         assertDomainAllowed(url, domains);
         console.log(`[CollectEngine] browser.render: ${url}`);
@@ -337,29 +449,38 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           buf = Buffer.from(await res.arrayBuffer());
         } catch {
           // fetch(undici) 和 https.get 都被 TLS 指纹拦截时，降级用 curl（系统级 TLS 栈）
-          buf = await new Promise<Buffer>((resolve, reject) => {
-            const { execFile } = require("child_process");
-            // -f: HTTP 错误（404/500 等）时返回失败，避免把错误页面当图片保存
-            const args = ["-sSLf", "--max-time", "120"];
-            for (const [k, v] of Object.entries(mergedHeaders)) {
-              args.push("-H", `${k}: ${v}`);
-            }
-            args.push(url);
-            execFile("curl", args, { encoding: "buffer", maxBuffer: 200 * 1024 * 1024 }, (err: any, stdout: Buffer) => {
-              if (err) reject(new Error(`下载失败(curl): ${err.message}`));
-              else if (!stdout || !stdout.length) reject(new Error(`下载失败(curl): 空响应 ${url}`));
-              else resolve(stdout);
+          try {
+            buf = await new Promise<Buffer>((resolve, reject) => {
+              const { execFile } = require("child_process");
+              // -f: HTTP 错误（404/500 等）时返回失败，避免把错误页面当图片保存
+              const args = ["-sSLf", "--max-time", "120"];
+              for (const [k, v] of Object.entries(mergedHeaders)) {
+                args.push("-H", `${k}: ${v}`);
+              }
+              args.push(url);
+              execFile("curl", args, { encoding: "buffer", maxBuffer: 200 * 1024 * 1024 }, (err: any, stdout: Buffer) => {
+                if (err) reject(new Error(`下载失败(curl): ${err.message}`));
+                else if (!stdout || !stdout.length) reject(new Error(`下载失败(curl): 空响应 ${url}`));
+                else resolve(stdout);
+              });
             });
-          });
+          } catch {
+            // 第三级：Cloudflare 等站点 fetch/curl 均被拦时，走系统浏览器内 fetch（带 CF cookie）
+            buf = await downloadViaBrowser(url);
+          }
         }
         // 校验下载内容确实是图片（magic bytes），防止 HTML 错误页/空文件混入素材库
         {
+          // SVG：以 <?xml 或 <svg 开头（可能有 BOM/空白前缀）
+          const head = buf.slice(0, 256).toString("utf8").replace(/^﻿/, "").replace(/^\s+/, "");
+          const isSvg = head.startsWith("<?xml") || head.toLowerCase().startsWith("<svg");
           const isImage =
             (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) || // JPEG
             (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) || // PNG
             (buf.length > 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) || // GIF
             (buf.length > 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45) || // WEBP (RIFF....WEBP)
-            (buf.length > 4 && buf[0] === 0x42 && buf[1] === 0x4d); // BMP
+            (buf.length > 4 && buf[0] === 0x42 && buf[1] === 0x4d) || // BMP
+            isSvg; // SVG 矢量图
           if (!isImage) {
             throw new Error(`下载内容不是有效图片（可能为错误页面）: ${url}`);
           }

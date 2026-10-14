@@ -31,6 +31,7 @@ const KEEP_LEGACY = new Set([
   "screen",
   "network",
   "print",
+  "webcollect",
 ]);
 
 /** 数据工具命名空间（→ 源 data-tools，params.tool = 命名空间） */
