@@ -487,9 +487,15 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
         }
         // 校验下载内容确实是图片（magic bytes），防止 HTML 错误页/空文件混入素材库
         {
-          // SVG：以 <?xml 或 <svg 开头（可能有 BOM/空白前缀）
-          const head = buf.slice(0, 256).toString("utf8").replace(/^﻿/, "").replace(/^\s+/, "");
-          const isSvg = head.startsWith("<?xml") || head.toLowerCase().startsWith("<svg");
+          // SVG：可能以 BOM/空白/XML 声明/注释（如 lucide 的 <!-- license -->）开头，
+          // 先剥离前置空白与注释，再判断是否含 <svg
+          const rawHead = buf.slice(0, 1024).toString("utf8").replace(/^﻿/, "");
+          const stripped = rawHead
+            .replace(/^\s+/, "")
+            .replace(/^(<\?xml[^>]*\?>\s*)?/, "")
+            .replace(/^(<!--[\s\S]*?-->\s*)*/, "")
+            .replace(/^\s+/, "");
+          const isSvg = stripped.toLowerCase().startsWith("<svg") || rawHead.toLowerCase().startsWith("<svg");
           const isImage =
             (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) || // JPEG
             (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) || // PNG
