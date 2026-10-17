@@ -1064,6 +1064,16 @@ function updateBrowserAutomationCommandExecution(payload: {
   );
   const previousSlot = browserAutomationExecutionSlots[slotKey];
   const updatedAt = payload.updatedAt || new Date().toISOString();
+  // 新任务（taskId 变了）必须重置 startedAt，否则会继承旧任务的时间戳
+  const isNewTask =
+    payload.running === true &&
+    !!payload.taskId &&
+    String(payload.taskId).trim() !== String(previousSlot?.taskId || "").trim();
+  const resolvedStartedAt = payload.running
+    ? isNewTask
+      ? updatedAt
+      : (previousSlot?.startedAt || updatedAt)
+    : (previousSlot?.startedAt || updatedAt);
 
   upsertBrowserAutomationExecutionSlot(slotKey, {
     slotKey,
@@ -1079,9 +1089,7 @@ function updateBrowserAutomationCommandExecution(payload: {
         : (payload.progress ?? null),
     lastError: payload.lastError ?? null,
     runtime: payload.runtime ?? null,
-    startedAt: payload.running
-      ? previousSlot?.startedAt || updatedAt
-      : previousSlot?.startedAt || updatedAt,
+    startedAt: resolvedStartedAt,
     finishedAt: payload.running ? null : updatedAt,
     updatedAt,
   });
@@ -6635,11 +6643,15 @@ async function handlePsdSetProduction(
     ): Promise<string> => {
       // 检查文件扩展名
       const fileExt = getFileExtension(imagePath).toLowerCase();
-      if (fileExt !== ".svg" && fileExt !== ".webp") {
+      // 无扩展名的历史缓存文件 / SVG / WebP 都转 PNG，保证 PS 能识别
+      const needsConvert =
+        fileExt === "" || fileExt === ".svg" || fileExt === ".webp";
+      if (!needsConvert) {
         return imagePath;
       }
 
-      const formatLabel = fileExt === ".svg" ? "SVG" : "WebP";
+      const formatLabel =
+        fileExt === ".svg" ? "SVG" : fileExt === ".webp" ? "WebP" : "无扩展名图片";
       emitter.emit("log", {
         level: "info",
         message: `[psd-set] 检测到${formatLabel}素材，正在转换为PNG: ${getFileName(imagePath)}`,
@@ -7357,7 +7369,25 @@ async function handlePsdSetProduction(
       `正在调用 Photoshop 处理，智能对象数: ${processPayload.smart_objects.length}`,
     );
 
-    const processResult = await photoshopApi.processPsd(processPayload);
+    // PS 渲染可能耗时数分钟：定时心跳续报 processing，避免服务端按超时/孤儿回收任务
+    const psHeartbeatTimer = setInterval(() => {
+      void syncPsdSetProductionStatus({
+        psdSetId,
+        status: "processing",
+        message: "Photoshop 渲染中",
+        progress: 3,
+        total: 5,
+        dispatchToken: normalizedDispatchToken,
+        logs: productionLogs,
+      }).catch(() => undefined);
+    }, 45_000);
+
+    let processResult;
+    try {
+      processResult = await photoshopApi.processPsd(processPayload);
+    } finally {
+      clearInterval(psHeartbeatTimer);
+    }
     psdSetConsoleDebug("production.process-psd.result", {
       psdSetId,
       taskId: taskId || null,

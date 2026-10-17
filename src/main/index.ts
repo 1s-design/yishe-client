@@ -2338,32 +2338,61 @@ function ensureFileExtension(
   url?: string,
   contentType?: string,
 ): string {
-  // 如果文件名已经有扩展名，直接返回
-  if (fileName.includes(".")) {
+  // 已有扩展名（最后一段是 1~5 位字母数字）则原样返回
+  if (/\.[a-zA-Z0-9]{1,5}$/.test(fileName)) {
     return fileName;
   }
 
-  // 检查 URL 中是否包含 .psd
-  if (url && url.toLowerCase().includes(".psd")) {
+  const lowerUrl = String(url || "").toLowerCase();
+  const lowerContentType = String(contentType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+
+  // Content-Type → 扩展名（优先于 URL 猜测，因为无后缀 URL 很常见）
+  const contentTypeExtMap: Record<string, string> = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tiff",
+    "image/tif": ".tif",
+    "image/svg+xml": ".svg",
+    "image/avif": ".avif",
+    "application/psd": ".psd",
+    "application/x-photoshop": ".psd",
+    "application/octet-stream": "",
+  };
+  if (lowerContentType && contentTypeExtMap[lowerContentType]) {
+    return `${fileName}${contentTypeExtMap[lowerContentType]}`;
+  }
+  if (
+    lowerContentType.includes("photoshop") ||
+    lowerContentType.includes("image/vnd.adobe.photoshop")
+  ) {
     return `${fileName}.psd`;
   }
-
-  // 检查 Content-Type 是否为 PSD 相关类型
-  if (contentType) {
-    const lowerContentType = contentType.toLowerCase();
-    if (
-      lowerContentType.includes("photoshop") ||
-      lowerContentType.includes("image/vnd.adobe.photoshop") ||
-      (lowerContentType === "application/octet-stream" &&
-        url &&
-        url.toLowerCase().includes("psd"))
-    ) {
-      return `${fileName}.psd`;
-    }
+  if (lowerContentType.startsWith("image/")) {
+    const subtype = lowerContentType.slice("image/".length).replace(/\+.*/, "");
+    const fallbackExt =
+      subtype === "jpeg" ? ".jpg" : subtype ? `.${subtype}` : ".jpg";
+    return `${fileName}${fallbackExt}`;
   }
 
-  // 如果无法确定，返回原文件名（让系统处理）
-  return fileName;
+  // URL 路径/查询串中的扩展名
+  const urlExtMatch = lowerUrl.match(
+    /\.(jpe?g|png|webp|gif|bmp|tiff?|svg|avif|psd)(?:[?#&]|$)/,
+  );
+  if (urlExtMatch) {
+    const raw = urlExtMatch[1];
+    const ext = raw === "jpeg" ? "jpg" : raw;
+    return `${fileName}.${ext}`;
+  }
+
+  // 仍无法判断时默认按 jpg（PS 可识别的最通用有损图格式）
+  return `${fileName}.jpg`;
 }
 
 type DownloadManifestEntry = {
@@ -2582,14 +2611,58 @@ ipcMain.handle("download-file", async (_event, url: string) => {
 
       const cached = getCachedDownloadByUrl(filesDir, normalizedUrl);
       if (cached.found && cached.entry) {
-        return {
-          success: true,
-          message: "文件链接已缓存，跳过下载",
-          filePath: cached.entry.filePath,
-          skipped: true,
-          fileSize: cached.entry.fileSize,
-          cacheKey,
-        };
+        // 历史缓存文件可能缺扩展名（PS 不识别），补全后返回
+        const cachedPath = cached.entry.filePath;
+        const cachedExt = extname(cachedPath).toLowerCase();
+        const hasValidExt = /\.(jpe?g|png|webp|gif|bmp|tiff?|svg|avif|psd)$/.test(
+          cachedExt,
+        );
+        if (hasValidExt) {
+          return {
+            success: true,
+            message: "文件链接已缓存，跳过下载",
+            filePath: cachedPath,
+            skipped: true,
+            fileSize: cached.entry.fileSize,
+            cacheKey,
+          };
+        }
+        // 无扩展名：按内容嗅探重命名，让 PS 能识别
+        try {
+          const correctedName = ensureFileExtension(
+            basename(cachedPath),
+            normalizedUrl,
+            cached.entry.contentType || undefined,
+          );
+          const correctedPath = pathJoin(filesDir, correctedName);
+          if (fs.existsSync(correctedPath)) {
+            return {
+              success: true,
+              message: "文件链接已缓存，跳过下载",
+              filePath: correctedPath,
+              skipped: true,
+              fileSize: fs.statSync(correctedPath).size,
+              cacheKey,
+            };
+          }
+          fs.renameSync(cachedPath, correctedPath);
+          const manifest = readDownloadManifest(filesDir);
+          if (manifest[cacheKey]) {
+            manifest[cacheKey].filePath = correctedPath;
+            manifest[cacheKey].fileName = correctedName;
+            writeDownloadManifest(filesDir, manifest);
+          }
+          return {
+            success: true,
+            message: "文件链接已缓存，已补全扩展名",
+            filePath: correctedPath,
+            skipped: true,
+            fileSize: fs.statSync(correctedPath).size,
+            cacheKey,
+          };
+        } catch {
+          // 重命名失败则走重新下载
+        }
       }
 
       let fileName = getFileNameFromUrl(parsedUrl);
