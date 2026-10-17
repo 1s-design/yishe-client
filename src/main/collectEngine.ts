@@ -677,7 +677,9 @@ function loadSourceHooks(code: string): any {
     module,
     exports: module.exports,
     console: { log: () => undefined, warn: () => undefined, error: () => undefined },
-    // 源代码只应使用 ctx；这里不提供 require/process/fs 等 Node 能力
+    // URL 是纯解析工具（无网络/文件能力），源码拼查询串常用，注入避免 "URL is not defined"；
+    // 其余 Node 能力（require/process/fs/fetch）一律不给，网络必须走 ctx
+    URL,
   };
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox, {
