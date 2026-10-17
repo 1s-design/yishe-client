@@ -88,6 +88,7 @@ export interface PsdSetProductionStatusReport {
   machineCode?: string;
   assignedClientId?: string;
   assignedMachineCode?: string;
+  logs?: any[];
 }
 
 export interface PageStickerPsdSetDto {

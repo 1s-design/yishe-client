@@ -23,6 +23,7 @@ if sys.platform == 'win32':
     os.environ['PYTHONUNBUFFERED'] = '1'
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator, model_validator
@@ -264,6 +265,27 @@ async def allow_private_network_access(request: Request, call_next):
 
     return response
 
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """全局捕获 FastAPI 参数校验失败异常，格式化为清晰友好的错误信息，避免前端仅收到模糊的 422 状态码"""
+    errors = exc.errors()
+    formatted = []
+    for err in errors:
+        loc = ".".join(str(l) for l in err.get("loc", []) if l != "body")
+        msg = err.get("msg", "")
+        formatted.append(f"[{loc}] {msg}" if loc else msg)
+    combined = "; ".join(formatted) if formatted else str(exc)
+    logger.warning(f"请求参数验证失败 (422): {combined}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": combined,
+            "errors": errors,
+            "message": f"参数校验失败 (422): {combined}"
+        }
+    )
+
 # ========== 请求/响应模型 ==========
 
 class Position(BaseModel):
@@ -398,13 +420,13 @@ class SmartObjectConfig(BaseModel):
     @validator('background_image_path')
     def validate_background_image(cls, v):
         """验证背景图片文件路径格式（可选，不检查文件是否存在，实际处理时检查）。"""
-        if v is None:
-            return v
+        if v is None or not str(v).strip():
+            return None
         path = Path(v)
         valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
         if path.suffix.lower() not in valid_extensions:
             raise ValueError(f"不支持的背景图片格式: {v}，支持的格式: {', '.join(valid_extensions)}")
-        return v
+        return str(v).strip()
     
     @validator('resize_mode')
     def validate_resize_mode(cls, v):
@@ -418,10 +440,11 @@ class SmartObjectConfig(BaseModel):
     
     @model_validator(mode='after')
     def validate_custom_options(self):
-        """验证自定义模式配置"""
+        """验证自定义模式配置（缺少时自愈回退为 contain，避免直接抛 422 终止批次）"""
         if self.resize_mode == 'custom':
             if self.custom_options is None:
-                raise ValueError("当 resize_mode='custom' 时，custom_options 必须提供")
+                logger.warning("SmartObjectConfig 中 resize_mode='custom' 但未提供 custom_options，自动降级为 'contain'")
+                self.resize_mode = 'contain'
         return self
 
 
@@ -502,13 +525,13 @@ class DefaultOptions(BaseModel):
 
     @validator('background_image_path')
     def validate_background_image(cls, v):
-        if v is None:
-            return v
+        if v is None or not str(v).strip():
+            return None
         path = Path(v)
         valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
         if path.suffix.lower() not in valid_extensions:
             raise ValueError(f"不支持的背景图片格式: {v}，支持的格式: {', '.join(valid_extensions)}")
-        return v
+        return str(v).strip()
 
 
 class OverlaySize(BaseModel):
@@ -1009,8 +1032,8 @@ class ProcessRequest(BaseModel):
     @validator('background_image_path')
     def validate_background_image_path(cls, v):
         """验证旧格式背景图片文件路径（可选）。"""
-        if v is None:
-            return v
+        if v is None or not str(v).strip():
+            return None
         path = Path(v)
         if not path.exists():
             raise ValueError(f"背景图片文件路径不存在: {v}")

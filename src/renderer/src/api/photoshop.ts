@@ -28,10 +28,30 @@ psApiClient.interceptors.response.use(
     const pickMessage = (value: any): string => {
       if (!value) return ''
       if (typeof value === 'string') return value.trim()
+      if (Array.isArray(value)) {
+        return value
+          .map(item => {
+            if (typeof item === 'string') return item.trim()
+            if (!item || typeof item !== 'object') return String(item)
+            const loc = Array.isArray(item.loc)
+              ? item.loc.filter((x: any) => x !== 'body').join('.')
+              : ''
+            const msg = item.msg || item.message || item.error || ''
+            return loc ? `[${loc}] ${msg}` : msg
+          })
+          .filter(Boolean)
+          .join('; ')
+      }
+      if (Array.isArray(value.errors)) {
+        return pickMessage(value.errors)
+      }
       return String(value.message || value.error || value.msg || value.reason || '').trim()
     }
     const rawMessage = pickMessage(detail) ||
                        pickMessage(responseData) ||
+                       (error.response?.status === 422
+                         ? '参数校验失败 (422): 请检查 PSD 路径、背景图或智能对象配置'
+                         : null) ||
                        (error.code === 'ECONNABORTED'
                          ? `Photoshop 处理请求超时，请检查 PS 自动化端是否仍在执行（${error.config?.timeout || '未知'}ms）`
                          : null) ||

@@ -1220,6 +1220,11 @@ function normalizeErrorMessage(error: unknown, fallback = "操作失败") {
 }
 
 function isPhotoshopInfrastructureError(error: any) {
+  const status = Number(error?.status || error?.response?.status || 0);
+  if (status >= 400 && status < 500) {
+    // 4xx 是请求或业务校验错误（例如 422 校验失败），PS 服务端通信正常且在线，切勿当成基础设施宕机
+    return false;
+  }
   const detail = error?.detail || error?.response?.data || {};
   const requestUrl = String(
     error?.requestUrl || error?.config?.url || "",
@@ -1271,6 +1276,15 @@ function isPhotoshopInfrastructureError(error: any) {
     message.includes("网络") ||
     message.includes("连接")
   );
+  if (
+    message.includes("422") ||
+    message.includes("参数校验") ||
+    message.includes("validation error") ||
+    message.includes("unprocessable") ||
+    message.includes("smart_objects")
+  ) {
+    return false;
+  }
   return hasNetworkSignal && (hasPhotoshopSignal || isPhotoshopRequest);
 }
 
@@ -6087,6 +6101,13 @@ async function syncPsdSetProductionStatus(event: {
   images?: string[];
   dispatchToken?: string | null;
   profileId?: string | null;
+  logs?: Array<{
+    time: string;
+    step: string;
+    level: "info" | "warn" | "error";
+    message: string;
+    details?: string;
+  }>;
 }) {
   const statusMessage = String(event.message || "").trim();
   const dispatchToken = String(
@@ -6109,6 +6130,7 @@ async function syncPsdSetProductionStatus(event: {
     machineCode: identity.machineCode,
     assignedClientId: identity.clientId,
     assignedMachineCode: identity.machineCode,
+    logs: Array.isArray(event.logs) ? event.logs : undefined,
   };
 
   psdSetConsoleDebug("sync-status.prepare", {
@@ -6245,6 +6267,35 @@ async function handlePsdSetProduction(
   });
   void syncServiceRuntime("photoshop");
 
+  // 初始化精简制作日志列表（保留最新关键节点，控制体积）
+  const productionLogs: Array<{
+    time: string;
+    step: string;
+    level: "info" | "warn" | "error";
+    message: string;
+    details?: string;
+  }> = [];
+  const addProductionLog = (
+    step: string,
+    message: string,
+    level: "info" | "warn" | "error" = "info",
+    details?: string,
+  ) => {
+    const entry = {
+      time: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+      step: String(step).slice(0, 50),
+      level,
+      message: String(message).slice(0, 300),
+      details: details ? String(details).slice(0, 500) : undefined,
+    };
+    if (productionLogs.length >= 30) {
+      productionLogs.shift();
+    }
+    productionLogs.push(entry);
+  };
+
+  addProductionLog("开始制作", `开始处理套图制作 (ID: ${psdSetId})`);
+
   // 发送开始事件，触发全局loading
   emitter.emit("psdSetProgressStart", { psdSetId });
   await syncPsdSetProductionStatus({
@@ -6255,6 +6306,7 @@ async function handlePsdSetProduction(
     total: 5,
     dispatchToken: normalizedDispatchToken,
     profileId: normalizedProfileId,
+    logs: productionLogs,
   });
 
   try {
@@ -6349,6 +6401,7 @@ async function handlePsdSetProduction(
       total: 5,
     });
 
+    addProductionLog("获取套图信息", `已获取套图信息：${psdSet.name || "未命名套图"}`);
     await syncPsdSetProductionStatus({
       psdSetId,
       status: "processing",
@@ -6356,6 +6409,7 @@ async function handlePsdSetProduction(
       progress: 1,
       total: 5,
       dispatchToken: normalizedDispatchToken,
+      logs: productionLogs,
     });
 
     const localPsdPathRaw =
@@ -6844,6 +6898,7 @@ async function handlePsdSetProduction(
       progress: 3,
       total: 5,
     });
+    addProductionLog("素材就绪", `贴纸与PSD模板下载就绪，开始PS处理`);
     await syncPsdSetProductionStatus({
       psdSetId,
       status: "processing",
@@ -6851,6 +6906,7 @@ async function handlePsdSetProduction(
       progress: 3,
       total: 5,
       dispatchToken: normalizedDispatchToken,
+      logs: productionLogs,
     });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
@@ -7143,26 +7199,48 @@ async function handlePsdSetProduction(
       };
     }
 
+    if (processPayload.defaults) {
+      if (!defaultBackgroundImagePath) {
+        delete processPayload.defaults.background_image_path;
+      }
+      if (
+        processPayload.defaults.resize_mode === "custom" &&
+        (!processPayload.defaults.custom_options ||
+          typeof processPayload.defaults.custom_options !== "object")
+      ) {
+        processPayload.defaults.resize_mode = "contain";
+        delete processPayload.defaults.custom_options;
+      }
+    }
+
     for (let i = 0; i < processPayload.smart_objects.length; i++) {
+      const so = processPayload.smart_objects[i];
+      if (!so) continue;
       const backgroundImagePath = String(
-        processPayload.smart_objects[i]?.background_image_path ||
-          defaultBackgroundImagePath ||
-          "",
+        so.background_image_path || defaultBackgroundImagePath || "",
       ).trim();
       if (backgroundImagePath) {
         const resolvedBackgroundImagePath = await resolveImagePathForProcess(
           backgroundImagePath,
           `智能对象背景[${i + 1}]`,
         );
-        processPayload.smart_objects[i].background_image_path =
-          await processImageToPngIfNeeded(resolvedBackgroundImagePath);
-      } else if (
-        Object.prototype.hasOwnProperty.call(
-          processPayload.smart_objects[i] || {},
-          "background_image_path",
-        )
-      ) {
-        delete processPayload.smart_objects[i].background_image_path;
+        so.background_image_path = await processImageToPngIfNeeded(
+          resolvedBackgroundImagePath,
+        );
+      } else {
+        delete so.background_image_path;
+      }
+
+      // 缩放模式与自定义参数自愈校验，防止 422 报错
+      if (so.resize_mode === "custom") {
+        if (!so.custom_options || typeof so.custom_options !== "object") {
+          emitter.emit("log", {
+            level: "warn",
+            message: `[psd-set] 智能对象[${i + 1}] resize_mode='custom' 缺少 custom_options，自动降级为 'contain'`,
+          });
+          so.resize_mode = "contain";
+          delete so.custom_options;
+        }
       }
     }
     await assertProcessFileReady("PSD模板", processPayload.psd_path);
@@ -7274,6 +7352,11 @@ async function handlePsdSetProduction(
       verbose: processPayload.verbose ?? null,
     });
 
+    addProductionLog(
+      "调用PS处理",
+      `正在调用 Photoshop 处理，智能对象数: ${processPayload.smart_objects.length}`,
+    );
+
     const processResult = await photoshopApi.processPsd(processPayload);
     psdSetConsoleDebug("production.process-psd.result", {
       psdSetId,
@@ -7284,6 +7367,11 @@ async function handlePsdSetProduction(
     if (!processResult.success || !processResult.data?.export_files) {
       throw new Error(`PS处理失败: ${processResult.message || "未知错误"}`);
     }
+
+    addProductionLog(
+      "PS处理完成",
+      `PS处理完成，成功生成 ${processResult.data.export_files.length} 个导出文件`,
+    );
 
     // 过滤出成功导出的文件
     const successfulFiles = processResult.data.export_files.filter(
@@ -7326,6 +7414,7 @@ async function handlePsdSetProduction(
       progress: 4,
       total: 5,
     });
+    addProductionLog("上传成图", `开始上传 ${successfulFiles.length} 个生成图片到云存储`);
     await syncPsdSetProductionStatus({
       psdSetId,
       status: "processing",
@@ -7333,6 +7422,7 @@ async function handlePsdSetProduction(
       progress: 4,
       total: 5,
       dispatchToken: normalizedDispatchToken,
+      logs: productionLogs,
     });
     emitPsAutomationStatus({
       currentPsSetId: psdSetId,
@@ -7525,6 +7615,7 @@ async function handlePsdSetProduction(
       dispatchToken: normalizedDispatchToken,
     });
 
+    addProductionLog("制作完成", `套图制作全部完成，已上传 ${updatedImages.length} 张图片到云端`);
     await syncPsdSetProductionStatus({
       psdSetId,
       status: "completed",
@@ -7533,6 +7624,7 @@ async function handlePsdSetProduction(
       total: 5,
       images: updatedImages,
       dispatchToken: normalizedDispatchToken,
+      logs: productionLogs,
     });
     emitPsAutomationStatus({
       running: false,
@@ -7629,6 +7721,13 @@ async function handlePsdSetProduction(
       );
     }
 
+    addProductionLog(
+      "制作失败",
+      productionInfrastructureErrorMessage || rawErrorMessage || "制作失败",
+      "error",
+      error?.stack || error?.detail ? JSON.stringify(error?.detail || error?.message) : undefined,
+    );
+
     await syncPsdSetProductionStatus({
       psdSetId,
       status: "failed",
@@ -7636,6 +7735,7 @@ async function handlePsdSetProduction(
         productionInfrastructureErrorMessage || rawErrorMessage || "制作失败",
       dispatchToken: normalizedDispatchToken,
       profileId: normalizedProfileId,
+      logs: productionLogs,
     });
     emitPsAutomationStatus({
       running: false,
@@ -15108,6 +15208,39 @@ function isPhotoshopReadyForPoll(): boolean {
   );
 }
 
+let lastPsProbeTime = 0;
+async function tryHealPhotoshopRuntime(): Promise<boolean> {
+  const now = Date.now();
+  if (now - lastPsProbeTime < 10000) {
+    return isPhotoshopReadyForPoll() && !hasRuntimeError();
+  }
+  lastPsProbeTime = now;
+  try {
+    const status = await photoshopApi.getPhotoshopStatus();
+    if (status && status.is_running && status.is_available) {
+      updateServiceStatus("photoshop", {
+        label: "Photoshop",
+        connected: true,
+        available: true,
+        status: "connected",
+        state: "idle",
+        busy: false,
+        lastError: null,
+        message: "Photoshop 自动化服务就绪",
+        details: {
+          photoshopReady: true,
+          photoshopStatus: "ready",
+          serviceHealthy: true,
+        },
+      });
+      return true;
+    }
+  } catch {
+    // 探活失败保持原状
+  }
+  return isPhotoshopReadyForPoll() && !hasRuntimeError();
+}
+
 function hasRuntimeError(): boolean {
   const service = clientInfo.services?.["ps-automation"];
   if (!service) return false;
@@ -15192,15 +15325,32 @@ async function recoverPsdSetClientOrphans(
   }
 }
 
+let psdSetPollStartedAt = 0;
+
 async function pollNextPsdSetTask() {
   if (psdSetPollInFlight) {
-    psdSetConsoleDebug("poll.skip-in-flight", {
-      reason: "psdSetPollInFlight=true",
-    });
-    return;
+    const flightAge = Date.now() - psdSetPollStartedAt;
+    if (
+      (!isProductionInProgress && flightAge > 60000) ||
+      flightAge > 35 * 60 * 1000
+    ) {
+      psdSetConsoleDebug(
+        "poll.watchdog.reset-in-flight",
+        { flightAge },
+        "warn",
+      );
+      psdSetPollInFlight = false;
+    } else {
+      psdSetConsoleDebug("poll.skip-in-flight", {
+        reason: "psdSetPollInFlight=true",
+        flightAge,
+      });
+      return;
+    }
   }
 
   psdSetPollInFlight = true;
+  psdSetPollStartedAt = Date.now();
   psdSetConsoleDebug("poll.tick.start", {
     canClaim: canClaimNextTask(),
     canPoll: canPollNextPsdSetTask(),
@@ -15238,6 +15388,11 @@ async function pollNextPsdSetTask() {
         message: `[psd-set] 无法领取任务: ${reasons.join(", ")}`,
       });
       return;
+    }
+
+    // 如果 PS 未就绪或存在运行时错误，尝试快速探活自愈，避免一次性偶发异常导致永久卡死
+    if (!isPhotoshopReadyForPoll() || hasRuntimeError()) {
+      await tryHealPhotoshopRuntime();
     }
 
     // 如果 PS 未就绪，跳过本次轮询（但不停止定时器）
@@ -15399,15 +15554,10 @@ async function fetchPsAutomationDispatchConfig() {
       stopPsdSetPolling();
     }
   } catch (error) {
-    psAutomationControlState.autoDispatchEnabled = false;
-    autoPsdBatchState.autoDispatchEnabled = false;
-    persistPsAutomationAutoDispatchEnabled(false);
-    stopPsdSetPolling();
-    emitPsAutomationStatus();
-
+    // 临时网络或请求失败，保留当前状态稍后重试，绝不能将用户开启状态持久化覆写为 false
     emitter.emit("log", {
       level: "warn",
-      message: `[psd-set] 获取配置失败: ${error instanceof Error ? error.message : String(error)}`,
+      message: `[psd-set] 定时同步自动制作配置异常，保留当前状态稍后重试: ${error instanceof Error ? error.message : String(error)}`,
     });
     psdSetConsoleDebug(
       "config.fetch.error",

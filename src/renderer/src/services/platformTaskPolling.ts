@@ -60,7 +60,9 @@ const PLATFORM_TASK_SKIP_LOG_INTERVAL_MS = 30000;
 const PLATFORM_TASK_RELEASE_GRACE_MS = 2500;
 const PLATFORM_TASK_RECOVERY_INTERVAL_MS = 30000;
 let platformTaskPollTimer: ReturnType<typeof setInterval> | null = null;
+let platformConfigSyncTimer: ReturnType<typeof setInterval> | null = null;
 let platformTaskPollInFlight = false;
+let platformTaskPollStartedAt = 0;
 let lastConfigSyncAt = 0;
 let lastSkipLogSignature = "";
 let lastSkipLogAt = 0;
@@ -221,7 +223,16 @@ export async function syncPlatformAutoDispatchConfig() {
   }
 }
 
+function ensureConfigSyncTimerRunning() {
+  if (!platformConfigSyncTimer) {
+    platformConfigSyncTimer = setInterval(() => {
+      void syncPlatformAutoDispatchConfig();
+    }, PLATFORM_CONFIG_SYNC_INTERVAL_MS);
+  }
+}
+
 function ensureTimerRunning() {
+  ensureConfigSyncTimerRunning();
   if (!platformTaskPollTimer) {
     platformTaskPollTimer = setInterval(() => {
       void pollPlatformTask();
@@ -335,12 +346,32 @@ async function emitPlatformTaskRuntime(snapshot: PublishTaskRuntimeSnapshot) {
 }
 
 async function pollPlatformTask() {
-  if (platformTaskPollInFlight) return;
-  if (platformTaskAutoState.running) return;
+  if (platformTaskPollInFlight) {
+    const flightAge = Date.now() - platformTaskPollStartedAt;
+    if (
+      (!platformTaskAutoState.running && flightAge > 60000) ||
+      flightAge > 35 * 60 * 1000
+    ) {
+      console.warn("[platform-task] 看门狗重置超时的 pollInFlight", flightAge);
+      platformTaskPollInFlight = false;
+    } else {
+      return;
+    }
+  }
+  if (platformTaskAutoState.running) {
+    const runAge = Date.now() - platformTaskPollStartedAt;
+    if (runAge > 35 * 60 * 1000) {
+      console.warn("[platform-task] 看门狗重置超时的 running", runAge);
+      platformTaskAutoState.running = false;
+    } else {
+      return;
+    }
+  }
   if (Date.now() < nextPollNotBefore) return;
 
   try {
     platformTaskPollInFlight = true;
+    platformTaskPollStartedAt = Date.now();
 
     if (Date.now() - lastConfigSyncAt > PLATFORM_CONFIG_SYNC_INTERVAL_MS) {
       await syncPlatformAutoDispatchConfig();
@@ -481,12 +512,17 @@ async function pollPlatformTask() {
 }
 
 export function startPlatformTaskPolling() {
-  console.log("[platform-task] 启动轮询...");
+  console.log("[platform-task] 启动轮询与配置监控...");
+  ensureConfigSyncTimerRunning();
   void syncPlatformAutoDispatchConfig();
 }
 
 export function stopPlatformTaskPolling() {
   stopTimer();
+  if (platformConfigSyncTimer) {
+    clearInterval(platformConfigSyncTimer);
+    platformConfigSyncTimer = null;
+  }
   platformTaskAutoState.enabled = false;
   platformTaskAutoState.lastReason = "stopped";
   if (!platformTaskAutoState.running) {
