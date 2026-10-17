@@ -272,6 +272,8 @@ async function saveToServer(params: {
         meta: {
           width: params.width,
           height: params.height,
+          collectMethod: "extension",
+          collectMethodLabel: "插件采集",
         },
       },
     });

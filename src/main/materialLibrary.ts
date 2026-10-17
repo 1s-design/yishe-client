@@ -6,11 +6,13 @@
  * 平台侧只需提供本地文件路径与元数据，避免三处重复实现与 apiBase 写死导致的入库失败。
  */
 import fs from "fs";
+import os from "os";
 import path from "path";
 import http from "http";
 import https from "https";
 import { URL } from "url";
 import sharp from "sharp";
+import * as imghash from "imghash";
 import { uploadFileToCos, generateCosKey, getBackendApiBase, getCurrentAccessToken } from "./cos";
 
 type ServerModule = typeof import("./server");
@@ -68,6 +70,41 @@ export interface MaterialLibraryResult {
   materialId?: string;
   /** 服务端贴纸记录的 URL（COS 直链） */
   materialUrl?: string;
+}
+
+/**
+ * 本地计算感知哈希（与服务端 imghash.hash(path, 12, "hex") 同参数，保证哈希可比）。
+ * 重活在客户端：服务端不再下载图片算 phash。失败返回空串，不阻断入库。
+ */
+export async function computePhashLocal(localPath: string, suffix = "jpg"): Promise<string> {
+  try {
+    const isSvg = String(suffix).toLowerCase() === "svg";
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `mat-phash-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${isSvg ? "png" : "jpg"}`,
+    );
+    if (isSvg) {
+      await sharp(localPath, { limitInputPixels: false, failOn: "none", density: 300 })
+        .resize(512, 512, { fit: "inside", withoutEnlargement: true })
+        .png()
+        .toFile(tmpPath);
+    } else {
+      const analysisBuffer = await sharp(localPath, { limitInputPixels: false, failOn: "none" })
+        .resize(512, 512, { fit: "inside", withoutEnlargement: true })
+        .toBuffer();
+      fs.writeFileSync(tmpPath, analysisBuffer);
+    }
+    const phash = await imghash.hash(tmpPath, 12, "hex");
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* 忽略清理失败 */
+    }
+    return phash || "";
+  } catch (e: any) {
+    console.warn("[MaterialLibrary] phash 本地计算失败:", e?.message || e);
+    return "";
+  }
 }
 
 /**
@@ -130,6 +167,9 @@ export async function uploadToMaterialLibrary(
     }
     const aspectRatio = imgWidth && imgHeight ? Number((imgWidth / imgHeight).toFixed(6)) : null;
 
+    // 感知哈希本地计算（服务端不下载图片算 phash）
+    const phash = await computePhashLocal(localPath, payload?.suffix || "jpg");
+
     const name = (
       clean4ByteEmoji(payload?.name) ||
       clean4ByteEmoji(payload?.nameEn) ||
@@ -155,6 +195,7 @@ export async function uploadToMaterialLibrary(
       width: imgWidth || null,
       height: imgHeight || null,
       aspectRatio,
+      phash: phash || "",
       isCutout: payload?.isCutout ?? false,
       meta: {
         collectedAt: new Date().toISOString(),

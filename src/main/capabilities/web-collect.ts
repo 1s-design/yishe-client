@@ -348,6 +348,10 @@ const downloadDef: CapabilityDefinition = {
       .optional()
       .describe("入库目标：crawler_material（默认）或 collect_file"),
     keywords: z.string().optional().describe("关键词（逗号分隔）"),
+    meta: z
+      .record(z.any())
+      .optional()
+      .describe("附加元数据（如 harvestBatchId、auditStatus 等，合并进素材 meta）"),
   }),
   handler: async (args: {
     url: string;
@@ -357,6 +361,7 @@ const downloadDef: CapabilityDefinition = {
     referer?: string;
     materialTarget?: string;
     keywords?: string;
+    meta?: Record<string, unknown>;
   }) => {
     let tmpPath = "";
     try {
@@ -381,7 +386,13 @@ const downloadDef: CapabilityDefinition = {
         originUrl: args.originUrl || args.url,
         keywords: args.keywords || "",
         materialTarget: args.materialTarget === "collect_file" ? "collect_file" : "crawler_material",
-        meta: { sourceImageUrl: args.url, importedFrom: "webcollect" },
+        meta: {
+          sourceImageUrl: args.url,
+          importedFrom: "webcollect",
+          collectMethod: "webcollect",
+          collectMethodLabel: "网页采集",
+          ...(args.meta || {}),
+        },
       } as any);
 
       if (matRes?.ok === false) {

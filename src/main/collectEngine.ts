@@ -83,6 +83,39 @@ async function fetchWithTimeout(
   }
 }
 
+/**
+ * curl 兜底请求（系统 TLS 栈）：fetch/undici 被 TLS 指纹或代理拦截时用。
+ * 返回 { status, text }；用 -w 追加状态码标记再切分，避免 -f 丢 4xx 响应体。
+ */
+async function curlRequest(
+  method: "GET" | "POST",
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+  body?: string,
+): Promise<{ status: number; text: string }> {
+  const { execFile } = require("child_process");
+  const args = ["-sSL", "--max-time", String(Math.max(5, Math.ceil(timeoutMs / 1000))), "-X", method];
+  for (const [k, v] of Object.entries(headers)) args.push("-H", `${k}: ${v}`);
+  if (body) args.push("--data-binary", body);
+  args.push("-w", "\n__CURL_STATUS__:%{http_code}", url);
+  return new Promise((resolve, reject) => {
+    execFile(
+      "curl",
+      args,
+      { encoding: "buffer", maxBuffer: 100 * 1024 * 1024 },
+      (err: any, stdout: Buffer) => {
+        const raw = stdout ? stdout.toString("utf8") : "";
+        const marker = raw.lastIndexOf("\n__CURL_STATUS__:");
+        if (marker < 0) return reject(err || new Error(`curl 无状态码输出: ${String(err?.message || "")}`));
+        const text = raw.slice(0, marker);
+        const status = Number(raw.slice(marker + "\n__CURL_STATUS__:".length).trim()) || 0;
+        resolve({ status, text });
+      },
+    );
+  });
+}
+
 /** 浏览器任务串行锁：同一时刻只跑一个真浏览器渲染，避免资源风暴 */
 let browserChain: Promise<any> = Promise.resolve();
 
@@ -294,18 +327,34 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           }
           target = u.toString();
         }
-        const res = await fetchWithTimeout(target, {
-          method: "GET",
-          headers: {
-            "User-Agent": UA,
-            Accept: "text/html,application/json,*/*",
-            ...(options.headers || {}),
-          },
-          timeoutMs: Math.min(options.timeoutMs || 30000, defaultTimeout),
-        });
-        const text = await res.text();
+        const mergedHeaders = {
+          "User-Agent": UA,
+          Accept: "text/html,application/json,*/*",
+          ...(options.headers || {}),
+        };
+        const timeoutMs = Math.min(options.timeoutMs || 30000, defaultTimeout);
+        let text: string;
+        let status: number;
+        try {
+          const res = await fetchWithTimeout(target, {
+            method: "GET",
+            headers: mergedHeaders,
+            timeoutMs,
+          });
+          status = res.status;
+          text = await res.text();
+        } catch (e1: any) {
+          // fetch/undici 被 TLS 指纹或代理拦截时，降级 curl（系统 TLS 栈）
+          try {
+            const r = await curlRequest("GET", target, mergedHeaders, timeoutMs);
+            status = r.status;
+            text = r.text;
+          } catch (e2: any) {
+            throw new Error(`HTTP GET 请求失败 (${target}): fetch(${e1?.message}) / curl(${e2?.message})`);
+          }
+        }
         return {
-          status: res.status,
+          status,
           text,
           json() {
             return JSON.parse(text);
@@ -323,19 +372,35 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
         assertDomainAllowed(url, domains);
         const isJson =
           options.body && typeof options.body === "object" && !(options.body instanceof FormData);
-        const res = await fetchWithTimeout(url, {
-          method: "POST",
-          headers: {
-            "User-Agent": UA,
-            ...(isJson ? { "Content-Type": "application/json" } : {}),
-            ...(options.headers || {}),
-          },
-          body: isJson ? JSON.stringify(options.body) : (options.body as any),
-          timeoutMs: Math.min(options.timeoutMs || 30000, defaultTimeout),
-        });
-        const text = await res.text();
+        const mergedHeaders = {
+          "User-Agent": UA,
+          ...(isJson ? { "Content-Type": "application/json" } : {}),
+          ...(options.headers || {}),
+        };
+        const timeoutMs = Math.min(options.timeoutMs || 30000, defaultTimeout);
+        const bodyStr = isJson ? JSON.stringify(options.body) : (options.body as any);
+        let text: string;
+        let status: number;
+        try {
+          const res = await fetchWithTimeout(url, {
+            method: "POST",
+            headers: mergedHeaders,
+            body: bodyStr,
+            timeoutMs,
+          });
+          status = res.status;
+          text = await res.text();
+        } catch (e1: any) {
+          try {
+            const r = await curlRequest("POST", url, mergedHeaders, timeoutMs, String(bodyStr ?? ""));
+            status = r.status;
+            text = r.text;
+          } catch (e2: any) {
+            throw new Error(`HTTP POST 请求失败 (${url}): fetch(${e1?.message}) / curl(${e2?.message})`);
+          }
+        }
         return {
-          status: res.status,
+          status,
           text,
           json() {
             return JSON.parse(text);
@@ -434,7 +499,7 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           /** 自定义请求头（如 Accept、Accept-Language 等，部分站点防盗链需要） */
           headers?: Record<string, string>;
         } = {},
-      ): Promise<{ cosUrl: string; size: number; materialOk?: boolean }> {
+      ): Promise<{ cosUrl: string; size: number; materialOk?: boolean; materialId?: string }> {
         // 统一规范：domains 白名单只约束 search/list 的抓取请求；
         // download 的 URL 来自搜索结果（如聚合源的第三方 CDN），不再限域
         const mergedHeaders: Record<string, string> = {
@@ -521,6 +586,7 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
         fs.writeFileSync(tmpPath, buf);
         try {
           let materialOk = false;
+          let materialId: string | undefined;
           if (options.toMaterial) {
             try {
               const { uploadToMaterialLibrary } = await import("./materialLibrary");
@@ -539,8 +605,24 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
                 itemParams.url ||
                 itemParams.detailUrl ||
                 "";
+              // 采集方式/平台标注：报告与素材库可直接展示「哪个平台·哪种方式」
+              const actionLabelMap: Record<string, string> = {
+                search: "关键词搜索",
+                list: "分类浏览",
+                download: "下载入库",
+              };
+              const action = String(args.action || "download");
+              // download 是落地步骤；真正的方式看 params.via（search|list）或 meta.collectMethodLabel
+              const via = String((args.params as any)?.via || "");
+              const labelKey = action === "download" && via ? via : action;
               const meta = {
+                sourceName: (args.meta as any)?.name || args.sourceId,
+                collectAction: action,
+                collectActionLabel:
+                  (args.meta as any)?.modeLabels?.[labelKey] || actionLabelMap[labelKey] || labelKey,
                 ...(options.meta || {}),
+                // 调用方附加元数据（如 harvest 批次标记），经 collect_run params.meta 传入
+                ...((args.params as any)?.meta || {}),
                 sourceImageUrl: options.meta?.sourceImageUrl || url,
                 ...(itemParams.title
                   ? { sourceTitle: String(itemParams.title).slice(0, 300) }
@@ -555,6 +637,7 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
                 materialTarget,
               } as any);
               materialOk = !!matRes?.ok;
+              materialId = matRes?.materialId;
             } catch (matErr: any) {
               console.warn("[CollectEngine] 素材库入库失败:", matErr?.message || matErr);
             }
@@ -563,7 +646,7 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           if (!result?.ok || !result?.url) {
             throw new Error(`上传 COS 失败: ${result?.msg || JSON.stringify(result)?.slice(0, 200)}`);
           }
-          return { cosUrl: result.url, size: buf.length, materialOk };
+          return { cosUrl: result.url, size: buf.length, materialOk, materialId };
         } finally {
           try {
             fs.unlinkSync(tmpPath);
