@@ -32,6 +32,9 @@ const KEEP_LEGACY = new Set([
   "network",
   "print",
   "webcollect",
+  // 通用采集能力命名空间（collect.discover / collect.run / collect.status）由
+  // CapabilityRegistry 自己处理；不能被当成源 id 去拉源代码（否则 status 会 404）
+  "collect",
 ]);
 
 /** 数据工具命名空间（→ 源 data-tools，params.tool = 命名空间） */

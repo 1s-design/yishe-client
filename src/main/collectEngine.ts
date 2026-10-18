@@ -21,7 +21,7 @@ export interface CollectEngineRunArgs {
   sourceVersion?: string;
   /** 源代码全文（CJS 形态，客户端由接口拉取后传入） */
   code: string;
-  /** search | list | download */
+  /** 方法 key，取自源 meta.methods[].key（引擎按同名导出 hook 调用） */
   action: string;
   params?: Record<string, any>;
   /** 源 meta（用于域名白名单 / 超时 / 限速） */
@@ -606,11 +606,12 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
                 itemParams.detailUrl ||
                 "";
               // 采集方式/平台标注：报告与素材库可直接展示「哪个平台·哪种方式」
-              const actionLabelMap: Record<string, string> = {
-                search: "关键词搜索",
-                list: "分类浏览",
-                download: "下载入库",
-              };
+              // 方法标签来自源自己声明的 meta.methods，不再写死 search/list/download
+              const declaredMethods: any[] = Array.isArray((args.meta as any)?.methods)
+                ? (args.meta as any).methods
+                : [];
+              const methodLabel = (key: string) =>
+                declaredMethods.find((d) => d?.key === key)?.label;
               const action = String(args.action || "download");
               // download 是落地步骤；真正的方式看 params.via（search|list）或 meta.collectMethodLabel
               const via = String((args.params as any)?.via || "");
@@ -619,7 +620,9 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
                 sourceName: (args.meta as any)?.name || args.sourceId,
                 collectAction: action,
                 collectActionLabel:
-                  (args.meta as any)?.modeLabels?.[labelKey] || actionLabelMap[labelKey] || labelKey,
+                  methodLabel(labelKey) ||
+                  (args.meta as any)?.modeLabels?.[labelKey] ||
+                  labelKey,
                 ...(options.meta || {}),
                 // 调用方附加元数据（如 harvest 批次标记），经 collect_run params.meta 传入
                 ...((args.params as any)?.meta || {}),
