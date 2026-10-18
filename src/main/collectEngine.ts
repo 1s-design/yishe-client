@@ -304,7 +304,12 @@ async function renderWithBrowser(
   return result;
 }
 
-function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number; message?: string }>) {
+function buildCtx(
+  args: CollectEngineRunArgs,
+  progress: Array<{ percent: number; message?: string }>,
+  /** 记录本次运行落库的素材 ID，供 runCollectSource 回填到结果里 */
+  sink: { materialIds: string[]; materialOk: boolean } = { materialIds: [], materialOk: false },
+) {
   const domains = args.meta?.domains;
   const defaultTimeout = args.meta?.timeoutMs || 120000;
 
@@ -649,6 +654,9 @@ function buildCtx(args: CollectEngineRunArgs, progress: Array<{ percent: number;
           if (!result?.ok || !result?.url) {
             throw new Error(`上传 COS 失败: ${result?.msg || JSON.stringify(result)?.slice(0, 200)}`);
           }
+          // 记录落库结果：让调用方（agent/前端）能定位到「素材库里的最终文件」
+          if (materialId) sink.materialIds.push(materialId);
+          if (materialOk) sink.materialOk = true;
           return { cosUrl: result.url, size: buf.length, materialOk, materialId };
         } finally {
           try {
@@ -711,7 +719,8 @@ export async function runCollectSource(
       };
     }
 
-    const ctx = buildCtx(args, progress);
+    const sink = { materialIds: [] as string[], materialOk: false };
+    const ctx = buildCtx(args, progress, sink);
     const timeoutMs = args.meta?.timeoutMs || 120000;
     const run = Promise.resolve(hook(ctx, args.params || {}));
 
@@ -722,12 +731,26 @@ export async function runCollectSource(
 
     try {
       const data = (await Promise.race([run, timeoutRace])) as any;
+      // 回填落库信息：判据是「素材库里的最终文件」，调用方要能直接定位到它，
+      // 不必依赖各源 hook 是否记得把 materialId 传出来。
+      const payload = data && typeof data === "object" ? data : {};
+      const enriched =
+        sink.materialIds.length > 0
+          ? {
+              ...payload,
+              materialId: payload.materialId ?? sink.materialIds[0],
+              materialIds: sink.materialIds,
+              materialOk: payload.materialOk ?? sink.materialOk,
+            }
+          : payload;
       return {
         success: true,
-        data: data ?? {},
+        data: enriched,
         message:
           action === "download"
-            ? "下载完成"
+            ? sink.materialIds.length
+              ? `下载完成，已入库 ${sink.materialIds.length} 个素材`
+              : "下载完成"
             : `采集完成: ${Array.isArray(data?.items) ? data.items.length : 0} 条`,
         progress,
         engineVersion: COLLECT_ENGINE_VERSION,
