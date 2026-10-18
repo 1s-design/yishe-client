@@ -112,6 +112,63 @@ async function loadTools() {
   }
 }
 
+/**
+ * MCP 接入凭据。
+ *
+ * 监听地址默认对外（0.0.0.0），所以必须校验调用方身份，否则任何能连到端口的人都
+ * 能调用 97 个工具（含 download 这类写素材库的操作）。
+ * 取值优先级：环境变量 MCP_TOKEN > <userData>/mcp-token.txt > 首次生成并落盘。
+ */
+let cachedMcpToken: string | null = null;
+export function getMcpToken(): string {
+  if (cachedMcpToken) return cachedMcpToken;
+  const env = String(process.env.MCP_TOKEN || '').trim();
+  if (env) {
+    cachedMcpToken = env;
+    return cachedMcpToken;
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { app } = require('electron');
+    const fs = require('fs');
+    const path = require('path');
+    const dir = app?.getPath ? app.getPath('userData') : (process.env.HOME || '/tmp');
+    const file = path.join(dir, 'mcp-token.txt');
+    if (fs.existsSync(file)) {
+      const t = String(fs.readFileSync(file, 'utf8')).trim();
+      if (t) {
+        cachedMcpToken = t;
+        return cachedMcpToken;
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const crypto = require('crypto');
+    const fresh = crypto.randomBytes(24).toString('base64url');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, fresh, { mode: 0o600 });
+    cachedMcpToken = fresh;
+    return cachedMcpToken;
+  } catch {
+    // 取不到 userData 时退回进程级随机值（重启会变，但不影响本次可用）
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const crypto = require('crypto');
+    cachedMcpToken = crypto.randomBytes(24).toString('base64url');
+    return cachedMcpToken;
+  }
+}
+
+/** 校验 MCP 请求：支持 Authorization: Bearer <token> 与 ?token=<token>（EventSource 设不了头） */
+function isMcpAuthorized(req: any): boolean {
+  const expected = getMcpToken();
+  if (!expected) return true;
+  const auth = String(req.headers?.authorization || '');
+  const m = /^Bearer\s+(.+)$/i.exec(auth);
+  if (m && m[1].trim() === expected) return true;
+  const q = String(req.query?.token || '');
+  if (q && q === expected) return true;
+  return false;
+}
+
 interface RegisteredTool {
   name: string;
   description: string;
@@ -604,6 +661,19 @@ export class McpServerManager {
     // 创建 Express 应用
     this.app = express();
 
+    // 鉴权：/health 免鉴权（供探活），其余端点必须带 MCP token
+    this.app.use((req: any, res: any, next: any) => {
+      if (req.path === '/health') return next();
+      if (!isMcpAuthorized(req)) {
+        res.status(401).json({
+          error: 'unauthorized',
+          message: '缺少或无效的 MCP token。请带 Authorization: Bearer <token>，或用 ?token=<token>。',
+        });
+        return;
+      }
+      next();
+    });
+
     // 消息端点 - 必须在 json 中间件之前，保留原始 stream
     this.app.post('/messages', async (req, res) => {
       if (!this.transport) {
@@ -648,6 +718,11 @@ export class McpServerManager {
         status: 'ok',
         server: 'yishe-client-mcp',
         version: '1.0.0',
+        // 外部 agent 接入提示
+        transport: 'sse',
+        endpoints: { sse: '/sse', messages: '/messages' },
+        authRequired: true,
+        authHeader: 'Authorization: Bearer <token>（或 ?token=<token>）',
         tools: registeredTools.length > 0 ? registeredTools : [
           ...platformNames.map((k) => `hotsearch_${k}`),
           'hotsearch_collect_all',
@@ -708,7 +783,8 @@ export class McpServerManager {
         };
         this.httpServer!.once('error', onError);
         this.httpServer!.once('listening', onListening);
-        this.httpServer!.listen(port, '127.0.0.1');
+        // 默认对外监听（0.0.0.0），供任意 MCP 客户端接入；可用 MCP_HOST 收窄
+        this.httpServer!.listen(port, process.env.MCP_HOST || '0.0.0.0');
       });
 
     // 如果目标端口已被同款 MCP Server 占用，直接采用复用方案
@@ -731,8 +807,18 @@ export class McpServerManager {
       if (ok) {
         this.port = candidatePort;
         started = true;
-        console.log(`[MCP Server] 已启动，监听 http://127.0.0.1:${this.port}`);
+        const host = process.env.MCP_HOST || '0.0.0.0';
+        console.log(`[MCP Server] 已启动，监听 http://${host}:${this.port}`);
         console.log(`[MCP Server] 已注册 ${this.toolRegistry.size} 个工具`);
+        // 外部 agent 接入信息：SSE 地址 + 鉴权 token
+        const mcpToken = getMcpToken();
+        const hostForUrl = host === '0.0.0.0' ? '<本机IP>' : host;
+        console.log(`[MCP Server] ── 外部 agent 接入 ─────────────────────────`);
+        console.log(`[MCP Server] 传输: SSE   地址: http://${hostForUrl}:${this.port}/sse`);
+        console.log(`[MCP Server] 鉴权: Authorization: Bearer ${mcpToken}`);
+        console.log(`[MCP Server]      (EventSource 设不了请求头时改用 ?token=${mcpToken})`);
+        console.log(`[MCP Server] token 也已落盘: <userData>/mcp-token.txt`);
+        console.log(`[MCP Server] ────────────────────────────────────────`);
         break;
       }
     }
