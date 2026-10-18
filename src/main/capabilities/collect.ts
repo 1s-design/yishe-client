@@ -17,7 +17,7 @@ import {
   type CollectEngineRunArgs,
 } from "../collectEngine";
 import { fetchSourceCode } from "./source-bridge";
-import { getCachedSourceMetas } from "./dynamic-tool-surface";
+import { getCachedSourceMetas, syncCollectToolsFromServer } from "./dynamic-tool-surface";
 
 const runDef: CapabilityDefinition = {
   name: "run",
@@ -118,6 +118,9 @@ const discoverDef: CapabilityDefinition = {
     needsDownload?: boolean;
     limit?: number;
   }) => {
+    // 发现面直接面向 agent 决策，强制刷新一次源清单（含 modes/listParams/方式标签），
+    // 避免服务端新增能力后客户端缓存迟迟不生效
+    await syncCollectToolsFromServer(true);
     const metas = getCachedSourceMetas();
     if (!metas.length) {
       return {
@@ -165,12 +168,24 @@ const discoverDef: CapabilityDefinition = {
           supportsDownload: actions.includes("download"),
           available: meta.available !== false,
           unavailableReason: meta.available === false ? meta.unavailableReason || "站点限制" : undefined,
+          modes: (meta.modes || []).map((m: string) => ({
+            key: m,
+            label: (meta.modeLabels && meta.modeLabels[m]) || m,
+          })),
           searchParams: (meta.searchParams || []).map((p: any) => ({
             key: p.key,
             label: p.label,
             type: p.type,
             required: !!p.required,
             options: p.options || undefined,
+          })),
+          listParams: (meta.listParams || []).map((p: any) => ({
+            key: p.key,
+            label: p.label,
+            type: p.type,
+            required: !!p.required,
+            options: p.options || undefined,
+            default: p.default,
           })),
           _score: score,
         };
@@ -187,7 +202,8 @@ const discoverDef: CapabilityDefinition = {
         totalMatched: scored.length,
         hint:
           "选定 sourceId 后调用 collect_run：action=search 时把参数放在 params 对象内（如 {params:{query,page,pageSize}}）；" +
-          "action=download 时在 params.item 传 search 结果条目。query 只影响排序，试试换 module 或换源。",
+          "action=list 时不需要关键词，参数见 listParams（如 {params:{category,page}}，缺省抓首页/最新）；" +
+          "action=download 时在 params.item 传 search/list 结果条目。modes 字段标注了该源支持的采集方式（带 label）。query 只影响排序，试试换 module 或换源。",
         sources,
       },
     };
