@@ -12979,12 +12979,10 @@ function registerBuiltInLocalServices() {
       if (!sourceId) {
         throw new Error("缺少 sourceId");
       }
+      // 方法名不设白名单：action="run" 时取 payload.action，否则 action 本身就是方法 key
+      // （源自己声明 methods[].key，引擎按同名 hook 调用，未实现会由引擎报错）
       const hookAction =
-        action === "run"
-          ? String(payload.action || "search")
-          : ["search", "list", "download"].includes(action)
-            ? action
-            : "";
+        action === "run" ? String(payload.action || "search") : String(action || "");
       if (!hookAction) {
         throw new Error(`未实现的采集命令: ${action}`);
       }

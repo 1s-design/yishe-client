@@ -23,7 +23,9 @@ const runDef: CapabilityDefinition = {
   name: "run",
   namespace: "collect",
   description:
-    "执行服务端定义的采集源代码（sourceId 关联的 search/list/download 动作），在沙箱中运行并返回结构化采集结果。code 可省略：缺省时自动从服务端拉取源定义。",
+    "执行服务端定义的采集源代码（按源自己声明的 methods[].key 调用对应动作，如 search/popular/random/tag/download），在沙箱中运行并返回结构化采集结果。code 可省略：缺省时自动从服务端拉取源定义。" +
+    "重要：浏览类方法（search/popular/random 等）返回的 image/thumb/preview 只是列表缩略图/预览图，不是原图；" +
+    "要拿到可入库的高清原图，必须再调该源 write=true 的方法（如 download），并把上一步的完整条目放进 params.item。",
   riskLevel: "write",
   argsSchema: z.object({
     sourceId: z.string().describe("采集源 ID，如 4kwallpapers"),
@@ -33,9 +35,9 @@ const runDef: CapabilityDefinition = {
       .optional()
       .describe("源代码全文（可省略：缺省时自动从服务端 /collect/sources/:id/code 拉取）"),
     action: z
-      .enum(["search", "list", "download"])
+      .string()
       .default("search")
-      .describe("执行动作"),
+      .describe("方法 key，取自该源 methods[].key（如 search/popular/random/tag/download）"),
     params: z.record(z.string(), z.any()).optional().describe("动作参数（query/page/item/resolution 等）"),
     meta: z.record(z.string(), z.any()).optional().describe("源 meta（域名白名单/超时/限速）"),
     secrets: z.record(z.string(), z.string()).optional().describe("任务临时密钥"),
@@ -44,7 +46,7 @@ const runDef: CapabilityDefinition = {
     sourceId: string;
     sourceVersion?: string;
     code?: string;
-    action?: "search" | "list" | "download";
+    action?: string;
     params?: Record<string, any>;
     meta?: CollectEngineRunArgs["meta"];
     secrets?: Record<string, string>;
@@ -95,7 +97,7 @@ const discoverDef: CapabilityDefinition = {
   description:
     "检索可用采集源（工具检索入口）。query 为主题/内容词（如 壁纸、猫、新闻），" +
     "用于把相关源排前面，而不是过滤——图片类源都能搜任意内容；" +
-    "选中源后用 collect_run({sourceId, action, params}) 执行搜索或采集入库。",
+    "选中源后按它自己的 methods 调用 collect_run({sourceId, action, params})：action 取 methods[].key。",
   riskLevel: "read",
   argsSchema: z.object({
     query: z
@@ -143,12 +145,16 @@ const discoverDef: CapabilityDefinition = {
       .map((meta: any) => {
         const modules: string[] = Array.isArray(meta.module) ? meta.module : meta.module ? [meta.module] : [];
         const actions: string[] = meta.actions || ["download", "openPage"];
-        const paramLabels = (meta.searchParams || []).map((p: any) => `${p.key} ${p.label}`).join(" ");
+        const hasWriteMethod = (meta.methods || []).some((d: any) => d?.write === true);
+        const paramLabels = (meta.methods || [])
+          .flatMap((d: any) => [d.label, ...(d.params || []).map((p: any) => `${p.key} ${p.label}`)])
+          .filter(Boolean)
+          .join(" ");
         const haystack = `${meta.id} ${meta.name || ""} ${modules.join(" ")} ${paramLabels}`.toLowerCase();
 
         // 模块/能力是硬过滤
         if (moduleFilter && !modules.some((m) => m === moduleFilter || modules.includes(moduleFilter))) return null;
-        if (args?.needsDownload && !actions.includes("download")) return null;
+        if (args?.needsDownload && !actions.includes("download") && !hasWriteMethod) return null;
 
         // query 只做相关度打分（专家源靠前），不淘汰通用源：
         // 任意图库源都能搜「壁纸」等内容词
@@ -165,27 +171,24 @@ const discoverDef: CapabilityDefinition = {
           sourceId: meta.id,
           name: meta.name || meta.id,
           module: modules.join("/") || "unknown",
-          supportsDownload: actions.includes("download"),
+          supportsDownload: actions.includes("download") || hasWriteMethod,
           available: meta.available !== false,
           unavailableReason: meta.available === false ? meta.unavailableReason || "站点限制" : undefined,
-          modes: (meta.modes || []).map((m: string) => ({
-            key: m,
-            label: (meta.modeLabels && meta.modeLabels[m]) || m,
-          })),
-          searchParams: (meta.searchParams || []).map((p: any) => ({
-            key: p.key,
-            label: p.label,
-            type: p.type,
-            required: !!p.required,
-            options: p.options || undefined,
-          })),
-          listParams: (meta.listParams || []).map((p: any) => ({
-            key: p.key,
-            label: p.label,
-            type: p.type,
-            required: !!p.required,
-            options: p.options || undefined,
-            default: p.default,
+          methods: (meta.methods || []).map((d: any) => ({
+            key: d.key,
+            label: d.label,
+            description: d.description,
+            paginated: d.paginated !== false,
+            write: !!d.write,
+            requiresItem: !!d.requiresItem,
+            params: (d.params || []).map((p: any) => ({
+              key: p.key,
+              label: p.label,
+              type: p.type,
+              required: !!p.required,
+              options: p.options || undefined,
+              default: p.default,
+            })),
           })),
           _score: score,
         };
@@ -201,9 +204,11 @@ const discoverDef: CapabilityDefinition = {
         count: sources.length,
         totalMatched: scored.length,
         hint:
-          "选定 sourceId 后调用 collect_run：action=search 时把参数放在 params 对象内（如 {params:{query,page,pageSize}}）；" +
-          "action=list 时不需要关键词，参数见 listParams（如 {params:{category,page}}，缺省抓首页/最新）；" +
-          "action=download 时在 params.item 传 search/list 结果条目。modes 字段标注了该源支持的采集方式（带 label）。query 只影响排序，试试换 module 或换源。",
+          "选定 sourceId 后，从该源 methods 里挑一个方法，把 action 设成它的 key，参数放进 params（字段见该方法的 params）。" +
+          "例如 action=\"popular\" 或 action=\"search\"（params:{query,page}），缺省取第一个非 write 方法；" +
+          "write=true 的方法是落地步骤（如 download），需在 params.item 传上一步结果里的完整条目。" +
+          "浏览类方法返回的 image/thumb/preview 是列表缩略图/预览图，只有 write 方法（download）才会取高清原图并入库，所以入库必须走 write 方法。" +
+          "paginated=false 的方法不要传 page。query 只影响排序，试试换 module 或换源。",
         sources,
       },
     };

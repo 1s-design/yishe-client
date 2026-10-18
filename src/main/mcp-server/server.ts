@@ -33,6 +33,18 @@ type ToolCapability = {
 };
 
 export function zodToJsonSchema(schema: any): Record<string, any> {
+  // zod v4 快路径：v3 的 _def.typeName 在 v4 已不存在，走下面的 v3 走查会退化成
+  // { type:'object' } 且没有 properties —— 导致 agent/工具面板看不到任何参数定义。
+  if (schema && typeof schema === 'object' && (schema as any)._zod) {
+    try {
+      const { $schema: _ignored, ...json } = z.toJSONSchema(schema, {
+        io: 'input',
+      }) as Record<string, any>;
+      return json;
+    } catch {
+      /* 转换失败时回落到 v3 走查 */
+    }
+  }
   let current = schema;
   let optional = false;
   while (current?._def?.typeName === 'ZodOptional' || current?._def?.typeName === 'ZodDefault') {
@@ -64,10 +76,24 @@ export function zodToJsonSchema(schema: any): Record<string, any> {
 }
 
 function zodShapeToInputSchema(shape: Record<string, any>): Record<string, any> {
-  const properties = Object.fromEntries(
-    Object.entries(shape || {}).map(([key, value]) => [key, zodToJsonSchema(value)]),
+  const entries = Object.entries(shape || {}).filter(
+    ([, value]) => value !== undefined && value !== null,
   );
-  return { type: 'object', properties };
+  if (!entries.length) return { type: 'object', properties: {} };
+  try {
+    const { $schema: _ignored, ...json } = z.toJSONSchema(
+      z.object(Object.fromEntries(entries) as any),
+      { io: 'input' },
+    ) as Record<string, any>;
+    return json;
+  } catch {
+    return {
+      type: 'object',
+      properties: Object.fromEntries(
+        entries.map(([key, value]) => [key, zodToJsonSchema(value)]),
+      ),
+    };
+  }
 }
 
 function getZodObjectShape(schema: any): Record<string, any> {
@@ -132,10 +158,37 @@ export class McpServerManager {
     }
     names.add(definition.name);
     this.namesByServer.set(server, names);
+    // zodShape 里只要有一个 undefined，SDK 的 objectFromShape 就会抛
+    // "Cannot read properties of undefined (reading '_zod')"，
+    // 进而让整个 tools/list 失败（所有工具定义都拿不到）。这里先剔除空定义。
+    const rawShape = definition.zodShape || {};
+    const cleanShape: Record<string, any> = {};
+    const dropped: string[] = [];
+    for (const [key, value] of Object.entries(rawShape)) {
+      if (value === undefined || value === null) dropped.push(key);
+      else cleanShape[key] = value;
+    }
+    if (dropped.length) {
+      console.warn(
+        `[MCP Server] 工具 ${definition.name} 的 zodShape 含空定义，已剔除: ${dropped.join(', ')}`,
+      );
+    }
+    // 预检：嵌套层里的 undefined 同样会让 SDK 序列化时抛 _zod 错，
+    // 而 tools/list 是「一个工具炸、全部工具都拿不到定义」。这里提前探测并降级，
+    // 保证坏工具只影响自己，并把工具名打到日志里便于修。
+    let safeShape: Record<string, any> = cleanShape;
+    try {
+      z.toJSONSchema(z.object(cleanShape as any), { io: 'input' });
+    } catch (err: any) {
+      console.warn(
+        `[MCP Server] 工具 ${definition.name} 的 zodShape 无法序列化，已降级为空参数（否则整个 tools/list 会失败）: ${err?.message || err}`,
+      );
+      safeShape = {};
+    }
     server.tool(
       definition.name,
       definition.description,
-      (definition.zodShape || {}) as any,
+      safeShape as any,
       async (args) => definition.handler(args as Record<string, any>) as any,
     );
     this.toolRegistry.set(definition.name, {
