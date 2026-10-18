@@ -843,12 +843,23 @@ function normalizeFromFlatPublishData(
     typeof publishData.platformSettings[platform] === "object"
       ? publishData.platformSettings[platform]
       : {};
+  // 附加图在任务 metadata.platformOptions 里，publishData 被服务端剔除了
+  const metadataPlatformOptions =
+    row?.metadata?.platformOptions &&
+    typeof row.metadata.platformOptions === "object"
+      ? row.metadata.platformOptions
+      : {};
+  const appendImageUrls =
+    nestedPlatformOptions?.appendImageUrls ||
+    metadataPlatformOptions?.appendImageUrls ||
+    undefined;
 
   const nextPublishData = compactObject({
     ...publishData,
     platform: publishData?.platform || meta?.platform || platform,
     tags: normalizeTags(publishData?.tags),
     imageSources: normalizeStringArray(publishData?.imageSources),
+    appendImageUrls: normalizeStringArray(appendImageUrls),
     videoSource:
       typeof publishData?.videoSource === "string"
         ? publishData.videoSource.trim()

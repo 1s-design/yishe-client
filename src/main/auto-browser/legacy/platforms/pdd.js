@@ -416,29 +416,35 @@ async function fillPddProductTitle(page, title) {
     return "";
   }
 
+  // 标题输入框 placeholder：
+  // "商品标题组成：商品描述+规格，最多输入30个汉字（60个字符）"
+  const TITLE_SELECTOR = 'input[placeholder*="商品标题"]';
   const scopes = getPddSearchScopes(page);
   const errors = [];
 
   for (const scope of scopes) {
-    const input = scope
-      .locator('input[placeholder*="商品标题"], textarea[placeholder*="商品标题"]')
-      .first();
+    const input = scope.locator(TITLE_SELECTOR).first();
     try {
-      await input.waitFor({ state: "attached", timeout: 1500 });
+      await input.waitFor({ state: "visible", timeout: 5000 });
+      await input.click({ timeout: 2000 }).catch(() => {});
       await input.fill("");
       await input.fill(normalizedTitle);
-      logger.info(`${PLATFORM_NAME}商品标题已填写`, {
-        title: normalizedTitle,
-        length: normalizedTitle.length,
-      });
-      return normalizedTitle;
+      const filled = await input.inputValue().catch(() => "");
+      if (filled && filled.trim()) {
+        logger.info(`${PLATFORM_NAME}商品标题已填写`, {
+          title: filled.trim(),
+          length: filled.trim().length,
+          placeholder: await input.getAttribute("placeholder").catch(() => ""),
+        });
+        return filled.trim();
+      }
     } catch (error) {
       errors.push(error?.message || String(error));
     }
   }
 
   throw new Error(
-    `${PLATFORM_NAME}未找到商品标题输入框（placeholder 包含“商品标题”）（${errors
+    `${PLATFORM_NAME}未找到商品标题输入框（placeholder 含“商品标题”）（${errors
       .slice(-3)
       .join(" | ")}）`,
   );
@@ -849,6 +855,63 @@ function resolvePddIndexedFilePaths(filePaths, rawIndexes, label) {
   return resolved;
 }
 
+/**
+ * 拆分套图图片与附加图片。
+ * 服务端拼装顺序为 [套图图片..., 附加图片...]，附加图固定在末尾。
+ * psdImageIndexes 只应命中套图部分，附加图需追加到商品图后面。
+ */
+function splitPddSourceAndAppendPaths(filePaths, settings = {}, publishInfo = {}) {
+  const allPaths = (Array.isArray(filePaths) ? filePaths : []).filter(Boolean);
+  const appendUrls =
+    settings.appendImageUrls ||
+    publishInfo?.appendImageUrls ||
+    publishInfo?.platformOptions?.appendImageUrls ||
+    publishInfo?.publishOptions?.appendImageUrls;
+  const appendCount = Array.isArray(appendUrls) ? appendUrls.length : 0;
+  const sourceCount = Math.max(
+    0,
+    allPaths.length - Math.min(appendCount, allPaths.length),
+  );
+  return {
+    sourcePaths: allPaths.slice(0, sourceCount),
+    appendPaths: allPaths.slice(sourceCount),
+    appendCount,
+  };
+}
+
+function resolvePddCarouselAndDetailPaths(
+  preparedFilePaths,
+  settings = {},
+  publishInfo = {},
+) {
+  const { sourcePaths, appendPaths } = splitPddSourceAndAppendPaths(
+    preparedFilePaths,
+    settings,
+    publishInfo,
+  );
+
+  const defaultIndexes = Array.from(
+    { length: Math.min(MAIN_IMAGE_LIMIT, sourcePaths.length) },
+    (_, index) => index + 1,
+  );
+  const carouselFromSource = resolvePddIndexedFilePaths(
+    sourcePaths,
+    settings.psdImageIndexes || defaultIndexes,
+    "轮播图",
+  ).map((item) => item.filePath);
+
+  // 期望：psdImageIndexes 选中的套图 + 全部附加图 = 商品图
+  // 例如套图选 2 张 + 附加 3 张 = 5 张
+  const carouselPaths = [
+    ...new Set([...carouselFromSource, ...appendPaths]),
+  ].slice(0, MAIN_IMAGE_LIMIT);
+
+  // 详情图带上全部（含未挤进轮播的附加图），避免附加图丢失
+  const detailPaths = [...new Set([...carouselFromSource, ...appendPaths])];
+
+  return { sourcePaths, appendPaths, carouselPaths, detailPaths };
+}
+
 async function getPddMaterialModalScope(page) {
   const scopes = getPddSearchScopes(page);
   for (const scope of scopes) {
@@ -1184,6 +1247,7 @@ async function uploadMainImages(
   imageManager,
   targetUrl,
   settings = {},
+  publishInfo = {},
 ) {
   const targetImages = (Array.isArray(sourceImages) ? sourceImages : []).filter(
     (item) => String(item || "").trim(),
@@ -1271,16 +1335,21 @@ async function uploadMainImages(
     await page.waitForTimeout(3000);
   }
 
-  const carouselFilePaths = resolvePddIndexedFilePaths(
-    preparedImages.filePaths,
-    settings.psdImageIndexes ||
-      Array.from(
-        { length: Math.min(MAIN_IMAGE_LIMIT, preparedImages.filePaths.length) },
-        (_, index) => index + 1,
-      ),
-    "轮播图",
-  );
-  const carouselSelectedFilePaths = carouselFilePaths.map((item) => item.filePath);
+  const {
+    sourcePaths,
+    appendPaths,
+    carouselPaths: carouselSelectedFilePaths,
+    detailPaths: detailSelectedFilePaths,
+  } = resolvePddCarouselAndDetailPaths(preparedImages.filePaths, settings, publishInfo);
+
+  logger.info(`${PLATFORM_NAME}图片分区完成`, {
+    total: preparedImages.filePaths.length,
+    sourceCount: sourcePaths.length,
+    appendCount: appendPaths.length,
+    carouselCount: carouselSelectedFilePaths.length,
+    detailCount: detailSelectedFilePaths.length,
+    psdImageIndexes: settings.psdImageIndexes || null,
+  });
 
   const carouselSelectResult = await selectPddCarouselImagesFromMaterial(
     page,
@@ -1291,7 +1360,7 @@ async function uploadMainImages(
 
   const detailSelectResult = await selectPddDetailImagesFromMaterial(
     page,
-    carouselSelectedFilePaths,
+    detailSelectedFilePaths,
   );
   result.detailSelected = detailSelectResult.selected;
   result.detailConfirmClicked = detailSelectResult.confirmClicked;
@@ -1306,12 +1375,12 @@ async function uploadMainImages(
           return null;
         }
         const idx = Number(imageIndex) - 1;
-        const filePath = preparedImages.filePaths[idx];
+        const filePath = sourcePaths[idx];
         if (!filePath) {
           logger.warn(`${PLATFORM_NAME}SKU 图片序号超出范围，已跳过`, {
             skuIndex: index,
             imageIndex: Number(imageIndex),
-            fileCount: preparedImages.filePaths.length,
+            fileCount: sourcePaths.length,
           });
           return null;
         }
@@ -1320,7 +1389,7 @@ async function uploadMainImages(
       .filter(Boolean);
   } else if (settings.skuImageIndexes) {
     skuImageItems = resolvePddIndexedFilePaths(
-      preparedImages.filePaths,
+      sourcePaths,
       settings.skuImageIndexes,
       "SKU",
     );
@@ -1433,6 +1502,7 @@ export async function publishToPdd(publishInfo = {}) {
       imageManager,
       targetUrl,
       settings,
+      publishInfo,
     );
     tempFiles.push(...(mainImageUploadResult.tempFiles || []));
 
