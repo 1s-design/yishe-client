@@ -15637,12 +15637,19 @@ async function syncBoundClientAgentConfig() {
 
 // 获取客户端 Agent 配置
 async function fetchClientAgentConfig(): Promise<boolean> {
+  // ai.client-agent.execute 的默认调用规范是 openai.chat；只认该规范下的绑定，
+  // 不做跨 spec 回退（明文凭据由主进程 syncCloudAgentConfig 严格按功能绑定取）。
+  const pickSpecBinding = (binding: any) => {
+    if (!binding || typeof binding !== "object") return null;
+    if (binding?.keyId) return binding; // 兼容旧扁平结构
+    return binding["openai.chat"] || null;
+  };
+
   try {
     // 从 AI 设置获取 featureBindings（新结构：[code][specCode] = { keyId, ... }）
     const aiSetting = await getAiSetting();
     if (aiSetting?.featureBindings) {
-      const binding = aiSetting.featureBindings["ai.client-agent.execute"];
-      const item = binding?.keyId ? binding : Object.values(binding || {})[0];
+      const item = pickSpecBinding(aiSetting.featureBindings["ai.client-agent.execute"]);
       if (item?.keyId) {
         clientAgentConfig.keyId = item.keyId;
         clientAgentConfig.model = item.model || item.params?.model || "";
@@ -15655,8 +15662,7 @@ async function fetchClientAgentConfig(): Promise<boolean> {
 
     // 兼容旧的用户设置方式
     const setting = await getUserSetting();
-    const binding = setting?.featureBindings?.["ai.client-agent.execute"];
-    const item = binding?.keyId ? binding : Object.values(binding || {})[0];
+    const item = pickSpecBinding(setting?.featureBindings?.["ai.client-agent.execute"]);
     if (item?.keyId) {
       clientAgentConfig.keyId = item.keyId;
       clientAgentConfig.model = item.model || item.params?.model || "";

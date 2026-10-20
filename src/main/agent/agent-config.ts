@@ -135,6 +135,9 @@ export function saveLocalAgentConfig(
 
 /**
  * 从云端 design-server 同步 ai.client-agent.execute 场景绑定的配置
+ *
+ * 只认该功能自己绑定的 Key：统一走 /ai/runtime-config，由服务端 resolveRuntimeConfig
+ * 收敛（不接受跨功能回退、不接受跨 spec 回退、不接受硬编码模型/地址兜底）。
  */
 export async function syncCloudAgentConfig(
   serverBase: string,
@@ -147,52 +150,41 @@ export async function syncCloudAgentConfig(
 
   try {
     const apiBase = serverBase.replace(/\/+$/, "");
-    // 1. 读取当前用户的 featureBindings。usage-options 在新版服务端返回的是可用 Key 列表，
-    // 并不包含功能 code，因此不能用于定位 ai.client-agent.execute。
-    const settingRes = await requestDesignServer<any>(
-      "POST",
-      `${apiBase}/user/getAiSetting`,
-      token,
-      {},
-    );
-    const aiSetting = settingRes.data?.data || settingRes.data || {};
-    const bindings = aiSetting.featureBindings || {};
-    const clientAgentBinding = bindings["ai.client-agent.execute"] || bindings["ai.agent.execute"];
-    // 新结构：featureBindings[code][specCode] = { keyId, ... }
-    const clientAgentItem = clientAgentBinding?.keyId ? clientAgentBinding : Object.values(clientAgentBinding || {})[0];
 
-    if (!clientAgentItem?.keyId) {
-      // 用户切换或解除绑定时不能继续使用上一账号残留的 Key。
-      cachedConfig = { ...DEFAULT_CONFIG, isCustom: false };
-      return cachedConfig;
-    }
-
-    // 2. 获取具体 Key 的明细（BaseURL、ApiKey、Model）。该请求仅发生在主进程，密钥不会暴露给 Renderer。
-    const keyRes = await requestDesignServer<any>(
+    // 该请求仅发生在主进程，密钥不会暴露给 Renderer。
+    const res = await requestDesignServer<any>(
       "GET",
-      `${apiBase}/system/ai-api-key/${clientAgentItem.keyId}`,
+      `${apiBase}/ai/runtime-config?featureCode=ai.client-agent.execute`,
       token,
     );
 
-    const keyData = keyRes.data?.data || keyRes.data;
-    const apiKey = String(keyData?.apiKey || keyData?.secret || "").trim();
-    if (!keyData || !apiKey) {
+    const config = res.data?.data || res.data || {};
+    const apiKey = String(config.apiKey || "").trim();
+    const baseUrl = String(config.baseURL || config.baseUrl || "").trim();
+    const model = String(config.model || "").trim();
+    const keyId = Number(config.keyId) > 0 ? Number(config.keyId) : null;
+
+    if (!apiKey || !baseUrl || !model) {
+      // 用户未绑定、绑定的 Key 已删除/停用/过期，或 Key 未填默认模型 ——
+      // 不能继续使用上一账号残留的 Key。
       cachedConfig = { ...DEFAULT_CONFIG, isCustom: false };
-      throw new Error("已绑定客户端 Agent，但未获取到可用模型密钥");
+      throw new Error(
+        "未获取到可用的客户端 Agent 模型配置，请在「AI 使用设置」中为「客户端 Agent」绑定已启用且填写默认模型的 AI Key",
+      );
     }
 
     cachedConfig = {
       ...DEFAULT_CONFIG,
-      keyId: clientAgentItem.keyId,
-      provider: keyData.provider || "openai",
-      model: clientAgentItem.model || keyData.model || "deepseek-chat",
-      baseUrl: keyData.baseUrl || "https://api.deepseek.com/v1",
+      keyId,
+      provider: "openai",
+      model,
+      baseUrl,
       apiKey,
       enabled: true,
       isCustom: false,
     };
     console.log(
-      `[AgentConfig] 成功同步云端 Agent 配置: provider=${cachedConfig.provider}, model=${cachedConfig.model}`,
+      `[AgentConfig] 成功同步云端 Agent 配置: keyId=${keyId}, model=${cachedConfig.model}`,
     );
     return cachedConfig;
   } catch (err: any) {
