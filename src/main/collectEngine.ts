@@ -125,6 +125,41 @@ let browserChain: Promise<any> = Promise.resolve();
  * 在页面内 fetch 图片 URL 取字节，再 base64 返回。
  */
 async function downloadViaBrowser(url: string): Promise<Buffer> {
+  // ── 优先：直接连接系统真实 Chrome CDP（带所有会话与 CF cookie）──
+  try {
+    const { chromium } = await import("playwright-core");
+    for (const port of [9333, 9222]) {
+      try {
+        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+        const context = browser.contexts()[0];
+        if (context) {
+          const origin = new URL(url).origin;
+          let page = context.pages().find((p: any) => p.url().startsWith(origin));
+          let created = false;
+          if (!page) {
+            page = await context.newPage();
+            created = true;
+            await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+          }
+          const b64 = await page.evaluate(async (target: string) => {
+            const r = await fetch(target);
+            if (!r.ok) return null;
+            const buf = new Uint8Array(await r.arrayBuffer());
+            let bin = "";
+            const chunk = 0x8000;
+            for (let i = 0; i < buf.length; i += chunk) {
+              bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + chunk)) as any);
+            }
+            return btoa(bin);
+          }, url);
+          if (created) await page.close().catch(() => {});
+          await browser.close().catch(() => {});
+          if (b64) return Buffer.from(b64, "base64");
+        }
+      } catch {}
+    }
+  } catch {}
+
   const autoBrowser = await import("./auto-browser/index.js");
   const mod = autoBrowser as any;
   // 自动发现已连接的 managed profile
@@ -183,8 +218,49 @@ async function renderWithBrowser(
   } = {},
 ): Promise<{ html: string; finalUrl: string; title: string }> {
   const run = async () => {
-    // ── 优先使用系统已连接的浏览器实例（真实有头浏览器，可过 Cloudflare）──
-    // 与 svgrepo/artvee 等源同一通道：auto-browser 由用户经 browser_automation.connect 建立
+    // ── 优先：直接连接系统真实 Chrome CDP（带所有环境与 CF cookie）──
+    try {
+      const { chromium } = await import("playwright-core");
+      for (const port of [9333, 9222]) {
+        try {
+          const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+          const context = browser.contexts()[0] || (await browser.newContext());
+          const page = await context.newPage();
+          console.log(`[CollectEngine] browser.render(CDP port=${port}): ${url}`);
+          await page.goto(url, {
+            waitUntil: "domcontentloaded",
+            timeout: Math.min(options.timeoutMs || 60000, 180000),
+          });
+          // Cloudflare / 安全检查点轮询（最多 35 秒）
+          for (let i = 0; i < 35; i++) {
+            await new Promise((r) => setTimeout(r, 1000));
+            const t = (await page.title().catch(() => "")) || "";
+            if (/Security Checkpoint|Just a moment|请稍候|Cloudflare/i.test(t)) continue;
+            break;
+          }
+          if (options.waitFor) {
+            try {
+              await page.waitForSelector(options.waitFor, { timeout: 20000 });
+            } catch {
+              /* 选择器超时继续取 HTML */
+            }
+          }
+          if (options.waitMs) {
+            await new Promise((r) => setTimeout(r, Math.min(options.waitMs, 15000)));
+          }
+          const html = await page.content();
+          const finalUrl = page.url() || url;
+          const title = (await page.title().catch(() => "")) || "";
+          await page.close().catch(() => {});
+          await browser.close().catch(() => {});
+          return { html, finalUrl, title };
+        } catch (cdpErr) {
+          // CDP 连接失败或端口未开放，尝试下一个
+        }
+      }
+    } catch {}
+
+    // ── 次选：auto-browser 模块 ──
     try {
       const autoBrowser = await import("./auto-browser/index.js");
       const mod = autoBrowser as any;
@@ -362,7 +438,15 @@ function buildCtx(
           status,
           text,
           json() {
-            return JSON.parse(text);
+            if (!text || !text.trim()) {
+              throw new Error(`响应内容为空 (HTTP ${status})`);
+            }
+            try {
+              return JSON.parse(text);
+            } catch (err: any) {
+              const snippet = text.slice(0, 120).replace(/\s+/g, " ");
+              throw new Error(`JSON 解析失败 (HTTP ${status}): ${err?.message}，响应内容: ${snippet}`);
+            }
           },
         };
       },
