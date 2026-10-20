@@ -1,4 +1,4 @@
-﻿"""Photoshop 进程管理相关的工具函数。"""
+"""Photoshop 进程管理相关的工具函数。"""
 
 import os
 import sys
@@ -300,5 +300,16 @@ def create_photoshop_session(max_retries: int = 5, retry_delay: int = 2):
 
     if session is None:
         raise RuntimeError(f"无法创建 Photoshop Session: {last_error}")
+
+    # 全局关闭 Photoshop 对话框，防止「磁盘拷贝已修改，是否更新」等
+    # 模态弹窗阻塞自动化流程
+    try:
+        from photoshop.api.enumerations import DialogModes
+        session.app.displayDialogs = DialogModes.No
+    except Exception:
+        try:
+            session.app.displayDialogs = 3
+        except Exception as dialog_err:
+            print(f"⚠️ 设置 displayDialogs 失败（不阻断）: {dialog_err}")
 
     return session

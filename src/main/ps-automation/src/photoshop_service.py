@@ -106,8 +106,18 @@ def replace_layer_contents(session: Session, doc, layer, png_path: Path, export_
     place_desc.putBoolean(string_id("antiAlias"), True)
     session.app.executeAction(string_id("placeEvent"), place_desc, DialogModes.DisplayNoDialogs)
 
-    smart_doc.save()
-    smart_doc.close()
+    # 用 executeAction("save") + DisplayNoDialogs 保存智能对象
+    # 避免 smart_doc.save() 触发「磁盘拷贝已修改」模态弹窗卡住流程
+    try:
+        save_desc = ActionDescriptor()
+        session.app.executeAction(string_id("save"), save_desc, DialogModes.DisplayNoDialogs)
+        smart_doc.close()
+    except Exception as save_err:
+        print(f"⚠️ executeAction('save') 失败: {save_err}，尝试 close(SaveChanges)")
+        try:
+            smart_doc.close(2)  # 2 = SaveChanges.YES
+        except Exception as close_err:
+            print(f"⚠️ close 也失败: {close_err}")
     gc.collect()
 
 
@@ -134,6 +144,14 @@ def replace_and_export(
 
     with Session() as session:
         app = session.app
+        # 关闭 PS 模态对话框，防止磁盘文件变更后的「是否更新」弹窗卡住
+        try:
+            app.displayDialogs = DialogModes.No
+        except Exception:
+            try:
+                app.displayDialogs = 3
+            except Exception:
+                pass
         doc = app.open(str(psd_path))
 
         target_layer = pick_layer(doc, artboard_name)

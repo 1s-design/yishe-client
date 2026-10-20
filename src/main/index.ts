@@ -2063,6 +2063,16 @@ app.on("before-quit", (event) => {
         quitCleanupComplete = true;
         app.quit();
       });
+
+    // 兜底：清理 8 秒内未完成则强制退出，避免「点了退出却退不掉」
+    setTimeout(() => {
+      if (!quitCleanupComplete) {
+        console.warn("⚠️ 退出清理超时，强制退出");
+        writeMainLog("WARN", "退出清理超时，强制退出");
+        quitCleanupComplete = true;
+        app.exit(0);
+      }
+    }, 8000);
   }
 });
 

@@ -988,20 +988,29 @@ export class ExternalProcessManager {
     }
 
     for (const port of config.cleanupPorts) {
-      const pids = await this.findListeningPidsByPort(port)
-      if (!pids.length) {
-        continue
-      }
+      try {
+        const pids = await this.findListeningPidsByPort(port)
+        if (!pids.length) {
+          continue
+        }
 
-      this.writeProcessLog('WARN', '发现外部进程旧实例占用端口，准备清理', {
-        processId: config.id,
-        processName: config.name,
-        port,
-        pids
-      })
+        this.writeProcessLog('WARN', '发现外部进程旧实例占用端口，准备清理', {
+          processId: config.id,
+          processName: config.name,
+          port,
+          pids
+        })
 
-      for (const pid of pids) {
-        await this.killProcessTree(pid)
+        for (const pid of pids) {
+          await this.killProcessTree(pid)
+        }
+      } catch (err) {
+        // 端口清理失败不阻断进程启动
+        this.writeProcessLog('WARN', '清理监听端口失败（忽略并继续）', {
+          processId: config.id,
+          port,
+          error: err instanceof Error ? err.message : String(err)
+        })
       }
     }
   }
@@ -1012,10 +1021,17 @@ export class ExternalProcessManager {
     }
 
     return new Promise((resolve) => {
-      const child = spawn('netstat', ['-ano', '-p', 'TCP'], {
-        stdio: ['ignore', 'pipe', 'ignore'],
-        windowsHide: true
-      })
+      let child: ReturnType<typeof spawn>
+      try {
+        child = spawn('netstat', ['-ano', '-p', 'TCP'], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true
+        })
+      } catch {
+        // spawn 可能同步抛出（如资源耗尽 spawn UNKNOWN），不能让其冒泡导致闪退
+        resolve([])
+        return
+      }
       let output = ''
 
       child.stdout?.on('data', (data) => {
