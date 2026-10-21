@@ -122,7 +122,32 @@ export async function uploadToMaterialLibrary(
   const materialTarget = payload?.materialTarget === "collect_file" ? "collect_file" : "crawler_material";
   console.log(`[MaterialLibrary] 准备入库: localPath=${localPath}, fileName=${fileName}, category=${category}, target=${materialTarget}`);
 
-  // 1. 上传 COS
+  // 1. 客户端本地校验图片有效性并提取宽高/大小（必须在上传 COS 前执行，防止无效/错误页文件浪费云存储）
+  let fileSize = payload?.fileSize ?? 0;
+  let imgWidth = payload?.width ?? 0;
+  let imgHeight = payload?.height ?? 0;
+  const isSvgFile = /\.(svg|svgz)$/i.test(fileName) || /\.(svg|svgz)$/i.test(localPath);
+  try {
+    const stat = await fs.promises.stat(localPath);
+    if (!fileSize) fileSize = stat.size;
+    const meta = await sharp(localPath).metadata();
+    imgWidth = meta.width || 0;
+    imgHeight = meta.height || 0;
+    // 如果是 SVG 但没有声明宽高，赋予默认视口
+    if (isSvgFile && (!imgWidth || !imgHeight)) {
+      imgWidth = imgWidth || 800;
+      imgHeight = imgHeight || 800;
+    }
+  } catch (e: any) {
+    // sharp 解析失败说明文件不是有效图片（如 HTML 404/429 错误页或空文件），阻断上传及入库
+    throw new Error(`图片解析失败，拒绝上传及入库: ${e?.message || e}`);
+  }
+  if (!imgWidth || !imgHeight) {
+    throw new Error("图片解析失败（宽高为 0），拒绝上传及入库");
+  }
+  const aspectRatio = imgWidth && imgHeight ? Number((imgWidth / imgHeight).toFixed(6)) : null;
+
+  // 2. 校验通过后，上传 COS
   const cosKey = await generateCosKey({ category, filename: fileName });
   console.log(`[MaterialLibrary] 开始上传 COS: cosKey=${cosKey}`);
   const cosResult = await uploadFileToCos(localPath, cosKey);
@@ -135,7 +160,7 @@ export async function uploadToMaterialLibrary(
   }
   console.log(`[MaterialLibrary] ✅ COS 上传成功: url=${cosResult.url}, key=${cosResult.key}`);
 
-  // 2. 入库 sticker/create
+  // 3. 入库
   try {
     const { getTokenValue } = await getServerModule();
     const serverToken = getTokenValue();
@@ -145,27 +170,6 @@ export async function uploadToMaterialLibrary(
 
     const clean4ByteEmoji = (s: any) =>
       typeof s === "string" ? s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "").trim() : s;
-
-    // 客户端本地提取图片基础信息（宽/高/大小/宽高比），避免服务端二次检测浪费算力
-    let fileSize = payload?.fileSize ?? 0;
-    let imgWidth = payload?.width ?? 0;
-    let imgHeight = payload?.height ?? 0;
-    try {
-      const stat = await fs.promises.stat(localPath);
-      if (!fileSize) fileSize = stat.size;
-      if (!imgWidth || !imgHeight) {
-        const meta = await sharp(localPath).metadata();
-        imgWidth = imgWidth || meta.width || 0;
-        imgHeight = imgHeight || meta.height || 0;
-      }
-    } catch (e: any) {
-      // sharp 解析失败说明文件不是有效图片（HTML 错误页/损坏文件），拒绝入库
-      throw new Error(`图片解析失败，拒绝入库: ${e?.message || e}`);
-    }
-    if (!imgWidth || !imgHeight) {
-      throw new Error("图片解析失败（宽高为 0），拒绝入库");
-    }
-    const aspectRatio = imgWidth && imgHeight ? Number((imgWidth / imgHeight).toFixed(6)) : null;
 
     // 感知哈希本地计算（服务端不下载图片算 phash）
     const phash = await computePhashLocal(localPath, payload?.suffix || "jpg");
