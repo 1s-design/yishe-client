@@ -61,6 +61,10 @@ function buildParamSchema(paramConfig = {}) {
   if (paramConfig.enum) {
     schema.enum = [...paramConfig.enum];
   }
+  // enumLabels: [{ value, label, description }] 形式的选项元数据，给前端下拉用
+  if (paramConfig.enumLabels) {
+    schema.enumLabels = paramConfig.enumLabels.map((item) => ({ ...item }));
+  }
   if (paramConfig.minimum !== undefined) {
     schema.minimum = paramConfig.minimum;
   }

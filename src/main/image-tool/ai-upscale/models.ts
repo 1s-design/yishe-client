@@ -66,7 +66,7 @@ export const UPSCALE_MODELS: UpscaleModelDefinition[] = [
     url: 'https://huggingface.co/skillsafe-ai/realesr-animevideov3/resolve/main/model.onnx',
   },
   {
-    id: 'real-esrgan-x4plus-anime',
+    id: 'real-esrgan-x4plus-anime-6b',
     label: 'Real-ESRGAN x4plus Anime',
     description: '动漫插画 4x 超分，6B 大模型，细节最细腻，速度偏慢',
     scale: 4,

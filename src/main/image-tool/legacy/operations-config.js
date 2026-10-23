@@ -272,11 +272,31 @@ export const OPERATIONS_CONFIG = [
     category: 'basic',
     description: 'AI 智能超分辨率放大（无损放大图片，最高 4x），适合照片/动漫/插画放大',
     params: {
-      modelId: { type: 'string', description: '超分模型 ID', default: 'realesr-general-x4v3', enum: ['realesr-general-x4v3', 'real-esrgan-x4plus', 'real-esrgan-animevideov3', 'real-esrgan-x4plus-anime', 'real-esrgan-x4plus-anime-4b32f', 'real-cugan-2x', 'swin2sr-lightweight-x2', 'swin2sr-classical-x4', 'swin2sr-realworld-x4', 'swin2sr-compressed-x4'] },
+      modelId: {
+        type: 'string',
+        description: '超分模型 ID，按图片类型选：通用推荐 realesr-general-x4v3；写实照片选 real-esrgan-x4plus 或 swin2sr-realworld-x4；动漫插画选 real-esrgan-animevideov3 / real-esrgan-x4plus-anime-4b32f / real-cugan-2x；JPEG 压缩老图选 swin2sr-compressed-x4',
+        default: 'realesr-general-x4v3',
+        enum: ['realesr-general-x4v3', 'real-esrgan-x4plus', 'real-esrgan-animevideov3', 'real-esrgan-x4plus-anime-6b', 'real-esrgan-x4plus-anime-4b32f', 'real-cugan-2x', 'swin2sr-lightweight-x2', 'swin2sr-classical-x4', 'swin2sr-realworld-x4', 'swin2sr-compressed-x4'],
+        enumLabels: [
+          { value: 'realesr-general-x4v3',           label: '通用通用 x4 · 速度快',        description: '通用场景 4x，体积 4.9MB，速度最快，适合大多数照片、截图、插画' },
+          { value: 'real-esrgan-x4plus',             label: '写实照片 x4 · 细节最好',      description: '写实照片 4x 大模型，体积 64MB，细节还原最完整，速度较慢，适合高质量出图' },
+          { value: 'real-esrgan-animevideov3',       label: '动漫视频 x4 · 最轻量',        description: '动漫视频 4x，体积 2.4MB，速度最快，适合动漫截图、线稿、插画' },
+          { value: 'real-esrgan-x4plus-anime-6b',    label: '动漫插画 x4 · 6B 大模型',     description: '动漫插画 4x，6B 参数大模型，体积 17.9MB，细节最细腻，速度偏慢' },
+          { value: 'real-esrgan-x4plus-anime-4b32f', label: '动漫插画 x4 · 性价比之选',    description: '动漫插画 4x，体积 5.2MB，细节好速度可，动漫场景性价比最高' },
+          { value: 'real-cugan-2x',                  label: '二次元 2x · 快且降噪',        description: '二次元 2x，体积 5.2MB，放大一倍 + 降噪效果好，速度快' },
+          { value: 'swin2sr-lightweight-x2',         label: 'Transformer 2x · 细腻画质',   description: '轻量 Transformer 2x，体积 8.1MB，画质细腻，速度中等' },
+          { value: 'swin2sr-classical-x4',           label: 'Transformer 4x · 经典退化',   description: 'Transformer 4x，体积 55MB，经典退化模型，画质好但速度很慢' },
+          { value: 'swin2sr-realworld-x4',           label: 'Transformer 4x · 真实世界',   description: '面向真实世界照片 4x，体积 53MB，适合手机实拍照片，速度很慢' },
+          { value: 'swin2sr-compressed-x4',          label: 'Transformer 4x · 压缩修复',   description: '针对 JPEG 压缩痕迹优化的 4x，体积 55MB，适合压缩过度的老图，速度很慢' },
+        ],
+      },
       scale: { type: 'number', description: '放大倍数（由模型决定，可选 2 或 4）', optional: true, enum: [2, 4] }
     }
   }
 ];
+
+// 强制保留 OPERATIONS_CONFIG（对抗 rollup tree-shaking 对数组尾部元素的错误优化）
+if (typeof globalThis !== 'undefined') globalThis.__ai_upscale_config_present = OPERATIONS_CONFIG.length;
 
 /**
  * 生成AI prompt中操作类型的描述文本

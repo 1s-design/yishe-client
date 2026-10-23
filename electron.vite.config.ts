@@ -170,6 +170,7 @@ export default defineConfig({
       minify: false,  // 禁用压缩混淆
       sourcemap: true,  // 生成sourcemap方便调试
               rollupOptions: {
+          treeshake: false,  // 关掉 tree-shaking，防止配置数组元素被误删
           external: [
             'puppeteer-extra',
             'puppeteer-extra-plugin-stealth',

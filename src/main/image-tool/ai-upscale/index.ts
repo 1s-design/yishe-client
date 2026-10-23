@@ -46,8 +46,11 @@ export async function aiUpscale(
   const model = getUpscaleModel(modelId);
 
   if (params.scale !== undefined && params.scale !== model.scale) {
-    throw new Error(
-      `模型 ${model.label} 仅支持 ${model.scale}x 放大，无法使用 ${params.scale}x`,
+    // scale 是模型固有属性（由 ONNX 文件结构决定），不接受外部覆盖；
+    // 历史任务/表单默认值可能残留不匹配的 scale，硬抛错会让整个任务失败，
+    // 这里降级为警告并按模型自身 scale 执行，保证任务可继续。
+    console.warn(
+      `[ai-upscale] 模型 ${model.label} 仅支持 ${model.scale}x 放大，忽略传入的 scale=${params.scale}，按模型 scale 执行`,
     );
   }
 

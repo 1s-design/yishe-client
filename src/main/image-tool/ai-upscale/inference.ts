@@ -11,14 +11,17 @@
  * 不涉及模型推理细节。
  */
 import sharp from 'sharp';
+import path from 'path';
 import { env, AutoProcessor, Swin2SRForImageSuperResolution, RawImage } from '@xenova/transformers';
+import { app } from 'electron';
 import type { UpscaleModelDefinition } from './models';
 
 // 配置 transformers.js：只用本地随包模型，不走网络
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
 env.useFS = true;
-env.localModelPath = '.';
+// localModelPath 设为 app 根目录，模型路径传相对路径（transformers.js 会 pathJoin 两者）
+env.localModelPath = app.getAppPath();
 
 export interface UpscaleHooks {
   onProgress?: (progress: number, detail: { done: number; total: number }) => void;
@@ -40,9 +43,13 @@ export async function loadModel(modelDir: string): Promise<LoadedModel> {
   const cached = modelCache.get(modelDir);
   if (cached) return cached;
 
+  // transformers.js 的 from_pretrained 会把 modelPath 与 env.localModelPath 做 pathJoin
+  // 绝对路径会被破坏，所以必须转成相对于 app.getAppPath() 的相对路径
+  const relModelPath = path.relative(app.getAppPath(), modelDir);
+
   const [processor, model] = await Promise.all([
-    AutoProcessor.from_pretrained(modelDir),
-    Swin2SRForImageSuperResolution.from_pretrained(modelDir, { quantized: false }),
+    AutoProcessor.from_pretrained(relModelPath),
+    Swin2SRForImageSuperResolution.from_pretrained(relModelPath, { quantized: false }),
   ]);
 
   const loaded = { processor, model };

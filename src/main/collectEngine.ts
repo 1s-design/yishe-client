@@ -160,51 +160,121 @@ async function downloadViaBrowser(url: string): Promise<Buffer> {
     }
   } catch {}
 
-  const autoBrowser = await import("./auto-browser/index.js");
-  const mod = autoBrowser as any;
-  // 自动发现已连接的 managed profile
-  let profileId = "";
+  // ── 次选：auto-browser 模块（managed profile）──
   try {
-    const pool = await import("./auto-browser/legacy/services/ManagedProfileBrowserPool.js");
-    const status = await (pool as any).getManagedProfileBrowserStatus?.({});
-    const connected = (status?.instances || []).find((x: any) => x?.isConnected || x?.browserStatus?.isConnected);
-    if (connected?.profileId) profileId = String(connected.profileId);
-  } catch {
-    /* legacy 路径 */
-  }
-  let page = await mod.getBrowserPage?.(0, profileId ? { profileId } : {});
-  if (!page) page = await mod.createBrowserPage?.(profileId ? { profileId } : {});
-  if (!page?.goto) {
-    throw new Error(`下载失败: fetch/curl 均被拦截，且系统浏览器不可用（${url}）`);
-  }
-  // 先导航到同源页面建立 CF cookie（若已有会话则快速跳过）
-  try {
-    const origin = new URL(url).origin;
-    await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30000 });
-    // CF 挑战等待
-    for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const t = (await page.title?.().catch(() => "")) || "";
-      if (/Security Checkpoint|Just a moment|请稍候|Cloudflare/i.test(t)) continue;
-      break;
+    const autoBrowser = await import("./auto-browser/index.js");
+    const mod = autoBrowser as any;
+    // 自动发现已连接的 managed profile
+    let profileId = "";
+    try {
+      const pool = await import("./auto-browser/legacy/services/ManagedProfileBrowserPool.js");
+      const status = await (pool as any).getManagedProfileBrowserStatus?.({});
+      const connected = (status?.instances || []).find((x: any) => x?.isConnected || x?.browserStatus?.isConnected);
+      if (connected?.profileId) profileId = String(connected.profileId);
+    } catch {
+      /* legacy 路径 */
     }
-  } catch {
-    /* 同源导航失败仍尝试直接 fetch */
-  }
-  // 页面内 fetch 取字节（带 cookie），大图分块 base64
-  const b64 = await page.evaluate(async (target: string) => {
-    const r = await fetch(target);
-    if (!r.ok) return null;
-    const buf = new Uint8Array(await r.arrayBuffer());
-    let bin = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < buf.length; i += chunk) {
-      bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + chunk)) as any);
+    let page = await mod.getBrowserPage?.(0, profileId ? { profileId } : {});
+    if (!page) page = await mod.createBrowserPage?.(profileId ? { profileId } : {});
+    if (page?.goto) {
+      console.log(`[CollectEngine] browser.download(system${profileId ? ` profile=${profileId}` : ""}): ${url}`);
+      // 先导航到同源页面建立 CF cookie（若已有会话则快速跳过）
+      try {
+        const origin = new URL(url).origin;
+        await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30000 });
+        // CF 挑战等待
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const t = (await page.title?.().catch(() => "")) || "";
+          if (/Security Checkpoint|Just a moment|请稍候|Cloudflare/i.test(t)) continue;
+          break;
+        }
+      } catch {
+        /* 同源导航失败仍尝试直接 fetch */
+      }
+      // 页面内 fetch 取字节（带 cookie），大图分块 base64
+      const b64 = await page.evaluate(async (target: string) => {
+        const r = await fetch(target);
+        if (!r.ok) return null;
+        const buf = new Uint8Array(await r.arrayBuffer());
+        let bin = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < buf.length; i += chunk) {
+          bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + chunk)) as any);
+        }
+        return btoa(bin);
+      }, url);
+      if (b64) return Buffer.from(b64, "base64");
+      throw new Error(`系统浏览器 fetch 失败（可能仍被拦截）: ${url}`);
     }
-    return btoa(bin);
-  }, url);
-  if (!b64) throw new Error(`下载失败(浏览器fetch): ${url}`);
-  return Buffer.from(b64, "base64");
+  } catch (e: any) {
+    console.warn(`[CollectEngine] 系统浏览器下载不可用，降级 headless: ${e?.message || e}`);
+  }
+
+  // ── 降级：独立 headless Chromium（对齐 renderWithBrowser 的降级链）──
+  // 部分站点 CF/防盗链对 fetch/curl 直接 403，但真浏览器先访问同源建立会话后可过
+  const runHeadless = async (): Promise<Buffer> => {
+    let chromium: any;
+    let executablePath: string | undefined;
+    try {
+      ({ chromium } = await import("playwright-core"));
+      const runtime = await import("./auto-browser/legacy/utils/playwrightRuntime.js");
+      const chromeInfo = (runtime as any).getDefaultChromeExecutableInfo?.();
+      executablePath = chromeInfo?.executablePath || undefined;
+    } catch {
+      ({ chromium } = await import("playwright-core"));
+    }
+    const browser = await chromium.launch({
+      headless: true,
+      executablePath,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+      ],
+    });
+    try {
+      const origin = new URL(url).origin;
+      const context = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+        userAgent: UA,
+        // 防盗链/CF 校验 Referer，页面内 fetch 会继承 context headers
+        extraHTTPHeaders: { Referer: origin + "/" },
+      });
+      const page = await context.newPage();
+      console.log(`[CollectEngine] browser.download(headless): ${url}`);
+      try {
+        await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30000 });
+        // CF 挑战等待
+        for (let i = 0; i < 20; i++) {
+          await page.waitForTimeout(1000);
+          const t = (await page.title().catch(() => "")) || "";
+          if (/Security Checkpoint|Just a moment|请稍候|Cloudflare/i.test(t)) continue;
+          break;
+        }
+      } catch {
+        /* 同源导航失败仍尝试直接 fetch */
+      }
+      const b64 = await page.evaluate(async (target: string) => {
+        const r = await fetch(target);
+        if (!r.ok) return null;
+        const buf = new Uint8Array(await r.arrayBuffer());
+        let bin = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < buf.length; i += chunk) {
+          bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + chunk)) as any);
+        }
+        return btoa(bin);
+      }, url);
+      if (!b64) throw new Error(`headless 浏览器 fetch 失败（可能仍被拦截）: ${url}`);
+      return Buffer.from(b64, "base64");
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
+  };
+  const headlessResult = browserChain.then(runHeadless, runHeadless);
+  browserChain = headlessResult.catch(() => undefined);
+  return headlessResult;
 }
 
 async function renderWithBrowser(

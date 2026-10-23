@@ -407,7 +407,7 @@ export class McpServerManager {
       });
 
       // 注册 AI 超分 MCP 工具
-      const upscaleModelIds = ['realesr-general-x4v3', 'real-esrgan-x4plus', 'real-esrgan-animevideov3', 'real-esrgan-x4plus-anime', 'real-esrgan-x4plus-anime-4b32f', 'real-cugan-2x', 'swin2sr-lightweight-x2', 'swin2sr-classical-x4', 'swin2sr-realworld-x4', 'swin2sr-compressed-x4'];
+      const upscaleModelIds = ['realesr-general-x4v3', 'real-esrgan-x4plus', 'real-esrgan-animevideov3', 'real-esrgan-x4plus-anime-6b', 'real-esrgan-x4plus-anime-4b32f', 'real-cugan-2x', 'swin2sr-lightweight-x2', 'swin2sr-classical-x4', 'swin2sr-realworld-x4', 'swin2sr-compressed-x4'];
       const imageUpscaleShape = {
         imageUrl: z.string().describe('待放大的远程图片 URL 地址'),
         modelId: z.enum(upscaleModelIds as [string, ...string[]]).optional().describe('超分模型 ID，默认 realesr-general-x4v3（通用 4x，速度快）；动漫可选 real-esrgan-animevideov3 / real-esrgan-x4plus-anime-4b32f'),
