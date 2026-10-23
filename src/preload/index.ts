@@ -6,7 +6,7 @@
  * @FilePath: /yishe-electron/src/preload/index.ts
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 
 // Custom APIs for renderer
@@ -125,6 +125,8 @@ const api = {
   clearImageToolFiles: (payload: {
     directory?: "uploads" | "output" | "template" | "temp";
   }) => ipcRenderer.invoke("image-tool:clear-files", payload),
+  // AI 图片超分能力由主进程在图片处理链路中提供，渲染进程不直接调用
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getVideoTemplateStatus: () => ipcRenderer.invoke("video-template:get-status"),
   startVideoTemplateService: () => ipcRenderer.invoke("video-template:start"),
   stopVideoTemplateService: () => ipcRenderer.invoke("video-template:stop"),

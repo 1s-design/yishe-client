@@ -1,0 +1,10 @@
+{
+  "architectures": [
+    "Swin2SRForImageSuperResolution"
+  ],
+  "model_type": "swin2sr",
+  "upscale": 2,
+  "window_size": 8,
+  "num_channels": 3,
+  "image_size": 64
+}

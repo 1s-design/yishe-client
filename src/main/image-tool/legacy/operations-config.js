@@ -266,7 +266,16 @@ export const OPERATIONS_CONFIG = [
   { type: 'opaque', category: 'basic', description: '颜色替换（将图片中某颜色替换为新颜色）', params: { targetColor: { type: 'string', description: '要替换的颜色', required: true }, newColor: { type: 'string', description: '替换后的颜色', required: true }, fuzz: { type: 'number', description: '颜色容差（%）', default: 10, minimum: 0, maximum: 100 } } },
   { type: 'gradient', category: 'basic', description: '生成渐变背景图片', params: { width: { type: 'number', description: '宽度（像素）', default: 800, minimum: 1, maximum: 10000 }, height: { type: 'number', description: '高度（像素）', default: 800, minimum: 1, maximum: 10000 }, color1: { type: 'string', description: '起始颜色', default: '#000000' }, color2: { type: 'string', description: '结束颜色', default: '#FFFFFF' }, direction: { type: 'string', description: '方向', default: 'vertical', enum: ['horizontal', 'vertical', 'diagonal'] } } },
   { type: 'alpha', category: 'basic', description: '去除背景使其透明（适合产品图）', params: { targetColor: { type: 'string', description: '要变透明的颜色（默认白色）', default: '#FFFFFF' }, fuzz: { type: 'number', description: '颜色容差（%）', default: 15, minimum: 0, maximum: 100 } } },
-  { type: 'blend', category: 'basic', description: '图片混合（将两张图按比例融合）', params: { imageUrl2: { type: 'string', description: '第二张图片URL', required: true }, ratio: { type: 'number', description: '混合比例（0=全第一张，100=全第二张）', default: 50, minimum: 0, maximum: 100 } } }
+  { type: 'blend', category: 'basic', description: '图片混合（将两张图按比例融合）', params: { imageUrl2: { type: 'string', description: '第二张图片URL', required: true }, ratio: { type: 'number', description: '混合比例（0=全第一张，100=全第二张）', default: 50, minimum: 0, maximum: 100 } } },
+  {
+    type: 'ai_upscale',
+    category: 'basic',
+    description: 'AI 智能超分辨率放大（无损放大图片，最高 4x），适合照片/动漫/插画放大',
+    params: {
+      modelId: { type: 'string', description: '超分模型 ID', default: 'realesr-general-x4v3', enum: ['realesr-general-x4v3', 'real-esrgan-x4plus', 'real-esrgan-animevideov3', 'real-esrgan-x4plus-anime', 'real-esrgan-x4plus-anime-4b32f', 'real-cugan-2x', 'swin2sr-lightweight-x2', 'swin2sr-classical-x4', 'swin2sr-realworld-x4', 'swin2sr-compressed-x4'] },
+      scale: { type: 'number', description: '放大倍数（由模型决定，可选 2 或 4）', optional: true, enum: [2, 4] }
+    }
+  }
 ];
 
 /**

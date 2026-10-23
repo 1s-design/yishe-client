@@ -120,6 +120,7 @@ interface Window {
     clearImageToolFiles(payload: {
       directory?: "uploads" | "output" | "template" | "temp";
     }): Promise<any>;
+    getPathForFile(file: File): string;
     getVideoTemplateStatus(): Promise<any>;
     startVideoTemplateService(): Promise<any>;
     stopVideoTemplateService(): Promise<any>;

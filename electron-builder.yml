@@ -26,8 +26,11 @@ files:
   - "!resources/remotion-browser/**/*"
   - "!resources/google-art/**/*"
   - "!resources/plugin/**/*"
+  - "!resources/ai-upscale-models/**/*"
 asarUnpack:
   - resources/**
+  - node_modules/onnxruntime-node/**
+  - node_modules/onnxruntime-common/**
   - node_modules/@remotion/**
   - generated/video-template-runtime-source-v3/**
   - generated/video-template-runtime-source-v2/**
@@ -41,6 +44,10 @@ asarUnpack:
   - generated/video-template-ai-bundle-v2/**
   - generated/video-template-ai-bundle/**
 extraResources:
+  - from: resources/ai-upscale-models
+    to: resources/ai-upscale-models
+    filter:
+      - "**/*.onnx"
   - from: resources/remotion
     to: resources/remotion
     filter:

@@ -9,6 +9,7 @@ import { app } from "electron";
 
 import aiService from "./legacy/ai-service.js";
 import { applyLowpoly } from "./legacy/lowpoly.js";
+import { aiUpscale, listUpscaleModels } from "./ai-upscale/index";
 import {
   buildServiceCatalog,
   listOperationsMeta,
@@ -1202,6 +1203,16 @@ async function executeOperation(
       }
       break;
     }
+    case "ai_upscale": {
+      const upscaleOutputPath = outputPath.replace(/\.[^.]+$/, ".png");
+      await aiUpscale(currentInputPath, upscaleOutputPath, {
+        modelId: params.modelId,
+        scale: params.scale !== undefined ? parseInt(params.scale) : undefined,
+      });
+      command = `ai_upscale(model=${params.modelId || "realesr-general-x4v3"})`;
+      finalOutputPath = upscaleOutputPath;
+      break;
+    }
     default: {
       const opDef = getOperationDefinition(type);
       const isEffectOrFilter = Boolean(
@@ -1670,6 +1681,7 @@ async function getImageToolVariationsConfig() {
 
 export {
   aiService,
+  aiUpscale,
   applyLowpoly,
   beginTask,
   buildServiceCatalog,
@@ -1700,6 +1712,7 @@ export {
   imageToolState,
   isValidHttpUrl,
   listImageToolFiles,
+  listUpscaleModels,
   listExamples,
   listOperationDefinitions,
   listOperationsMeta,

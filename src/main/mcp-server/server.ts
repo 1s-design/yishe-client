@@ -406,6 +406,32 @@ export class McpServerManager {
         },
       });
 
+      // 注册 AI 超分 MCP 工具
+      const upscaleModelIds = ['realesr-general-x4v3', 'real-esrgan-x4plus', 'real-esrgan-animevideov3', 'real-esrgan-x4plus-anime', 'real-esrgan-x4plus-anime-4b32f', 'real-cugan-2x', 'swin2sr-lightweight-x2', 'swin2sr-classical-x4', 'swin2sr-realworld-x4', 'swin2sr-compressed-x4'];
+      const imageUpscaleShape = {
+        imageUrl: z.string().describe('待放大的远程图片 URL 地址'),
+        modelId: z.enum(upscaleModelIds as [string, ...string[]]).optional().describe('超分模型 ID，默认 realesr-general-x4v3（通用 4x，速度快）；动漫可选 real-esrgan-animevideov3 / real-esrgan-x4plus-anime-4b32f'),
+      };
+      this.registerTool(server, {
+        name: 'image_upscale',
+        description: 'AI 智能超分辨率放大图片（无损放大 2x/4x），适合照片、动漫、插画的高清化。基于 ONNX Runtime 本地推理，无需上传到云端。',
+        zodShape: imageUpscaleShape,
+        inputSchema: {
+          imageUrl: { type: 'string' },
+          modelId: { type: 'string', optional: true, enum: upscaleModelIds },
+        },
+        category: 'image',
+        capability: {
+          key: 'image_upscale',
+          label: 'AI 图片超分',
+          description: '使用 AI 模型无损放大图片（2x/4x）。',
+        },
+        handler: async (args) => {
+          const { executeImageUpscale } = await import('./tools/image-upscale');
+          return executeImageUpscale(args as any);
+        },
+      });
+
       // 注册 Remotion 视频渲染 MCP 工具
       const videoRenderShape = {
         templateId: z.string().optional().describe('视频模板 ID（action=render 时使用）'),
@@ -729,6 +755,7 @@ export class McpServerManager {
           'browser_invoke',
           'service_status',
           'image_process_execute',
+          'image_upscale',
           'video_render_execute',
         ],
       });

@@ -1,6 +1,6 @@
 {
   "name": "yishe-client",
-  "version": "1.2.314",
+  "version": "1.2.315",
   "description": "1s client",
   "main": "./generated/main/index.js",
   "author": "Jc",
@@ -54,6 +54,7 @@
     "@remotion/zod-types": "4.0.434",
     "@tailwindcss/postcss": "^4.1.17",
     "@vueuse/core": "^12.8.2",
+    "@xenova/transformers": "^2.17.2",
     "adm-zip": "^0.5.16",
     "ai": "^4.1.54",
     "autoprefixer": "^10.4.22",
@@ -77,6 +78,7 @@
     "lucide-react": "^0.477.0",
     "lucide-vue-next": "^0.477.0",
     "mitt": "^3.0.1",
+    "onnxruntime-node": "^1.30.0",
     "openai": "^6.34.0",
     "playwright-core": "^1.55.0",
     "postcss": "^8.5.6",
