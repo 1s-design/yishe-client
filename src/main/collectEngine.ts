@@ -10,6 +10,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { uploadFileToCos } from "./cos";
+import { sniffImageFormat } from "./imageFormat";
 
 export const COLLECT_ENGINE_VERSION = 1;
 
@@ -710,31 +711,17 @@ function buildCtx(
           }
         }
         // 校验下载内容确实是图片（magic bytes），防止 HTML 错误页/空文件混入素材库
-        {
-          // SVG：可能以 BOM/空白/XML 声明/注释（如 lucide 的 <!-- license -->）开头，
-          // 先剥离前置空白与注释，再判断是否含 <svg
-          const rawHead = buf.slice(0, 1024).toString("utf8").replace(/^﻿/, "");
-          const stripped = rawHead
-            .replace(/^\s+/, "")
-            .replace(/^(<\?xml[^>]*\?>\s*)?/, "")
-            .replace(/^(<!--[\s\S]*?-->\s*)*/, "")
-            .replace(/^\s+/, "");
-          const isSvg = stripped.toLowerCase().startsWith("<svg") || rawHead.toLowerCase().startsWith("<svg");
-          const isImage =
-            (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) || // JPEG
-            (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) || // PNG
-            (buf.length > 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) || // GIF
-            (buf.length > 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45) || // WEBP (RIFF....WEBP)
-            (buf.length > 4 && buf[0] === 0x42 && buf[1] === 0x4d) || // BMP
-            isSvg; // SVG 矢量图
-          if (!isImage) {
-            throw new Error(`下载内容不是有效图片（可能为错误页面）: ${url}`);
-          }
+        const imageFormat = sniffImageFormat(buf);
+        if (!imageFormat) {
+          throw new Error(`下载内容不是有效图片（可能为错误页面）: ${url}`);
         }
         // 文件名只保留 ASCII 安全字符，避免中文/特殊字符导致 ENOENT
         const rawName = String(options.filename || "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
-        const ext = (url.split("?")[0].split(".").pop() || "bin").slice(0, 8).replace(/[^a-z0-9]/gi, "") || "bin";
-        const safeName = rawName || `collect-${Date.now()}.${ext}`;
+        // 后缀一律以真实内容为准：URL 后缀常与实际返回格式不一致（如 .jpg 实为 PNG）
+        const ext = imageFormat;
+        // 强制把文件名后缀对齐真实格式，避免 URL 后缀污染 COS key 与素材库 suffix
+        const baseName = (rawName || `collect-${Date.now()}`).replace(/\.[a-z0-9]{1,8}$/i, "");
+        const safeName = `${baseName}.${ext}`;
         // 确保 tmp 目录存在（沙箱/清理后可能被删），文件名加随机后缀防并发碰撞
         const tmpDir = os.tmpdir();
         fs.mkdirSync(tmpDir, { recursive: true });

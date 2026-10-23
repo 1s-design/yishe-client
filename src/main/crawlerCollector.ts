@@ -9,6 +9,7 @@ import path from 'path'
 import fs from 'fs'
 import https from 'https'
 import { generateCosKey, uploadFileToCos } from './cos'
+import { sniffImageFormat } from './imageFormat'
 
 type AutoBrowserModule = typeof import('./auto-browser')
 
@@ -337,8 +338,12 @@ class CrawlerCollectorService {
             total: images.length,
           })
 
-          // 2.2 提取文件扩展名
-          const ext = this.extractExtension(image.url)
+          // 2.2 按真实内容判定格式（站点常出现 URL 后缀与实际返回内容不一致）
+          const imageFormat = sniffImageFormat(imageBuffer)
+          if (!imageFormat) {
+            throw new Error(`下载内容不是有效图片（可能为错误页面）: ${image.url}`)
+          }
+          const ext = `.${imageFormat}`
           const filename = `${config.site}_${Date.now()}_${i}${ext}`
 
           // 2.3 上传到 COS
@@ -408,7 +413,7 @@ class CrawlerCollectorService {
             name: image.alt || image.title || `${config.site} 图片`,
             description: image.description || image.alt || '',
             keywords: `${config.site},爬虫采集,${image.title || ''}`,
-            suffix: ext.replace('.', ''),
+            suffix: imageFormat,
             source: config.site,
             originUrl: image.url,
             meta: {
@@ -574,23 +579,6 @@ class CrawlerCollectorService {
     }
 
     throw new Error(`图片下载失败: ${lastErrorMessage}`)
-  }
-
-  /**
-   * 提取文件扩展名
-   */
-  private extractExtension(url: string): string {
-    try {
-      const urlObj = new URL(url)
-      const pathname = urlObj.pathname
-      let ext = path.extname(pathname).toLowerCase()
-      if (!ext || !['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-        ext = '.jpg' // 默认扩展名
-      }
-      return ext
-    } catch {
-      return '.jpg'
-    }
   }
 
   /**
