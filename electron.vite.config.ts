@@ -1,6 +1,6 @@
 import { resolve } from 'path'
 import fs from 'fs'
-import { bundle as bundleRemotion } from '@remotion/bundler'
+import { spawnSync } from 'child_process'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 
@@ -89,6 +89,82 @@ function restoreGeneratedDirectoryOwner(targetDir: string, owner: fs.Stats | nul
   }
 }
 
+/** 取目录下所有文件的最新修改时间（用于判断产物是否过期） */
+function getLatestMtimeMs(directory: string): number {
+  let latest = 0
+  const stack = [directory]
+  while (stack.length) {
+    const current = stack.pop() as string
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const entryPath = resolve(current, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(entryPath)
+      } else {
+        try {
+          const stat = fs.statSync(entryPath)
+          if (stat.mtimeMs > latest) latest = stat.mtimeMs
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  return latest
+}
+
+/** 产物存在且不早于源码，则无需重新打包 */
+function isBundleUpToDate(targetDir: string, sourceDir: string): boolean {
+  const entryHtml = resolve(targetDir, 'index.html')
+  if (!fs.existsSync(entryHtml)) {
+    return false
+  }
+  try {
+    const bundleMtime = fs.statSync(entryHtml).mtimeMs
+    return bundleMtime >= getLatestMtimeMs(sourceDir)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 在独立子进程里执行 Remotion 打包，并放大堆上限。
+ * webpack 全量打包峰值内存很高，跑在 dev 进程内会把整个 electron-vite 一起拖死；
+ * 放到子进程后，即使子进程崩溃也只丢本次产物更新。
+ */
+function buildBundleInChildProcess(entryPoint: string, outDir: string): void {
+  const scriptPath = resolve('scripts/build-video-template-bundle.mjs')
+  const result = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=4096', scriptPath, entryPoint, outDir],
+    { stdio: 'inherit' }
+  )
+  if (result.error) {
+    throw result.error
+  }
+  if (result.status !== 0) {
+    throw new Error(`bundle child process exited with code ${result.status}`)
+  }
+}
+
+/** 清理上次中断留下的 .tmp-* 暂存目录 */
+function cleanupStaleStagingDirectories(): void {
+  try {
+    for (const name of fs.readdirSync(videoTemplateBuildRoot)) {
+      if (/\.tmp-\d+-\d+$/.test(name) || /\.stale-\d+-\d+$/.test(name)) {
+        fs.rmSync(resolve(videoTemplateBuildRoot, name), { recursive: true, force: true })
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function videoTemplateAssetsPlugin() {
   const sourceDir = resolve('src/main/video-template')
 
@@ -100,6 +176,8 @@ function videoTemplateAssetsPlugin() {
       }
       fs.mkdirSync(videoTemplateBuildRoot, { recursive: true })
       const generatedOwner = getDirectoryOwner(videoTemplateBuildRoot)
+
+      cleanupStaleStagingDirectories()
 
       const sourceStagingDir = `${videoTemplateSourceTargetDir}.tmp-${Date.now()}-${process.pid}`
       prepareCleanDirectory(sourceStagingDir)
@@ -129,24 +207,27 @@ function videoTemplateAssetsPlugin() {
           continue
         }
 
+        // 产物已是最新（比 src/main/video-template 下所有文件都新）就直接复用。
+        // webpack 全量打包很吃内存，没必要每次 dev 启动都重跑。
+        if (isBundleUpToDate(targetDir, sourceDir)) {
+          console.info(`[video-template] prebuilt bundle is up to date, skip rebuild: ${targetDir}`)
+          continue
+        }
+
         const stagingDir = `${targetDir}.tmp-${Date.now()}-${process.pid}`
         prepareCleanDirectory(stagingDir)
 
         console.info(`[video-template] building prebuilt bundle: ${targetDir}`)
 
         try {
-          await bundleRemotion({
-            entryPoint,
-            outDir: stagingDir,
-            enableCaching: false,
-            onProgress(progress) {
-              if (progress === 100 || progress >= 95) {
-                console.info(`[video-template] prebuilt bundle progress: ${progress}%`)
-              }
-            }
-          })
+          buildBundleInChildProcess(entryPoint, stagingDir)
           replaceGeneratedDirectory(targetDir, stagingDir)
           restoreGeneratedDirectoryOwner(targetDir, generatedOwner)
+        } catch (error) {
+          // 构建失败不能拖垮 dev 启动：保留既有产物继续运行
+          console.warn(
+            `[video-template] prebuilt bundle failed, keep existing bundle: ${targetDir}: ${formatBuildError(error)}`
+          )
         } finally {
           if (fs.existsSync(stagingDir)) {
             fs.rmSync(stagingDir, { recursive: true, force: true })
