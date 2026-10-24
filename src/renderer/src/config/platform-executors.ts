@@ -43,14 +43,14 @@ type PlatformCapability = {
 const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
   douyin: {
     id: "douyin",
-    taskType: "publish-product-douyin",
-    label: "发布商品-抖音",
+    taskType: "publish-media-douyin",
+    label: "发布媒体-抖音",
     executionBackend: "uploader_api",
   },
   kuaishou: {
     id: "kuaishou",
-    taskType: "publish-product-kuaishou",
-    label: "发布商品-快手",
+    taskType: "publish-media-kuaishou",
+    label: "发布媒体-快手",
     executionBackend: "uploader_api",
   },
   doudian: {
@@ -85,26 +85,26 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
   },
   tiktok: {
     id: "tiktok",
-    taskType: "publish-product-tiktok",
-    label: "发布商品-TikTok",
+    taskType: "publish-media-tiktok",
+    label: "发布媒体-TikTok",
     executionBackend: "uploader_api",
   },
   youtube: {
     id: "youtube",
-    taskType: "publish-product-youtube",
-    label: "发布商品-YouTube",
+    taskType: "publish-media-youtube",
+    label: "发布媒体-YouTube",
     executionBackend: "uploader_api",
   },
   xiaohongshu: {
     id: "xiaohongshu",
-    taskType: "publish-product-xiaohongshu",
-    label: "发布商品-小红书",
+    taskType: "publish-media-xiaohongshu",
+    label: "发布媒体-小红书",
     executionBackend: "uploader_api",
   },
   weibo: {
     id: "weibo",
-    taskType: "publish-product-weibo",
-    label: "发布商品-微博",
+    taskType: "publish-media-weibo",
+    label: "发布媒体-微博",
     executionBackend: "uploader_api",
   },
   xianyu: {
@@ -1320,7 +1320,7 @@ export async function buildProcessedPublishPreview(
   row: any,
 ): Promise<PublishRequestPreviewResult> {
   const fallbackPlatform = String(row?.type || "").replace(
-    "publish-product-",
+    /^publish-(product|media)-/,
     "",
   );
   const platform =

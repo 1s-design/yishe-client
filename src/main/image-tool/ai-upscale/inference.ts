@@ -12,16 +12,45 @@
  */
 import sharp from 'sharp';
 import path from 'path';
-import { env, AutoProcessor, Swin2SRForImageSuperResolution, RawImage } from '@xenova/transformers';
 import { app } from 'electron';
 import type { UpscaleModelDefinition } from './models';
 
-// 配置 transformers.js：只用本地随包模型，不走网络
-env.allowLocalModels = true;
-env.allowRemoteModels = false;
-env.useFS = true;
-// localModelPath 设为 app 根目录，模型路径传相对路径（transformers.js 会 pathJoin 两者）
-env.localModelPath = app.getAppPath();
+type TransformersModule = typeof import('@xenova/transformers');
+
+let transformersPromise: Promise<TransformersModule> | null = null;
+
+/**
+ * 懒加载推理引擎。
+ *
+ * @xenova/transformers 体积大且含原生依赖，之前是顶层 import，
+ * 只要主进程加载到 image-tool 模块就会 require 它；一旦用户环境的
+ * node_modules 缺失/未装成功，主进程直接 MODULE_NOT_FOUND 崩溃退不出界面。
+ * 这里改为首次真正执行超分时才加载，缺失只让该功能报错，不影响启动。
+ */
+function loadTransformers(): Promise<TransformersModule> {
+  if (!transformersPromise) {
+    transformersPromise = import('@xenova/transformers')
+      .then((mod) => {
+        const transformers = ((mod as unknown as { default?: TransformersModule }).default ??
+          mod) as TransformersModule;
+        const { env } = transformers;
+        // 配置 transformers.js：只用本地随包模型，不走网络
+        env.allowLocalModels = true;
+        env.allowRemoteModels = false;
+        env.useFS = true;
+        // localModelPath 设为 app 根目录，模型路径传相对路径（transformers.js 会 pathJoin 两者）
+        env.localModelPath = app.getAppPath();
+        return transformers;
+      })
+      .catch((err) => {
+        transformersPromise = null;
+        throw new Error(
+          `AI 超分推理引擎加载失败（@xenova/transformers 缺失或安装损坏）：${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+  return transformersPromise;
+}
 
 export interface UpscaleHooks {
   onProgress?: (progress: number, detail: { done: number; total: number }) => void;
@@ -29,8 +58,8 @@ export interface UpscaleHooks {
 }
 
 interface LoadedModel {
-  processor: Awaited<ReturnType<typeof AutoProcessor.from_pretrained>>;
-  model: Awaited<ReturnType<typeof Swin2SRForImageSuperResolution.from_pretrained>>;
+  processor: any;
+  model: any;
 }
 
 const modelCache = new Map<string, LoadedModel>();
@@ -46,6 +75,8 @@ export async function loadModel(modelDir: string): Promise<LoadedModel> {
   // transformers.js 的 from_pretrained 会把 modelPath 与 env.localModelPath 做 pathJoin
   // 绝对路径会被破坏，所以必须转成相对于 app.getAppPath() 的相对路径
   const relModelPath = path.relative(app.getAppPath(), modelDir);
+
+  const { AutoProcessor, Swin2SRForImageSuperResolution } = await loadTransformers();
 
   const [processor, model] = await Promise.all([
     AutoProcessor.from_pretrained(relModelPath),
@@ -69,6 +100,7 @@ async function inferTile(
   tileH: number,
 ): Promise<{ data: Uint8Array; width: number; height: number }> {
   const { processor, model } = loaded;
+  const { RawImage } = await loadTransformers();
 
   // 构造 RawImage（HWC uint8）
   const image = new RawImage(tileRgb, tileW, tileH, 3);

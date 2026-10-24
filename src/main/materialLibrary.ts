@@ -138,6 +138,19 @@ export async function uploadToMaterialLibrary(
       imgWidth = imgWidth || 800;
       imgHeight = imgHeight || 800;
     }
+    // 后缀以真实内容为准（sharp format）：源站常见「URL 是 .jpg 实为 PNG」，
+    // 若不纠正，COS key 与库表 suffix 都会带错后缀，下游按后缀解码会失败
+    const sharpFmt = String(meta.format || "").toLowerCase();
+    const realSuffix =
+      sharpFmt === "jpeg" ? "jpg" :
+      ["png", "gif", "webp", "bmp", "avif", "tiff", "svg"].includes(sharpFmt) ? sharpFmt : "";
+    if (realSuffix) {
+      const curExt = (fileName.split(".").pop() || "").toLowerCase();
+      if (curExt !== realSuffix) {
+        fileName = `${fileName.replace(/\.[a-z0-9]{1,8}$/i, "")}.${realSuffix}`;
+      }
+      payload = { ...payload, suffix: realSuffix };
+    }
   } catch (e: any) {
     // sharp 解析失败说明文件不是有效图片（如 HTML 404/429 错误页或空文件），阻断上传及入库
     throw new Error(`图片解析失败，拒绝上传及入库: ${e?.message || e}`);

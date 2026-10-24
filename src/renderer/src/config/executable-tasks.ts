@@ -11,18 +11,20 @@ import type { PlatformTaskExecutionContext } from './platform-executors'
 
 /** 当前支持在客户端执行的任务类型（可扩展，不限于发布类） */
 export const EXECUTABLE_TASK_TYPES = [
-  'publish-product-douyin',
-  'publish-product-youtube',
+  // 商品发布（老链路：发布配置驱动）
   'publish-product-xianyu',
-  'publish-product-tiktok',
-  'publish-product-kuaishou',
   'publish-product-doudian',
   'publish-product-kuaishou_shop',
   'publish-product-temu',
   'publish-product-taobao',
   'publish-product-pdd',
-  'publish-product-xiaohongshu',
-  'publish-product-weibo',
+  // 媒体发布（Agent 直投链路）
+  'publish-media-douyin',
+  'publish-media-youtube',
+  'publish-media-tiktok',
+  'publish-media-kuaishou',
+  'publish-media-xiaohongshu',
+  'publish-media-weibo',
 ] as const
 
 export type ExecutableTaskType = (typeof EXECUTABLE_TASK_TYPES)[number]
@@ -114,16 +116,16 @@ async function executeWeiboPublish(row: any, context?: PlatformTaskExecutionCont
  * 各可执行任务类型的处理实现
  */
 const TASK_EXECUTORS: Partial<Record<ExecutableTaskType, TaskExecutor>> = {
-  'publish-product-douyin': executeDouyinPublish,
-  'publish-product-youtube': executeYoutubePublish,
   'publish-product-xianyu': executeXianyuPublish,
-  'publish-product-tiktok': executeTiktokPublish,
-  'publish-product-kuaishou': executeKuaishouPublish,
   'publish-product-doudian': executeDoudianPublish,
   'publish-product-kuaishou_shop': executeKuaishouShopPublish,
   'publish-product-temu': executeTemuPublish,
   'publish-product-taobao': executeTaobaoPublish,
   'publish-product-pdd': executePddPublish,
-  'publish-product-xiaohongshu': executeXiaohongshuPublish,
-  'publish-product-weibo': executeWeiboPublish,
+  'publish-media-douyin': executeDouyinPublish,
+  'publish-media-youtube': executeYoutubePublish,
+  'publish-media-tiktok': executeTiktokPublish,
+  'publish-media-kuaishou': executeKuaishouPublish,
+  'publish-media-xiaohongshu': executeXiaohongshuPublish,
+  'publish-media-weibo': executeWeiboPublish,
 }

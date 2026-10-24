@@ -44,10 +44,17 @@ asarUnpack:
   - generated/video-template-ai-bundle-v2/**
   - generated/video-template-ai-bundle/**
 extraResources:
+  # AI 超分模型：为控制安装包体积仅随包 2 个轻量模型（通用 + 动漫），
+  # 其余模型运行时按需联网下载（model-cache.ts ensureModel 兜底）。
+  # 注意：filter 必须包含完整模型目录（config.json / preprocessor_config.json
+  # 是 transformers.js 加载必需），不能只匹配 *.onnx。
   - from: resources/ai-upscale-models
     to: resources/ai-upscale-models
     filter:
-      - "**/*.onnx"
+      - "realesr-general-x4v3.onnx"
+      - "realesr-general-x4v3/**"
+      - "real-esrgan-x4plus-anime-4b32f.onnx"
+      - "real-esrgan-x4plus-anime-4b32f/**"
   - from: resources/remotion
     to: resources/remotion
     filter:
