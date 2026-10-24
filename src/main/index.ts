@@ -409,6 +409,61 @@ function writeMainLog(
   });
 }
 
+// ── 主进程崩溃兜底：留下证据，避免无声闪退 ─────────────────────
+// Node 15+ 的 unhandledRejection 默认直接终止进程，主进程未捕获异常也会让
+// Electron 无声退出（控制台只剩 crashpad_client_win.cc not connected）。
+// 这里统一兜底：同步写 crash 日志（不走队列，保证进程退出前已落盘），
+// 并保持进程运行——对客户端而言，单点异常继续运行比整个应用闪退更可取。
+function writeCrashLogSync(kind: string, payload: Record<string, any>): void {
+  try {
+    const baseDir = app.isPackaged ? app.getPath("userData") : process.cwd();
+    const dir = join(baseDir, "logs", "client");
+    fs.mkdirSync(dir, { recursive: true });
+    const line = JSON.stringify({
+      ts: new Date().toISOString(),
+      level: "ERROR",
+      module: "main-crash",
+      kind,
+      ...payload,
+    });
+    fs.appendFileSync(join(dir, "crash.log"), line + "\n");
+    console.error(`[main-crash] ${kind}`, payload);
+  } catch {
+    // 崩溃兜底自身绝不能再抛
+  }
+}
+
+process.on("uncaughtException", (error) => {
+  writeCrashLogSync("uncaughtException", {
+    error:
+      error instanceof Error
+        ? { message: error.message, stack: error.stack }
+        : String(error),
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  writeCrashLogSync("unhandledRejection", {
+    error:
+      reason instanceof Error
+        ? { message: reason.message, stack: reason.stack }
+        : String(reason),
+  });
+});
+
+// 渲染进程崩溃（页面白屏/闪退时此处必有记录）
+app.on("render-process-gone", (_event, webContents, details) => {
+  writeCrashLogSync("render-process-gone", {
+    webContentsId: webContents.id,
+    details,
+  });
+});
+
+// 子进程崩溃（GPU / 插件进程等，Windows 闪退常见根因）
+app.on("child-process-gone", (_event, details) => {
+  writeCrashLogSync("child-process-gone", { details });
+});
+
 function resolveBundledImageMagickDirectory(): string | null {
   const candidates = [
     join(
