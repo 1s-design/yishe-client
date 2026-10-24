@@ -183,7 +183,7 @@ import icon from "../../resources/favicon.png?asset";
 // import { publishToXiaohongshu } from './xiaohongshu'
 // import { publishToDouyin } from './douyin'
 // import { publishToKuaishou } from './kuaishou'
-import { homedir, platform } from "os";
+import { homedir, platform, freemem, totalmem } from "os";
 import { join as pathJoin } from "path";
 import fs from "fs";
 import http from "http";
@@ -463,6 +463,47 @@ app.on("render-process-gone", (_event, webContents, details) => {
 app.on("child-process-gone", (_event, details) => {
   writeCrashLogSync("child-process-gone", { details });
 });
+
+// ── 内存采样：定位 "Fatal process out of memory: Zone" ──────────────
+// Zone 是 V8 的原生临时内存池，它的 OOM 属于 malloc 失败（不是 JS 堆超限），
+// 进程会被直接 abort，任何 JS 兜底都来不及执行。因此只能靠崩溃前的采样数据
+// 判断是「编译巨型脚本」还是「整机内存被子进程吃光」。
+function writeMemorySampleSync(kind: string): void {
+  try {
+    const baseDir = app.isPackaged ? app.getPath("userData") : process.cwd();
+    const dirPath = join(baseDir, "logs", "client");
+    fs.mkdirSync(dirPath, { recursive: true });
+    const file = join(dirPath, "mem.log");
+    const mem = process.memoryUsage();
+    const line = JSON.stringify({
+      ts: new Date().toISOString(),
+      kind,
+      rssMB: Math.round(mem.rss / 1048576),
+      heapUsedMB: Math.round(mem.heapUsed / 1048576),
+      heapTotalMB: Math.round(mem.heapTotal / 1048576),
+      externalMB: Math.round(mem.external / 1048576),
+      arrayBuffersMB: Math.round(((mem as any).arrayBuffers || 0) / 1048576),
+      freeMemMB: Math.round(freemem() / 1048576),
+      totalMemMB: Math.round(totalmem() / 1048576),
+    });
+    fs.appendFileSync(file, line + "\n");
+    // 简单轮转，避免长期运行无限增长
+    try {
+      if (fs.statSync(file).size > 2 * 1024 * 1024) {
+        const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
+        fs.writeFileSync(file, lines.slice(-2000).join("\n") + "\n");
+      }
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* 采样失败不影响主流程 */
+  }
+}
+
+writeMemorySampleSync("startup");
+
+setInterval(() => writeMemorySampleSync("tick"), 15000).unref();
 
 function resolveBundledImageMagickDirectory(): string | null {
   const candidates = [

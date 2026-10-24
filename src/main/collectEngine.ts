@@ -824,6 +824,12 @@ function buildCtx(
 
 /** 在 vm 沙箱中执行源代码，取出 hooks */
 function loadSourceHooks(code: string): any {
+  // 超大脚本在 V8 编译阶段会耗尽原生 Zone 内存，直接 abort 进程（不是可捕获的 JS 异常）。
+  // 正常采集源只有几十 KB，超过阈值基本是数据异常，提前拒绝而不是让主进程闪退。
+  const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
+  if (Buffer.byteLength(code, "utf8") > MAX_SOURCE_BYTES) {
+    throw new Error(`采集源脚本过大（${Math.round(Buffer.byteLength(code, "utf8") / 1024)}KB），已拒绝编译`);
+  }
   const module = { exports: {} as any };
   const sandbox: any = {
     module,

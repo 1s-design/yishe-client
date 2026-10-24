@@ -116,6 +116,13 @@ export class DynamicCapabilityManager {
    * 将脚本字符串编译为可执行异步函数
    */
   private static compileScript(scriptContent: string): Function {
+    // 超大脚本编译会耗尽 V8 原生 Zone 内存直接 abort（不可捕获），
+    // 正常能力脚本只有几十 KB，超过阈值视为脏数据拒绝编译。
+    const MAX_SCRIPT_BYTES = 2 * 1024 * 1024;
+    const bytes = Buffer.byteLength(scriptContent, "utf8");
+    if (bytes > MAX_SCRIPT_BYTES) {
+      throw new Error(`能力脚本过大（${Math.round(bytes / 1024)}KB），已拒绝编译`);
+    }
     // 构造自包含的函数包装器
     const wrappedCode = `
       return (async function() {
