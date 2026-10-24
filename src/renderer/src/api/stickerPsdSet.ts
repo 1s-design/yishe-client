@@ -193,6 +193,9 @@ export const stickerPsdSetApi = {
     const response = await request.post({
       url: "/sticker-psd-set/claim-next",
       data,
+      // 数据库/网络抖动时服务端领取可能超过 10s；超时会导致
+      // 「服务端已分配任务 → 客户端不自知 → 下一轮释放」的死循环，放宽到 45s
+      timeout: 45000,
     });
     return unwrapApiData<ClaimNextPsdSetResponse>(response, {
       success: false,
