@@ -1,6 +1,6 @@
 import { resolve } from 'path'
 import fs from 'fs'
-import { spawnSync } from 'child_process'
+import { spawnSync, spawn } from 'child_process'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 
@@ -133,23 +133,47 @@ function isBundleUpToDate(targetDir: string, sourceDir: string): boolean {
 }
 
 /**
- * 在独立子进程里执行 Remotion 打包，并放大堆上限。
+ * 在独立子进程里执行 Remotion 打包（多个 bundle 串行），并放大堆上限。
  * webpack 全量打包峰值内存很高，跑在 dev 进程内会把整个 electron-vite 一起拖死；
  * 放到子进程后，即使子进程崩溃也只丢本次产物更新。
+ * 并行构建会让内存峰值翻倍，因此在同一子进程里顺序执行。
  */
-function buildBundleInChildProcess(entryPoint: string, outDir: string): void {
+function buildBundlesInChildProcess(pairs: Array<{ entryPoint: string; targetDir: string }>): void {
   const scriptPath = resolve('scripts/build-video-template-bundle.mjs')
-  const result = spawnSync(
-    process.execPath,
-    ['--max-old-space-size=4096', scriptPath, entryPoint, outDir],
-    { stdio: 'inherit' }
-  )
+  const args = pairs.flatMap(({ entryPoint, targetDir }) => [entryPoint, targetDir])
+  const result = spawnSync(process.execPath, ['--max-old-space-size=4096', scriptPath, ...args], {
+    stdio: 'inherit'
+  })
   if (result.error) {
     throw result.error
   }
   if (result.status !== 0) {
     throw new Error(`bundle child process exited with code ${result.status}`)
   }
+}
+
+/**
+ * dev 模式下异步触发打包：不等待、结果只写日志。
+ * dev 启动绝不能被 webpack 打包阻断——打包慢或 OOM 都不影响 Electron 拉起。
+ */
+function buildBundlesInBackground(pairs: Array<{ entryPoint: string; targetDir: string }>): void {
+  const scriptPath = resolve('scripts/build-video-template-bundle.mjs')
+  const args = pairs.flatMap(({ entryPoint, targetDir }) => [entryPoint, targetDir])
+  const child = spawn(process.execPath, ['--max-old-space-size=4096', scriptPath, ...args], {
+    stdio: 'ignore',
+    detached: true
+  })
+  child.on('error', (error) => {
+    console.warn(`[video-template] failed to spawn bundle child: ${String(error)}`)
+  })
+  child.on('exit', (code) => {
+    if (code === 0) {
+      console.info('[video-template] prebuilt bundles updated in background')
+    } else {
+      console.warn(`[video-template] prebuilt bundle child exited with code ${code}`)
+    }
+  })
+  child.unref()
 }
 
 /** 清理上次中断留下的 .tmp-* 暂存目录 */
@@ -168,71 +192,84 @@ function cleanupStaleStagingDirectories(): void {
 function videoTemplateAssetsPlugin() {
   const sourceDir = resolve('src/main/video-template')
 
+  let isDev = false
+
   return {
     name: 'build-video-template-assets',
+    configResolved(config: { command: string; mode: string }) {
+      // electron-vite dev 内部仍以 build(watch) 方式跑主进程，command 是 'build'，
+      // 不能用 command 判断；mode 才是区分 dev(development) 与打包(production) 的可靠信号。
+      isDev = config.mode !== 'production'
+    },
     async closeBundle() {
-      if (!fs.existsSync(sourceDir)) {
-        return
-      }
-      fs.mkdirSync(videoTemplateBuildRoot, { recursive: true })
-      const generatedOwner = getDirectoryOwner(videoTemplateBuildRoot)
-
-      cleanupStaleStagingDirectories()
-
-      const sourceStagingDir = `${videoTemplateSourceTargetDir}.tmp-${Date.now()}-${process.pid}`
-      prepareCleanDirectory(sourceStagingDir)
+      // 这个钩子负责产出辅助资源，任何失败都不应该阻止 dev 启动或主构建，
+      // 因此整体兜底：只记 warning，异常不外抛。
       try {
-        fs.cpSync(sourceDir, sourceStagingDir, { recursive: true })
-        replaceGeneratedDirectory(videoTemplateSourceTargetDir, sourceStagingDir)
-        restoreGeneratedDirectoryOwner(videoTemplateSourceTargetDir, generatedOwner)
-      } finally {
-        if (fs.existsSync(sourceStagingDir)) {
-          fs.rmSync(sourceStagingDir, { recursive: true, force: true })
+        if (!fs.existsSync(sourceDir)) {
+          return
         }
-      }
+        fs.mkdirSync(videoTemplateBuildRoot, { recursive: true })
+        const generatedOwner = getDirectoryOwner(videoTemplateBuildRoot)
 
-      const bundles = [
-        {
-          entryPoint: resolve('src/main/video-template/remotion/index.ts'),
-          targetDir: videoTemplateBundleTargetDir
-        },
-        {
-          entryPoint: resolve('src/main/video-template/remotion/ai-index.ts'),
-          targetDir: videoTemplateAiBundleTargetDir
-        }
-      ]
+        cleanupStaleStagingDirectories()
 
-      for (const { entryPoint, targetDir } of bundles) {
-        if (!fs.existsSync(entryPoint)) {
-          continue
-        }
-
-        // 产物已是最新（比 src/main/video-template 下所有文件都新）就直接复用。
-        // webpack 全量打包很吃内存，没必要每次 dev 启动都重跑。
-        if (isBundleUpToDate(targetDir, sourceDir)) {
-          console.info(`[video-template] prebuilt bundle is up to date, skip rebuild: ${targetDir}`)
-          continue
-        }
-
-        const stagingDir = `${targetDir}.tmp-${Date.now()}-${process.pid}`
-        prepareCleanDirectory(stagingDir)
-
-        console.info(`[video-template] building prebuilt bundle: ${targetDir}`)
-
+        const sourceStagingDir = `${videoTemplateSourceTargetDir}.tmp-${Date.now()}-${process.pid}`
+        prepareCleanDirectory(sourceStagingDir)
         try {
-          buildBundleInChildProcess(entryPoint, stagingDir)
-          replaceGeneratedDirectory(targetDir, stagingDir)
-          restoreGeneratedDirectoryOwner(targetDir, generatedOwner)
-        } catch (error) {
-          // 构建失败不能拖垮 dev 启动：保留既有产物继续运行
-          console.warn(
-            `[video-template] prebuilt bundle failed, keep existing bundle: ${targetDir}: ${formatBuildError(error)}`
-          )
+          fs.cpSync(sourceDir, sourceStagingDir, { recursive: true })
+          replaceGeneratedDirectory(videoTemplateSourceTargetDir, sourceStagingDir)
+          restoreGeneratedDirectoryOwner(videoTemplateSourceTargetDir, generatedOwner)
         } finally {
-          if (fs.existsSync(stagingDir)) {
-            fs.rmSync(stagingDir, { recursive: true, force: true })
+          if (fs.existsSync(sourceStagingDir)) {
+            fs.rmSync(sourceStagingDir, { recursive: true, force: true })
           }
         }
+
+        const bundles = [
+          {
+            entryPoint: resolve('src/main/video-template/remotion/index.ts'),
+            targetDir: videoTemplateBundleTargetDir
+          },
+          {
+            entryPoint: resolve('src/main/video-template/remotion/ai-index.ts'),
+            targetDir: videoTemplateAiBundleTargetDir
+          }
+        ]
+
+        const pending: Array<{ entryPoint: string; targetDir: string }> = []
+        for (const { entryPoint, targetDir } of bundles) {
+          if (!fs.existsSync(entryPoint)) {
+            continue
+          }
+
+          // 产物已是最新（比 src/main/video-template 下所有文件都新）就直接复用。
+          // webpack 全量打包很吃内存，没必要每次 dev 启动都重跑。
+          if (isBundleUpToDate(targetDir, sourceDir)) {
+            console.info(`[video-template] prebuilt bundle is up to date, skip rebuild: ${targetDir}`)
+            continue
+          }
+
+          console.info(`[video-template] building prebuilt bundle: ${targetDir}`)
+          pending.push({ entryPoint, targetDir })
+        }
+
+        if (pending.length === 0) {
+          return
+        }
+
+        if (isDev) {
+          // dev 下不等待：webpack 打包慢或占内存大都不阻断 Electron 启动
+          buildBundlesInBackground(pending)
+        } else {
+          try {
+            buildBundlesInChildProcess(pending)
+          } catch (error) {
+            // 构建失败保留既有产物继续，不阻断打包流程
+            console.warn(`[video-template] prebuilt bundles failed, keep existing bundle: ${formatBuildError(error)}`)
+          }
+        }
+      } catch (error) {
+        console.warn(`[video-template] asset preparation skipped: ${formatBuildError(error)}`)
       }
     }
   }
