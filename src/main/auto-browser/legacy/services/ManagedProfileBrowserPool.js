@@ -499,7 +499,7 @@ async function getChromeProcessesByUserDataDir(userDataDir) {
   const escapedNeedle = safeUserDataDir.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   try {
     const output = await execCommand(
-      `ps -ax -o pid=,command= | grep -F "${escapedNeedle}" | grep -F "chrome" | grep -v grep`,
+      `ps -ax -o pid=,command= | grep -F "${escapedNeedle}" | grep -i -F "chrome" | grep -v grep`,
       15000,
     );
     if (!output) {
@@ -601,6 +601,17 @@ function buildChromeLaunchArgs({ port, headless = false, userDataDir, windowWidt
       ? ["--headless=new"]
       : [`--window-size=${normalizedSize.width},${normalizedSize.height}`]),
   ];
+}
+
+/**
+ * 判断目标浏览器是否不支持上下文级管理（Browser.setDownloadBehavior）。
+ * 这类实例无法被 Playwright 接管，继续复用会导致打开环境后浏览器被立刻关闭，
+ * 必须重启该环境的浏览器再连接。
+ */
+function isCdpContextManagementUnsupported(error) {
+  return /Browser context management is not supported/i.test(
+    String(error?.message || ""),
+  );
 }
 
 function launchChromeWithDebugPort({
@@ -1221,6 +1232,7 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
       const connectDeadline = Date.now() + CDP_CONNECT_RETRY_TIMEOUT_MS;
       let connectAttempt = 0;
       let lastError = null;
+      let relaunchedForIncompatibleBrowser = false;
       while (!session.browserInstance && Date.now() < connectDeadline) {
         connectAttempt += 1;
         try {
@@ -1240,6 +1252,38 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
           break;
         } catch (error) {
           lastError = error;
+          if (
+            isCdpContextManagementUnsupported(error) &&
+            allowLaunch &&
+            !relaunchedForIncompatibleBrowser
+          ) {
+            relaunchedForIncompatibleBrowser = true;
+            logger.warn(
+              `环境 ${profile.id} 现有浏览器无法被接管，重启环境浏览器后重试: ${cdpEndpoint}`,
+            );
+            await killChromeProcessesByUserDataDir(profile.userDataDir).catch(
+              () => null,
+            );
+            await sleep(1200);
+            const relaunched = launchChromeWithDebugPort({
+              port: debugPort,
+              headless,
+              userDataDir: profile.userDataDir,
+              executablePath,
+              windowWidth: options.windowWidth,
+              windowHeight: options.windowHeight,
+            });
+            session.chromePid = relaunched.pid || null;
+            const relaunchReady = await waitForCdpEndpointAvailable(cdpEndpoint);
+            if (!relaunchReady.ok) {
+              throw new Error(
+                `重启环境浏览器后调试端口未就绪: ${cdpEndpoint}${
+                  relaunchReady.error ? ` (${relaunchReady.error})` : ""
+                }`,
+              );
+            }
+            continue;
+          }
           logger.info(
             `连接 Chrome CDP 失败，准备重试 (${connectAttempt}, ${Math.max(
               0,
