@@ -1,6 +1,6 @@
 {
   "name": "yishe-client",
-  "version": "1.2.316",
+  "version": "1.2.317",
   "description": "1s client",
   "main": "./generated/main/index.js",
   "author": "Jc",
