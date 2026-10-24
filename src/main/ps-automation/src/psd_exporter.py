@@ -23,6 +23,7 @@ try:
     from .utils import create_photoshop_session
     from .utils.image_utils import apply_overlays_to_image, match_overlay_for_artboard
     from .layer_finder import find_smart_object_layers
+    from .utils.memory_guard import purge_photoshop
 except ImportError:
     try:
         from src.utils.permission_utils import check_write_permission
@@ -30,6 +31,7 @@ except ImportError:
         from src.utils import create_photoshop_session
         from src.utils.image_utils import apply_overlays_to_image, match_overlay_for_artboard
         from src.layer_finder import find_smart_object_layers
+        from src.utils.memory_guard import purge_photoshop
     except ImportError:
         raise ImportError("无法导入必要的模块")
 
@@ -859,6 +861,13 @@ def replace_and_export_psd_multi(
             print(f"主文档已关闭")
         except Exception as e:
             print(f"⚠️ 警告: 关闭主文档时出错: {e}")
+
+        # 清理 PS 内部缓存（撤销历史/剪贴板/智能对象缓存），防止长期运行内存累积
+        try:
+            if purge_photoshop(app):
+                print("已清理 PS 内部缓存 (purge)")
+        except Exception as e:
+            print(f"⚠️ 警告: 清理 PS 缓存时出错: {e}")
     
     # 计算处理时间
     processing_time = time.time() - start_time

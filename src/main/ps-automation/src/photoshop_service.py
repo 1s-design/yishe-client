@@ -17,6 +17,7 @@ except ImportError:
     DialogModes = None
 
 from .utils import resize_image_in_tiles, validate_job_inputs
+from .utils.memory_guard import purge_photoshop
 
 
 def _safe_temp_stem(value: str, fallback: str = "image", max_length: int = 90) -> str:
@@ -118,6 +119,12 @@ def replace_layer_contents(session: Session, doc, layer, png_path: Path, export_
             smart_doc.close(2)  # 2 = SaveChanges.YES
         except Exception as close_err:
             print(f"⚠️ close 也失败: {close_err}")
+
+    # 清理 PS 内部缓存（撤销历史/剪贴板/智能对象缓存），防止长期运行内存累积
+    try:
+        purge_photoshop(session.app)
+    except Exception as purge_err:
+        print(f"⚠️ 清理 PS 缓存失败: {purge_err}")
     gc.collect()
 
 
@@ -142,6 +149,8 @@ def replace_and_export(
     """
     validate_job_inputs(png_path, psd_path, export_dir)
 
+    export_path = export_dir / f"{png_path.stem}_export.png"
+
     with Session() as session:
         app = session.app
         # 关闭 PS 模态对话框，防止磁盘文件变更后的「是否更新」弹窗卡住
@@ -154,13 +163,22 @@ def replace_and_export(
                 pass
         doc = app.open(str(psd_path))
 
-        target_layer = pick_layer(doc, artboard_name)
-        replace_layer_contents(session, doc, target_layer, png_path, export_dir, tile_size)
+        try:
+            target_layer = pick_layer(doc, artboard_name)
+            replace_layer_contents(session, doc, target_layer, png_path, export_dir, tile_size)
 
-        export_path = export_dir / f"{png_path.stem}_export.png"
-        options = session.ExportOptionsSaveForWeb()
-        doc.exportDocument(str(export_path), exportAs=session.ExportType.SaveForWeb, options=options)
-        doc.close()
+            options = session.ExportOptionsSaveForWeb()
+            doc.exportDocument(str(export_path), exportAs=session.ExportType.SaveForWeb, options=options)
+        finally:
+            # 无论成功失败都关闭文档并清理缓存，避免异常路径下文档滞留导致内存累积
+            try:
+                doc.close()
+            except Exception as close_err:
+                print(f"⚠️ 关闭主文档失败: {close_err}")
+            try:
+                purge_photoshop(app)
+            except Exception as purge_err:
+                print(f"⚠️ 清理 PS 缓存失败: {purge_err}")
 
     gc.collect()
     return export_path

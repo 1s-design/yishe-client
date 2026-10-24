@@ -249,6 +249,39 @@ app.add_middleware(
     expose_headers=["*"],  # 暴露所有响应头
 )
 
+# ---- 任务忙闲追踪：处理类请求进行中时看门狗推迟重启 PS ----
+import sys as _sys_mg
+
+_mg_mod = None
+for _mg_key in ("src.utils.memory_guard", "utils.memory_guard", "memory_guard"):
+    if _mg_key in _sys_mg.modules:
+        _mg_mod = _sys_mg.modules[_mg_key]
+        break
+if _mg_mod is None:
+    try:
+        from .utils import memory_guard as _mg_mod
+    except ImportError:
+        import importlib.util as _il_mg
+        _mg_file = Path(__file__).parent / "utils" / "memory_guard.py"
+        _spec_mg = _il_mg.spec_from_file_location("memory_guard", _mg_file)
+        _mg_mod = _il_mg.module_from_spec(_spec_mg)
+        _sys_mg.modules["memory_guard"] = _mg_mod
+        _spec_mg.loader.exec_module(_mg_mod)
+
+# 耗时的处理类端点（这些请求执行期间 PS 正在干活，重启会打断任务）
+_PROCESSING_PATHS = {"/processPsd", "/analyzePsd", "/analyzePsdRuntime"}
+
+
+@app.middleware("http")
+async def track_processing_jobs(request: Request, call_next):
+    if request.url.path in _PROCESSING_PATHS:
+        _mg_mod.job_begin()
+        try:
+            return await call_next(request)
+        finally:
+            _mg_mod.job_end()
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def allow_private_network_access(request: Request, call_next):
@@ -2386,6 +2419,33 @@ async def analyze_psd_runtime_file(request: PSDAnalysisRequest):
                 "traceback": traceback.format_exc()
             }
         )
+
+
+# ------------------------- 内存看门狗 -------------------------
+
+try:
+    from .utils.memory_guard import start_memory_watchdog, get_memory_watchdog
+except ImportError:
+    # 复用上方中间件已加载的模块实例，保证任务忙闲计数与看门狗共享
+    start_memory_watchdog = _mg_mod.start_memory_watchdog
+    get_memory_watchdog = _mg_mod.get_memory_watchdog
+
+
+@app.on_event("startup")
+async def _start_ps_memory_watchdog():
+    """服务启动时开启 Photoshop 内存看门狗。"""
+    start_memory_watchdog()
+
+
+@app.get("/memoryStatus", summary="查询 Photoshop 与系统提交内存状态")
+async def memory_status():
+    """返回 Photoshop 进程提交内存、系统提交内存及看门狗运行状态。"""
+    wd = get_memory_watchdog()
+    return {
+        "success": True,
+        "watchdog": wd.snapshot() if wd else {"enabled": False},
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 # 注意：启动服务的入口文件已移动到项目根目录的 start_api_server.py

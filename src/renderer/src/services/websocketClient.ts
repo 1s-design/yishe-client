@@ -1108,6 +1108,59 @@ function persistBrowserAutomationAutoDispatchEnabled(enabled: boolean) {
   }
 }
 
+// ---- PS / 系统内存快照（数据来自本地 PS 自动化端 /memoryStatus，供 admin 监控） ----
+export const psMemorySnapshot = reactive({
+  available: null as boolean | null,
+  psCommitGb: null as number | null,
+  systemCommit: null as {
+    used_gb?: number;
+    limit_gb?: number;
+    free_gb?: number;
+    pct?: number;
+  } | null,
+  watchdogEnabled: null as boolean | null,
+  fetchedAt: null as string | null,
+});
+
+let psMemoryRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+export function refreshPsMemorySnapshot() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+  fetch("http://localhost:1595/memoryStatus", { signal: controller.signal })
+    .then((res) =>
+      res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)),
+    )
+    .then((data) => {
+      const watchdog = data?.watchdog || {};
+      psMemorySnapshot.available = true;
+      psMemorySnapshot.psCommitGb =
+        typeof watchdog.photoshop_commit_gb === "number"
+          ? watchdog.photoshop_commit_gb
+          : null;
+      psMemorySnapshot.systemCommit = watchdog.system_commit || null;
+      psMemorySnapshot.watchdogEnabled = !!watchdog.enabled;
+      psMemorySnapshot.fetchedAt = new Date().toISOString();
+    })
+    .catch(() => {
+      // 自动化端离线：标记 unavailable，心跳照常上报，便于 admin 区分「客户端在线但 PS 自动化端未运行」
+      psMemorySnapshot.available = false;
+      psMemorySnapshot.psCommitGb = null;
+      psMemorySnapshot.systemCommit = null;
+      psMemorySnapshot.watchdogEnabled = null;
+      psMemorySnapshot.fetchedAt = new Date().toISOString();
+    })
+    .finally(() => clearTimeout(timeoutId));
+}
+
+function startPsMemoryRefreshLoop() {
+  if (psMemoryRefreshTimer) return;
+  setTimeout(refreshPsMemorySnapshot, 3000);
+  psMemoryRefreshTimer = setInterval(refreshPsMemorySnapshot, 30_000);
+}
+
+startPsMemoryRefreshLoop();
+
 function buildPsAutomationSnapshot() {
   return {
     ...(psAutomationControlState.enabled === null
@@ -1127,6 +1180,13 @@ function buildPsAutomationSnapshot() {
     lastError: autoPsdBatchState.lastError,
     lastHeartbeatAt: autoPsdBatchState.lastHeartbeatAt,
     updatedAt: autoPsdBatchState.updatedAt,
+    memory: {
+      available: psMemorySnapshot.available,
+      psCommitGb: psMemorySnapshot.psCommitGb,
+      systemCommit: psMemorySnapshot.systemCommit,
+      watchdogEnabled: psMemorySnapshot.watchdogEnabled,
+      capturedAt: psMemorySnapshot.fetchedAt,
+    },
   };
 }
 
