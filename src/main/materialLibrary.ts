@@ -130,7 +130,9 @@ export async function uploadToMaterialLibrary(
   try {
     const stat = await fs.promises.stat(localPath);
     if (!fileSize) fileSize = stat.size;
-    const meta = await sharp(localPath).metadata();
+    // SVG 是矢量，72dpi 渲染出来的像素宽高偏小（如 545×254），会让下游分辨率审核误判；
+    // 按 300dpi 计算等效像素尺寸，与 computePhashLocal 的 SVG 渲染密度保持一致
+    const meta = await sharp(localPath, isSvgFile ? { density: 300 } : undefined).metadata();
     imgWidth = meta.width || 0;
     imgHeight = meta.height || 0;
     // 如果是 SVG 但没有声明宽高，赋予默认视口

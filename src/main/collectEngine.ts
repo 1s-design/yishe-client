@@ -653,6 +653,10 @@ function buildCtx(
           /** 入库目标：crawler_material（默认）| collect_file（媒体采集→采集文件） */
           materialTarget?: string;
           title?: string;
+          /** 图文说明：源抓到的作品介绍文案，写入素材库 description 字段 */
+          description?: string;
+          /** 关键词（逗号分隔）：写入素材库 keywords 字段 */
+          keywords?: string;
           source?: string;
           originUrl?: string;
           meta?: Record<string, unknown>;
@@ -782,6 +786,20 @@ function buildCtx(
                 category: "uncategorized",
                 source: options.source || args.sourceId,
                 originUrl,
+                // 图文说明/关键词：优先调用方显式传入，其次复用 item 里源抓到的文本
+                description: String(
+                  options.description ??
+                    itemParams.description ??
+                    itemParams.desc ??
+                    itemParams.summary ??
+                    "",
+                ).slice(0, 990),
+                keywords: String(
+                  options.keywords ??
+                    (Array.isArray(itemParams.keywords)
+                      ? itemParams.keywords.join(",")
+                      : itemParams.keywords ?? ""),
+                ).slice(0, 990),
                 meta,
                 materialTarget,
               } as any);

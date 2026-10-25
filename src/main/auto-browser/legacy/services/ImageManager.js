@@ -3,7 +3,8 @@
  */
 
 import { join as pathJoin, extname } from 'path';
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, copyFileSync, statSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { logger } from '../utils/logger.js';
 import { getAutoBrowserTempDir } from '../utils/workspacePaths.js';
 
@@ -34,11 +35,57 @@ export class ImageManager {
     }
 
     /**
-     * 下载图片到临时目录
+     * 解析本地资源路径，支持普通路径与 file:// URL。
+     * 远程 URL 或文件不存在时返回空字符串。
+     */
+    resolveLocalImagePath(source) {
+        const raw = String(source || '').trim();
+        if (!raw || /^https?:\/\//i.test(raw)) {
+            return '';
+        }
+        let candidate = raw;
+        if (raw.startsWith('file://')) {
+            try {
+                candidate = fileURLToPath(raw);
+            } catch {
+                return '';
+            }
+        }
+        try {
+            return existsSync(candidate) && statSync(candidate).isFile() ? candidate : '';
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * 下载图片到临时目录（远程 URL 走网络下载，本地资源复制一份）。
+     * 本地资源必须复制而不是直接复用：调用方上传后会删除临时文件，
+     * 直接复用会导致发布缓存素材被误删。
      */
     async downloadImage(imageUrl, filename) {
         try {
-            const response = await fetch(imageUrl);
+            const rawSource = String(imageUrl || '').trim();
+            const safeName = this.sanitizeFilename(filename || Date.now());
+
+            const localImagePath = this.resolveLocalImagePath(rawSource);
+            if (localImagePath) {
+                const extension = extname(localImagePath).replace('.', '').toLowerCase() || 'jpg';
+                const tempPath = pathJoin(this.tempDir, `${safeName}.${extension}`);
+                copyFileSync(localImagePath, tempPath);
+                logger.debug('本地图片已复制到临时目录:', tempPath);
+                return tempPath;
+            }
+
+            if (
+                rawSource.startsWith('file://') ||
+                rawSource.startsWith('/') ||
+                /^[a-zA-Z]:[\\/]/.test(rawSource)
+            ) {
+                throw new Error(`图片文件不存在: ${rawSource}`);
+            }
+
+            const response = await fetch(rawSource);
             
             if (!response.ok) {
                 throw new Error(`下载图片失败: ${response.statusText}`);
@@ -47,10 +94,8 @@ export class ImageManager {
             const buffer = await response.arrayBuffer();
 
             // 提取扩展名：优先从 pathname 获取，其次从 content-type 推断，最后默认 jpg
-            let extension = this.getImageExtension(imageUrl, response);
+            const extension = this.getImageExtension(rawSource, response);
             
-            // 规范化文件名，避免包含非法字符或路径片段
-            const safeName = this.sanitizeFilename(filename || Date.now());
             const tempPath = pathJoin(this.tempDir, `${safeName}.${extension}`);
             
             writeFileSync(tempPath, Buffer.from(buffer));
