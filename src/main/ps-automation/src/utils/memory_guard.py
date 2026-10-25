@@ -174,6 +174,22 @@ def purge_photoshop(app=None) -> bool:
 # ------------------------- 看门狗 -------------------------
 
 
+def _wlog(message: str) -> None:
+    """看门狗专用文件日志：进程被杀后也能事后追查决策过程。"""
+    import os as _os
+    from datetime import datetime as _dt
+    from pathlib import Path as _Path
+
+    try:
+        log_dir = _Path(__file__).resolve().parent.parent / "logs"
+        log_dir.mkdir(exist_ok=True)
+        with open(log_dir / "watchdog.log", "a", encoding="utf-8") as f:
+            f.write(f"{_dt.now().strftime('%F %T')} {message}\n")
+    except Exception:
+        pass
+    print(message)
+
+
 def clear_photoshop_autorecovery() -> int:
     """清理 Photoshop 自动恢复（会话恢复）缓存目录。
 
@@ -200,11 +216,11 @@ def clear_photoshop_autorecovery() -> int:
                 try:
                     shutil.rmtree(child, ignore_errors=True)
                     cleaned += 1
-                    print(f"[内存看门狗] 已清理 PS 自动恢复缓存: {child.name}")
+                    _wlog(f"[内存看门狗] 已清理 PS 自动恢复缓存: {child.name}")
                 except Exception as e:
-                    print(f"[内存看门狗] 清理 {child.name} 失败: {e}")
+                    _wlog(f"[内存看门狗] 清理 {child.name} 失败: {e}")
     except Exception as e:
-        print(f"[内存看门狗] 清理自动恢复缓存异常: {e}")
+        _wlog(f"[内存看门狗] 清理自动恢复缓存异常: {e}")
     return cleaned
 
 
@@ -221,7 +237,7 @@ def _restart_photoshop_with_cleanup(timeout: int = 120) -> bool:
     )
 
     if is_photoshop_running():
-        print("[内存看门狗] 正在关闭 Photoshop...")
+        _wlog("[内存看门狗] 正在关闭 Photoshop...")
         close_photoshop_process(force=False)
         for _ in range(15):
             time.sleep(1)
@@ -229,14 +245,14 @@ def _restart_photoshop_with_cleanup(timeout: int = 120) -> bool:
                 break
         # 兜底强杀
         if is_photoshop_running():
-            print("[内存看门狗] PS 未正常退出，强制结束")
+            _wlog("[内存看门狗] PS 未正常退出，强制结束")
             close_photoshop_process(force=True)
             time.sleep(3)
 
     # PS 已完全退出，安全清理会话恢复缓存
     clear_photoshop_autorecovery()
 
-    print("[内存看门狗] 正在启动 Photoshop...")
+    _wlog("[内存看门狗] 正在启动 Photoshop...")
     return start_photoshop(timeout)
 
 
@@ -300,7 +316,7 @@ class MemoryWatchdog:
             try:
                 self._check_once()
             except Exception as e:
-                print(f"[内存看门狗] 检查异常（忽略并继续）: {e}")
+                _wlog(f"[内存看门狗] 检查异常（忽略并继续）: {e}")
             # 推迟重启期间用短间隔轮询，尽快抓住空闲窗口
             self._stop_event.wait(
                 self.defer_interval if self._defer_since else self.interval
@@ -311,7 +327,7 @@ class MemoryWatchdog:
         sys_commit = get_system_commit()
 
         if ps_gb is not None:
-            print(f"[内存看门狗] Photoshop 提交内存: {ps_gb} GB")
+            _wlog(f"[内存看门狗] Photoshop 提交内存: {ps_gb} GB")
         if sys_commit:
             print(
                 f"[内存看门狗] 系统提交内存: {sys_commit['used_gb']}/"
@@ -371,13 +387,13 @@ class MemoryWatchdog:
             f"系统提交内存临界({sys_commit['pct']}%)" if critical
             else f"PS 提交内存 {ps_gb}GB 超阈值"
         )
-        print(f"[内存看门狗] 🔄 {reason}，自动重启 Photoshop...")
+        _wlog(f"[内存看门狗] 🔄 {reason}，自动重启 Photoshop...")
         try:
             ok = _restart_photoshop_with_cleanup(timeout=120)
             status = "成功" if ok else "失败"
-            print(f"[内存看门狗] 自动重启 Photoshop {status}")
+            _wlog(f"[内存看门狗] 自动重启 Photoshop {status}")
         except Exception as e:
-            print(f"[内存看门狗] 自动重启 Photoshop 异常: {e}")
+            _wlog(f"[内存看门狗] 自动重启 Photoshop 异常: {e}")
 
     # ---- 启停 ----
     def start(self) -> bool:
