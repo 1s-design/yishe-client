@@ -3200,6 +3200,10 @@ async function getRemotionRuntime() {
         details: {
           templates,
           health: healthPayload,
+          engines: healthPayload?.engines || {
+            remotion: { available: true },
+            hyperframes: { available: false },
+          },
           processStatus: "stopped",
           serviceHealthy: false,
           warmed: false,
@@ -3296,9 +3300,14 @@ async function getRemotionRuntime() {
         "enqueueRender",
       ],
       details: {
-        templates,
-        health: healthPayload,
-        processStatus: "embedded",
+          templates,
+          health: healthPayload,
+          // 渲染引擎能力：服务端据此把 hyperframes 任务只派给支持的客户端
+          engines: healthPayload?.engines || {
+            remotion: { available: true },
+            hyperframes: { available: false },
+          },
+          processStatus: "embedded",
         serviceHealthy: true,
         heartbeatLatencyMs,
         lastHeartbeatAt: checkedAt,
@@ -3613,6 +3622,10 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
       body: JSON.stringify({
         templateId,
         inputProps: command.payload?.inputProps || {},
+        ...(command.payload?.engine
+          ? { engine: command.payload.engine }
+          : {}),
+        ...(command.payload?.html ? { html: command.payload.html } : {}),
       }),
     }).then((result) =>
       ensureRemotionResponseOk(result, "本地 Video Template 创建渲染任务失败"),

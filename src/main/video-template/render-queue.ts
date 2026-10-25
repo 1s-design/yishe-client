@@ -13,6 +13,8 @@ export interface VideoTemplateJobData {
   templateId: string;
   compositionId: string;
   inputProps: Record<string, unknown>;
+  /** 渲染引擎：remotion（默认）或 hyperframes（HTML 合成直渲） */
+  engine?: "remotion" | "hyperframes";
 }
 
 export type VideoTemplateServeUrlResolver = (
@@ -266,12 +268,14 @@ export function makeRenderQueue({
   browserExecutable,
   binariesDirectory,
   chromeMode,
+  hyperframesWorkDir,
 }: {
   resolveServeUrl: VideoTemplateServeUrlResolver;
   rendersDir: string;
   browserExecutable: string | null;
   binariesDirectory: string | null;
   chromeMode: RemotionChromeMode;
+  hyperframesWorkDir?: string;
 }) {
   const jobs = new Map<string, VideoTemplateJobState>();
   let queue: Promise<unknown> = Promise.resolve();
@@ -349,6 +353,151 @@ export function makeRenderQueue({
       const level = log.type === "error" ? "error" : log.type === "warning" ? "warn" : "info";
       appendRuntimeLog(level, "browser", message);
     };
+
+    // ── HyperFrames 引擎分支：HTML 合成直渲，不走 Remotion bundle ──
+    if (job.data.engine === "hyperframes") {
+      const abortController = new AbortController();
+      const cancelHyperframes = () => abortController.abort();
+      const outputLocation = path.join(rendersDir, `${jobId}.mp4`);
+
+      setJob(
+        {
+          progress: 0,
+          status: "in-progress",
+          cancel: cancelHyperframes,
+          data: job.data,
+          createdAt: job.createdAt,
+          startedAt,
+          updatedAt: startedAt,
+        },
+        {
+          stage: "prepare",
+          message: "正在准备 HyperFrames 项目",
+          timeoutMs,
+          logLevel: "info",
+          logMessage: `任务进入渲染队列（HyperFrames 引擎），超时阈值 ${timeoutMs}ms`,
+        },
+      );
+
+      try {
+        if (!hyperframesWorkDir) {
+          throw new Error("HyperFrames 工作目录未配置");
+        }
+        const html = String(job.data.inputProps?.html || "").trim();
+        if (!html) {
+          throw new Error("HyperFrames 渲染缺少 HTML 合成内容（inputProps.html）");
+        }
+        const { renderHyperframesJob } = await import("./hyperframes-renderer");
+        await renderHyperframesJob({
+          jobId,
+          html,
+          variables:
+            job.data.inputProps?.variables &&
+            typeof job.data.inputProps.variables === "object" &&
+            !Array.isArray(job.data.inputProps.variables)
+              ? (job.data.inputProps.variables as Record<string, unknown>)
+              : undefined,
+          fps: Number(job.data.inputProps?.fps) || 30,
+          quality:
+            job.data.inputProps?.quality === "draft" ||
+            job.data.inputProps?.quality === "high"
+              ? job.data.inputProps.quality
+              : "standard",
+          outputLocation,
+          workDir: hyperframesWorkDir,
+          browserExecutable,
+          binariesDirectory,
+          abortSignal: abortController.signal,
+          onProgress: (info) => {
+            const updatedAt = Date.now();
+            const normalizedProgress = clampProgress(info.progress);
+            const progressBucket = Math.floor(
+              (normalizedProgress * 100) / progressLogStep,
+            );
+            const shouldLogProgress =
+              info.stage !== lastLoggedStage ||
+              progressBucket > lastLoggedProgressBucket ||
+              updatedAt - lastLoggedAt >= progressLogIntervalMs;
+            if (shouldLogProgress) {
+              lastLoggedStage = info.stage;
+              lastLoggedProgressBucket = progressBucket;
+              lastLoggedAt = updatedAt;
+            }
+            setJob(
+              {
+                progress: normalizedProgress,
+                status: "in-progress",
+                cancel: cancelHyperframes,
+                data: job.data,
+                createdAt: job.createdAt,
+                startedAt,
+                updatedAt,
+              },
+              {
+                stage: info.stage,
+                message: info.message,
+                progressDetails: {
+                  renderedFrames: info.framesRendered ?? 0,
+                  encodedFrames: 0,
+                  stitchStage: info.stage === "muxing" ? "muxing" : "encoding",
+                  renderEstimatedTime: 0,
+                  renderedDoneIn: null,
+                  encodedDoneIn: null,
+                },
+                timeoutMs,
+                logLevel: "info",
+                logMessage: shouldLogProgress
+                  ? `${info.message}，总进度 ${Math.round(normalizedProgress * 100)}%`
+                  : null,
+              },
+            );
+          },
+          onLog: appendRuntimeLog,
+        });
+
+        const completedAt = Date.now();
+        setJob(
+          {
+            status: "completed",
+            videoUrl: outputLocation,
+            localPath: outputLocation,
+            data: job.data,
+            createdAt: job.createdAt,
+            startedAt,
+            completedAt,
+            updatedAt: completedAt,
+          },
+          {
+            stage: "completed",
+            message: "视频渲染完成（HyperFrames）",
+            timeoutMs,
+            logLevel: "info",
+            logMessage: `视频渲染完成（HyperFrames），输出文件 ${outputLocation}`,
+          },
+        );
+      } catch (error) {
+        const completedAt = Date.now();
+        setJob(
+          {
+            status: "failed",
+            error: error as Error,
+            data: job.data,
+            createdAt: job.createdAt,
+            startedAt,
+            completedAt,
+            updatedAt: completedAt,
+          },
+          {
+            stage: "failed",
+            message: formatErrorMessage(error),
+            timeoutMs,
+            logLevel: "error",
+            logMessage: `HyperFrames 渲染失败：${formatErrorMessage(error)}`,
+          },
+        );
+      }
+      return;
+    }
 
     setJob(
       {
@@ -451,10 +600,15 @@ async function probeUrl(url: string, mode: "HEAD" | "RANGE"): Promise<Response |
 
 async function isUrlReachable(url: string): Promise<boolean> {
   const head = await probeUrl(url, "HEAD");
-  if (head && head.ok) return true;
-  // HEAD 不可用/失败时降级 Range GET；404/4xx/5xx 或网络失败均视为不可达
+  if (head && head.status >= 200 && head.status < 400) return true;
+  // HEAD 不可用/失败时降级 Range GET（部分 CDN 不支持 HEAD，如返回 405）
   const range = await probeUrl(url, "RANGE");
-  return !!(range && range.ok);
+  if (range && range.status >= 200 && range.status < 400) return true;
+  // 只有收到明确的错误响应才判定死链；超时/网络抖动属于不可证伪，交给 Remotion 自行加载，
+  // 否则慢速 CDN（如 picsum）会在 3.5s 探测窗口内被判死链而替换成透明占位图
+  const headError = !!head && head.status >= 400 && head.status !== 405 && head.status !== 501;
+  const rangeError = !!range && range.status >= 400;
+  return !(headError || rangeError);
 }
 
 async function sanitizeAndValidateInputMedia(inputProps: Record<string, any>): Promise<Record<string, any>> {
@@ -515,8 +669,11 @@ async function sanitizeAndValidateInputMedia(inputProps: Record<string, any>): P
     }
   }
 
-  for (const url of mediaUrls) {
-    const ok = await isUrlReachable(url);
+  // 并行探测，避免逐个串行等待超时（每条最坏 3.5s × 2）导致渲染前长时间卡住
+  const probeResults = await Promise.all(
+    [...mediaUrls].map(async (url) => ({ url, ok: await isUrlReachable(url) })),
+  );
+  for (const { url, ok } of probeResults) {
     if (!ok) {
       deadMediaSrcs.push(url);
       console.warn(`[video-template] 媒体 URL 无法访问: ${url}，将从场景中剥离以防渲染失败`);

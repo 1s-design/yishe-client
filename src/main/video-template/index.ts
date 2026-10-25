@@ -457,6 +457,7 @@ function formatJob(jobId: string, job: VideoTemplateJobState | undefined | null)
     data: {
       templateId: String(job.data?.templateId || "").trim(),
       compositionId: String(job.data?.compositionId || "").trim(),
+      engine: job.data?.engine === "hyperframes" ? "hyperframes" : "remotion",
       inputProps:
         job.data?.inputProps &&
         typeof job.data.inputProps === "object" &&
@@ -680,6 +681,7 @@ async function warmVideoTemplateService() {
         browserExecutable: browser.executablePath,
         binariesDirectory,
         chromeMode: browser.chromeMode,
+        hyperframesWorkDir: path.join(directories.temp, "hyperframes"),
       });
 
       queueInstance = queue;
@@ -796,6 +798,13 @@ async function getVideoTemplateStatus() {
       standard: inspectVideoTemplateBundle("standard"),
       ai: inspectVideoTemplateBundle("ai"),
     },
+    engines: {
+      remotion: { available: true },
+      hyperframes: {
+        // HyperFrames 复用 Remotion 的 Chrome + FFmpeg 二进制，bundle 不需要
+        available: !!resolveRemotionBinariesDirectory() || !app.isPackaged,
+      },
+    },
     queue: {
       total: jobs.length,
       activeCount: activeJobs.length,
@@ -846,12 +855,40 @@ async function getVideoTemplateRender(jobId: string) {
 }
 
 async function enqueueVideoTemplateRender(payload: Record<string, any> = {}) {
+  const engine = String(payload.engine || "remotion").trim().toLowerCase();
+  const queue = await ensureVideoTemplateQueue();
+
+  // ── HyperFrames 引擎：HTML 合成直渲，无需模板与 bundle ──
+  if (engine === "hyperframes") {
+    const inputProps =
+      payload.inputProps && typeof payload.inputProps === "object"
+        ? { ...payload.inputProps }
+        : {};
+    if (typeof payload.html === "string" && payload.html.trim()) {
+      inputProps.html = payload.html;
+    }
+    if (!String(inputProps.html || "").trim()) {
+      throw new Error("engine=hyperframes 时必须在 inputProps.html 或 html 中提供 HTML 合成内容");
+    }
+
+    const jobId = queue.createJob({
+      templateId: String(payload.templateId || "hyperframes-html").trim(),
+      compositionId: String(payload.compositionId || "HyperframesComposition").trim(),
+      inputProps,
+      engine: "hyperframes",
+    });
+
+    return {
+      success: true,
+      data: { jobId },
+    };
+  }
+
   const templateId = String(payload.templateId || "").trim();
   if (!templateId) {
     throw new Error("templateId is required");
   }
 
-  const queue = await ensureVideoTemplateQueue();
   const { template, inputProps } = sanitizeInputProps(
     templateId,
     payload.inputProps && typeof payload.inputProps === "object"

@@ -2,6 +2,7 @@ import React from "react";
 import { z } from "zod";
 import {
   AbsoluteFill,
+  Img,
   interpolate,
   spring,
   useCurrentFrame,
@@ -272,7 +273,7 @@ export const GradientImageTransitionTemplate: React.FC<
                 background: `linear-gradient(135deg, ${palette.accent} 0%, ${palette.accentAlt} 100%)`,
               }}
             />
-            <img
+            <Img
               src={slide.image.src}
               alt={slide.image.alt || slide.caption || `slide-${index + 1}`}
               style={{
@@ -6865,7 +6866,7 @@ export const ImageShowcaseTemplate: React.FC<
     >
       {/* 当前图片 */}
       <AbsoluteFill style={{ opacity: slideOpacity }}>
-        <img
+        <Img
           src={slides[activeIndex]?.image.src}
           alt={slides[activeIndex]?.image.alt || ""}
           style={{

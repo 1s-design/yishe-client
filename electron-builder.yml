@@ -32,6 +32,7 @@ asarUnpack:
   - node_modules/onnxruntime-node/**
   - node_modules/onnxruntime-common/**
   - node_modules/@remotion/**
+  - node_modules/@hyperframes/**
   - generated/video-template-runtime-source-v3/**
   - generated/video-template-runtime-source-v2/**
   - generated/video-template-runtime-source/**
