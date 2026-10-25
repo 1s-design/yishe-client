@@ -1,6 +1,6 @@
 {
   "name": "yishe-client",
-  "version": "1.2.324",
+  "version": "1.2.325",
   "description": "1s client",
   "main": "./generated/main/index.js",
   "author": "Jc",
@@ -41,6 +41,9 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
     "@element-plus/icons-vue": "^2.3.2",
+    "@hyperframes/core": "^0.8.197",
+    "@hyperframes/engine": "^0.8.197",
+    "@hyperframes/producer": "^0.8.197",
     "@langchain/core": "^0.3.0",
     "@langchain/langgraph": "^0.2.0",
     "@langchain/openai": "^0.3.0",
