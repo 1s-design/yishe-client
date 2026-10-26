@@ -207,6 +207,31 @@ export const claimNextPublishTask = async (data: {
   });
 };
 
+export interface PeekNextPublishTaskResponse {
+  success: boolean;
+  data?: {
+    taskId: string | null;
+    taskType?: string;
+    mediaUrls?: string[];
+  };
+}
+
+// 窥探下一条待领取的发布任务（不领取，仅用于媒体预热）
+export const peekNextPublishTask = async (data: {
+  clientId?: string;
+  machineCode?: string;
+  profileId?: string;
+}): Promise<PeekNextPublishTaskResponse> => {
+  const response = await request.post({
+    url: "/websocket/publish-tasks/peek-next",
+    data,
+    timeout: 15000,
+  });
+  return unwrapApiData<PeekNextPublishTaskResponse>(response, {
+    success: false,
+  });
+};
+
 export const recoverClientPublishTaskOrphans = async (data: {
   clientId?: string;
   machineCode?: string;

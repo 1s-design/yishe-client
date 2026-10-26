@@ -2336,3 +2336,34 @@ export async function queryUploaderTaskLogsBySource(
     return { success: false, message: e?.message || "请求失败" };
   }
 }
+
+/**
+ * 预热媒体文件到 uploader 本地缓存（后台下载，立即返回）
+ */
+export async function prefetchMedia(urls: string[]): Promise<{
+  success: boolean;
+  queued?: number;
+  message?: string;
+}> {
+  try {
+    const res = await fetch(`${UPLOADER_API_BASE}/api/prefetch-media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls: Array.isArray(urls) ? urls : [] }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.ok !== true) {
+      return {
+        success: false,
+        message: json?.message ?? json?.error ?? `预热媒体失败: ${res.status}`,
+      };
+    }
+    return {
+      success: true,
+      queued: Number(json?.queued ?? 0),
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || "预热媒体失败" };
+  }
+}

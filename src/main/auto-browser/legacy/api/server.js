@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import { URL, fileURLToPath } from 'url';
 import publishService from './publishService.js';
 import crawlerService from './crawlerService.js';
+import { ImageManager } from '../services/ImageManager.js';
 import {
     getBrowserStatus,
     getOrCreateBrowser,
@@ -187,6 +188,14 @@ const SILENT_REQUEST_PATHS = new Set([
     '/api/browser/status',
     '/api/browser/pages'
 ]);
+
+let sharedImageManager = null;
+function getSharedImageManager() {
+    if (!sharedImageManager) {
+        sharedImageManager = new ImageManager();
+    }
+    return sharedImageManager;
+}
 
 class ApiServer {
     constructor(port = 7010) {
@@ -438,6 +447,8 @@ class ApiServer {
                     await this.handleBrowserCheckAndReconnect(req, res);
                 } else if (reqPath === '/api/upload' && method === 'POST') {
                     await this.handleUpload(req, res);
+                } else if (reqPath === '/api/prefetch-media' && method === 'POST') {
+                    await this.handlePrefetchMedia(req, res);
                 } else if (reqPath === '/api/login-status' && method === 'GET') {
                     await this.handleLoginStatus(req, res);
                 } else if (reqPath === '/api/browser/export-user-data' && method === 'GET') {
@@ -495,6 +506,7 @@ class ApiServer {
                 { method: 'POST', path: '/api/schedule', description: '创建定时发布' },
                 { method: 'GET', path: '/api/platforms', description: '支持的平台列表' },
                 { method: 'POST', path: '/api/upload', description: '上传视频/图片文件' },
+                { method: 'POST', path: '/api/prefetch-media', description: '预热媒体文件到本地缓存（后台下载，立即返回）' },
                 { method: 'GET', path: '/api/login-status', description: '各平台登录状态' },
                 { method: 'GET', path: '/api/browser/status', description: '浏览器连接状态' },
                 { method: 'POST', path: '/api/browser/connect', description: '连接浏览器' },
@@ -2534,6 +2546,33 @@ class ApiServer {
         } catch (error) {
             logger.error('上传失败:', error);
             this.sendResponse(res, 500, { success: false, message: error.message || '上传失败' });
+        }
+    }
+
+    /**
+     * 预热媒体文件：后台并发下载到本地缓存，立即返回
+     */
+    async handlePrefetchMedia(req, res) {
+        try {
+            const body = await this.parseBody(req).catch(() => ({})) || {};
+            if (!Array.isArray(body?.urls) || body.urls.length === 0) {
+                this.sendResponse(res, 400, { success: false, message: '请传 urls（非空数组）' });
+                return;
+            }
+            const urls = body.urls
+                .map(item => String(item || '').trim())
+                .filter(Boolean)
+                .slice(0, 50);
+            if (urls.length === 0) {
+                this.sendResponse(res, 400, { success: false, message: '请传 urls（非空数组）' });
+                return;
+            }
+            getSharedImageManager()
+                .prefetchMedia(urls)
+                .catch(error => logger.warn('媒体预热失败:', error));
+            this.sendResponse(res, 200, { ok: true, queued: urls.length });
+        } catch (error) {
+            this.sendResponse(res, 500, { success: false, message: error.message });
         }
     }
 

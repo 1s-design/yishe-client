@@ -480,6 +480,11 @@ async function pollPlatformTask() {
           onRuntime: emitPlatformTaskRuntime,
           dispatchToken: task.dispatchToken || undefined,
           profileId: task.profileId || targetProfileId || undefined,
+          claimIdentity: {
+            clientId: readiness.runtime.clientId || undefined,
+            machineCode: readiness.runtime.machineCode || undefined,
+            profileId: targetProfileId || undefined,
+          },
         },
       );
     } catch (execError) {

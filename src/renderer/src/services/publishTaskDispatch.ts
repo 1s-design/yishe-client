@@ -1,5 +1,6 @@
 import {
   getTaskDetail,
+  peekNextPublishTask,
   type QueueMessage,
   updateTaskStatus,
 } from "../api/queue";
@@ -7,6 +8,7 @@ import {
   cancelUploaderTasksBySource,
   closeUploaderBrowser,
   getUploaderProfiles,
+  prefetchMedia,
   type UploaderTaskSourceId,
 } from "../api/uploader";
 import {
@@ -41,12 +43,53 @@ type ExecutePublishTaskOptions = {
   onRuntime?: (snapshot: PublishTaskRuntimeSnapshot) => void | Promise<void>;
   profileId?: string;
   dispatchToken?: string | null;
+  claimIdentity?: {
+    clientId?: string;
+    machineCode?: string;
+    profileId?: string;
+  };
 };
 
 const PUBLISH_TASK_HEARTBEAT_INTERVAL_MS = 10_000;
 const PUBLISH_TASK_RUNTIME_UPDATE_MIN_INTERVAL_MS = 5_000;
 const PUBLISH_TASK_STATUS_FALLBACK_RETRY_DELAYS_MS = [800, 2000, 5000];
 const MISSING_PROFILE_ERROR_PREFIX = "指定环境不存在";
+
+// 媒体预热：记录已预热的下一条任务 taskId，同一任务不重复预热
+const prefetchedMediaTaskIds = new Set<string>();
+const PREFETCHED_MEDIA_TASK_ID_LIMIT = 50;
+
+async function warmupNextTaskMedia(options?: ExecutePublishTaskOptions) {
+  const identity = options?.claimIdentity || {};
+  const peek = await peekNextPublishTask({
+    clientId: identity.clientId || undefined,
+    machineCode: identity.machineCode || undefined,
+    profileId: identity.profileId || undefined,
+  });
+  const nextTaskId = String(peek?.data?.taskId || "").trim();
+  if (!nextTaskId || prefetchedMediaTaskIds.has(nextTaskId)) {
+    return;
+  }
+  if (prefetchedMediaTaskIds.size >= PREFETCHED_MEDIA_TASK_ID_LIMIT) {
+    prefetchedMediaTaskIds.clear();
+  }
+  prefetchedMediaTaskIds.add(nextTaskId);
+
+  const mediaUrls = Array.isArray(peek?.data?.mediaUrls)
+    ? peek.data.mediaUrls
+        .map((url) => String(url || "").trim())
+        .filter(Boolean)
+    : [];
+  if (mediaUrls.length === 0) {
+    return;
+  }
+  await prefetchMedia(mediaUrls);
+}
+
+// fire-and-forget：预热失败绝不影响当前任务执行
+function triggerNextTaskMediaPrefetch(options?: ExecutePublishTaskOptions) {
+  void warmupNextTaskMedia(options).catch(() => undefined);
+}
 
 class PublishTaskRetryableError extends Error {
   constructor(message: string) {
@@ -686,7 +729,10 @@ export async function executePublishQueueTask(
     };
     await emitRuntime(options, lastRuntimeSnapshot);
 
-    await executor(detail, executionContext);
+    const executionPromise = executor(detail, executionContext);
+    // 执行器启动后，后台预热下一条任务的媒体文件（每任务周期最多 1 次）
+    triggerNextTaskMediaPrefetch(options);
+    await executionPromise;
 
     lastRuntimeSnapshot = {
       taskId: detail.id,
