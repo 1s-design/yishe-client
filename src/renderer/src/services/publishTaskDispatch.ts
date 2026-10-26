@@ -11,6 +11,7 @@ import {
   prefetchMedia,
   type UploaderTaskSourceId,
 } from "../api/uploader";
+import { PLATFORM_IMAGE_PROCESS_RULES } from "../config/platform-executors";
 import {
   getExecutableTaskDisplayList,
   getTaskExecutor,
@@ -83,7 +84,23 @@ async function warmupNextTaskMedia(options?: ExecutePublishTaskOptions) {
   if (mediaUrls.length === 0) {
     return;
   }
-  await prefetchMedia(mediaUrls);
+
+  // 从 taskType 提取 platform key，查平台图片尺寸规则
+  let maxDimension: number | undefined;
+  const taskType = String(peek?.data?.taskType || "").trim();
+  if (taskType) {
+    const platformKey = taskType.split("-").pop();
+    if (platformKey) {
+      const rule =
+        PLATFORM_IMAGE_PROCESS_RULES[platformKey] ||
+        PLATFORM_IMAGE_PROCESS_RULES.default;
+      if (rule?.width || rule?.height) {
+        maxDimension = Math.max(rule.width ?? 0, rule.height ?? 0) || undefined;
+      }
+    }
+  }
+
+  await prefetchMedia(mediaUrls, { maxDimension });
 }
 
 // fire-and-forget：预热失败绝不影响当前任务执行

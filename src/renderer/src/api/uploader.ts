@@ -2340,16 +2340,21 @@ export async function queryUploaderTaskLogsBySource(
 /**
  * 预热媒体文件到 uploader 本地缓存（后台下载，立即返回）
  */
-export async function prefetchMedia(urls: string[]): Promise<{
+export async function prefetchMedia(
+  urls: string[],
+  options?: { maxDimension?: number },
+): Promise<{
   success: boolean;
   queued?: number;
   message?: string;
 }> {
   try {
+    const body: Record<string, unknown> = { urls: Array.isArray(urls) ? urls : [] };
+    if (options?.maxDimension) body.maxDimension = options.maxDimension;
     const res = await fetch(`${UPLOADER_API_BASE}/api/prefetch-media`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ urls: Array.isArray(urls) ? urls : [] }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(10000),
     });
     const json = await res.json().catch(() => ({}));
