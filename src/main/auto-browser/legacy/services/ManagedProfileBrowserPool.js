@@ -1233,6 +1233,11 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
       let connectAttempt = 0;
       let lastError = null;
       let relaunchedForIncompatibleBrowser = false;
+      // 客户端重启后，上次拉起的 Chrome（detached）可能残留：
+      // HTTP /json/version 可达但 DevTools WebSocket 无法接管（connectOverCDP 超时）。
+      // 此时自动清理残留进程并重启环境浏览器，最多尝试 MAX_STALE_CHROME_RELAUNCH 次。
+      const MAX_STALE_CHROME_RELAUNCH = 2;
+      let staleChromeRelaunchCount = 0;
       while (!session.browserInstance && Date.now() < connectDeadline) {
         connectAttempt += 1;
         try {
@@ -1283,6 +1288,49 @@ export async function getOrCreateManagedProfileBrowser(options = {}) {
               );
             }
             continue;
+          }
+          // CDP 连接超时 + HTTP 端点仍可达：判定为上次客户端退出残留的僵尸 Chrome，
+          // 自动清理残留进程并重启环境浏览器后重连。
+          const isCdpConnectTimeout = /connectOverCDP timeout/i.test(
+            String(error?.message || ""),
+          );
+          if (isCdpConnectTimeout && allowLaunch && staleChromeRelaunchCount < MAX_STALE_CHROME_RELAUNCH) {
+            const endpointProbe = await checkCdpEndpointAvailable(cdpEndpoint);
+            if (endpointProbe.ok) {
+              staleChromeRelaunchCount += 1;
+              logger.warn(
+                `环境 ${profile.id} CDP 端点可达但无法接管（疑似客户端重启后的残留 Chrome），自动清理并重启环境浏览器 (第 ${staleChromeRelaunchCount}/${MAX_STALE_CHROME_RELAUNCH} 次)`,
+              );
+              const staleKill = await killChromeProcessesByUserDataDir(
+                profile.userDataDir,
+              ).catch(() => null);
+              await killPortProcesses(debugPort).catch(() => null);
+              if (staleKill?.killed?.length) {
+                logger.info(
+                  `环境 ${profile.id} 已清理残留 Chrome 进程: pids=${staleKill.killed.join(",")}`,
+                );
+              }
+              await sleep(1500);
+              const relaunched = launchChromeWithDebugPort({
+                port: debugPort,
+                headless,
+                userDataDir: profile.userDataDir,
+                executablePath,
+                windowWidth: options.windowWidth,
+                windowHeight: options.windowHeight,
+              });
+              session.chromePid = relaunched.pid || null;
+              launchedNewBrowser = true;
+              const relaunchReady = await waitForCdpEndpointAvailable(cdpEndpoint);
+              if (!relaunchReady.ok) {
+                throw new Error(
+                  `清理残留 Chrome 并重启环境浏览器后调试端口未就绪: ${cdpEndpoint}${
+                    relaunchReady.error ? ` (${relaunchReady.error})` : ""
+                  }`,
+                );
+              }
+              continue;
+            }
           }
           logger.info(
             `连接 Chrome CDP 失败，准备重试 (${connectAttempt}, ${Math.max(

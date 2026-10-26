@@ -1014,11 +1014,46 @@ export async function getOrCreateBrowser(options = {}) {
             logger.info(`使用 CDP 模式连接浏览器 (${modeStr}):`, endpoint);
             const maxRetries = 10;
             const retryDelayMs = 2000;
+            // 客户端重启后残留的 Chrome 可能出现"HTTP 端点可达但无法接管"（connectOverCDP 超时），
+            // 此时自动清理端口进程并重启环境浏览器，最多尝试 2 次。
+            let staleChromeRelaunchCount = 0;
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     browserInstance = await withTimeout(chromium.connectOverCDP(endpoint), 15000, 'connectOverCDP');
                     break;
                 } catch (e) {
+                    const isCdpConnectTimeout = /connectOverCDP timeout/i.test(String(e?.message || ''));
+                    if (
+                        isCdpConnectTimeout &&
+                        parsedEndpoint.isLocal &&
+                        parsedEndpoint.port &&
+                        staleChromeRelaunchCount < 2
+                    ) {
+                        const probe = await checkCdpEndpointAvailable(endpoint);
+                        if (probe.ok) {
+                            staleChromeRelaunchCount += 1;
+                            logger.warn(
+                                `CDP 端点可达但无法接管（疑似客户端重启后残留的 Chrome 进程），自动清理并重启环境浏览器 (第 ${staleChromeRelaunchCount}/2 次): ${endpoint}`
+                            );
+                            const portPids = await getListeningPids(parsedEndpoint.port).catch(() => []);
+                            if (portPids.length) {
+                                await killPids(portPids).catch(() => {});
+                            }
+                            await new Promise((resolve) => setTimeout(resolve, 1500));
+                            if (cdpSelection.userDataDir) {
+                                launchWithDebugPort({
+                                    port: parsedEndpoint.port,
+                                    headless,
+                                    userDataDir: cdpSelection.userDataDir,
+                                    executablePath: options.chromeExecutablePath,
+                                    windowWidth: options.windowWidth,
+                                    windowHeight: options.windowHeight,
+                                });
+                            }
+                            await new Promise((resolve) => setTimeout(resolve, 3500));
+                            continue;
+                        }
+                    }
                     if (i < maxRetries - 1) {
                         logger.info(`CDP 连接失败，${retryDelayMs / 1000} 秒后重试 (${i + 1}/${maxRetries})...`);
                         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
