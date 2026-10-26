@@ -9607,6 +9607,11 @@ function registerBuiltInLocalServices() {
           onRuntime: emitPublishTaskRuntime,
           profileId,
           dispatchToken,
+          claimIdentity: {
+            clientId: identity.clientId || undefined,
+            machineCode: identity.machineCode || undefined,
+            profileId: profileId || undefined,
+          },
         });
         return {
           success: true,
