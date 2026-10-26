@@ -2567,8 +2567,9 @@ class ApiServer {
                 this.sendResponse(res, 400, { success: false, message: '请传 urls（非空数组）' });
                 return;
             }
+            const maxDimension = Number(body.maxDimension) || undefined;
             getSharedImageManager()
-                .prefetchMedia(urls)
+                .prefetchMedia(urls, { maxDimension })
                 .catch(error => logger.warn('媒体预热失败:', error));
             this.sendResponse(res, 200, { ok: true, queued: urls.length });
         } catch (error) {

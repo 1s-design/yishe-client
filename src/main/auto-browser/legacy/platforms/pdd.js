@@ -76,6 +76,7 @@ async function prepareImages(images, imageManager) {
       const tempPath = await imageManager.downloadImage(
         source,
         `${PLATFORM_KEY}_${Date.now()}_${index}`,
+        { maxDimension: 1500 },
       );
       filePaths.push(tempPath);
       tempFiles.push(tempPath);

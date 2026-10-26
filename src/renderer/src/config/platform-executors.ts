@@ -115,7 +115,7 @@ const PLATFORM_CAPABILITIES: Record<string, PlatformCapability> = {
   },
 };
 
-const PLATFORM_IMAGE_PROCESS_RULES: Record<
+export const PLATFORM_IMAGE_PROCESS_RULES: Record<
   string,
   Partial<typeof DEFAULT_IMAGE_PROCESS_RULE>
 > = {
