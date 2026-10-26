@@ -24,8 +24,11 @@ const DOWNLOAD_CONCURRENCY = 4;
 // 默认图片尺寸上限（最长边像素），覆盖绝大多数发布场景
 const DEFAULT_MAX_DIMENSION = 2000;
 
-// 腾讯云 COS / 云点播常见域名——支持 imageMogr2 实时图片处理
-const COS_IMAGE_PROCESS_DOMAINS = [
+// 支持 CDN 实时图片处理（query 参数让 CDN 返回缩图）的域名正则。
+// 切换图床（阿里 OSS imagex-oss-process、AWS CloudFront 等）时，
+// 在下方数组新增对应正则即可；没命中的域名自动走 sharp 本地 resize 兜底，
+// 不会报错，只是先下载原图再缩。
+const CDN_IMAGE_PROCESS_DOMAINS = [
     /\bmyqcloud\.com$/i,
     /\btencentcloudcdn\.com$/i,
     /\btencentcloud\.com$/i,
@@ -41,33 +44,49 @@ function buildInflightKey(url, maxDimension) {
     return `${url}||d${maxDimension || 'raw'}`;
 }
 
-function isCosUrl(url) {
+function isCdnImageUrl(url) {
     if (!url || !/^https?:\/\//i.test(url)) return false;
     try {
         const host = new URL(url).hostname.toLowerCase();
-        return COS_IMAGE_PROCESS_DOMAINS.some(re => re.test(host));
+        return CDN_IMAGE_PROCESS_DOMAINS.some(re => re.test(host));
     } catch {
         return false;
     }
 }
 
 /**
+ * URL 是否已带 CDN 图片处理参数（避免重复拼接）。
+ * 已知参数名：imageMogr2（腾讯 COS）、x-oss-process（阿里 OSS）、x-amz-process（AWS）
+ */
+function hasCdnProcessParam(url) {
+    if (!url) return false;
+    const lower = url.toLowerCase();
+    return lower.includes('imagemogr2') || lower.includes('x-oss-process') || lower.includes('x-amz-process');
+}
+
+/**
  * 构建下载时的优化 URL：
- * - COS 域名 → 拼接 imageMogr2/thumbnail/x{max} 让 CDN 返回缩图
- * - 非 COS → 原样返回（后续 sharp 在本地 resize）
- * - 视频或 maxDimension 未指定 → 原样返回（视频不走 imageMogr2）
+ * - 命中 CDN 实时处理域名 → 拼接 imageMogr2/thumbnail/x{max} 让 CDN 返回缩图
+ *   （已带 imageMogr2 参数时跳过，避免格式破坏）
+ * - 非 CDN / 视频 / 已带处理参数 → 原样返回（后续 sharp 在本地 resize 兜底）
  */
 function buildOptimizedUrl(url, maxDimension) {
-    if (!url) return url;
-    if (!maxDimension) return url;
+    if (!url || !maxDimension) return url;
 
-    // 视频文件不走 imageMogr2（imageMogr2 只处理静态图）
-    const lower = url.toLowerCase().split('?')[0];
-    if (lower.endsWith('.mp4') || lower.endsWith('.mov') || lower.endsWith('.webm') || lower.endsWith('.m4v')) {
+    // 视频不走 CDN 图片处理
+    const pathPart = url.toLowerCase().split('?')[0];
+    if (pathPart.endsWith('.mp4') || pathPart.endsWith('.mov') || pathPart.endsWith('.webm') || pathPart.endsWith('.m4v')) {
         return url;
     }
 
-    if (!isCosUrl(url)) {
+    // 非 CDN 域名 → 原样返回（sharp 兜底）
+    if (!isCdnImageUrl(url)) {
+        return url;
+    }
+
+    // URL 已带 CDN 图片处理参数（比如来自上一层调用方或服务端 COS 生成的缩略图 URL）
+    if (hasCdnProcessParam(url)) {
+        logger.debug('URL 已带 CDN 图片处理参数，跳过 imageMogr2 拼接:', url.slice(0, 80));
         return url;
     }
 
@@ -242,23 +261,59 @@ export class ImageManager {
 
     /**
      * 下载远程媒体到缓存目录，返回缓存文件路径。
-     * COS 域名 URL 会拼接 imageMogr2 让 CDN 返回缩图；
-     * 非 COS URL + maxDimension 则下载原图后用 sharp 本地 resize。
+     * CDN 域名 URL 会拼接 imageMogr2 让 CDN 返回缩图（content-type 非 image 时放弃优化）；
+     * 非 CDN URL + maxDimension 则下载原图后用 sharp 本地 resize。
      */
     async downloadToCache(imageUrl, maxDimension) {
-        const optimizedUrl = buildOptimizedUrl(imageUrl, maxDimension);
-        const response = await fetch(optimizedUrl);
+        const isCdn = isCdnImageUrl(imageUrl);
+        let usedOptimization = false;
+        let currentUrl = imageUrl;
 
+        // CDN 路径：尝试拼接 imageMogr2，但如果 CDN 返回非 image 内容（参数不被识别、
+        // URL 已带其他 CDN 参数导致 imageMogr2 格式破坏等），回退到原始 URL 重下。
+        if (isCdn && maxDimension) {
+            const optimized = buildOptimizedUrl(imageUrl, maxDimension);
+            if (optimized !== imageUrl) {
+                currentUrl = optimized;
+                usedOptimization = true;
+            }
+        }
+
+        let response = await fetch(currentUrl);
         if (!response.ok) {
-            throw new Error(`下载图片失败: ${response.statusText}`);
+            if (usedOptimization) {
+                logger.warn('CDN 优化 URL 请求失败，回退原始 URL:', response.status, imageUrl);
+                response = await fetch(imageUrl);
+                if (!response.ok) {
+                    throw new Error(`下载图片失败: ${response.statusText}`);
+                }
+            } else {
+                throw new Error(`下载图片失败: ${response.statusText}`);
+            }
+        }
+
+        // 校验 content-type：CDN 优化 URL 如果返回非 image/*（比如 CDN 忽略参数返回了
+        // HTML 错误页），回退原始 URL。原始 URL 也做同样校验。
+        const contentType = response.headers?.get?.('content-type') || '';
+        const looksLikeImage = /^image\//i.test(contentType) || contentType.includes('octet-stream');
+        if (!looksLikeImage) {
+            if (usedOptimization) {
+                logger.warn('CDN 优化 URL 返回非图片内容，回退原始 URL:', contentType.slice(0, 40), imageUrl);
+                response = await fetch(imageUrl);
+                if (!response.ok) {
+                    throw new Error(`下载图片失败: ${response.statusText}`);
+                }
+            } else {
+                throw new Error(`下载图片失败: 响应非图片 (content-type: ${contentType}, url: ${imageUrl.slice(0, 80)})`);
+            }
         }
 
         let buffer = Buffer.from(await response.arrayBuffer());
-        const extension = this.getCacheExtension(optimizedUrl, response);
-        const isCos = isCosUrl(imageUrl);
+        const extension = this.getCacheExtension(currentUrl, response);
 
-        // 非 COS 域名 + maxDimension：下载原图后 sharp resize 到目标尺寸
-        if (maxDimension && !isCos) {
+        // 非 CDN 域名 + maxDimension：下载原图后 sharp resize 到目标尺寸
+        // 或 CDN 回退到原始 URL 但仍需要缩图
+        if (maxDimension && (!isCdn || currentUrl === imageUrl)) {
             try {
                 const resized = await sharp(buffer)
                     .rotate() // 自动修正 EXIF 方向
@@ -271,9 +326,9 @@ export class ImageManager {
                     .webp({ quality: 80 })
                     .toBuffer();
                 buffer = resized;
-                logger.debug('非 COS 图片已本地 resize:', imageUrl);
+                logger.debug('图片已本地 resize:', imageUrl);
             } catch (err) {
-                logger.warn('sharp resize 失败，使用原图:', err?.message);
+                logger.warn('sharp resize 失败，使用原图:', err?.message, imageUrl.slice(0, 60));
             }
         }
 
