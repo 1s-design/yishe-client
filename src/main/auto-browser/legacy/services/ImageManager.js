@@ -40,6 +40,28 @@ const CDN_IMAGE_PROCESS_DOMAINS = [
 // 同一 (URL + 尺寸) 的并发下载共享同一个 Promise
 const inflightDownloads = new Map();
 
+// 单次媒体下载的超时时间。
+// 重要：共享的 inflight Promise 必须保证一定会 settle——若某个请求挂起，
+// 预热（后台）发起的下载会让正式任务的 downloadImage 永久 await 同一个
+// Promise，表现为任务卡在某个步骤不动。因此所有下载都必须带超时。
+const DOWNLOAD_FETCH_TIMEOUT_MS = 30_000;
+
+async function fetchWithTimeout(url, timeoutMs = DOWNLOAD_FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+        try {
+            controller.abort();
+        } catch {
+            /* ignore */
+        }
+    }, timeoutMs);
+    try {
+        return await fetch(url, { signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 function buildInflightKey(url, maxDimension) {
     return `${url}||d${maxDimension || 'raw'}`;
 }
@@ -279,11 +301,11 @@ export class ImageManager {
             }
         }
 
-        let response = await fetch(currentUrl);
+        let response = await fetchWithTimeout(currentUrl);
         if (!response.ok) {
             if (usedOptimization) {
                 logger.warn('CDN 优化 URL 请求失败，回退原始 URL:', response.status, imageUrl);
-                response = await fetch(imageUrl);
+                response = await fetchWithTimeout(imageUrl);
                 if (!response.ok) {
                     throw new Error(`下载图片失败: ${response.statusText}`);
                 }
@@ -299,7 +321,7 @@ export class ImageManager {
         if (!looksLikeImage) {
             if (usedOptimization) {
                 logger.warn('CDN 优化 URL 返回非图片内容，回退原始 URL:', contentType.slice(0, 40), imageUrl);
-                response = await fetch(imageUrl);
+                response = await fetchWithTimeout(imageUrl);
                 if (!response.ok) {
                     throw new Error(`下载图片失败: ${response.statusText}`);
                 }
