@@ -58,6 +58,10 @@ const WEB_DIR = process.env.FRONTEND_DIST
     : path.resolve(__dirname, '../../web/dist');
 const UPLOAD_DIR = getAutoBrowserUploadDir();
 const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
+// 单个发布任务的硬超时（毫秒）。留足余量，只用于兜底卡死，不误杀慢任务。
+const PUBLISH_TASK_TIMEOUT_MS = Number(
+    process.env.PUBLISH_TASK_TIMEOUT_MS || 20 * 60 * 1000,
+);
 
 function normalizeDebugValue(value, depth = 0) {
     if (depth > 4) return '[MaxDepth]';
@@ -298,6 +302,14 @@ class ApiServer {
             publishInfo = {},
         } = payload;
         const taskSource = buildTaskSource({ source, sourceId, kind });
+        // 发布任务卡死时（例如浏览器被外部关闭导致 await 永不返回），
+        // 由 TaskManager 的硬超时兜底，并在这里关掉对应环境浏览器，避免残留
+        const executionProfileId = String(
+            publishInfo?.profileId
+            || publishInfo?.browserAutomationProfileId
+            || payload?.profileId
+            || '',
+        ).trim() || undefined;
 
         return taskManager.createTask({
             kind,
@@ -345,6 +357,15 @@ class ApiServer {
             });
             taskContext.log(result?.success ? 'info' : 'warn', '任务执行返回结果', result);
             return result;
+        }, {
+            timeoutMs: PUBLISH_TASK_TIMEOUT_MS,
+            onTimeout: async () => {
+                try {
+                    await closeBrowser({ profileId: executionProfileId });
+                } catch (error) {
+                    logger.warn('发布任务超时清理浏览器失败:', error?.message || error);
+                }
+            },
         });
     }
 
