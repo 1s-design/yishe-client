@@ -59,8 +59,10 @@ const WEB_DIR = process.env.FRONTEND_DIST
 const UPLOAD_DIR = getAutoBrowserUploadDir();
 const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
 // 单个发布任务的硬超时（毫秒）。留足余量，只用于兜底卡死，不误杀慢任务。
+// 正常任务 1~2 分钟；这里取 8 分钟，短于服务端看门狗的 10 分钟，
+// 保证客户端先自愈（释放执行槽 + 关掉卡死的浏览器），而不是被服务端抢先放回队列。
 const PUBLISH_TASK_TIMEOUT_MS = Number(
-    process.env.PUBLISH_TASK_TIMEOUT_MS || 20 * 60 * 1000,
+    process.env.PUBLISH_TASK_TIMEOUT_MS || 8 * 60 * 1000,
 );
 
 function normalizeDebugValue(value, depth = 0) {
