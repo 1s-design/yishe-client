@@ -139,6 +139,156 @@ async function resolveFieldInputs(page, selectors) {
   return { locator: null, count: 0, selector: "" };
 }
 
+/**
+ * 统计 SKU 表格里真正的数据行数。
+ *
+ * 用来区分两种完全不同的故障：
+ *  - 表格 8 行、只匹配到 7 个输入框 → 某行的 input 没被选择器命中（会整体错位一格）
+ *  - 表格 7 行、配置 8 条 → 配置多配了一条（与定位无关）
+ */
+async function countSkuTableRows(page) {
+  try {
+    return await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll("tr")).filter((tr) =>
+        tr.querySelector('td[class*="attr-column-field"]'),
+      );
+      return rows.length;
+    });
+  } catch (error) {
+    logger.warn(`抖店SKU表格行数统计失败: ${error?.message || error}`);
+    return 0;
+  }
+}
+
+/**
+ * 采集某个字段定位到的每个输入框的“行锚点”，用于核对 nth(i) 与页面视觉行的对应关系。
+ *
+ * 一旦中间某一行的 input 没被选择器命中，后面所有行都会整体错位一格：
+ * 表现就是「第一行价格空着、配置里最后一条无处可填」。打印 rowIndex 后，
+ * 只要发现编号从 1 开始（缺 0）或出现跳号，就能一眼定位是第几行漏了。
+ */
+async function describeSkuInputAnchors(page, selector) {
+  try {
+    return await page.evaluate((sel) => {
+      const nodes = Array.from(document.querySelectorAll(sel));
+      return nodes.map((el, index) => {
+        const td = el.closest("td");
+        const tr = el.closest("tr");
+        const cells = tr ? Array.from(tr.querySelectorAll("td")) : [];
+        const rowText = cells
+          .slice(0, 2)
+          .map((cell) => String(cell.innerText || cell.textContent || "").trim())
+          .filter(Boolean)
+          .join(" | ");
+        return {
+          index,
+          placeholder: String(el.getAttribute("placeholder") || "").trim(),
+          value: el.value === undefined ? "" : String(el.value),
+          colClass: td ? String(td.className || "").trim() : "",
+          rowIndex:
+            tr && tr.parentElement
+              ? Array.from(tr.parentElement.children).indexOf(tr)
+              : -1,
+          rowText: rowText.slice(0, 80),
+        };
+      });
+    }, selector);
+  } catch (error) {
+    logger.warn(`抖店字段锚点采集失败: ${error?.message || error}`);
+    return [];
+  }
+}
+
+/**
+ * 按“行”归并输入框：每个 tr 只取该行内第一个命中的 input，返回它在全局集合里的序号。
+ *
+ * 用于兜底「同一行存在多个同列语义输入框」（例如销售价 + 市场价都在
+ * attr-column-field_price 前缀下），这时按全局序号填写会整体错位。
+ */
+async function resolveRowAnchoredIndexes(page, selector) {
+  try {
+    return await page.evaluate((sel) => {
+      const all = Array.from(document.querySelectorAll(sel));
+      const byRow = new Map();
+      all.forEach((el, index) => {
+        const tr = el.closest("tr");
+        const key = tr || el;
+        if (!byRow.has(key)) byRow.set(key, index);
+      });
+      return Array.from(byRow.values());
+    }, selector);
+  } catch (error) {
+    logger.warn(`抖店逐行定位失败: ${error?.message || error}`);
+    return [];
+  }
+}
+
+function readInputValue(input) {
+  return input.inputValue().catch(() => "");
+}
+
+function normalizeFilledValue(value) {
+  return String(value === undefined || value === null ? "" : value)
+    .replace(/[,\s￥¥元]/g, "")
+    .trim();
+}
+
+/**
+ * 判断回读到的值是否与写入值一致（容忍 "24.88" / "24.880" / "24.88 元" 这类差异）
+ */
+function isFilledValueMatched(actual, expected) {
+  const normalizedActual = normalizeFilledValue(actual);
+  const normalizedExpected = normalizeFilledValue(expected);
+  if (!normalizedActual) return false;
+  if (normalizedActual === normalizedExpected) return true;
+  const actualNumber = Number(normalizedActual);
+  const expectedNumber = Number(normalizedExpected);
+  if (Number.isFinite(actualNumber) && Number.isFinite(expectedNumber)) {
+    return Math.abs(actualNumber - expectedNumber) < 0.005;
+  }
+  return false;
+}
+
+/**
+ * 写入一个 SKU 输入框，并在写完后回读校验。
+ *
+ * 只 fill 不回读时，抖店前端（受控组件 / 校验拦截 / 失焦重置）可能悄悄把值吃掉，
+ * 日志上却显示“已填写”。回读不一致时改用逐字输入重试一次，仍不一致就明确告警。
+ */
+async function fillSkuInput(input, value, logLabel) {
+  await input.waitFor({ timeout: 5000, state: "visible" });
+  await input.scrollIntoViewIfNeeded().catch(() => undefined);
+  await input.click({ clickCount: 3 }).catch(() => undefined);
+  await input.fill("").catch(() => undefined);
+  await input.fill(String(value));
+
+  let actual = await readInputValue(input);
+  if (isFilledValueMatched(actual, value)) {
+    return { ok: true, actual, retried: false };
+  }
+
+  // 受控组件常常要求真实的键盘事件，fill 只设置 value 不触发 input 事件
+  await input.click({ clickCount: 3 }).catch(() => undefined);
+  await input.press("Control+a").catch(() => undefined);
+  await input
+    .type(String(value), { delay: 20 })
+    .catch(() => undefined);
+  await input.evaluate((el) => {
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.blur?.();
+  }).catch(() => undefined);
+
+  actual = await readInputValue(input);
+  const ok = isFilledValueMatched(actual, value);
+  if (!ok) {
+    logger.warn(
+      `抖店${logLabel}：回读校验失败，期望=${value}，实际=${actual || "(空)"}`,
+    );
+  }
+  return { ok, actual, retried: true };
+}
+
 function isLikelyPreviewImageMeta(src, width, height) {
   const normalizedSrc = String(src || "").trim();
   const normalizedWidth = Number(width || 0);
@@ -2678,19 +2828,43 @@ export async function publishToDoudian(publishInfo = {}) {
           );
         }
 
+        const codeTableRowCount = await countSkuTableRows(page);
+        if (codeTableRowCount > 0 && inputCount !== codeTableRowCount) {
+          logger.warn(
+            `抖店商家编码逻辑：编码输入框数量(${inputCount}) 与 SKU 表格行数(${codeTableRowCount}) 不一致，存在漏行或同列多框，填写会整体错位`,
+          );
+        }
+        const codeAnchors = await describeSkuInputAnchors(
+          page,
+          codeField.selector,
+        );
+        codeAnchors.forEach((anchor) => {
+          logger.info(
+            `抖店商家编码逻辑：input[${anchor.index}] 行号=${anchor.rowIndex} 规格="${anchor.rowText}" 列=${anchor.colClass || "-"} placeholder="${anchor.placeholder}"`,
+          );
+        });
+
         for (let index = 0; index < inputCount; index += 1) {
           const code = skuConfig.length > 0
             ? skuProductCodes[index]
             : skuCodes[index] || productCode;
           if (!code) continue;
-          const input = productCodeInputs.nth(index);
-          await input.waitFor({ timeout: 5000, state: "visible" });
-          await input.scrollIntoViewIfNeeded().catch(() => undefined);
-          await input.click({ clickCount: 3 }).catch(() => undefined);
-          await input.fill("").catch(() => undefined);
-          await input.fill(code);
-          productCodeFilledCount += 1;
-          logger.info(`抖店商家编码逻辑：已填写 input[${index}] = ${code}`);
+          try {
+            const input = productCodeInputs.nth(index);
+            const result = await fillSkuInput(
+              input,
+              code,
+              `商家编码逻辑：input[${index}]`,
+            );
+            productCodeFilledCount += 1;
+            logger.info(
+              `抖店商家编码逻辑：已填写 input[${index}] = ${code}${result.retried ? "（已重试并回读校验）" : ""}`,
+            );
+          } catch (error) {
+            logger.warn(
+              `抖店商家编码逻辑：input[${index}] 填写失败: ${error?.message || error}`,
+            );
+          }
         }
       } catch (error) {
         logger.warn(`抖店商家编码逻辑执行失败: ${error?.message || error}`);
@@ -2715,17 +2889,29 @@ export async function publishToDoudian(publishInfo = {}) {
       ]);
       const stockInputs = stockField.locator;
       const inputCount = stockField.count;
+      const stockTableRowCount = await countSkuTableRows(page);
       if (!stockInputs || inputCount <= 0) {
         logger.warn("抖店库存逻辑：未定位到任何库存输入框，跳过填写");
       } else {
         logger.info(
-          `抖店库存逻辑：命中库存输入框，selector=${stockField.selector}, inputCount=${inputCount}, 配置数=${skuConfig.length}`,
+          `抖店库存逻辑：命中库存输入框，selector=${stockField.selector}, inputCount=${inputCount}, 配置数=${skuConfig.length}, SKU表格行数=${stockTableRowCount}`,
         );
         if (inputCount !== skuConfig.length) {
           logger.warn(
             `抖店库存逻辑：页面库存框数量(${inputCount}) 与 SKU 配置条数(${skuConfig.length}) 不一致，超出部分会被跳过`,
           );
         }
+        if (stockTableRowCount > 0 && inputCount !== stockTableRowCount) {
+          logger.warn(
+            `抖店库存逻辑：库存输入框数量(${inputCount}) 与 SKU 表格行数(${stockTableRowCount}) 不一致，存在漏行或同列多框，填写会整体错位`,
+          );
+        }
+        const anchors = await describeSkuInputAnchors(page, stockField.selector);
+        anchors.forEach((anchor) => {
+          logger.info(
+            `抖店库存逻辑：input[${anchor.index}] 行号=${anchor.rowIndex} 规格="${anchor.rowText}" 列=${anchor.colClass || "-"} placeholder="${anchor.placeholder}"`,
+          );
+        });
       }
       for (let i = 0; i < inputCount; i += 1) {
         const sku = skuConfig[i];
@@ -2736,13 +2922,15 @@ export async function publishToDoudian(publishInfo = {}) {
         }
         try {
           const input = stockInputs.nth(i);
-          await input.waitFor({ timeout: 5000, state: "visible" });
-          await input.scrollIntoViewIfNeeded().catch(() => undefined);
-          await input.click({ clickCount: 3 }).catch(() => undefined);
-          await input.fill("").catch(() => undefined);
-          await input.fill(String(stockToFill));
+          const result = await fillSkuInput(
+            input,
+            stockToFill,
+            `库存逻辑：SKU ${i + 1}`,
+          );
           stockFilledCount += 1;
-          logger.info(`抖店库存逻辑：SKU ${i + 1} 库存已填写 = ${stockToFill}`);
+          logger.info(
+            `抖店库存逻辑：SKU ${i + 1} 库存已填写 = ${stockToFill}${result.retried ? "（已重试并回读校验）" : ""}`,
+          );
         } catch (error) {
           logger.warn(`抖店库存逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
         }
@@ -2778,9 +2966,88 @@ export async function publishToDoudian(publishInfo = {}) {
         'td[class*="attr-column-field_price"] input:not([type])',
         'td.attr-column-field_price input',
       ];
-      const priceInputs = page.locator(priceSelectorList.join(", "));
+      const priceSelector = priceSelectorList.join(", ");
+      const priceInputs = page.locator(priceSelector);
       const priceInputCount = await priceInputs.count();
-      for (let i = 0; i < priceInputCount; i += 1) {
+      const priceTableRowCount = await countSkuTableRows(page);
+
+      logger.info(
+        `抖店价格逻辑：价格输入框=${priceInputCount}, SKU表格行数=${priceTableRowCount}, 配置数=${skuConfig.length}`,
+      );
+      if (priceInputCount <= 0) {
+        logger.warn("抖店价格逻辑：未定位到任何价格输入框，跳过填写");
+      } else {
+        if (priceInputCount !== skuConfig.length) {
+          logger.warn(
+            `抖店价格逻辑：价格输入框数量(${priceInputCount}) 与 SKU 配置条数(${skuConfig.length}) 不一致` +
+              (priceTableRowCount > 0
+                ? `，SKU表格行数=${priceTableRowCount}`
+                : "") +
+              "，多出的配置会被跳过、多出的行保持原值",
+          );
+        }
+        if (priceTableRowCount > 0 && priceInputCount !== priceTableRowCount) {
+          logger.warn(
+            `抖店价格逻辑：价格输入框数量(${priceInputCount}) 与 SKU 表格行数(${priceTableRowCount}) 不一致，存在漏行或同列多框，后续按行归并后再填写`,
+          );
+        }
+        const anchors = await describeSkuInputAnchors(page, priceSelector);
+        anchors.forEach((anchor) => {
+          logger.info(
+            `抖店价格逻辑：input[${anchor.index}] 行号=${anchor.rowIndex} 规格="${anchor.rowText}" 列=${anchor.colClass || "-"} placeholder="${anchor.placeholder}" 原值=${anchor.value || "(空)"}`,
+          );
+        });
+      }
+
+      // 主定位与表格行数对不上时，说明存在漏行或同列多框，先尝试自愈
+      let priceLocator = priceInputs;
+      let priceLocatorCount = priceInputCount;
+      let priceLocatorSelector = priceSelector;
+      if (priceTableRowCount > 0 && priceInputCount !== priceTableRowCount) {
+        const priceFallbackSelectors = [
+          'input[placeholder*="请输入价格" i]',
+          'input[placeholder*="价格" i]',
+        ];
+        for (const fallbackSelector of priceFallbackSelectors) {
+          try {
+            const fallbackLocator = page.locator(fallbackSelector);
+            const fallbackCount = await fallbackLocator.count();
+            if (fallbackCount === priceTableRowCount) {
+              priceLocator = fallbackLocator;
+              priceLocatorCount = fallbackCount;
+              priceLocatorSelector = fallbackSelector;
+              logger.warn(
+                `抖店价格逻辑：主定位命中 ${priceInputCount} 个、与表格行数 ${priceTableRowCount} 不符，改用 placeholder 兜底定位 ${fallbackSelector}`,
+              );
+              break;
+            }
+          } catch (error) {
+            logger.warn(
+              `抖店价格逻辑：兜底定位失败 selector=${fallbackSelector} ${error?.message || error}`,
+            );
+          }
+        }
+      }
+
+      // 同一行存在多个价格框（如销售价 + 市场价）时按行归并，避免整体错位
+      let priceIndexes = null;
+      if (priceTableRowCount > 0 && priceLocatorCount > priceTableRowCount) {
+        const rowAnchored = await resolveRowAnchoredIndexes(
+          page,
+          priceLocatorSelector,
+        );
+        if (rowAnchored.length === priceTableRowCount) {
+          priceIndexes = rowAnchored;
+          logger.info(
+            `抖店价格逻辑：已按行归并价格输入框，行索引=[${rowAnchored.join(",")}]`,
+          );
+        }
+      }
+
+      const priceLoopLength = priceIndexes
+        ? priceIndexes.length
+        : priceLocatorCount;
+      for (let i = 0; i < priceLoopLength; i += 1) {
         const sku = skuConfig[i];
         const priceToFill = resolvePrice(sku);
         if (priceToFill === undefined) {
@@ -2788,14 +3055,18 @@ export async function publishToDoudian(publishInfo = {}) {
           continue;
         }
         try {
-          const input = priceInputs.nth(i);
-          await input.waitFor({ timeout: 5000, state: "visible" });
-          await input.scrollIntoViewIfNeeded().catch(() => undefined);
-          await input.click({ clickCount: 3 }).catch(() => undefined);
-          await input.fill("").catch(() => undefined);
-          await input.fill(String(priceToFill));
+          const input = priceIndexes
+            ? priceLocator.nth(priceIndexes[i])
+            : priceLocator.nth(i);
+          const result = await fillSkuInput(
+            input,
+            priceToFill,
+            `价格逻辑：SKU ${i + 1}`,
+          );
           priceFilledCount += 1;
-          logger.info(`抖店价格逻辑：SKU ${i + 1} 价格已填写 = ${priceToFill}`);
+          logger.info(
+            `抖店价格逻辑：SKU ${i + 1} 价格已填写 = ${priceToFill}${result.retried ? "（已重试并回读校验）" : ""}`,
+          );
         } catch (error) {
           logger.warn(`抖店价格逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
         }
