@@ -2662,6 +2662,8 @@ export async function publishToDoudian(publishInfo = {}) {
         // class 一旦改名或 input 不是 text 类型，count 就是 0，整段会被跳过不填。
         const codeField = await resolveFieldInputs(page, [
           'input[placeholder="请输入erp编码"]',
+          // 带 i 标志忽略大小写，兼容“请输入ERP编码”这类大小写差异
+          'input[placeholder*="erp编码" i]',
           'input[placeholder="请输入商品编码"]',
           'td.attr-column-field_code input',
           'td[class*="attr-column-field_code"] input',
