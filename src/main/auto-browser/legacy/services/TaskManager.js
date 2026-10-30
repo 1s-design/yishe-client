@@ -11,6 +11,20 @@ const DEFAULT_MAX_TASKS = Number(process.env.TASK_MANAGER_MAX_TASKS || 500);
 const DEFAULT_MAX_LOGS_PER_TASK = Number(
   process.env.TASK_MANAGER_MAX_LOGS_PER_TASK || 300,
 );
+// 单个任务执行硬超时（防卡死：executor 卡在永不返回的 await 时会永久占用执行槽）。
+// 必须短于服务端看门狗（10 分钟）：否则服务端先把任务放回 pending，客户端执行槽却仍被
+// 卡死任务占着，新任务只能排队 -> 排队超时被移出 -> 再被派发，死锁自维持。
+const DEFAULT_TASK_TIMEOUT_MS = Number(
+  process.env.TASK_MANAGER_TASK_TIMEOUT_MS || 8 * 60 * 1000,
+);
+// 任务在队列中等待被调度的最长存活时间（超时说明执行槽已被占死，移除让上层重新领取）
+const DEFAULT_QUEUED_TIMEOUT_MS = Number(
+  process.env.TASK_MANAGER_QUEUED_TIMEOUT_MS || 5 * 60 * 1000,
+);
+// 取消/停止后留给 executor 自行收尾的宽限期，超时未退出则强制回收执行槽
+const DEFAULT_CANCEL_GRACE_MS = Number(
+  process.env.TASK_MANAGER_CANCEL_GRACE_MS || 30 * 1000,
+);
 
 function createId(prefix = "task") {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -107,7 +121,20 @@ export class TaskManager {
     this.taskIdsBySourceKey = new Map();
     this.queue = [];
     this.runningCount = 0;
+    // 当前真正占用执行槽的任务集合：runningCount 始终由它推导，
+    // 避免「executor 卡死 + 计数器泄漏」导致并发槽永久不可用
+    this.runningTaskIds = new Set();
+    // 每个任务的私有执行配置（超时时间 / 超时清理回调），不随任务对象序列化外泄
+    this.executionOptions = new Map();
+    // 取消后等待 executor 自行退出的宽限期定时器（卡死时兜底强制回收）
+    this.cancelFallbackTimers = new Map();
+    this.cancelGraceMs =
+      Number(options.cancelGraceMs) || DEFAULT_CANCEL_GRACE_MS;
     this.concurrency = Number(options.concurrency) || DEFAULT_CONCURRENCY;
+    this.taskTimeoutMs =
+      Number(options.taskTimeoutMs) || DEFAULT_TASK_TIMEOUT_MS;
+    this.queuedTimeoutMs =
+      Number(options.queuedTimeoutMs) || DEFAULT_QUEUED_TIMEOUT_MS;
     this.retentionMs = Number(options.retentionMs) || DEFAULT_RETENTION_MS;
     this.cleanupIntervalMs =
       Number(options.cleanupIntervalMs) || DEFAULT_CLEANUP_INTERVAL_MS;
@@ -135,7 +162,7 @@ export class TaskManager {
     }
   }
 
-  createTask(input = {}, executor) {
+  createTask(input = {}, executor, options = {}) {
     if (typeof executor !== "function") {
       throw new Error("executor 必须是函数");
     }
@@ -173,6 +200,11 @@ export class TaskManager {
 
     this.tasks.set(taskId, task);
     this.taskOrder.push(taskId);
+    this.executionOptions.set(taskId, {
+      timeoutMs: Number(options?.timeoutMs) || this.taskTimeoutMs,
+      onTimeout:
+        typeof options?.onTimeout === "function" ? options.onTimeout : null,
+    });
     if (source.id || source.traceId) {
       this.taskIdsBySourceKey.set(sourceKey, taskId);
     }
@@ -277,6 +309,7 @@ export class TaskManager {
 
     const normalizedReason = String(reason || "").trim() || "任务已取消";
     const terminalStatuses = new Set(["success", "failed", "cancelled"]);
+    const wasRunning = task.status === "running";
     task.cancelRequested = true;
     task.cancelReason = normalizedReason;
 
@@ -298,6 +331,13 @@ export class TaskManager {
       this._appendLog(taskId, "warn", "任务已取消", {
         reason: normalizedReason,
       });
+    }
+
+    // 用户手动停止后，若 executor 正卡在永不返回的 await 上，它永远看不到
+    // cancelRequested，执行槽也就永远不释放、后续任务全部干等。
+    // 给一个短宽限期让它自行收尾，超时仍不退出就强制回收。
+    if (wasRunning) {
+      this._scheduleCancelFallback(taskId, normalizedReason);
     }
 
     return this.getTask(taskId);
@@ -431,12 +471,141 @@ export class TaskManager {
     while (this.runningCount < this.concurrency && this.queue.length > 0) {
       const next = this.queue.shift();
       if (!next) break;
-      this.runningCount += 1;
-      this._runTask(next).finally(() => {
-        this.runningCount -= 1;
-        this._processQueue();
-      });
+      this._startQueuedTask(next);
     }
+  }
+
+  _startQueuedTask(queueItem) {
+    const { taskId } = queueItem;
+    this.runningTaskIds.add(taskId);
+    this.runningCount = this.runningTaskIds.size;
+    this._runTask(queueItem).finally(() => {
+      this._clearCancelFallback(taskId);
+      this.runningTaskIds.delete(taskId);
+      this.runningCount = this.runningTaskIds.size;
+      this._processQueue();
+    });
+  }
+
+  /**
+   * 强制释放某个任务占用的执行槽（用于兜底：executor 卡死时其 promise 永不 settle）
+   */
+  _releaseExecutionSlot(taskId) {
+    const released = this.runningTaskIds.delete(taskId);
+    this.runningCount = this.runningTaskIds.size;
+    return released;
+  }
+
+  /**
+   * 终止卡死任务：先跑超时清理回调（关闭环境浏览器，让后台 executor 随之报错退出），
+   * 再回收执行槽并取消任务。只 release 槽位而不关浏览器，会留下一个仍在后台操作
+   * 同一账号的僵尸执行流，干扰下一个任务。
+   */
+  _terminateStuckTask(taskId, reason) {
+    const options = this.executionOptions.get(taskId);
+    const onTimeout =
+      typeof options?.onTimeout === "function" ? options.onTimeout : null;
+
+    if (onTimeout) {
+      Promise.resolve()
+        .then(() => onTimeout())
+        .catch((error) => {
+          this._appendLog(taskId, "warn", "卡死任务清理回调执行失败", {
+            message: error?.message || String(error),
+          });
+        });
+    }
+
+    this._releaseExecutionSlot(taskId);
+    this.cancelTask(taskId, reason);
+    this._clearCancelFallback(taskId);
+  }
+
+  /**
+   * 取消/停止后的兜底：宽限期内 executor 没自行退出（说明它卡死了），强制收尾。
+   */
+  _scheduleCancelFallback(taskId, reason) {
+    if (!Number.isFinite(this.cancelGraceMs) || this.cancelGraceMs <= 0) {
+      return;
+    }
+
+    const existing = this.cancelFallbackTimers.get(taskId);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.cancelFallbackTimers.delete(taskId);
+      if (!this.runningTaskIds.has(taskId)) {
+        return;
+      }
+      this._appendLog(
+        taskId,
+        "warn",
+        "取消后执行器未退出（疑似卡死），强制关闭浏览器并回收执行槽",
+      );
+      this._terminateStuckTask(taskId, reason);
+    }, this.cancelGraceMs);
+
+    if (typeof timer.unref === "function") {
+      timer.unref();
+    }
+    this.cancelFallbackTimers.set(taskId, timer);
+  }
+
+  _clearCancelFallback(taskId) {
+    const timer = this.cancelFallbackTimers.get(taskId);
+    if (timer) {
+      clearTimeout(timer);
+      this.cancelFallbackTimers.delete(taskId);
+    }
+  }
+
+  /**
+   * 给 executor 套一层硬超时。
+   * 背景：发布执行器内部会 await 浏览器操作，一旦浏览器被外部关闭 / CDP 连接僵死，
+   * 该 await 可能永不返回，导致执行槽被永久占用、后续任务全部卡在 created。
+   * 这里在超时后强制结束等待，保证 .finally() 能释放执行槽。
+   */
+  _withTaskTimeout(taskId, timeoutMs, onTimeout, executorRunner) {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return Promise.resolve().then(() => executorRunner());
+    }
+
+    let timer = null;
+    const timeoutSeconds = Math.round(timeoutMs / 1000);
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(async () => {
+        this._appendLog(
+          taskId,
+          "warn",
+          `任务执行超时（${timeoutSeconds}s 未返回），强制结束并释放执行槽`,
+        );
+        try {
+          if (onTimeout) {
+            await onTimeout();
+          }
+        } catch (cleanupError) {
+          this._appendLog(taskId, "warn", "超时清理回调执行失败", {
+            message: cleanupError?.message || String(cleanupError),
+          });
+        }
+        const error = new Error(
+          `任务执行超时（超过 ${timeoutSeconds} 秒未返回）`,
+        );
+        error.code = "TASK_TIMEOUT";
+        reject(error);
+      }, timeoutMs);
+    });
+
+    return Promise.race([
+      Promise.resolve().then(() => executorRunner()),
+      timeoutPromise,
+    ]).finally(() => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    });
   }
 
   async _runTask(queueItem) {
@@ -485,6 +654,11 @@ export class TaskManager {
       },
     };
 
+    const execOptions = this.executionOptions.get(taskId) || {};
+    const timeoutMs = Number(execOptions.timeoutMs) || this.taskTimeoutMs;
+    const onTimeout =
+      typeof execOptions.onTimeout === "function" ? execOptions.onTimeout : null;
+
     try {
       const result = await logger.runWithContext(
         {
@@ -498,7 +672,10 @@ export class TaskManager {
             );
           },
         },
-        () => executor(context),
+        () =>
+          this._withTaskTimeout(taskId, timeoutMs, onTimeout, () =>
+            executor(context),
+          ),
       );
       const latestTask = this.tasks.get(taskId);
       if (latestTask?.cancelRequested || latestTask?.status === "cancelled") {
@@ -560,7 +737,44 @@ export class TaskManager {
         continue;
       }
 
-      if (task.status === "queued" || task.status === "running") {
+      if (task.status === "running") {
+        const startedAtValue = task.startedAt
+          ? new Date(task.startedAt).getTime()
+          : 0;
+        if (
+          startedAtValue &&
+          now - startedAtValue >= this.taskTimeoutMs
+        ) {
+          // 兜底：executor 卡死时其 promise 永不 settle，这里强行回收执行槽
+          this._appendLog(
+            taskId,
+            "warn",
+            `任务运行超时（${Math.round(this.taskTimeoutMs / 1000)}s），清理器强制终止并回收执行槽`,
+          );
+          this._terminateStuckTask(
+            taskId,
+            "任务运行超时，已被执行器强制终止",
+          );
+        }
+        continue;
+      }
+
+      if (task.status === "queued") {
+        const createdAtValue = task.createdAt
+          ? new Date(task.createdAt).getTime()
+          : 0;
+        if (
+          createdAtValue &&
+          now - createdAtValue >= this.queuedTimeoutMs
+        ) {
+          // 排队过久说明执行槽被占死，移除后由上层重新领取，避免任务无限堆积
+          this._appendLog(
+            taskId,
+            "warn",
+            `任务排队超时（${Math.round(this.queuedTimeoutMs / 1000)}s），已移出队列`,
+          );
+          this.cancelTask(taskId, "任务排队超时，已被执行器移出队列");
+        }
         continue;
       }
 
@@ -577,6 +791,11 @@ export class TaskManager {
     }
 
     removableTaskIds.forEach((taskId) => this._removeTask(taskId));
+
+    // 若本轮回收了执行槽，立刻尝试调度队列中等待的任务
+    if (this.queue.length > 0 && this.runningCount < this.concurrency) {
+      this._processQueue();
+    }
   }
 
   _trimTaskStore() {
@@ -600,6 +819,11 @@ export class TaskManager {
     this.tasks.delete(taskId);
     this.taskOrder = this.taskOrder.filter((id) => id !== taskId);
     this.queue = this.queue.filter((item) => item.taskId !== taskId);
+    this.executionOptions.delete(taskId);
+    this._clearCancelFallback(taskId);
+    if (this.runningTaskIds.delete(taskId)) {
+      this.runningCount = this.runningTaskIds.size;
+    }
   }
 
   _summarizePlatformResult(result) {
