@@ -161,6 +161,197 @@ async function countSkuTableRows(page) {
 }
 
 /**
+ * 抖店 SKU 表格是虚拟滚动列表（容器 class 为 ecom-g-table-tbody-virtual-holder-inner），
+ * DOM 里同时只保留视口附近的 6~7 行，滚出视口的行会被销毁、滚入时才新建。
+ *
+ * 因此绝对不能用 page.locator(...).nth(i) 按顺序填写：
+ * 那样只能碰到“当前恰好渲染出来”的那几行，表现为「只填了前 6 个 / 第一行空着 /
+ * 后面的配置被静默丢弃」。必须滚动让目标行渲染出来，再按 data-row-key 精确定位。
+ */
+const DOUDIAN_VIRTUAL_BODY = ".ecom-g-table-tbody-virtual";
+
+/** 每个 page 的行 key 缓存，避免库存/编码/价格三段各滚动一遍 */
+const skuRowKeyCache = new WeakMap();
+
+async function isVirtualSkuTable(page) {
+  try {
+    return await page.evaluate((sel) => {
+      const body = document.querySelector(sel);
+      if (!body) return false;
+      return document.querySelectorAll("tr[data-row-key]").length > 0;
+    }, DOUDIAN_VIRTUAL_BODY);
+  } catch (error) {
+    return false;
+  }
+}
+
+/** 把 SKU 表格滚进视口并返回其中心坐标（鼠标落在屏幕外时 wheel 完全无效） */
+async function focusVirtualTableCenter(page) {
+  await page
+    .evaluate((sel) => {
+      document.querySelector(sel)?.scrollIntoView({ block: "center" });
+    }, DOUDIAN_VIRTUAL_BODY)
+    .catch(() => undefined);
+  await page.waitForTimeout(400);
+  const box = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x + rect.width / 2),
+      y: Math.round(rect.y + rect.height / 2),
+      height: Math.round(rect.height),
+    };
+  }, DOUDIAN_VIRTUAL_BODY);
+  if (box) {
+    await page.mouse.move(box.x, box.y).catch(() => undefined);
+  }
+  return box;
+}
+
+/** 向上滚到虚拟列表顶部 */
+async function scrollVirtualTableToTop(page, box) {
+  if (!box) return;
+  await page.mouse.move(box.x, box.y).catch(() => undefined);
+  for (let i = 0; i < 12; i += 1) {
+    await page.mouse.wheel(0, -600).catch(() => undefined);
+    await page.waitForTimeout(90);
+  }
+}
+
+async function readVirtualRows(page) {
+  try {
+    return await page.evaluate(() =>
+      Array.from(document.querySelectorAll("tr[data-row-key]")).map((tr) => ({
+        key: String(tr.dataset.rowKey || "").trim(),
+        spec: String(tr.querySelector("td")?.innerText || "")
+          .trim()
+          .replace(/\s+/g, " ")
+          .slice(0, 40),
+      })),
+    );
+  } catch (error) {
+    return [];
+  }
+}
+
+/**
+ * 滚动一遍整张虚拟表格，收集所有出现过的行（按 data-row-key 排序 = 真实的 SKU 顺序）。
+ */
+async function collectAllSkuRowKeys(page, box) {
+  await scrollVirtualTableToTop(page, box);
+  const keys = new Map();
+  const collect = async () => {
+    const rows = await readVirtualRows(page);
+    rows.forEach((row) => {
+      if (row.key) keys.set(row.key, row.spec);
+    });
+  };
+  await collect();
+  await page.mouse.move(box.x, box.y).catch(() => undefined);
+  for (let i = 0; i < 25; i += 1) {
+    await page.mouse.wheel(0, 220).catch(() => undefined);
+    await page.waitForTimeout(150);
+    await collect();
+  }
+  const rows = Array.from(keys.entries())
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([key, spec]) => ({ key, spec }));
+  logger.info(
+    `抖店虚拟表格：滚动采集到 ${rows.length} 行 SKU` +
+      (rows.length > 0
+        ? `，key 范围 ${rows[0].key}~${rows[rows.length - 1].key}`
+        : ""),
+  );
+  return rows;
+}
+
+/** 取得当前页面的 SKU 行列表（含滚动采集与缓存） */
+async function getSkuRows(page) {
+  const cached = skuRowKeyCache.get(page);
+  if (cached) return cached;
+  const box = await focusVirtualTableCenter(page);
+  const rows = box ? await collectAllSkuRowKeys(page, box) : [];
+  const result = { rows, box };
+  skuRowKeyCache.set(page, result);
+  return result;
+}
+
+/** 向下滚动直到目标行被渲染出来（填写顺序自上而下，目标行总在当前位置下方） */
+async function ensureRowRendered(page, box, rowKey, maxTries = 25) {
+  for (let i = 0; i < maxTries; i += 1) {
+    try {
+      const count = await page.locator(`tr[data-row-key="${rowKey}"]`).count();
+      if (count > 0) return true;
+    } catch (error) {
+      // 忽略单次查询异常，继续滚动重试
+    }
+    if (!box) return false;
+    await page.mouse.move(box.x, box.y).catch(() => undefined);
+    await page.mouse.wheel(0, 160).catch(() => undefined);
+    await page.waitForTimeout(140);
+  }
+  return false;
+}
+
+/**
+ * 列出 SKU 表格里每一行的规格名。
+ *
+ * 页面能填多少条 SKU 完全由模板（copyId）的规格组合决定，与配置写多少条无关。
+ * 配置条数与页面行数不一致时，把页面实际规格名打出来，用户就能逐条对照，
+ * 立刻看出是多配了一条、还是模板里缺了这个规格。
+ */
+async function describeSkuTableSpecs(page) {
+  try {
+    return await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll("tr")).filter((tr) =>
+        tr.querySelector('td[class*="attr-column-field"]'),
+      );
+      return rows.map((tr, index) => {
+        const cells = Array.from(tr.querySelectorAll("td"));
+        return {
+          index,
+          spec: cells
+            .slice(0, 3)
+            .map((cell) => String(cell.innerText || cell.textContent || "").trim())
+            .filter(Boolean)
+            .join(" | ")
+            .slice(0, 90),
+        };
+      });
+    });
+  } catch (error) {
+    logger.warn(`抖店SKU规格清单采集失败: ${error?.message || error}`);
+    return [];
+  }
+}
+
+/**
+ * 打印“页面实际 SKU 规格清单”，并在配置条数与页面行数不一致时给出可操作的提示。
+ */
+async function logSkuSpecMismatch(page, label, inputCount, configCount) {
+  if (inputCount === configCount) return;
+  const specs = await describeSkuTableSpecs(page);
+  if (specs.length > 0) {
+    logger.warn(`抖店${label}：页面 SKU 规格清单（共 ${specs.length} 行）→`);
+    specs.forEach((item) => {
+      logger.warn(`抖店${label}：  第 ${item.index + 1} 行 规格="${item.spec}"`);
+    });
+  }
+  if (configCount > inputCount) {
+    logger.warn(
+      `抖店${label}：配置有 ${configCount} 条，但页面只有 ${inputCount} 行 SKU，` +
+        `多出的 ${configCount - inputCount} 条配置无处可填（通常是模板里没有对应规格，或配置多复制了一条）`,
+    );
+  } else {
+    logger.warn(
+      `抖店${label}：配置只有 ${configCount} 条，但页面有 ${inputCount} 行 SKU，` +
+        `后面的 ${inputCount - configCount} 行会保持模板原值`,
+    );
+  }
+}
+
+/**
  * 采集某个字段定位到的每个输入框的“行锚点”，用于核对 nth(i) 与页面视觉行的对应关系。
  *
  * 一旦中间某一行的 input 没被选择器命中，后面所有行都会整体错位一格：
@@ -2844,26 +3035,64 @@ export async function publishToDoudian(publishInfo = {}) {
           );
         });
 
-        for (let index = 0; index < inputCount; index += 1) {
-          const code = skuConfig.length > 0
-            ? skuProductCodes[index]
-            : skuCodes[index] || productCode;
-          if (!code) continue;
-          try {
-            const input = productCodeInputs.nth(index);
-            const result = await fillSkuInput(
-              input,
-              code,
-              `商家编码逻辑：input[${index}]`,
-            );
-            productCodeFilledCount += 1;
-            logger.info(
-              `抖店商家编码逻辑：已填写 input[${index}] = ${code}${result.retried ? "（已重试并回读校验）" : ""}`,
-            );
-          } catch (error) {
-            logger.warn(
-              `抖店商家编码逻辑：input[${index}] 填写失败: ${error?.message || error}`,
-            );
+        if (await isVirtualSkuTable(page)) {
+          // ===== 虚拟滚动表格：滚动让目标行渲染出来，再按 data-row-key 定位 =====
+          const { rows, box } = await getSkuRows(page);
+          await scrollVirtualTableToTop(page, box);
+          for (let i = 0; i < rows.length; i += 1) {
+            const rowInfo = rows[i];
+            const code = skuConfig.length > 0
+              ? skuProductCodes[i]
+              : skuCodes[i] || productCode;
+            if (!code) continue;
+            if (!(await ensureRowRendered(page, box, rowInfo.key))) {
+              logger.warn(
+                `抖店商家编码逻辑：第 ${i + 1} 行(key=${rowInfo.key}) 滚动后仍未渲染，跳过`,
+              );
+              continue;
+            }
+            try {
+              const input = page
+                .locator(`tr[data-row-key="${rowInfo.key}"]`)
+                .locator(codeField.selector)
+                .first();
+              const result = await fillSkuInput(
+                input,
+                code,
+                `商家编码逻辑：第 ${i + 1} 行`,
+              );
+              productCodeFilledCount += 1;
+              logger.info(
+                `抖店商家编码逻辑：第 ${i + 1} 行 已填写编码 = ${code}（${rowInfo.spec}）${result.retried ? "（已重试并回读校验）" : ""}`,
+              );
+            } catch (error) {
+              logger.warn(
+                `抖店商家编码逻辑：第 ${i + 1} 行 填写失败: ${error?.message || error}`,
+              );
+            }
+          }
+        } else {
+          for (let index = 0; index < inputCount; index += 1) {
+            const code = skuConfig.length > 0
+              ? skuProductCodes[index]
+              : skuCodes[index] || productCode;
+            if (!code) continue;
+            try {
+              const input = productCodeInputs.nth(index);
+              const result = await fillSkuInput(
+                input,
+                code,
+                `商家编码逻辑：input[${index}]`,
+              );
+              productCodeFilledCount += 1;
+              logger.info(
+                `抖店商家编码逻辑：已填写 input[${index}] = ${code}${result.retried ? "（已重试并回读校验）" : ""}`,
+              );
+            } catch (error) {
+              logger.warn(
+                `抖店商家编码逻辑：input[${index}] 填写失败: ${error?.message || error}`,
+              );
+            }
           }
         }
       } catch (error) {
@@ -2900,6 +3129,7 @@ export async function publishToDoudian(publishInfo = {}) {
           logger.warn(
             `抖店库存逻辑：页面库存框数量(${inputCount}) 与 SKU 配置条数(${skuConfig.length}) 不一致，超出部分会被跳过`,
           );
+          await logSkuSpecMismatch(page, "库存逻辑", inputCount, skuConfig.length);
         }
         if (stockTableRowCount > 0 && inputCount !== stockTableRowCount) {
           logger.warn(
@@ -2913,26 +3143,74 @@ export async function publishToDoudian(publishInfo = {}) {
           );
         });
       }
-      for (let i = 0; i < inputCount; i += 1) {
-        const sku = skuConfig[i];
-        const stockToFill = resolveStock(sku);
-        if (stockToFill === undefined) {
-          logger.info(`抖店库存逻辑：SKU ${i + 1} 未设置库存，跳过`);
-          continue;
+      if (await isVirtualSkuTable(page)) {
+        // ===== 虚拟滚动表格：滚动让目标行渲染出来，再按 data-row-key 定位 =====
+        const { rows, box } = await getSkuRows(page);
+        if (rows.length !== skuConfig.length) {
+          logger.warn(
+            `抖店库存逻辑：页面 SKU 行数(${rows.length}) 与配置条数(${skuConfig.length}) 不一致`,
+          );
+          rows.forEach((row, idx) => {
+            logger.warn(`抖店库存逻辑：  第 ${idx + 1} 行 规格="${row.spec}"`);
+          });
         }
-        try {
-          const input = stockInputs.nth(i);
-          const result = await fillSkuInput(
-            input,
-            stockToFill,
-            `库存逻辑：SKU ${i + 1}`,
-          );
-          stockFilledCount += 1;
-          logger.info(
-            `抖店库存逻辑：SKU ${i + 1} 库存已填写 = ${stockToFill}${result.retried ? "（已重试并回读校验）" : ""}`,
-          );
-        } catch (error) {
-          logger.warn(`抖店库存逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
+        await scrollVirtualTableToTop(page, box);
+        const expected = Math.min(rows.length, skuConfig.length);
+        for (let i = 0; i < expected; i += 1) {
+          const rowInfo = rows[i];
+          const stockToFill = resolveStock(skuConfig[i]);
+          if (stockToFill === undefined) {
+            logger.info(
+              `抖店库存逻辑：SKU ${i + 1}(${rowInfo.spec}) 未设置库存，跳过`,
+            );
+            continue;
+          }
+          if (!(await ensureRowRendered(page, box, rowInfo.key))) {
+            logger.warn(
+              `抖店库存逻辑：SKU ${i + 1}(key=${rowInfo.key}) 滚动后仍未渲染，跳过`,
+            );
+            continue;
+          }
+          try {
+            const input = page
+              .locator(`tr[data-row-key="${rowInfo.key}"]`)
+              .locator(stockField.selector)
+              .first();
+            const result = await fillSkuInput(
+              input,
+              stockToFill,
+              `库存逻辑：SKU ${i + 1}`,
+            );
+            stockFilledCount += 1;
+            logger.info(
+              `抖店库存逻辑：SKU ${i + 1} 库存已填写 = ${stockToFill}（${rowInfo.spec}）${result.retried ? "（已重试并回读校验）" : ""}`,
+            );
+          } catch (error) {
+            logger.warn(`抖店库存逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
+          }
+        }
+      } else {
+        for (let i = 0; i < inputCount; i += 1) {
+          const sku = skuConfig[i];
+          const stockToFill = resolveStock(sku);
+          if (stockToFill === undefined) {
+            logger.info(`抖店库存逻辑：SKU ${i + 1} 未设置库存，跳过`);
+            continue;
+          }
+          try {
+            const input = stockInputs.nth(i);
+            const result = await fillSkuInput(
+              input,
+              stockToFill,
+              `库存逻辑：SKU ${i + 1}`,
+            );
+            stockFilledCount += 1;
+            logger.info(
+              `抖店库存逻辑：SKU ${i + 1} 库存已填写 = ${stockToFill}${result.retried ? "（已重试并回读校验）" : ""}`,
+            );
+          } catch (error) {
+            logger.warn(`抖店库存逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
+          }
         }
       }
     } else if (stockValue) {
@@ -2969,7 +3247,12 @@ export async function publishToDoudian(publishInfo = {}) {
       const priceSelector = priceSelectorList.join(", ");
       const priceInputs = page.locator(priceSelector);
       const priceInputCount = await priceInputs.count();
-      const priceTableRowCount = await countSkuTableRows(page);
+      let priceTableRowCount = await countSkuTableRows(page);
+      // 虚拟滚动表格下 countSkuTableRows 只能数到已渲染的行，用滚动采集的真实行数覆盖
+      if (await isVirtualSkuTable(page)) {
+        const { rows } = await getSkuRows(page);
+        if (rows.length > 0) priceTableRowCount = rows.length;
+      }
 
       logger.info(
         `抖店价格逻辑：价格输入框=${priceInputCount}, SKU表格行数=${priceTableRowCount}, 配置数=${skuConfig.length}`,
@@ -2985,6 +3268,12 @@ export async function publishToDoudian(publishInfo = {}) {
                 : "") +
               "，多出的配置会被跳过、多出的行保持原值",
           );
+          await logSkuSpecMismatch(
+            page,
+            "价格逻辑",
+            priceInputCount,
+            skuConfig.length,
+          );
         }
         if (priceTableRowCount > 0 && priceInputCount !== priceTableRowCount) {
           logger.warn(
@@ -2999,76 +3288,102 @@ export async function publishToDoudian(publishInfo = {}) {
         });
       }
 
-      // 主定位与表格行数对不上时，说明存在漏行或同列多框，先尝试自愈
-      let priceLocator = priceInputs;
-      let priceLocatorCount = priceInputCount;
-      let priceLocatorSelector = priceSelector;
-      if (priceTableRowCount > 0 && priceInputCount !== priceTableRowCount) {
-        const priceFallbackSelectors = [
-          'input[placeholder*="请输入价格" i]',
-          'input[placeholder*="价格" i]',
-        ];
-        for (const fallbackSelector of priceFallbackSelectors) {
-          try {
-            const fallbackLocator = page.locator(fallbackSelector);
-            const fallbackCount = await fallbackLocator.count();
-            if (fallbackCount === priceTableRowCount) {
-              priceLocator = fallbackLocator;
-              priceLocatorCount = fallbackCount;
-              priceLocatorSelector = fallbackSelector;
-              logger.warn(
-                `抖店价格逻辑：主定位命中 ${priceInputCount} 个、与表格行数 ${priceTableRowCount} 不符，改用 placeholder 兜底定位 ${fallbackSelector}`,
-              );
-              break;
-            }
-          } catch (error) {
+      // 注意：不要用 placeholder 给价格做兜底。
+      // 抖店 SKU 行内价格框的 placeholder 是无语义的“请输入”，而“价格”“现货库存”
+      // “商家编码”这类文案属于表外的批量设置区输入框，用它们兜底只会填错地方。
+      if (await isVirtualSkuTable(page)) {
+        // ===== 虚拟滚动表格：滚动让目标行渲染出来，再按 data-row-key 定位 =====
+        const { rows, box } = await getSkuRows(page);
+        if (rows.length !== skuConfig.length) {
+          logger.warn(
+            `抖店价格逻辑：页面 SKU 行数(${rows.length}) 与配置条数(${skuConfig.length}) 不一致`,
+          );
+          rows.forEach((row, idx) => {
+            logger.warn(`抖店价格逻辑：  第 ${idx + 1} 行 规格="${row.spec}"`);
+          });
+        }
+        await scrollVirtualTableToTop(page, box);
+        const expected = Math.min(rows.length, skuConfig.length);
+        for (let i = 0; i < expected; i += 1) {
+          const rowInfo = rows[i];
+          const priceToFill = resolvePrice(skuConfig[i]);
+          if (priceToFill === undefined) {
+            logger.info(
+              `抖店价格逻辑：SKU ${i + 1}(${rowInfo.spec}) 未设置价格，跳过`,
+            );
+            continue;
+          }
+          if (!(await ensureRowRendered(page, box, rowInfo.key))) {
             logger.warn(
-              `抖店价格逻辑：兜底定位失败 selector=${fallbackSelector} ${error?.message || error}`,
+              `抖店价格逻辑：SKU ${i + 1}(key=${rowInfo.key}) 滚动后仍未渲染，跳过`,
+            );
+            continue;
+          }
+          try {
+            const input = page
+              .locator(`tr[data-row-key="${rowInfo.key}"]`)
+              .locator(priceSelector)
+              .first();
+            const result = await fillSkuInput(
+              input,
+              priceToFill,
+              `价格逻辑：SKU ${i + 1}`,
+            );
+            priceFilledCount += 1;
+            logger.info(
+              `抖店价格逻辑：SKU ${i + 1} 价格已填写 = ${priceToFill}（${rowInfo.spec}）${result.retried ? "（已重试并回读校验）" : ""}`,
+            );
+          } catch (error) {
+            logger.warn(`抖店价格逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
+          }
+        }
+      } else {
+        // ===== 普通表格：沿用原有的按序号填写 =====
+        const priceLocator = priceInputs;
+        const priceLocatorCount = priceInputCount;
+        const priceLocatorSelector = priceSelector;
+
+        // 同一行存在多个价格框（如销售价 + 市场价）时按行归并，避免整体错位
+        let priceIndexes = null;
+        if (priceTableRowCount > 0 && priceLocatorCount > priceTableRowCount) {
+          const rowAnchored = await resolveRowAnchoredIndexes(
+            page,
+            priceLocatorSelector,
+          );
+          if (rowAnchored.length === priceTableRowCount) {
+            priceIndexes = rowAnchored;
+            logger.info(
+              `抖店价格逻辑：已按行归并价格输入框，行索引=[${rowAnchored.join(",")}]`,
             );
           }
         }
-      }
 
-      // 同一行存在多个价格框（如销售价 + 市场价）时按行归并，避免整体错位
-      let priceIndexes = null;
-      if (priceTableRowCount > 0 && priceLocatorCount > priceTableRowCount) {
-        const rowAnchored = await resolveRowAnchoredIndexes(
-          page,
-          priceLocatorSelector,
-        );
-        if (rowAnchored.length === priceTableRowCount) {
-          priceIndexes = rowAnchored;
-          logger.info(
-            `抖店价格逻辑：已按行归并价格输入框，行索引=[${rowAnchored.join(",")}]`,
-          );
-        }
-      }
-
-      const priceLoopLength = priceIndexes
-        ? priceIndexes.length
-        : priceLocatorCount;
-      for (let i = 0; i < priceLoopLength; i += 1) {
-        const sku = skuConfig[i];
-        const priceToFill = resolvePrice(sku);
-        if (priceToFill === undefined) {
-          logger.info(`抖店价格逻辑：SKU ${i + 1} 未设置价格，跳过`);
-          continue;
-        }
-        try {
-          const input = priceIndexes
-            ? priceLocator.nth(priceIndexes[i])
-            : priceLocator.nth(i);
-          const result = await fillSkuInput(
-            input,
-            priceToFill,
-            `价格逻辑：SKU ${i + 1}`,
-          );
-          priceFilledCount += 1;
-          logger.info(
-            `抖店价格逻辑：SKU ${i + 1} 价格已填写 = ${priceToFill}${result.retried ? "（已重试并回读校验）" : ""}`,
-          );
-        } catch (error) {
-          logger.warn(`抖店价格逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
+        const priceLoopLength = priceIndexes
+          ? priceIndexes.length
+          : priceLocatorCount;
+        for (let i = 0; i < priceLoopLength; i += 1) {
+          const sku = skuConfig[i];
+          const priceToFill = resolvePrice(sku);
+          if (priceToFill === undefined) {
+            logger.info(`抖店价格逻辑：SKU ${i + 1} 未设置价格，跳过`);
+            continue;
+          }
+          try {
+            const input = priceIndexes
+              ? priceLocator.nth(priceIndexes[i])
+              : priceLocator.nth(i);
+            const result = await fillSkuInput(
+              input,
+              priceToFill,
+              `价格逻辑：SKU ${i + 1}`,
+            );
+            priceFilledCount += 1;
+            logger.info(
+              `抖店价格逻辑：SKU ${i + 1} 价格已填写 = ${priceToFill}${result.retried ? "（已重试并回读校验）" : ""}`,
+            );
+          } catch (error) {
+            logger.warn(`抖店价格逻辑：SKU ${i + 1} 填写失败: ${error?.message || error}`);
+          }
         }
       }
     }
