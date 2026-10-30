@@ -856,6 +856,10 @@ function loadSourceHooks(code: string): any {
     // URL 是纯解析工具（无网络/文件能力），源码拼查询串常用，注入避免 "URL is not defined"；
     // 其余 Node 能力（require/process/fs/fetch）一律不给，网络必须走 ctx
     URL,
+    // 源码里用 new Promise(r => setTimeout(r, ms)) 做重试/退避，vm 上下文没有这些 Node 全局，
+    // 不注入会直接 "setTimeout is not defined"（无网络能力，注入无风险）
+    setTimeout,
+    clearTimeout,
   };
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox, {
