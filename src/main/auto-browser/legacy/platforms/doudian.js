@@ -113,6 +113,32 @@ async function fillInputsBySelectorList(page, selectors, value, logPrefix) {
   return 0;
 }
 
+/**
+ * 按语义优先级逐个尝试选择器，返回第一个命中的 locator。
+ *
+ * 与“把多个选择器用逗号合并成一个大集合”不同：合并时只要有一个宽松选择器
+ * （例如 td[class*="attr-column-field_num"] input，会命中商品编码列），
+ * 命中的元素就会混入其它列，后续按 nth(i) 序号填写时就会串列
+ * —— 库存值被写进编码框、编码又覆盖回去，表现就是「编码填进库存里」。
+ * 改成逐个尝试后，同一字段只可能来自同一个语义定位，不会再跨列。
+ */
+async function resolveFieldInputs(page, selectors) {
+  for (const selector of selectors) {
+    try {
+      const locator = page.locator(selector);
+      const count = await locator.count();
+      if (count > 0) {
+        return { locator, count, selector };
+      }
+    } catch (error) {
+      logger.warn(
+        `抖店字段定位失败: selector=${selector} ${error?.message || error}`,
+      );
+    }
+  }
+  return { locator: null, count: 0, selector: "" };
+}
+
 function isLikelyPreviewImageMeta(src, width, height) {
   const normalizedSrc = String(src || "").trim();
   const normalizedWidth = Number(width || 0);
@@ -2631,13 +2657,24 @@ export async function publishToDoudian(publishInfo = {}) {
       logger.info("抖店商家编码逻辑：无商家编码，跳过填写");
     } else {
       try {
-        const productCodeSelector =
-          'td.attr-column-field_code input[type="text"]';
-        const productCodeInputs = page.locator(productCodeSelector);
-        const inputCount = await productCodeInputs.count();
-        logger.info(
-          `抖店商家编码逻辑：准备填写商家编码，inputCount=${inputCount}`,
-        );
+        // 优先用 placeholder 定位编码框（抖店实际文案为“请输入erp编码”），
+        // 原来的 td.attr-column-field_code input[type="text"] 作为兜底：
+        // class 一旦改名或 input 不是 text 类型，count 就是 0，整段会被跳过不填。
+        const codeField = await resolveFieldInputs(page, [
+          'input[placeholder="请输入erp编码"]',
+          'input[placeholder="请输入商品编码"]',
+          'td.attr-column-field_code input',
+          'td[class*="attr-column-field_code"] input',
+        ]);
+        const productCodeInputs = codeField.locator;
+        const inputCount = codeField.count;
+        if (!productCodeInputs || inputCount <= 0) {
+          logger.warn("抖店商家编码逻辑：未定位到任何编码输入框，跳过填写");
+        } else {
+          logger.info(
+            `抖店商家编码逻辑：准备填写商家编码，selector=${codeField.selector}, inputCount=${inputCount}`,
+          );
+        }
 
         for (let index = 0; index < inputCount; index += 1) {
           const code = skuConfig.length > 0
@@ -2664,19 +2701,30 @@ export async function publishToDoudian(publishInfo = {}) {
     if (skuConfig.length > 0) {
       // 按 SKU 逐个填写库存
       logger.info(`抖店库存逻辑：使用 SKU 配置，共 ${skuConfig.length} 项`);
-      const stockSelectorList = [
+      // 只允许“库存语义”的定位：placeholder 优先，其次 stock 列 class。
+      // 已移除 attr-column-field_num / attr-column-field_inventory 这两个宽松匹配，
+      // 它们会连带命中商品编码列，按序号填写时就会把库存写进编码框。
+      const stockField = await resolveFieldInputs(page, [
         'input[placeholder="请输入库存"]',
-        'input[type="text"][placeholder="请输入库存"]',
-        'input[type="number"][placeholder="请输入库存"]',
-        'td.attr-column-field_stock input[type="text"]',
-        'td.attr-column-field_stock input[type="number"]',
-        'td.attr-column-field_stock input:not([type])',
+        'td.attr-column-field_stock input',
         'td[class*="attr-column-field_stock"] input',
+        // 仅作为末位兜底：上面三个全都没命中时才会用到，不会与它们混用
         'td[class*="attr-column-field_inventory"] input',
-        'td[class*="attr-column-field_num"] input',
-      ];
-      const stockInputs = page.locator(stockSelectorList.join(", "));
-      const inputCount = await stockInputs.count();
+      ]);
+      const stockInputs = stockField.locator;
+      const inputCount = stockField.count;
+      if (!stockInputs || inputCount <= 0) {
+        logger.warn("抖店库存逻辑：未定位到任何库存输入框，跳过填写");
+      } else {
+        logger.info(
+          `抖店库存逻辑：命中库存输入框，selector=${stockField.selector}, inputCount=${inputCount}, 配置数=${skuConfig.length}`,
+        );
+        if (inputCount !== skuConfig.length) {
+          logger.warn(
+            `抖店库存逻辑：页面库存框数量(${inputCount}) 与 SKU 配置条数(${skuConfig.length}) 不一致，超出部分会被跳过`,
+          );
+        }
+      }
       for (let i = 0; i < inputCount; i += 1) {
         const sku = skuConfig[i];
         const stockToFill = resolveStock(sku);
@@ -2702,14 +2750,9 @@ export async function publishToDoudian(publishInfo = {}) {
         page,
         [
           'input[placeholder="请输入库存"]',
-          'input[type="text"][placeholder="请输入库存"]',
-          'input[type="number"][placeholder="请输入库存"]',
-          'td.attr-column-field_stock input[type="text"]',
-          'td.attr-column-field_stock input[type="number"]',
-          'td.attr-column-field_stock input:not([type])',
+          'td.attr-column-field_stock input',
           'td[class*="attr-column-field_stock"] input',
           'td[class*="attr-column-field_inventory"] input',
-          'td[class*="attr-column-field_num"] input',
         ],
         stockValue,
         "库存逻辑",
