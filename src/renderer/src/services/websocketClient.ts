@@ -1223,8 +1223,10 @@ function clearPhotoshopProductionBusyState(message = "套图制作已结束") {
       ? previous.details
       : ({} as Record<string, any>);
   const photoshopReady = !!previousDetails.photoshopReady;
+  const photonReady = !!previousDetails.photonReady;
+  const engineReady = photoshopReady || photonReady;
   const photoshopRunning = !!previousDetails.photoshopRunning;
-  const nextState = photoshopReady
+  const nextState = engineReady
     ? "idle"
     : photoshopRunning
       ? "connected"
@@ -1232,7 +1234,7 @@ function clearPhotoshopProductionBusyState(message = "套图制作已结束") {
 
   // 套图完成事件先清本地 busy，避免侧边栏等到下一次 runtime 刷新才退出 loading。
   updateServiceStatus("photoshop", {
-    label: "Photoshop",
+    label: resolveCanvasEngineLabel(previousDetails),
     connected: previous?.connected ?? true,
     available: previous?.available ?? photoshopReady,
     status: previous?.status || "connected",
@@ -1301,6 +1303,7 @@ function isPhotoshopInfrastructureError(error: any) {
     requestUrl.includes("localhost:1595") ||
     requestUrl.includes("/processpsd") ||
     requestUrl.includes("/photoshopstatus") ||
+    requestUrl.includes("/photonstatus") ||
     requestUrl.includes("/health") ||
     requestUrl.includes("/startphotoshop") ||
     requestUrl.includes("/stopphotoshop") ||
@@ -1321,7 +1324,10 @@ function isPhotoshopInfrastructureError(error: any) {
     message.includes("ps 自动化") ||
     message.includes("photoshop") ||
     message.includes("localhost:1595") ||
-    message.includes("ps 处理服务")
+    message.includes("ps 处理服务") ||
+    message.includes("photon") ||
+    message.includes("出图服务") ||
+    message.includes("出图引擎")
   );
   const hasNetworkSignal = !!(
     code.includes("econn") ||
@@ -1340,7 +1346,9 @@ function isPhotoshopInfrastructureError(error: any) {
     message.includes("无法连接") ||
     message.includes("服务连接失败") ||
     message.includes("ps 处理服务未启动") ||
+    message.includes("出图服务未启动") ||
     message.includes("photoshop 处理请求超时") ||
+    message.includes("photon cli") ||
     message.includes("网络") ||
     message.includes("连接")
   );
@@ -1371,7 +1379,9 @@ async function markPhotoshopRuntimeUnavailable(message: string) {
   const runtime = updateServiceStatus(
     "photoshop",
     {
-      label: "Photoshop",
+      label: resolveCanvasEngineLabel(
+        (previous?.details || {}) as Record<string, any>,
+      ),
       connected: false,
       available: false,
       status: "error",
@@ -1391,6 +1401,9 @@ async function markPhotoshopRuntimeUnavailable(message: string) {
         serviceStatus: "error",
         photoshopReady: false,
         photoshopStatus: "unknown",
+        photonReady: false,
+        photonStatus: "error",
+        engine: null,
         transientStatusError: message,
       },
     },
@@ -6134,6 +6147,9 @@ function getPsdSetConsoleDebugRuntime() {
           details: {
             photoshopReady: psService.details?.photoshopReady ?? null,
             rawPhotoshopReady: psService.details?.rawPhotoshopReady ?? null,
+            photonReady: psService.details?.photonReady ?? null,
+            photonInstalled: psService.details?.photonInstalled ?? null,
+            engine: psService.details?.engine ?? null,
             processBusy: psService.details?.processBusy ?? null,
           },
         }
@@ -6979,11 +6995,11 @@ async function handlePsdSetProduction(
     emitter.emit("psdSetProgress", {
       psdSetId,
       step: "步骤 3/5: 处理PSD文件",
-      message: "正在调用Photoshop服务处理PSD文件，替换智能对象...",
+      message: "正在调用出图服务处理PSD文件，替换智能对象...",
       progress: 3,
       total: 5,
     });
-    addProductionLog("素材就绪", `贴纸与PSD模板下载就绪，开始PS处理`);
+    addProductionLog("素材就绪", `贴纸与PSD模板下载就绪，开始出图处理`);
     await syncPsdSetProductionStatus({
       psdSetId,
       status: "processing",
@@ -7002,7 +7018,7 @@ async function handlePsdSetProduction(
     });
     emitter.emit("log", {
       level: "info",
-      message: `[psd-set] 正在调用PS服务处理PSD...`,
+      message: `[psd-set] 正在调用出图服务处理PSD...`,
     });
     psdSetConsoleDebug("production.process-psd.begin", {
       psdSetId,
@@ -7236,7 +7252,7 @@ async function handlePsdSetProduction(
     const assertProcessFileReady = async (label: string, filePath: string) => {
       const normalizedPath = String(filePath || "").trim();
       if (!normalizedPath) {
-        throw new Error(`${label}路径为空，无法调用 Photoshop 服务`);
+        throw new Error(`${label}路径为空，无法调用出图服务`);
       }
       if (typeof (window.api as any).checkLocalFileExists !== "function") {
         return;
@@ -7328,6 +7344,19 @@ async function handlePsdSetProduction(
         }
       }
     }
+    // 出图引擎：配置显式指定优先；未指定时 Photoshop 可用则用 PS，否则回退 Photon
+    const resolvedEngine = resolveProductionEngine(
+      (processPayload as any).engine,
+    );
+    (processPayload as any).engine = resolvedEngine;
+    emitter.emit("log", {
+      level: "info",
+      message:
+        resolvedEngine === "photon"
+          ? `[psd-set] 🧩 出图引擎: Photon（本机无需安装 Photoshop）`
+          : `[psd-set] 🧩 出图引擎: Photoshop`,
+    });
+
     await assertProcessFileReady("PSD模板", processPayload.psd_path);
     for (let i = 0; i < processPayload.smart_objects.length; i++) {
       await assertProcessFileReady(
@@ -7370,7 +7399,7 @@ async function handlePsdSetProduction(
       }
     }
 
-    // 打印即将发送给 Photoshop 服务的参数，便于排查多素材 / smart_objects 问题
+    // 打印即将发送给出图服务的参数，便于排查多素材 / smart_objects 问题
     // 简化 smart_objects 输出，避免日志过大
     const logSmartObjects = processPayload.smart_objects.map((so: any) => {
       const logSo: any = {
@@ -7425,7 +7454,7 @@ async function handlePsdSetProduction(
       rotations: processPayload.smart_objects.map((so: any) => ({ name: so.smart_object_name, rotation: so.rotation })),
     });
 
-    writePsdSetFileLog("info", "准备调用 Photoshop processPsd", {
+    writePsdSetFileLog("info", "准备调用出图服务 processPsd", {
       psdSetId,
       commandId: taskId || null,
       psdPath: processPayload.psd_path,
@@ -7437,17 +7466,19 @@ async function handlePsdSetProduction(
       verbose: processPayload.verbose ?? null,
     });
 
+    const engineLabel = resolvedEngine === "photon" ? "Photon" : "Photoshop";
+
     addProductionLog(
-      "调用PS处理",
-      `正在调用 Photoshop 处理，智能对象数: ${processPayload.smart_objects.length}`,
+      "调用出图处理",
+      `正在调用 ${engineLabel} 处理，智能对象数: ${processPayload.smart_objects.length}`,
     );
 
-    // PS 渲染可能耗时数分钟：定时心跳续报 processing，避免服务端按超时/孤儿回收任务
+    // 渲染可能耗时数分钟：定时心跳续报 processing，避免服务端按超时/孤儿回收任务
     const psHeartbeatTimer = setInterval(() => {
       void syncPsdSetProductionStatus({
         psdSetId,
         status: "processing",
-        message: "Photoshop 渲染中",
+        message: `${engineLabel} 渲染中`,
         progress: 3,
         total: 5,
         dispatchToken: normalizedDispatchToken,
@@ -7468,21 +7499,31 @@ async function handlePsdSetProduction(
     });
 
     if (!processResult.success || !processResult.data?.export_files) {
-      throw new Error(`PS处理失败: ${processResult.message || "未知错误"}`);
+      throw new Error(
+        `${engineLabel}处理失败: ${processResult.message || "未知错误"}`,
+      );
     }
 
-    addProductionLog(
-      "PS处理完成",
-      `PS处理完成，成功生成 ${processResult.data.export_files.length} 个导出文件`,
-    );
-
-    // 过滤出成功导出的文件
-    const successfulFiles = processResult.data.export_files.filter(
+    const exportFiles = processResult.data.export_files;
+    // 只统计真正写出文件的条目：全失败时 API 也会返回等量占位项
+    const successfulFiles = exportFiles.filter(
       (file) => file.success && file.export_path,
     );
 
+    addProductionLog(
+      "出图处理完成",
+      `${engineLabel}处理完成，成功生成 ${successfulFiles.length} 个导出文件`,
+    );
+
     if (successfulFiles.length === 0) {
-      throw new Error(`PS处理失败: 所有文件导出失败`);
+      const failureDetail = exportFiles
+        .map((file) => file.error)
+        .filter((error): error is string => !!error)
+        .slice(0, 3)
+        .join("；");
+      throw new Error(
+        `${engineLabel}处理失败: 所有文件导出失败${failureDetail ? `（${failureDetail}）` : ""}`,
+      );
     }
 
     emitter.emit("psdSetProgress", {
@@ -7502,7 +7543,7 @@ async function handlePsdSetProduction(
       successfulFiles,
       exportFiles: processResult.data.export_files,
     });
-    writePsdSetFileLog("info", "Photoshop 处理完成", {
+    writePsdSetFileLog("info", `${engineLabel} 处理完成`, {
       psdSetId,
       commandId: taskId || null,
       exportFiles: processResult.data.export_files,
@@ -7818,7 +7859,7 @@ async function handlePsdSetProduction(
         (runtimeError) => {
           emitter.emit("log", {
             level: "warn",
-            message: `[psd-set] 标记 Photoshop runtime 不可用失败: ${serializeError(runtimeError)}`,
+            message: `[psd-set] 标记出图服务不可用失败: ${serializeError(runtimeError)}`,
           });
         },
       );
@@ -7921,7 +7962,15 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
     {};
   const previousPhotoshopReady = !!(
     previousRuntime?.details?.photoshopReady === true ||
-    previousRuntime?.available === true
+    (previousRuntime?.available === true &&
+      previousRuntime?.details?.photonReady !== true)
+  );
+  const previousPhotonReady = previousRuntime?.details?.photonReady === true;
+  const previousPhotonInstalled =
+    previousRuntime?.details?.photonInstalled === true || previousPhotonReady;
+  const previousEngineReady = previousPhotoshopReady || previousPhotonReady;
+  const previousEngineLabel = resolveCanvasEngineLabel(
+    (previousRuntime?.details || {}) as Record<string, any>,
   );
   const previousConnected = previousRuntime?.connected === true;
 
@@ -7935,7 +7984,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
       busy: isBusy,
       currentTaskId: currentProductionTaskId,
       dispatchToken: currentProductionDispatchToken,
-      message: "当前为浏览器环境，未注入桌面端 Photoshop 能力",
+      message: "当前为浏览器环境，未注入桌面端出图能力",
       endpoint: "http://localhost:1595",
       lastCheckedAt,
       lastError: null,
@@ -7947,6 +7996,10 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
         photoshopRunning: false,
         photoshopReady: false,
         photoshopStatus: "unsupported",
+        photonReady: false,
+        photonInstalled: false,
+        photonStatus: "unsupported",
+        engine: null,
         runtime: "browser",
       },
     };
@@ -7954,20 +8007,39 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
 
   try {
     const health = await photoshopApi.checkHealth();
-    const psStatus = await photoshopApi.checkPhotoshopStatus(false);
+    const photonStatus = await probePhotonStatus();
+    let psStatus: Awaited<
+      ReturnType<typeof photoshopApi.checkPhotoshopStatus>
+    > | null = null;
+    try {
+      psStatus = await photoshopApi.checkPhotoshopStatus(false);
+    } catch (psStatusError) {
+      // Photon 可用时，PS 状态探测失败不应阻断整条出图链路
+      if (photonStatus?.is_available !== true) {
+        throw psStatusError;
+      }
+    }
     photoshopRuntimeProbeFailureCount = 0;
-    const photoshopRunning = !!psStatus.is_running;
+    const photoshopRunning = !!psStatus?.is_running;
     const reportedPhotoshopReady = !!(
-      psStatus.is_available && photoshopRunning
+      psStatus?.is_available && photoshopRunning
     );
     const photoshopReady = !!(
       reportedPhotoshopReady ||
       (isBusy && photoshopRunning && previousPhotoshopReady)
     );
-    const available = photoshopReady;
+    const photonReady = photonStatus?.is_available === true;
+    const photonInstalled = !!photonStatus?.cli_path || photonReady;
+    const available = photoshopReady || photonReady;
+    const engine = photoshopReady ? "photoshop" : photonReady ? "photon" : null;
+    const engineLabel = resolveCanvasEngineLabel({
+      photoshopReady,
+      photonReady,
+      photonInstalled,
+    });
 
     return {
-      label: "Photoshop",
+      label: engineLabel,
       connected: true,
       available,
       status: "connected",
@@ -7976,13 +8048,21 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
       currentTaskId: currentProductionTaskId,
       dispatchToken: currentProductionDispatchToken,
       message: isBusy
-        ? "正在执行 Photoshop 任务"
+        ? `正在执行 ${engineLabel} 出图任务`
         : photoshopReady
-          ? "PS 服务已连接，Photoshop 可执行"
-          : photoshopRunning
-            ? "PS 服务已连接，Photoshop 已启动，等待可执行状态"
-            : "PS 服务已连接，等待 Photoshop 启动",
-      version: health.version || psStatus.connection_test?.version,
+          ? "出图服务已连接，Photoshop 可执行"
+          : photonReady
+            ? "出图服务已连接，本机将通过 Photon 引擎出图（未检测到可用的 Photoshop）"
+            : photonInstalled
+              ? "出图服务已连接，等待 Photon 引擎就绪"
+              : photoshopRunning
+                ? "出图服务已连接，Photoshop 已启动，等待可执行状态"
+                : "出图服务已连接，等待 Photoshop 启动",
+      version:
+        health.version ||
+        psStatus?.connection_test?.version ||
+        photonStatus?.version ||
+        undefined,
       endpoint: "http://localhost:1595",
       lastCheckedAt,
       lastError: null,
@@ -8010,13 +8090,23 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
             : photoshopRunning
               ? "starting"
               : "stopped",
+        photonReady,
+        photonInstalled,
+        photonStatus: photonReady
+          ? "ready"
+          : photonInstalled
+            ? "not_ready"
+            : "unavailable",
+        photonVersion: photonStatus?.version || null,
+        photonCliPath: photonStatus?.cli_path || null,
+        engine,
         rawStatus: psStatus,
         rawPhotoshopReady: reportedPhotoshopReady,
       },
     };
   } catch (error: any) {
     photoshopRuntimeProbeFailureCount += 1;
-    const errorMessage = normalizeErrorMessage(error, "PS 状态检测失败");
+    const errorMessage = normalizeErrorMessage(error, "出图服务状态检测失败");
     const networkError =
       isPhotoshopInfrastructureError(error) ||
       error?.code === "ECONNREFUSED" ||
@@ -8026,7 +8116,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
     const canUsePreviousReadyState = !!(
       networkError &&
       previousConnected &&
-      previousPhotoshopReady &&
+      previousEngineReady &&
       photoshopRuntimeProbeFailureCount < PHOTOSHOP_RUNTIME_FAILURE_GRACE_COUNT
     );
     if (canUsePreviousReadyState) {
@@ -8035,7 +8125,7 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
           ? previousRuntime.details
           : {};
       return {
-        label: "Photoshop",
+        label: previousEngineLabel,
         connected: true,
         available: true,
         status: "connected",
@@ -8044,8 +8134,8 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
         currentTaskId: currentProductionTaskId,
         dispatchToken: currentProductionDispatchToken,
         message: isBusy
-          ? "正在执行 Photoshop 任务，状态检测暂时未响应"
-          : "PS 服务已连接，状态检测短暂未响应",
+          ? `正在执行 ${previousEngineLabel} 出图任务，状态检测暂时未响应`
+          : "出图服务已连接，状态检测短暂未响应",
         version: previousRuntime?.version,
         endpoint: previousRuntime?.endpoint || "http://localhost:1595",
         lastCheckedAt,
@@ -8066,8 +8156,14 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
           ...previousDetails,
           serviceHealthy: false,
           serviceStatus: "connected",
-          photoshopReady: true,
-          photoshopStatus: isBusy ? "busy" : "ready",
+          photoshopReady: previousPhotoshopReady,
+          photoshopStatus: isBusy
+            ? "busy"
+            : previousPhotoshopReady
+              ? "ready"
+              : previousDetails.photoshopStatus,
+          photonReady: previousPhotonReady,
+          photonInstalled: previousPhotonInstalled,
           transientStatusError: errorMessage,
           transientFailureCount: photoshopRuntimeProbeFailureCount,
         },
@@ -8076,14 +8172,14 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
 
     if (networkError && !(isBusy && previousConnected)) {
       return {
-        label: "Photoshop",
+        label: previousEngineLabel,
         connected: false,
         available: false,
         status: "disconnected",
         state: "offline",
         busy: false,
         currentTaskId: null,
-        message: "PS 处理服务未启动",
+        message: "出图服务未启动",
         endpoint: "http://localhost:1595",
         lastCheckedAt,
         lastError: null,
@@ -8095,21 +8191,24 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
           photoshopRunning: false,
           photoshopReady: false,
           photoshopStatus: "unknown",
+          photonReady: false,
+          photonInstalled: previousPhotonInstalled,
+          photonStatus: "unknown",
         },
       };
     }
 
     if (isBusy && previousConnected) {
       return {
-        label: "Photoshop",
+        label: previousEngineLabel,
         connected: true,
-        available: previousPhotoshopReady,
+        available: previousEngineReady,
         status: "connected",
         state: "busy",
         busy: true,
         currentTaskId: currentProductionTaskId,
         dispatchToken: currentProductionDispatchToken,
-        message: "正在执行 Photoshop 任务，状态检测暂时未响应",
+        message: `正在执行 ${previousEngineLabel} 出图任务，状态检测暂时未响应`,
         endpoint: "http://localhost:1595",
         lastCheckedAt,
         lastError: errorMessage,
@@ -8131,23 +8230,25 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
           serviceStatus: "connected",
           photoshopReady: previousPhotoshopReady,
           photoshopStatus: "busy",
+          photonReady: previousPhotonReady,
+          photonInstalled: previousPhotonInstalled,
           transientStatusError: errorMessage,
         },
       };
     }
 
     return {
-      label: "Photoshop",
+      label: previousEngineLabel,
       connected: false,
       available: false,
       status: "error",
       state: "error",
       busy: false,
       currentTaskId: null,
-      message: errorMessage || "PS 处理服务异常",
+      message: errorMessage || "出图服务异常",
       endpoint: "http://localhost:1595",
       lastCheckedAt,
-      lastError: errorMessage || "PS 处理服务异常",
+      lastError: errorMessage || "出图服务异常",
       debugAvailable: true,
       supportedCommands: ["refreshRuntime", "health"],
       details: {
@@ -8156,6 +8257,9 @@ async function getPhotoshopRuntime(): Promise<Partial<ClientServiceStatus>> {
         photoshopRunning: false,
         photoshopReady: false,
         photoshopStatus: "unknown",
+        photonReady: false,
+        photonInstalled: previousPhotonInstalled,
+        photonStatus: "unknown",
       },
     };
   }
@@ -8862,12 +8966,31 @@ function registerBuiltInLocalServices() {
         });
         const data = await photoshopApi.processPsd({
           ...request,
+          engine: resolveProductionEngine((request as any)?.engine),
           export_dir: psdTestExportDir,
         });
         return {
           success: data.success,
           message: data.message,
           data,
+        };
+      }
+
+      const photoshopControlActions = new Set([
+        "startPhotoshop",
+        "stopPhotoshop",
+        "restartPhotoshop",
+      ]);
+      if (
+        photoshopControlActions.has(String(command.action || "")) &&
+        isPhotonEngineReady() &&
+        !isPhotoshopEngineReady()
+      ) {
+        // Photon 引擎无需启动 Photoshop 进程，避免在未安装 PS 的机器上报错
+        return {
+          success: true,
+          message: "当前客户端使用 Photon 引擎，无需操作 Photoshop",
+          data: { skipped: true, engine: "photon" },
         };
       }
 
@@ -15310,8 +15433,88 @@ function isPhotoshopReadyForPoll(): boolean {
     return false;
   }
   return !!(
-    service?.available === true || service?.details?.photoshopReady === true
+    service?.available === true ||
+    service?.details?.photoshopReady === true ||
+    service?.details?.photonReady === true
   );
+}
+
+function getPsAutomationServiceDetails(): Record<string, any> {
+  const service = clientInfo.services?.["ps-automation"];
+  const details = service?.details;
+  return details && typeof details === "object"
+    ? (details as Record<string, any>)
+    : {};
+}
+
+/**
+ * 仅判断 Photoshop 引擎本身是否可用。
+ * 注意：service.available 在 Photon 就绪时也为 true，不能用来区分引擎。
+ */
+function isPhotoshopEngineReady(): boolean {
+  return getPsAutomationServiceDetails().photoshopReady === true;
+}
+
+/** 判断 Photon 引擎是否可用（本机未安装 Photoshop 时的出图链路）。 */
+function isPhotonEngineReady(): boolean {
+  return getPsAutomationServiceDetails().photonReady === true;
+}
+
+/**
+ * 出图引擎显示名（仅用于状态展示，不参与引擎选择）。
+ * PS 就绪时显示 Photoshop；否则本机装了 Photon 就显示 Photon；都没有时沿用 Photoshop 文案，保持旧行为。
+ */
+function resolveCanvasEngineLabel(
+  details: Record<string, any> = getPsAutomationServiceDetails(),
+): "Photoshop" | "Photon" {
+  if (details?.photoshopReady === true) return "Photoshop";
+  if (details?.photonReady === true || details?.photonInstalled === true) {
+    return "Photon";
+  }
+  return "Photoshop";
+}
+
+/**
+ * 选择本次出图使用的引擎：
+ * 1. 配置里显式指定 photoshop / photon 时，以配置为准；
+ * 2. 未指定时优先 Photoshop（保持原有默认行为），PS 不可用再回退 Photon。
+ */
+function resolveProductionEngine(
+  configuredEngine: unknown,
+): "photoshop" | "photon" {
+  const configured = String(configuredEngine || "").trim().toLowerCase();
+  if (configured === "photon" || configured === "photoshop") {
+    return configured;
+  }
+  if (isPhotoshopEngineReady()) return "photoshop";
+  if (isPhotonEngineReady()) return "photon";
+  return "photoshop";
+}
+
+const PHOTON_STATUS_PROBE_TTL_MS = 60_000;
+let lastPhotonProbeAt = 0;
+let lastPhotonStatus: Awaited<
+  ReturnType<typeof photoshopApi.checkPhotonStatus>
+> | null = null;
+
+async function probePhotonStatus(force = false) {
+  const now = Date.now();
+  if (
+    !force &&
+    lastPhotonStatus &&
+    now - lastPhotonProbeAt < PHOTON_STATUS_PROBE_TTL_MS
+  ) {
+    return lastPhotonStatus;
+  }
+  try {
+    const status = await photoshopApi.checkPhotonStatus();
+    lastPhotonStatus = status;
+    lastPhotonProbeAt = now;
+    return status;
+  } catch {
+    lastPhotonProbeAt = now;
+    return lastPhotonStatus;
+  }
 }
 
 let lastPsProbeTime = 0;
@@ -15360,7 +15563,9 @@ function hasRuntimeError(): boolean {
     lastError.includes("etimedout") ||
     lastError.includes("timeout") ||
     lastError.includes("socket hang up") ||
-    lastError.includes("ps 处理服务未启动")
+    lastError.includes("ps 处理服务未启动") ||
+    lastError.includes("出图服务未启动") ||
+    lastError.includes("出图服务连接异常")
   );
 }
 
@@ -15496,12 +15701,12 @@ async function pollNextPsdSetTask() {
       return;
     }
 
-    // 如果 PS 未就绪或存在运行时错误，尝试快速探活自愈，避免一次性偶发异常导致永久卡死
+    // 如果出图服务未就绪或存在运行时错误，尝试快速探活自愈，避免一次性偶发异常导致永久卡死
     if (!isPhotoshopReadyForPoll() || hasRuntimeError()) {
       await tryHealPhotoshopRuntime();
     }
 
-    // 如果 PS 未就绪，跳过本次轮询（但不停止定时器）
+    // 如果出图服务未就绪，跳过本次轮询（但不停止定时器）
     if (!isPhotoshopReadyForPoll()) {
       psdSetConsoleDebug(
         "poll.skip-ps-not-ready",
@@ -15512,7 +15717,7 @@ async function pollNextPsdSetTask() {
       );
       emitter.emit("log", {
         level: "warn",
-        message: `[psd-set] PS 未就绪，跳过本次轮询`,
+        message: `[psd-set] 出图服务未就绪，跳过本次轮询`,
       });
       return;
     }

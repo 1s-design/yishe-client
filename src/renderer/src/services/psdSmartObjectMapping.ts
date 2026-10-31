@@ -173,7 +173,7 @@ function describeMappingCase(imageCount: number, slotCount: number): {
     return {
       caseKey: "multiple-images-single-slot",
       caseDescription:
-        "多图 + 单智能对象：第一张图替换已有槽位，其余图片追加为无名称槽位，交给 PS 服务按顺序匹配。",
+        "多图 + 单智能对象：第一张图替换已有槽位，其余图片追加为无名称槽位，交给出图服务按顺序匹配。",
     };
   }
 

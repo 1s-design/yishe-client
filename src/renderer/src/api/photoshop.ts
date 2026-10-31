@@ -94,6 +94,14 @@ export interface PhotoshopStatusResponse {
   timestamp: string
 }
 
+export interface PhotonStatusResponse {
+  is_available: boolean
+  cli_path?: string | null
+  version?: string | null
+  error?: string | null
+  timestamp: string
+}
+
 export interface PSDAnalysisResponse {
   file_info: {
     file_path: string
@@ -205,6 +213,10 @@ export interface DefaultOptions {
 
 export interface ProcessRequest {
   psd_path: string
+  /**
+   * 出图引擎：photoshop（默认，PS 链路）/ photon（Photon Studio 链路，本机无需安装 PS）
+   */
+  engine?: 'photoshop' | 'photon'
   // ========== 新格式：支持多个智能对象 ==========
   smart_objects?: SmartObjectConfig[]
   color_layers?: ColorLayerConfig[]
@@ -248,6 +260,7 @@ export interface HealthResponse {
   timestamp: string
   features?: string[]
   capabilities?: Record<string, any>
+  engines?: Record<string, any>
 }
 
 // API 方法
@@ -268,6 +281,14 @@ export const photoshopApi = {
     const response = await psApiClient.get<PhotoshopStatusResponse>('/photoshopStatus', {
       params: { test_connection: testConnection }
     })
+    return response.data
+  },
+
+  /**
+   * 检测 Photon Studio 状态（本机未安装 Photoshop 时的出图引擎）
+   */
+  async checkPhotonStatus(): Promise<PhotonStatusResponse> {
+    const response = await psApiClient.get<PhotonStatusResponse>('/photonStatus')
     return response.data
   },
 

@@ -977,6 +977,19 @@ class ProcessRequest(BaseModel):
         description="图片旋转角度（度），在裁剪/缩放之前旋转原图。0=不旋转，支持 90/180/270 或任意角度。",
         example=90
     )
+    engine: Optional[str] = Field(
+        "photoshop",
+        description="""
+        出图引擎（默认 "photoshop"）
+
+        **可选值**：
+        - **"photoshop"**（默认）：原有 Photoshop 链路，行为与历史版本完全一致
+        - **"photon"**：Photon Studio 无 PS 链路，设备未安装 Photoshop 时使用
+
+        两种引擎的入参（smart_objects / defaults / overlays / rotation 等）与出参完全一致。
+        """,
+        example="photoshop"
+    )
     verbose: bool = Field(
         True,
         description="""
@@ -1043,6 +1056,14 @@ class ProcessRequest(BaseModel):
                         }
         }
     
+    @validator('engine')
+    def validate_engine(cls, v):
+        """出图引擎归一化；未知引擎直接报错，避免静默走错链路。"""
+        normalized = str(v or "photoshop").strip().lower()
+        if normalized not in {"photoshop", "photon"}:
+            raise ValueError(f"不支持的 engine: {v}（可选 photoshop / photon）")
+        return normalized
+
     @validator('psd_path')
     def validate_psd_path_exists(cls, v):
         """验证 PSD 文件路径是否存在"""
@@ -1201,6 +1222,7 @@ class HealthResponse(BaseModel):
     timestamp: str = Field(..., description="检查时间")
     features: Optional[List[str]] = Field(default=None, description="支持的功能特性列表")
     capabilities: Optional[Dict[str, Any]] = Field(default=None, description="详细功能能力描述")
+    engines: Optional[Dict[str, Any]] = Field(default=None, description="出图引擎状态（photoshop / photon）")
 
 
 class PhotoshopStatusRequest(BaseModel):
@@ -1259,6 +1281,15 @@ class PhotoshopStatusResponse(BaseModel):
                 "timestamp": "2024-01-01T12:00:00"
             }
         }
+
+
+class PhotonStatusResponse(BaseModel):
+    """Photon Studio 状态检测响应模型"""
+    is_available: bool = Field(..., description="Photon Studio 是否可用（CLI 可执行且后台服务响应）")
+    cli_path: Optional[str] = Field(None, description="Photon CLI 可执行文件路径")
+    version: Optional[str] = Field(None, description="Photon CLI 版本")
+    error: Optional[str] = Field(None, description="不可用时的原因")
+    timestamp: str = Field(..., description="检测时间戳")
 
 
 class SmartObjectInfo(BaseModel):
@@ -1404,6 +1435,7 @@ SERVICE_FEATURES = [
     "background_image",
     "custom_options",
     "unbuffered_logging",
+    "photon_engine",
 ]
 
 SERVICE_CAPABILITIES = {
@@ -1436,6 +1468,7 @@ SERVICE_CAPABILITIES = {
 SUPPORTED_PARAMETERS = {
     "root": [
         "psd_path (string, 必需): PSD 文件绝对路径",
+        "engine (string, 可选): 出图引擎 photoshop(默认) / photon",
         "smart_objects (array, 可选): 智能对象配置列表",
         "defaults (object, 可选): 默认配置参数 (resize_mode, rotation, tile_size)",
         "export_dir (string, 可选): 导出目录路径",
@@ -1607,6 +1640,7 @@ def render_status_dashboard_html() -> str:
       <a href="/docs">/docs</a>
       <a href="/health">/health</a>
       <a href="/photoshopStatus">/photoshopStatus</a>
+      <a href="/photonStatus">/photonStatus</a>
     </div>
 
     <div class="hint">
@@ -1616,6 +1650,118 @@ def render_status_dashboard_html() -> str:
 </body>
 </html>
 """
+
+
+# ========== 出图引擎分发 ==========
+
+def _ensure_desktop_writable(path: Path) -> None:
+    """服务以 root 启动时，把导出目录交给桌面用户，否则 Photon/Photoshop 无法写入。"""
+    if os.name == "nt" or not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+
+    target_uid = target_gid = None
+    sudo_uid = (os.environ.get("SUDO_UID") or "").strip()
+    sudo_gid = (os.environ.get("SUDO_GID") or "").strip()
+    if sudo_uid.isdigit():
+        target_uid = int(sudo_uid)
+        target_gid = int(sudo_gid) if sudo_gid.isdigit() else target_uid
+    else:
+        try:
+            parent_stat = path.parent.stat()
+            target_uid, target_gid = parent_stat.st_uid, parent_stat.st_gid
+        except OSError:
+            pass
+
+    try:
+        if target_uid is not None:
+            os.chown(path, target_uid, target_gid)
+        os.chmod(path, 0o775)
+    except OSError as exc:
+        print(f"⚠️ API层: 调整导出目录权限失败（{path}）: {exc}")
+        try:
+            os.chmod(path, 0o777)
+        except OSError:
+            pass
+
+
+def _prepare_export_dir(raw_dir: Optional[str]) -> str:
+    """把客户端传来的导出目录转换成当前系统可用、且桌面端应用可写的目录。
+
+    兼容 macOS/Linux 上收到 Windows 风格路径（\\Users\\xx、C:\\Users\\xx）的情况：
+    反斜杠会被当作普通字符，最终导出到安装目录下的同名“怪目录”，Photon 也无法写入。
+    """
+    value = str(raw_dir or "").strip() or str(DEFAULT_EXPORT_DIR)
+    if os.name != "nt":
+        value = value.replace("\\", "/")
+        value = re.sub(r"^[A-Za-z]:", "", value)
+
+    try:
+        path = Path(value).expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        _ensure_desktop_writable(path)
+        return str(path)
+    except OSError as exc:
+        print(f"⚠️ API层: 导出目录不可用（{value}）: {exc}，回退到默认目录 {DEFAULT_EXPORT_DIR}")
+        fallback = Path(DEFAULT_EXPORT_DIR).expanduser()
+        fallback.mkdir(parents=True, exist_ok=True)
+        _ensure_desktop_writable(fallback)
+        return str(fallback)
+
+
+def _dispatch_process_psd(engine: str, psd_path: str, config: dict):
+    """按 engine 选链路。photoshop 分支的调用方式与历史版本完全一致。"""
+    if engine == "photon":
+        import contextlib
+        import io as _io
+
+        from src.engines.photon_engine import replace_and_export_psd_multi_photon
+
+        print("🎨 API层: 使用 Photon 引擎出图（本机无需安装 Photoshop）")
+        runner = lambda: replace_and_export_psd_multi_photon(  # noqa: E731
+            psd_path=Path(psd_path),
+            export_dir=Path(config["export_dir"]),
+            smart_objects_config=config.get("smart_objects_config") or [],
+            color_layer_configs=config.get("color_layer_configs") or [],
+            output_filename=config.get("output_filename"),
+            overlays=config.get("overlays"),
+        )
+        if not config.get("verbose", True):
+            with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(_io.StringIO()):
+                return runner()
+        return runner()
+
+    return process_psd_with_image_multi(psd_path=psd_path, config=config)
+
+
+_PHOTON_PROBE_CACHE: Dict[str, Any] = {"at": 0.0, "payload": None}
+_PHOTON_PROBE_TTL_SECONDS = 300
+
+
+def _probe_photon_status(force: bool = False) -> dict:
+    """探测本机 Photon Studio 是否可用（带缓存，避免 /health 被频繁调用时反复启动 CLI）。"""
+    import time
+
+    cached = _PHOTON_PROBE_CACHE.get("payload")
+    if not force and cached is not None and time.time() - float(_PHOTON_PROBE_CACHE.get("at") or 0) < _PHOTON_PROBE_TTL_SECONDS:
+        return cached
+
+    payload: Dict[str, Any] = {"is_available": False, "cli_path": None, "version": None, "error": None}
+    try:
+        from src.engines.photon_cli import PhotonCli
+
+        cli = PhotonCli(default_timeout=30)
+        # 先解析 CLI 路径：即使后续 ping 失败，也能让前端判断“Photon 已安装但未就绪”
+        payload["cli_path"] = cli.cli_path
+        version = cli.version()
+        payload["version"] = version
+        cli.list_sessions()
+        payload["is_available"] = True
+    except Exception as e:
+        payload["error"] = str(e)
+
+    _PHOTON_PROBE_CACHE["at"] = time.time()
+    _PHOTON_PROBE_CACHE["payload"] = payload
+    return payload
 
 
 # ========== API 路由 ==========
@@ -1649,6 +1795,7 @@ async def service_index(request: Request):
             "health": "/health",
             "docs": "/docs",
             "photoshopStatus": "/photoshopStatus",
+            "photonStatus": "/photonStatus",
             "processPsd": "/processPsd"
         },
         "timestamp": datetime.now().isoformat()
@@ -1667,11 +1814,18 @@ async def health_check():
     健康检查接口
     返回服务状态、版本、特性列表和时间戳
     """
+    from fastapi.concurrency import run_in_threadpool
+
+    photon_payload = await run_in_threadpool(_probe_photon_status)
     return HealthResponse(
         status="healthy",
         version=SERVICE_VERSION,
         features=SERVICE_FEATURES,
         capabilities=SERVICE_CAPABILITIES,
+        engines={
+            "photoshop": {"supported": True, "status_endpoint": "/photoshopStatus"},
+            "photon": photon_payload,
+        },
         timestamp=datetime.now().isoformat()
     )
 
@@ -1791,13 +1945,8 @@ async def process_psd(request: ProcessRequest, response: Response):
     详细说明请查看上方的 description。
     """
     try:
-        # 使用默认导出目录（如果未指定）
-        export_dir = request.export_dir if request.export_dir else str(DEFAULT_EXPORT_DIR)
-        
-        # 确保默认目录存在
-        default_path = Path(export_dir)
-        if not default_path.exists():
-            default_path.mkdir(parents=True, exist_ok=True)
+        # 使用默认导出目录（如果未指定），并兼容 Windows 风格路径 / 保证桌面端可写
+        export_dir = _prepare_export_dir(request.export_dir)
         
         # 生成带时间戳的唯一文件名，防止文件被覆盖
         psd_path_obj = Path(request.psd_path)
@@ -1872,9 +2021,10 @@ async def process_psd(request: ProcessRequest, response: Response):
             }
 
             # 调用处理函数（新格式）
-            export_paths, processing_time = process_psd_with_image_multi(
-                psd_path=request.psd_path,
-                config=config
+            export_paths, processing_time = _dispatch_process_psd(
+                request.engine,
+                request.psd_path,
+                config,
             )
         else:
             # ========== 旧格式：单个智能对象（向后兼容） ==========
@@ -1910,9 +2060,10 @@ async def process_psd(request: ProcessRequest, response: Response):
             }
 
             # 统一使用 process_psd_with_image_multi（默认方法）
-            export_paths, processing_time = process_psd_with_image_multi(
-                psd_path=request.psd_path,
-                config=config
+            export_paths, processing_time = _dispatch_process_psd(
+                request.engine,
+                request.psd_path,
+                config,
             )
         
         # 构建响应数据
@@ -2124,6 +2275,36 @@ async def get_photoshop_status(test_connection: bool = False):
             "traceback": traceback.format_exc()
         }
         raise HTTPException(status_code=500, detail=error_detail)
+
+
+@app.get(
+    "/photonStatus",
+    response_model=PhotonStatusResponse,
+    tags=["Photon"],
+    summary="检测 Photon Studio 状态",
+    description="""
+    检测本机 Photon Studio 是否可用（不需要安装 Photoshop）。
+
+    **检查内容**：
+    - Photon CLI 是否可执行（环境变量 `PHOTON_CLI` / PATH / `~/.photon/bin` / 安装目录）
+    - CLI 版本
+    - CLI 后台服务是否响应
+
+    **使用场景**：客户端在派发前判断本机应使用 photoshop 还是 photon 引擎。
+    """,
+    response_description="Photon 可用性、CLI 路径与版本"
+)
+async def get_photon_status():
+    from fastapi.concurrency import run_in_threadpool
+
+    payload = await run_in_threadpool(lambda: _probe_photon_status(force=True))
+    return PhotonStatusResponse(
+        is_available=bool(payload.get("is_available")),
+        cli_path=payload.get("cli_path"),
+        version=payload.get("version"),
+        error=payload.get("error"),
+        timestamp=datetime.now().isoformat(),
+    )
 
 
 @app.post(

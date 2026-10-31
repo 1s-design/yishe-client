@@ -184,6 +184,19 @@ function resolvePhotoshopRuntimeMeta() {
   ).trim();
   const photoshopRunning = !!(details?.photoshopRunning ?? (available || busy));
   const photoshopReady = !!(details?.photoshopReady ?? available);
+  // 未安装 Photoshop 的机器走 Photon 引擎出图，展示上也要算“可用”
+  const photonReady = details?.photonReady === true;
+  const photonInstalled = details?.photonInstalled === true || photonReady;
+  const engineReady = photoshopReady || photonReady;
+  const engineLabel = photoshopReady
+    ? "Photoshop"
+    : photonInstalled
+      ? "Photon"
+      : "Photoshop";
+  const engineReadyLabel = photoshopReady ? "PS 可用" : "Photon 可用";
+  const engineReadyDescription = photoshopReady
+    ? "出图服务已连接，可执行"
+    : "出图服务已连接，将通过 Photon 引擎出图";
   const photoshopStatus = String(
     details?.photoshopStatus ||
       (busy
@@ -201,31 +214,38 @@ function resolvePhotoshopRuntimeMeta() {
 
   const valueText = busy
     ? "制作中"
-    : photoshopStatus === "ready"
-      ? "PS 可用"
+    : engineReady
+      ? engineReadyLabel
       : photoshopStatus === "starting"
         ? "启动中"
         : connected
-          ? "PS 未启动"
+          ? photonInstalled
+            ? "Photon 未就绪"
+            : "PS 未启动"
           : serviceError
             ? "异常"
             : "未启动";
 
   const description = busy
     ? currentStep || "当前有套图任务正在处理"
-    : photoshopStatus === "ready"
-      ? "PS 服务已连接，可执行"
+    : engineReady
+      ? engineReadyDescription
       : photoshopStatus === "starting"
-        ? "等待 PS 就绪"
+        ? photonInstalled
+          ? "等待 Photon 引擎就绪"
+          : "等待 PS 就绪"
         : connected
-          ? "PS 尚未启动"
+          ? photonInstalled
+            ? "Photon 尚未就绪"
+            : "PS 尚未启动"
           : serviceError
-            ? runtime?.message || "PS 异常"
+            ? runtime?.message ||
+              (photonInstalled ? "Photon 异常" : "PS 异常")
             : "服务未启动";
 
   const tone: ServiceStatusTone = busy
     ? "warning"
-    : photoshopStatus === "ready"
+    : engineReady
       ? "success"
       : connected
         ? "warning"
@@ -251,6 +271,7 @@ function resolvePhotoshopRuntimeMeta() {
     connected,
     available,
     busy,
+    engineLabel,
     valueText,
     description,
     tone,
@@ -1293,7 +1314,7 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
   },
   {
     key: "ps",
-    title: "Photoshop",
+    title: photoshopRuntimeMeta.value.engineLabel,
     value: photoshopRuntimeMeta.value.busy
       ? "制作中"
       : autoPsdBatchState.autoDispatchEnabled
@@ -1306,7 +1327,7 @@ const dashboardStatusCards = computed<DashboardStatusCard[]>(() => [
         : photoshopRuntimeMeta.value.description,
     details: [psAutoProductionDetail.value],
     hoverTitle: photoshopRuntimeMeta.value.busy
-      ? "PS 制作详情"
+      ? `${photoshopRuntimeMeta.value.engineLabel} 制作详情`
       : autoPsdBatchState.autoDispatchEnabled
         ? "客户端自动领取模式"
         : undefined,
