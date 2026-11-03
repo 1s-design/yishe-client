@@ -34,6 +34,12 @@ type PlatformAutoDispatchConfig = {
   isMatch: boolean;
   enabled: boolean;
   reason: string | null;
+  /**
+   * 店铺路由模式（抖店）：任务按「任务绑定店铺」派给当前登录该店铺的环境。
+   * 此时不要求配置里指定固定环境，用本机当前活动环境去领取，
+   * 服务端会校验这个环境登录的店铺是否就是任务要发的那家。
+   */
+  shopRoutedDispatch: boolean;
 };
 
 export const platformTaskAutoState = reactive({
@@ -118,14 +124,24 @@ function normalizePlatformAutoDispatchConfig(
       ? (root.browserAutomation as Record<string, any>)
       : root;
   const autoSchedulingEnabled = source.autoSchedulingEnabled === true;
+  const shopRoutedDispatch = source.shopRoutedDispatch === true;
   const targetClientId = pickFirstNonEmptyString(source.autoDispatchClientId);
   const targetMachineCode = pickFirstNonEmptyString(
     source.autoDispatchMachineCode,
   );
-  const targetProfileId = pickFirstNonEmptyString(source.autoDispatchProfileId);
+  const rawTargetProfileId = pickFirstNonEmptyString(
+    source.autoDispatchProfileId,
+  );
   const currentProfileId = pickFirstNonEmptyString(runtime.profileId);
   const currentClientId = pickFirstNonEmptyString(runtime.clientId);
   const currentMachineCode = pickFirstNonEmptyString(runtime.machineCode);
+  /**
+   * 店铺路由模式不预先指定环境：用本机当前活动环境去领，
+   * 由服务端按「该环境登录的店铺」决定能不能领这条任务。
+   */
+  const targetProfileId = shopRoutedDispatch
+    ? rawTargetProfileId || currentProfileId
+    : rawTargetProfileId;
   const targetMode = targetMachineCode
     ? ("machineCode" as const)
     : targetClientId
@@ -143,16 +159,23 @@ function normalizePlatformAutoDispatchConfig(
       : targetMode === "clientId"
         ? currentClientId
         : "";
-  const isMatch = !!targetValue && targetValue === currentValue;
+  // 店铺路由下设备/环境都不再强绑，由服务端按店铺匹配
+  const isMatch = shopRoutedDispatch
+    ? true
+    : !!targetValue && targetValue === currentValue;
   const reason = !autoSchedulingEnabled
     ? "auto-scheduling-disabled"
-    : !targetValue
-      ? "target-missing"
-      : !targetProfileId
-        ? "target-profile-missing"
-        : !isMatch
-          ? "target-mismatch"
-          : null;
+    : shopRoutedDispatch
+      ? currentProfileId
+        ? null
+        : "current-profile-missing"
+      : !targetValue
+        ? "target-missing"
+        : !targetProfileId
+          ? "target-profile-missing"
+          : !isMatch
+            ? "target-mismatch"
+            : null;
 
   return {
     autoSchedulingEnabled,
@@ -166,6 +189,7 @@ function normalizePlatformAutoDispatchConfig(
     isMatch,
     enabled: autoSchedulingEnabled && isMatch,
     reason,
+    shopRoutedDispatch,
   };
 }
 
@@ -460,6 +484,22 @@ async function pollPlatformTask() {
 
     const taskId = String(task.taskId || "").trim();
     if (!taskId) return;
+
+    /**
+     * 店铺路由派发的任务必须带着指定的执行环境。
+     * 缺失时宁可这一轮不执行，也不能退回到"当前激活环境"上跑 ——
+     * 否则店铺配的是 1 环境，发布页却会在 2 环境打开（串店）。
+     */
+    if (task.shopId && !String(task.profileId || "").trim()) {
+      platformTaskAutoState.lastReason = "shop-task-profile-missing";
+      platformTaskAutoState.lastError =
+        "店铺任务未携带目标执行环境，已拒绝执行以避免串店";
+      console.warn(
+        "[platform-task] 店铺任务缺少目标执行环境，跳过执行:",
+        JSON.stringify({ taskId, shopId: task.shopId }),
+      );
+      return;
+    }
 
     platformTaskAutoState.running = true;
     platformTaskAutoState.currentTaskId = taskId;

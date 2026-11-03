@@ -71,6 +71,8 @@ export interface ClaimNextPublishTaskResponse {
     clientId?: string | null;
     machineCode?: string | null;
     profileId?: string | null;
+    /** 任务目标店铺（店铺路由派发时由服务端给出，用于执行前防串店） */
+    shopId?: string | null;
   };
 }
 
