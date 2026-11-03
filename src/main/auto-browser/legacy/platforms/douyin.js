@@ -7,6 +7,7 @@ import { getOrCreateBrowser } from '../services/BrowserService.js';
 import { PageOperator } from '../services/PageOperator.js';
 import { logger } from '../utils/logger.js';
 import { buildAutoBrowserScreenshotPath } from '../utils/workspacePaths.js';
+import { throwUploadEntryMissing } from '../utils/publishDiagnostics.js';
 
 /**
  * 抖音发布器类
@@ -185,8 +186,11 @@ class DouyinPublisher {
             await fileInput.setInputFiles(filePath);
             logger.info('视频文件已选择');
         } catch (error) {
-            logger.error('未找到视频上传输入框，可能未登录或页面结构已变', error.message);
-            throw new Error('未找到视频上传入口，请确认是否已登录或页面是否正确加载');
+            logger.error('未找到视频上传输入框', error.message);
+            // 区分「未登录」与「页面结构变化」
+            await throwUploadEntryMissing(page, this.platformName, '视频上传入口', {
+                fileInputSelector: selector
+            });
         }
     }
 

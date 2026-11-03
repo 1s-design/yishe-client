@@ -23,6 +23,10 @@ import {
 import {
     weiboAuth
 } from '../utils/weiboAuth.js';
+import {
+    assertLoggedIn,
+    throwUploadEntryMissing
+} from '../utils/publishDiagnostics.js';
 
 /**
  * 微博发布器类
@@ -149,6 +153,12 @@ class WeiboPublisher {
                     };
                 }
                 logger.info(`${this.platformName}已登录，继续发布流程`);
+            } else {
+                // 配置里关闭了通用登录检查（选择器易随前端改版失效），
+                // 这里只做「强证据」判定：被重定向到登录页或明确出现登录入口时才拦。
+                await assertLoggedIn(page, this.platformName, {
+                    fileInputSelector: this.config.selectors?.fileInput
+                });
             }
 
             // 5. 执行平台特定的预处理
@@ -242,7 +252,11 @@ class WeiboPublisher {
     async uploadSingleImage(page, tempPath, imageIndex) {
         const fileInput = await page.$('input[type="file"]');
         if (!fileInput) {
-            throw new Error('未找到文件选择器');
+            // 不要再抛"未找到文件选择器"这种信息，运营看不懂也不需要看懂。
+            // 这里先判断到底是没登录，还是页面结构变了。
+            await throwUploadEntryMissing(page, this.platformName, '图片上传入口', {
+                fileInputSelector: this.config.selectors?.fileInput
+            });
         }
 
         // Playwright: setInputFiles 替代 Puppeteer 的 uploadFile
@@ -302,9 +316,10 @@ class WeiboPublisher {
 
         // 关键词/标签 转为带 # 的话题（去重、去已有 #）
         const tagList = [...(publishInfo.tags || []), ...(publishInfo.keywords || [])]
-            .map(t => String(t).replace(/^#/, '').trim())
+            .map(t => String(t).replace(/^#/, '').replace(/#$/, '').trim())
             .filter(Boolean);
-        const uniqueTags = [...new Set(tagList)];
+        // 正文里手写过的话题不再重复追加，避免出现「#电商设计 ... #电商设计#」这种双份
+        const uniqueTags = [...new Set(tagList)].filter(t => !body.includes(t));
         // 微博话题规则：用一个 # 将词包起来，如 #好物#
         const hashtags = uniqueTags.length ? uniqueTags.map(t => `#${t}#`).join(' ') : '';
 

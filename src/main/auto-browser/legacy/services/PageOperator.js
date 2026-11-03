@@ -75,13 +75,47 @@ export class PageOperator {
         };
 
         const fillOptions = { ...defaultOptions, ...options };
+        const textValue = text == null ? '' : String(text);
+
+        // 长文本走一次性填充：page.type 是逐字符输入，默认 delay 100ms/字，
+        // 600 字的正文要 60s 以上，必然超过 Playwright 30s 的动作超时。
+        // fill 会通过原生 setter 派发 input 事件，React/Vue 受控组件一样能拿到值；
+        // 万一被框架覆盖，再退回 insertText（单次插入，也不逐键触发）。
+        if (textValue.length > 80) {
+            let filled = false;
+            try {
+                await page.fill(resolvedSelector, textValue, { timeout: 15000 });
+                filled = await page.evaluate(
+                    ({ sel, len }) => {
+                        const el = document.querySelector(sel);
+                        if (!el) return false;
+                        const value = el.isContentEditable ? el.innerText : el.value;
+                        // 富文本编辑器可能对文本做二次加工，留 20% 容差
+                        return String(value || '').length >= Math.floor(len * 0.8);
+                    },
+                    { sel: resolvedSelector, len: textValue.length }
+                );
+            } catch (error) {
+                logger.warn(`fillInput: 一次性填充失败（${error.message}），回退 insertText`);
+            }
+            if (filled) return;
+
+            const isMac = process.platform === 'darwin';
+            await page.click(resolvedSelector);
+            await page.keyboard.down(isMac ? 'Meta' : 'Control');
+            await page.keyboard.press('KeyA');
+            await page.keyboard.up(isMac ? 'Meta' : 'Control');
+            await page.keyboard.press('Backspace');
+            await page.keyboard.insertText(textValue);
+            return;
+        }
 
         if (fillOptions.clear) {
             await page.click(resolvedSelector, { clickCount: 3 }); // 全选
             await page.keyboard.press('Backspace'); // 删除
         }
 
-        await page.type(resolvedSelector, text, { delay: fillOptions.delay });
+        await page.type(resolvedSelector, textValue, { delay: fillOptions.delay });
     }
 
     /**

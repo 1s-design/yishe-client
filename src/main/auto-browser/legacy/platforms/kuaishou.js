@@ -8,6 +8,7 @@ import { PageOperator } from '../services/PageOperator.js';
 import { logger } from '../utils/logger.js';
 import { kuaishouAuth } from '../utils/kuaishouAuth.js';
 import { buildAutoBrowserScreenshotPath } from '../utils/workspacePaths.js';
+import { throwUploadEntryMissing } from '../utils/publishDiagnostics.js';
 
 /**
  * 快手发布器类
@@ -179,7 +180,8 @@ class KuaishouPublisher {
         }
 
         if (!uploadButton) {
-            throw new Error('未找到上传按钮，请确认页面是否已正确加载');
+            // 区分「未登录」与「页面结构变化」，避免只报"未找到上传按钮"
+            await throwUploadEntryMissing(page, this.platformName, '视频上传按钮');
         }
 
         // 使用文件选择器上传
