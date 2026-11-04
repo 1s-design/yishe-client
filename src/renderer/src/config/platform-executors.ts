@@ -161,6 +161,15 @@ const UPLOADER_POLL_INTERVAL_MS = 2000;
 const UPLOADER_POLL_TIMEOUT_MS = 30 * 60 * 1000;
 const UPLOADER_RUNTIME_SYNC_MIN_INTERVAL_MS = 8000;
 
+/**
+ * 平台任务运行日志（明细）上报开关。
+ *
+ * 写死关闭：不再向服务端 POST /queue/message/runtime-log，
+ * 只保留任务状态、当前步骤、进度和错误摘要，节省服务端存储与上行流量。
+ * 需要恢复逐条日志时，把 true/false 改掉后重新构建客户端即可。
+ */
+const TASK_RUNTIME_LOG_UPLOAD_ENABLED = false;
+
 export function getPlatformCapability(
   platform: string,
 ): PlatformCapability | null {
@@ -1496,6 +1505,20 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
         delete nextData.executionRuntime;
       }
 
+      // 发布任务走增量回写：meta/publishData（占 data 绝大部分体积）由服务端
+      // merge 逻辑以服务端当前值为准，客户端无需每次重复上传整份发布数据。
+      // 仅上送顶层运行时字段（taskLogs 等），本地副本仍保留完整 data。
+      const taskType = String(row?.type || "");
+      const isPublishTask =
+        taskType.startsWith("publish-product-") ||
+        taskType.startsWith("publish-media-");
+      const payloadData = isPublishTask
+        ? (() => {
+            const { meta: _meta, publishData: _publishData, ...rest } = nextData;
+            return rest;
+          })()
+        : nextData;
+
       const apiBase = getRemoteApiBase();
       const headers = await buildAuthorizedJsonHeaders();
       const response = await fetch(`${apiBase}/queue/message/data`, {
@@ -1504,7 +1527,7 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
         body: JSON.stringify({
           queue: row.type,
           messageId: row.id,
-          data: nextData,
+          data: payloadData,
           dispatchToken: context?.dispatchToken || undefined,
         }),
       });
@@ -1538,6 +1561,10 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
       return;
     }
     if (payload.logs.length === 0 && options?.allowEmpty !== true) {
+      return;
+    }
+    // 日志明细暂不上报：节省服务端存储与上行流量（状态/进度仍走 updateTaskRuntime）
+    if (!TASK_RUNTIME_LOG_UPLOAD_ENABLED) {
       return;
     }
 
@@ -1725,11 +1752,14 @@ abstract class BasePlatformExecutor implements PlatformExecutor {
         throw new Error(queryResult.message || "查询发布端任务状态失败");
       }
 
-      const logsResult = await queryUploaderTaskLogsBySource([sourceId], {
-        afterIds: lastLogId ? { [sourceId]: lastLogId } : undefined,
-      });
+      // 明细日志不上报时，跳过本地日志查询，只用 runtimeTask.logInfo 的摘要（条数/最后一条）
+      const logsResult = TASK_RUNTIME_LOG_UPLOAD_ENABLED
+        ? await queryUploaderTaskLogsBySource([sourceId], {
+            afterIds: lastLogId ? { [sourceId]: lastLogId } : undefined,
+          })
+        : null;
       const logMatch =
-        logsResult.success && Array.isArray(logsResult.data)
+        logsResult?.success && Array.isArray(logsResult.data)
           ? logsResult.data[0]
           : undefined;
       const runtimeLogs = Array.isArray(logMatch?.logs)

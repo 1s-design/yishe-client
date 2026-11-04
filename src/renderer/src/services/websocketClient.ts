@@ -50,6 +50,7 @@ import {
 } from "./publishTaskDispatch";
 import {
   platformTaskAutoState,
+  notifyPlatformTaskPushed,
   setPlatformTaskClientRuntimeProvider,
   setPlatformTaskRuntimeCallback,
   syncPlatformAutoDispatchConfig,
@@ -6157,11 +6158,20 @@ function getPsdSetConsoleDebugRuntime() {
   };
 }
 
+/**
+ * PS 自动化调试轨迹开关：默认关闭。
+ * 开启后每个阶段都会写一条带完整运行时上下文的日志（此前占客户端日志量 80% 以上，
+ * 且每条都要 JSON.stringify 一遍运行时快照）。仅在排查 PS 自动上架问题时临时置 true。
+ * error 级别不受此开关影响，始终记录。
+ */
+const PS_AUTO_DEBUG_LOG_ENABLED = false;
+
 function psdSetConsoleDebug(
   stage: string,
   context?: Record<string, any>,
   level: "log" | "warn" | "error" = "log",
 ) {
+  if (!PS_AUTO_DEBUG_LOG_ENABLED && level !== "error") return;
   const payload = normalizePsdSetDebugValue({
     tag: "PS_AUTO_DEBUG",
     stage,
@@ -9650,6 +9660,8 @@ function registerBuiltInLocalServices() {
       }
 
       if (action === "executePublishTask") {
+        // 服务端主动推送任务：重置兜底轮询的空闲退避
+        notifyPlatformTaskPushed();
         const taskId = String(command.payload?.taskId || "").trim();
         const taskType = String(command.payload?.taskType || "").trim();
         const queue = String(command.payload?.queue || taskType).trim();
@@ -15362,9 +15374,37 @@ export function getCurrentPsdSetProductionDispatchToken() {
 
 const PSD_SET_POLL_INTERVAL_MS = 4000;
 const PSD_SET_RECOVERY_INTERVAL_MS = 30000;
+/**
+ * 空闲退避：连续领不到套图任务时拉长下次尝试间隔。
+ * 定时器仍按 4s 触发，但未到退避时间的轮次直接跳过，不发网络请求。
+ */
+const PSD_SET_IDLE_BACKOFF_STEPS_MS = [8000, 16000, 30000];
+const PSD_SET_MAX_BACKOFF_MS = 30000;
 let psdSetPollTimer: ReturnType<typeof setInterval> | null = null;
 let psdSetPollInFlight = false;
 let lastPsdSetRecoveryAt = 0;
+let psdSetNextPollNotBefore = 0;
+let psdSetClaimIdleStreak = 0;
+
+function markPsdSetClaimIdle() {
+  psdSetClaimIdleStreak += 1;
+  const backoff =
+    PSD_SET_IDLE_BACKOFF_STEPS_MS[
+      Math.min(
+        psdSetClaimIdleStreak - 1,
+        PSD_SET_IDLE_BACKOFF_STEPS_MS.length - 1,
+      )
+    ] || PSD_SET_MAX_BACKOFF_MS;
+  psdSetNextPollNotBefore = Math.max(
+    psdSetNextPollNotBefore,
+    Date.now() + backoff,
+  );
+}
+
+function markPsdSetClaimActive() {
+  psdSetClaimIdleStreak = 0;
+  psdSetNextPollNotBefore = 0;
+}
 
 function pickFirstNonEmptyString(...values: unknown[]) {
   for (const value of values) {
@@ -15639,6 +15679,10 @@ async function recoverPsdSetClientOrphans(
 let psdSetPollStartedAt = 0;
 
 async function pollNextPsdSetTask() {
+  // 空闲退避：未到退避到期时间的轮次直接跳过，不发网络请求
+  if (Date.now() < psdSetNextPollNotBefore) {
+    return;
+  }
   if (psdSetPollInFlight) {
     const flightAge = Date.now() - psdSetPollStartedAt;
     if (
@@ -15759,6 +15803,7 @@ async function pollNextPsdSetTask() {
     });
 
     if (!res?.success) {
+      markPsdSetClaimIdle();
       return;
     }
 
@@ -15766,6 +15811,7 @@ async function pollNextPsdSetTask() {
       psdSetConsoleDebug("poll.claim.not-claimed", {
         response: res,
       });
+      markPsdSetClaimIdle();
       return;
     }
 
@@ -15780,6 +15826,7 @@ async function pollNextPsdSetTask() {
       );
       return;
     }
+    markPsdSetClaimActive();
 
     emitter.emit("log", {
       level: "info",
@@ -15812,6 +15859,8 @@ async function pollNextPsdSetTask() {
       level: "warn",
       message: `[psd-set] 轮询领取任务失败: ${error instanceof Error ? error.message : String(error)}`,
     });
+    // 网络异常同样退避，避免 4s 间隔连续打超时请求
+    markPsdSetClaimIdle();
   } finally {
     psdSetPollInFlight = false;
   }
@@ -16004,6 +16053,9 @@ function startPsdSetPolling() {
   psdSetPollTimer = setInterval(() => {
     void pollNextPsdSetTask();
   }, PSD_SET_POLL_INTERVAL_MS);
+  // 重启轮询时清掉上一轮遗留的退避，保证开启后立即尝试领取
+  psdSetNextPollNotBefore = 0;
+  psdSetClaimIdleStreak = 0;
   void recoverPsdSetClientOrphans("客户端开启自动制作，释放遗留套图任务");
   void pollNextPsdSetTask();
 }

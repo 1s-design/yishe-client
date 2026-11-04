@@ -65,6 +65,13 @@ const PLATFORM_CONFIG_SYNC_INTERVAL_MS = 30000;
 const PLATFORM_TASK_SKIP_LOG_INTERVAL_MS = 30000;
 const PLATFORM_TASK_RELEASE_GRACE_MS = 2500;
 const PLATFORM_TASK_RECOVERY_INTERVAL_MS = 30000;
+/**
+ * 空闲退避：连续领不到任务时拉长下次尝试间隔（服务端有任务派发时会通过
+ * websocket 主动推送 executePublishTask，轮询只是兜底通道，拉长不影响接单）。
+ * 领到任务或配置变化后立即恢复基础间隔。
+ */
+const PLATFORM_TASK_IDLE_BACKOFF_STEPS_MS = [8000, 16000, 30000];
+const PLATFORM_TASK_MAX_BACKOFF_MS = 30000;
 let platformTaskPollTimer: ReturnType<typeof setInterval> | null = null;
 let platformConfigSyncTimer: ReturnType<typeof setInterval> | null = null;
 let platformTaskPollInFlight = false;
@@ -74,6 +81,28 @@ let lastSkipLogSignature = "";
 let lastSkipLogAt = 0;
 let nextPollNotBefore = 0;
 let lastRecoveryAt = 0;
+let claimIdleStreak = 0;
+
+function markPlatformTaskClaimIdle() {
+  claimIdleStreak += 1;
+  const backoff =
+    PLATFORM_TASK_IDLE_BACKOFF_STEPS_MS[
+      Math.min(claimIdleStreak - 1, PLATFORM_TASK_IDLE_BACKOFF_STEPS_MS.length - 1)
+    ] || PLATFORM_TASK_MAX_BACKOFF_MS;
+  nextPollNotBefore = Math.max(nextPollNotBefore, Date.now() + backoff);
+}
+
+function markPlatformTaskClaimActive() {
+  claimIdleStreak = 0;
+}
+
+/**
+ * 服务端 websocket 推送任务时调用：重置空闲退避，
+ * 让兜底轮询立即回到基础间隔，与推送通道保持同步。
+ */
+export function notifyPlatformTaskPushed() {
+  markPlatformTaskClaimActive();
+}
 
 let platformTaskRuntimeCallback:
   | ((snapshot: PublishTaskRuntimeSnapshot) => void | Promise<void>)
@@ -476,6 +505,8 @@ async function pollPlatformTask() {
       ) {
         void syncPlatformAutoDispatchConfig();
       }
+      // 空闲退避：连续空手而归时拉长下次尝试，避免 4s 空转打服务端
+      markPlatformTaskClaimIdle();
       return;
     }
 
@@ -484,6 +515,7 @@ async function pollPlatformTask() {
 
     const taskId = String(task.taskId || "").trim();
     if (!taskId) return;
+    markPlatformTaskClaimActive();
 
     /**
      * 店铺路由派发的任务必须带着指定的执行环境。
@@ -498,6 +530,8 @@ async function pollPlatformTask() {
         "[platform-task] 店铺任务缺少目标执行环境，跳过执行:",
         JSON.stringify({ taskId, shopId: task.shopId }),
       );
+      // 服务端看门狗会释放这条任务，退避等待，避免热循环反复领取
+      markPlatformTaskClaimIdle();
       return;
     }
 
@@ -551,6 +585,8 @@ async function pollPlatformTask() {
     } else {
       console.warn("[platform-task] 轮询失败:", error);
     }
+    // 网络异常同样退避，避免 4s 间隔连续打超时请求
+    markPlatformTaskClaimIdle();
   } finally {
     platformTaskPollInFlight = false;
   }
