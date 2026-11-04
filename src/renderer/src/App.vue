@@ -1571,7 +1571,13 @@ onMounted(() => {
   void websocketClient.syncServiceRuntime("video-template");
 
   void checkUploaderServiceStatus();
-  uploaderServiceStatusInterval = setInterval(checkUploaderServiceStatus, 3000);
+  // 上传器运行时已由 websocketClient 的内部循环每 4 秒同步一次（含上报）。
+  // 这里的定时器只负责刷新界面角标，没必要 3 秒一次重复探测；
+  // 页面不可见时也跳过，避免窗口挂在后台空转。
+  uploaderServiceStatusInterval = setInterval(() => {
+    if (document.hidden) return;
+    void checkUploaderServiceStatus();
+  }, 15000);
 
   void checkLocalServiceStatus();
   localServiceStatusInterval = setInterval(checkLocalServiceStatus, 8000);
