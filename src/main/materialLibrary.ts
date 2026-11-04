@@ -208,6 +208,10 @@ export async function uploadToMaterialLibrary(
       originUrl: (payload?.originUrl || "").slice(0, 1000),
       name,
       description,
+      // 关键词对两个入库目标都要带上：源标签/检索词是素材唯一的题材锚点，
+      // 之前只有 collect_file 分支带 keywords，crawler_material 一直写空
+      keywords,
+      keywordsEn,
       suffix: payload?.suffix || "jpg",
       source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
       fileSize: fileSize || null,

@@ -11,6 +11,7 @@ import os from "os";
 import path from "path";
 import { uploadFileToCos } from "./cos";
 import { sniffImageFormat } from "./imageFormat";
+import { trimTransparentMargins, type AlphaTrimInfo } from "./alphaTrim";
 
 export const COLLECT_ENGINE_VERSION = 1;
 
@@ -662,6 +663,12 @@ function buildCtx(
           meta?: Record<string, unknown>;
           /** 自定义请求头（如 Accept、Accept-Language 等，部分站点防盗链需要） */
           headers?: Record<string, string>;
+          /** 透明抠图自动裁掉四周空白，默认开启；传 false 可保留原始构图 */
+          trimTransparent?: boolean;
+          /** 裁切后四周保留的安全边像素，不传按短边自适应 */
+          trimPadding?: number;
+          /** alpha 阈值 0~255，低于等于该值算空白，默认 8 */
+          trimAlphaThreshold?: number;
         } = {},
       ): Promise<{ cosUrl: string; size: number; materialOk?: boolean; materialId?: string }> {
         // 统一规范：domains 白名单只约束 search/list 的抓取请求；
@@ -719,10 +726,36 @@ function buildCtx(
         if (!imageFormat) {
           throw new Error(`下载内容不是有效图片（可能为错误页面）: ${url}`);
         }
+
+        // 透明抠图自动去掉四周多余空白：客户端本地 sharp 处理，服务端零开销。
+        // 只有检测到 alpha 且确实存在空白边的图才会重编码；不透明壁纸走快速路径原样入库。
+        let finalFormat: typeof imageFormat = imageFormat;
+        let trimInfo: AlphaTrimInfo | null = null;
+        try {
+          const trimmed = await trimTransparentMargins(buf, imageFormat, {
+            enabled: options.trimTransparent,
+            padding: options.trimPadding,
+            alphaThreshold: options.trimAlphaThreshold,
+          });
+          if (trimmed) {
+            buf = trimmed.buffer;
+            trimInfo = trimmed.info;
+            finalFormat = "png";
+            console.log(
+              `[CollectEngine] 透明边距裁切 ${trimmed.info.from.width}x${trimmed.info.from.height}` +
+                ` -> ${trimmed.info.to.width}x${trimmed.info.to.height}` +
+                ` (省 ${(trimmed.info.reducedRatio * 100).toFixed(1)}% 面积)`,
+            );
+          }
+        } catch (trimErr: any) {
+          console.warn("[CollectEngine] 透明边距裁切失败，按原图入库:", trimErr?.message || trimErr);
+        }
+
         // 文件名只保留 ASCII 安全字符，避免中文/特殊字符导致 ENOENT
         const rawName = String(options.filename || "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
         // 后缀一律以真实内容为准：URL 后缀常与实际返回格式不一致（如 .jpg 实为 PNG）
-        const ext = imageFormat;
+        // 裁切后统一输出无损 PNG，保证透明通道与素材库 suffix 一致
+        const ext = finalFormat;
         // 强制把文件名后缀对齐真实格式，避免 URL 后缀污染 COS key 与素材库 suffix
         const baseName = (rawName || `collect-${Date.now()}`).replace(/\.[a-z0-9]{1,8}$/i, "");
         const safeName = `${baseName}.${ext}`;
@@ -780,6 +813,8 @@ function buildCtx(
                 ...(itemParams.title
                   ? { sourceTitle: String(itemParams.title).slice(0, 300) }
                   : {}),
+                // 裁切溯源：原尺寸 / 裁后尺寸 / 安全边 / 省下的面积
+                ...(trimInfo ? { autoTrim: trimInfo } : {}),
               };
               const matRes: any = await uploadToMaterialLibrary(tmpPath, safeName, {
                 name: options.title || safeName,
@@ -802,6 +837,9 @@ function buildCtx(
                 ).slice(0, 990),
                 meta,
                 materialTarget,
+                // 裁过的图一定是带透明通道的抠图，客户端直接标记，
+                // 不再依赖服务端读文件头兜底（避免 VP8L / tRNS 等边界格式漏标）
+                ...(trimInfo ? { isCutout: true } : {}),
               } as any);
               materialOk = !!matRes?.ok;
               materialId = matRes?.materialId;
