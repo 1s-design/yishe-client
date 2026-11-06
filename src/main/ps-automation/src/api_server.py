@@ -1285,7 +1285,8 @@ class PhotoshopStatusResponse(BaseModel):
 
 class PhotonStatusResponse(BaseModel):
     """Photon Studio 状态检测响应模型"""
-    is_available: bool = Field(..., description="Photon Studio 是否可用（CLI 可执行且后台服务响应）")
+    is_available: bool = Field(..., description="Photon 出图引擎是否可用（CLI 已安装；真正出图时才按需启动 Photon）")
+    installed: bool = Field(False, description="本机是否已安装 Photon CLI")
     cli_path: Optional[str] = Field(None, description="Photon CLI 可执行文件路径")
     version: Optional[str] = Field(None, description="Photon CLI 版本")
     error: Optional[str] = Field(None, description="不可用时的原因")
@@ -1737,24 +1738,35 @@ _PHOTON_PROBE_CACHE: Dict[str, Any] = {"at": 0.0, "payload": None}
 _PHOTON_PROBE_TTL_SECONDS = 300
 
 
-def _probe_photon_status(force: bool = False) -> dict:
-    """探测本机 Photon Studio 是否可用（带缓存，避免 /health 被频繁调用时反复启动 CLI）。"""
+def _probe_photon_status() -> dict:
+    """被动探测本机 Photon Studio 是否已安装（带缓存）。
+
+    这里只解析 CLI 路径与版本，绝不调用 session list/open 等命令：
+    Photon CLI 在后台服务未运行时会自动拉起 Photon 应用，客户端空闲轮询
+    状态时不应触发启动。真正出图时由 PhotonCli 按需启动 Photon。
+    """
     import time
 
     cached = _PHOTON_PROBE_CACHE.get("payload")
-    if not force and cached is not None and time.time() - float(_PHOTON_PROBE_CACHE.get("at") or 0) < _PHOTON_PROBE_TTL_SECONDS:
+    if cached is not None and time.time() - float(_PHOTON_PROBE_CACHE.get("at") or 0) < _PHOTON_PROBE_TTL_SECONDS:
         return cached
 
-    payload: Dict[str, Any] = {"is_available": False, "cli_path": None, "version": None, "error": None}
+    payload: Dict[str, Any] = {
+        "is_available": False,
+        "installed": False,
+        "cli_path": None,
+        "version": None,
+        "error": None,
+    }
     try:
         from src.engines.photon_cli import PhotonCli
 
         cli = PhotonCli(default_timeout=30)
-        # 先解析 CLI 路径：即使后续 ping 失败，也能让前端判断“Photon 已安装但未就绪”
+        # 先解析 CLI 路径：即使后续查询失败，也能让前端判断“Photon 已安装但不可执行”
         payload["cli_path"] = cli.cli_path
-        version = cli.version()
-        payload["version"] = version
-        cli.list_sessions()
+        payload["installed"] = True
+        payload["version"] = cli.version()
+        # 已安装且可执行即视为可用于出图（出图任务执行时再启动 Photon）
         payload["is_available"] = True
     except Exception as e:
         payload["error"] = str(e)
@@ -2286,20 +2298,22 @@ async def get_photoshop_status(test_connection: bool = False):
     检测本机 Photon Studio 是否可用（不需要安装 Photoshop）。
 
     **检查内容**：
-    - Photon CLI 是否可执行（环境变量 `PHOTON_CLI` / PATH / `~/.photon/bin` / 安装目录）
+    - Photon CLI 是否已安装（环境变量 `PHOTON_CLI` / PATH / `~/.photon/bin` / 安装目录）
     - CLI 版本
-    - CLI 后台服务是否响应
+
+    **不会启动 Photon**：只做被动探测；真正出图时才会按需启动 Photon。
 
     **使用场景**：客户端在派发前判断本机应使用 photoshop 还是 photon 引擎。
     """,
-    response_description="Photon 可用性、CLI 路径与版本"
+    response_description="Photon 可用性、安装状态、CLI 路径与版本"
 )
 async def get_photon_status():
     from fastapi.concurrency import run_in_threadpool
 
-    payload = await run_in_threadpool(lambda: _probe_photon_status(force=True))
+    payload = await run_in_threadpool(lambda: _probe_photon_status())
     return PhotonStatusResponse(
         is_available=bool(payload.get("is_available")),
+        installed=bool(payload.get("installed")),
         cli_path=payload.get("cli_path"),
         version=payload.get("version"),
         error=payload.get("error"),

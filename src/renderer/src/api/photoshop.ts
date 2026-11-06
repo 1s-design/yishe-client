@@ -96,6 +96,7 @@ export interface PhotoshopStatusResponse {
 
 export interface PhotonStatusResponse {
   is_available: boolean
+  installed?: boolean
   cli_path?: string | null
   version?: string | null
   error?: string | null
