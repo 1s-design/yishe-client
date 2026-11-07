@@ -21,6 +21,10 @@ export interface MaterialUploadParams {
   width?: number;
   height?: number;
   target?: MaterialUploadTarget;
+  /** 客户端已裁掉透明空白边：直接声明为抠图素材，服务端不再猜 */
+  isCutout?: boolean;
+  /** 裁切溯源（原尺寸/裁后尺寸/安全边/省下的面积），写入素材 meta.autoTrim */
+  autoTrim?: Record<string, any>;
 }
 
 export interface MaterialUploadResult {
@@ -250,6 +254,8 @@ async function saveToServer(params: {
   originUrl: string;
   width?: number;
   height?: number;
+  isCutout?: boolean;
+  autoTrim?: Record<string, any>;
   target: MaterialUploadTarget;
 }): Promise<any> {
   const sessionUser = await fetchLocalClientSessionUser();
@@ -269,12 +275,21 @@ async function saveToServer(params: {
         suffix: params.suffix,
         originUrl: params.originUrl,
         source: "browser-extension",
+        // 尺寸以入库文件的真实宽高落列，裁切后不能再用原图尺寸
+        width: params.width ?? null,
+        height: params.height ?? null,
+        aspectRatio:
+          params.width && params.height
+            ? Number((params.width / params.height).toFixed(6))
+            : null,
+        isCutout: params.isCutout === true,
         meta: {
           width: params.width,
           height: params.height,
           collectMethod: "extension",
           collectMethodLabel: "插件采集",
           sourceImageUrl: params.originUrl,
+          ...(params.autoTrim ? { autoTrim: params.autoTrim } : {}),
         },
       },
     });
@@ -308,6 +323,8 @@ export async function downloadImageAndUploadMaterial(
       description,
       keywords,
       imageData,
+      isCutout,
+      autoTrim,
       target = "sticker",
     } = params;
 
@@ -333,6 +350,8 @@ export async function downloadImageAndUploadMaterial(
       originUrl: url,
       width,
       height,
+      isCutout,
+      autoTrim,
       target,
     });
 

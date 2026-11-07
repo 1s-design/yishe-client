@@ -23,6 +23,10 @@ import { registerHotSearchRoutes } from "./hotsearch/hotsearch.routes";
 import { hotSearchService } from "./hotsearch/hotsearch.service";
 import { registerMediaCollectRoutes } from "./mediaCollect.routes";
 import { writeClientLog } from "./clientLogger";
+import {
+  trimTransparentMarginsInDataUrl,
+  type AlphaTrimInfo,
+} from "./alphaTrim";
 import { createAgentApiRouter } from "./agent/agent-api";
 import { sessionStore } from "./agent/session-store";
 
@@ -1562,6 +1566,46 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
         return;
       }
 
+      // 插件手动采集的图同样去掉四周多余空白：复用采集引擎的 alphaTrim
+      // （本地 sharp 解码裁切，服务端零开销）。只处理真有 alpha 空白边的 png/webp，
+      // 其余（jpg / 无透明通道 / 无空白边 / 超限）返回 null，payload 原样透传。
+      let uploadPayloadImage = imageData;
+      let uploadPayloadContentType = contentType;
+      let uploadPayloadSuffix = suffix;
+      let uploadPayloadFileName = fileName;
+      let uploadPayloadWidth = width;
+      let uploadPayloadHeight = height;
+      let uploadPayloadFileSize = fileSize;
+      let trimInfo: AlphaTrimInfo | null = null;
+      try {
+        const trimmed = await trimTransparentMarginsInDataUrl(
+          String(imageData || ""),
+        );
+        if (trimmed) {
+          uploadPayloadImage = trimmed.dataUrl;
+          uploadPayloadContentType = trimmed.contentType;
+          uploadPayloadSuffix = trimmed.suffix;
+          uploadPayloadFileName = fileName
+            ? String(fileName).replace(/\.[a-z0-9]{1,8}$/i, "") + ".png"
+            : fileName;
+          uploadPayloadWidth = trimmed.width;
+          uploadPayloadHeight = trimmed.height;
+          uploadPayloadFileSize = trimmed.fileSize;
+          trimInfo = trimmed.info;
+          console.log(
+            `[material-upload:${requestId}] 透明边距裁切 ` +
+              `${trimmed.info.from.width}x${trimmed.info.from.height}` +
+              ` -> ${trimmed.info.to.width}x${trimmed.info.to.height}` +
+              ` (省 ${(trimmed.info.reducedRatio * 100).toFixed(1)}% 面积)`,
+          );
+        }
+      } catch (trimErr: any) {
+        console.warn(
+          `[material-upload:${requestId}] 透明边距裁切失败，按原图上传:`,
+          trimErr?.message || trimErr,
+        );
+      }
+
       console.log(
         `[material-upload:${requestId}] ========== 通过 IPC 调用 renderer 端 ==========`,
       );
@@ -1577,14 +1621,17 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
           name,
           description,
           keywords,
-          imageData,
-          fileName,
-          contentType,
-          suffix,
-          width,
-          height,
-          fileSize,
+          imageData: uploadPayloadImage,
+          fileName: uploadPayloadFileName,
+          contentType: uploadPayloadContentType,
+          suffix: uploadPayloadSuffix,
+          width: uploadPayloadWidth,
+          height: uploadPayloadHeight,
+          fileSize: uploadPayloadFileSize,
           target,
+          // 裁过的图一定是带透明通道的抠图，客户端直接标记，
+          // 不再依赖服务端读文件头兜底（避免 VP8L / tRNS 等边界格式漏标）
+          ...(trimInfo ? { isCutout: true, autoTrim: trimInfo } : {}),
         };
         const result = await mainWindow.webContents.executeJavaScript(`
           (async () => {

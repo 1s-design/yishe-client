@@ -1,7 +1,9 @@
 /**
  * 透明抠图「自动去掉四周多余空白」——纯客户端本地处理。
  *
- * 采集下载到字节后、写临时文件 / 上传 COS 之前调用。
+ * 两个入口共用同一套裁切规则：
+ * - trimTransparentMargins：采集引擎下载到字节后、写临时文件 / 上传 COS 之前调用。
+ * - trimTransparentMarginsInDataUrl：插件手动采集（/api/material-upload）的 base64 数据。
  * 服务端完全不参与图片解码与重编码，不消耗任何服务端 CPU / 内存 / 带宽。
  *
  * 做法：读 RGBA 原始像素 → 算 alpha 通道的最小外接矩形 → 四周留一点安全边裁切。
@@ -9,6 +11,7 @@
  * 全不透明 / 无空白边的图直接返回 null，连重编码都不做，不影响采集速度。
  */
 import sharp from 'sharp'
+import { formatFromContentType, sniffImageFormat } from './imageFormat'
 
 export interface AlphaTrimInfo {
   from: { width: number; height: number }
@@ -127,5 +130,55 @@ export async function trimTransparentMargins(
     // 裁剪是增强能力，任何异常都不能阻断采集入库
     console.warn('[AlphaTrim] 跳过自动裁切:', e?.message || e)
     return null
+  }
+}
+
+export interface AlphaTrimDataUrlResult {
+  /** 裁切后的无损 PNG dataURL */
+  dataUrl: string
+  contentType: 'image/png'
+  suffix: 'png'
+  width: number
+  height: number
+  fileSize: number
+  info: AlphaTrimInfo
+}
+
+function decodeImageDataUrl(dataUrl: string): { buffer: Buffer; contentType: string } | null {
+  if (typeof dataUrl !== 'string') return null
+  const matched = dataUrl.trim().match(/^data:([^;,]+)?;base64,([\s\S]+)$/)
+  if (!matched || !matched[2]) return null
+  try {
+    const buffer = Buffer.from(matched[2], 'base64')
+    if (!buffer.length) return null
+    return { buffer, contentType: String(matched[1] || '').toLowerCase() }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * dataURL 版透明边距裁切：解析 base64 → 按真实文件头判格式 → 复用 trimTransparentMargins。
+ * 没裁动（非 png/webp、无 alpha、无空白边、超限）时返回 null，调用方保持原 payload 不动。
+ */
+export async function trimTransparentMarginsInDataUrl(
+  dataUrl: string,
+  options: AlphaTrimOptions = {},
+): Promise<AlphaTrimDataUrlResult | null> {
+  const decoded = decodeImageDataUrl(dataUrl)
+  if (!decoded) return null
+
+  const format = sniffImageFormat(decoded.buffer) || formatFromContentType(decoded.contentType)
+  const trimmed = await trimTransparentMargins(decoded.buffer, format || '', options)
+  if (!trimmed) return null
+
+  return {
+    dataUrl: `data:image/png;base64,${trimmed.buffer.toString('base64')}`,
+    contentType: 'image/png',
+    suffix: 'png',
+    width: trimmed.info.to.width,
+    height: trimmed.info.to.height,
+    fileSize: trimmed.buffer.length,
+    info: trimmed.info,
   }
 }
