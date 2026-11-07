@@ -61,7 +61,9 @@ export const platformTaskAutoState = reactive({
 });
 
 const PLATFORM_TASK_POLL_INTERVAL_MS = 4000;
-const PLATFORM_CONFIG_SYNC_INTERVAL_MS = 30000;
+// 配置同步原为 30s 常驻轮询；现由服务端 user-setting-changed 推送即时生效，
+// 这里只保留低频兜底，避免推送丢失后配置长期不刷新。
+const PLATFORM_CONFIG_SYNC_INTERVAL_MS = 300000;
 const PLATFORM_TASK_SKIP_LOG_INTERVAL_MS = 30000;
 const PLATFORM_TASK_RELEASE_GRACE_MS = 2500;
 const PLATFORM_TASK_RECOVERY_INTERVAL_MS = 30000;

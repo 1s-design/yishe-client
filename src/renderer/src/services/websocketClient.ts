@@ -5630,6 +5630,23 @@ function bindSocketEvents(currentSocket: Socket) {
     // 心跳成功回执
   });
 
+  // 服务端配置变更推送：省去 30s 常驻轮询，改由这里即时同步。
+  // 三个消费方分别对应 browserAutomation / psAutomation / aiSetting。
+  currentSocket.on("user-setting-changed", (payload: any) => {
+    const scope = payload?.scope;
+    emitter.emit("log", {
+      level: "info",
+      message: `[ws] 收到配置变更推送 scope=${scope || "all"}，立即同步`,
+    });
+    if (scope !== "aiSetting") {
+      void fetchPsAutomationDispatchConfig();
+      void syncPlatformAutoDispatchConfig();
+    }
+    if (scope !== "setting") {
+      void fetchClientAgentConfig();
+    }
+  });
+
   currentSocket.on("worker:task", async (task: any) => {
     const taskId = task?.taskId;
     const capabilityId = task?.capabilityId || "";
@@ -15929,8 +15946,11 @@ async function fetchPsAutomationDispatchConfig() {
   }
 }
 
-// 定时同步配置的间隔（30秒）
-const PS_CONFIG_SYNC_INTERVAL_MS = 30000;
+// 定时同步配置的间隔。
+// 原为 30s 常驻轮询（与 platformTaskPolling 合计占 getSetting 请求量的绝大部分）。
+// 现在配置变更由服务端通过 user-setting-changed 主动推送，这里只保留低频兜底，
+// 防止推送在断线/重连间隙丢失后配置长期不刷新。
+const PS_CONFIG_SYNC_INTERVAL_MS = 300000;
 let psConfigSyncTimer: ReturnType<typeof setInterval> | null = null;
 
 function startPsConfigSync() {
