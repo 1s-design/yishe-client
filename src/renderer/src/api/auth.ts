@@ -181,7 +181,9 @@ export const getUserInfo = async (): Promise<UserInfo> => {
 
   const response = await request.post<{ data: UserInfo } | UserInfo>({
     url: "/user/getUserInfo",
-    data: {},
+    // 精简档：只剔除零消费的大块配置，档案 / 公司 / isAdmin 等字段全部保留。
+    // validateToken() 只看 401，精简档不影响 token 有效性判定。
+    data: { lean: true },
   });
 
   console.log("getUserInfo 响应:", response);
