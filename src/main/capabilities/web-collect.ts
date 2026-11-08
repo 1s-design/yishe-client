@@ -396,7 +396,8 @@ const downloadDef: CapabilityDefinition = {
       } as any);
 
       if (matRes?.ok === false) {
-        return { success: false, error: matRes?.msg || "入库失败" };
+        // COS 已上传成功：把地址带回，调用方重试时可直接复用，避免二次上传
+        return { success: false, error: matRes?.msg || "入库失败", cosUrl: matRes?.materialUrl };
       }
 
       // 返回素材信息（含 sharp 提取的元数据）
@@ -404,14 +405,10 @@ const downloadDef: CapabilityDefinition = {
         success: true,
         data: {
           materialOk: matRes?.ok !== false,
-          materialId: matRes?.data?.id,
+          materialId: matRes?.materialId,
           url: args.url,
           name: args.title || filename,
-          width: matRes?.data?.width,
-          height: matRes?.data?.height,
-          fileSize: matRes?.data?.fileSize,
-          aspectRatio: matRes?.data?.aspectRatio,
-          cosUrl: matRes?.data?.url,
+          cosUrl: matRes?.materialUrl,
           source: args.source || "webcollect",
         },
       };
@@ -482,20 +479,17 @@ const uploadDef: CapabilityDefinition = {
       } as any);
 
       if (matRes?.ok === false) {
-        return { success: false, error: matRes?.msg || "入库失败" };
+        // COS 已上传成功：把地址带回，调用方重试时可直接复用，避免二次上传
+        return { success: false, error: matRes?.msg || "入库失败", cosUrl: matRes?.materialUrl };
       }
 
       return {
         success: true,
         data: {
           materialOk: matRes?.ok !== false,
-          materialId: matRes?.data?.id,
+          materialId: matRes?.materialId,
           name: args.title || filename,
-          width: matRes?.data?.width,
-          height: matRes?.data?.height,
-          fileSize: matRes?.data?.fileSize,
-          aspectRatio: matRes?.data?.aspectRatio,
-          cosUrl: matRes?.data?.url,
+          cosUrl: matRes?.materialUrl,
           source: args.source || "webcollect-upload",
         },
       };

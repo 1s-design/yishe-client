@@ -770,6 +770,9 @@ function buildCtx(
         try {
           let materialOk = false;
           let materialId: string | undefined;
+          // 素材库入库链路（uploadToMaterialLibrary）内部已完成 COS 上传，
+          // 记录其最终 COS 地址，供下面跳过第二次上传（避免双倍流量 + COS 双份存储）
+          let materialCosUrl: string | undefined;
           if (options.toMaterial) {
             try {
               const { uploadToMaterialLibrary } = await import("./materialLibrary");
@@ -843,11 +846,18 @@ function buildCtx(
               } as any);
               materialOk = !!matRes?.ok;
               materialId = matRes?.materialId;
+              materialCosUrl = (matRes as any)?.materialUrl || materialCosUrl;
             } catch (matErr: any) {
               console.warn("[CollectEngine] 素材库入库失败:", matErr?.message || matErr);
             }
           }
-          const result: any = await uploadFileToCos(tmpPath);
+          // COS 上传去重：toMaterial 链路里 uploadToMaterialLibrary 已把文件传到 COS，
+          // 这里不再重复上传（cosKey 带时间戳，重传会生成第二个对象：双倍上传流量 + 双倍存储）。
+          // 仅当未走素材库链路（toMaterial=false）或拿不到已上传地址时才单独上传兜底。
+          const result: any =
+            materialCosUrl
+              ? { ok: true, url: materialCosUrl }
+              : await uploadFileToCos(tmpPath);
           if (!result?.ok || !result?.url) {
             throw new Error(`上传 COS 失败: ${result?.msg || JSON.stringify(result)?.slice(0, 200)}`);
           }

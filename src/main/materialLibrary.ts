@@ -262,7 +262,8 @@ export async function uploadToMaterialLibrary(
             console.log(`[MaterialLibrary] 入库响应(${materialTarget}) 状态码: ${res.statusCode}, 响应体: ${data.slice(0, 300)}`);
             if (res.statusCode && res.statusCode >= 400) {
               console.error(`[MaterialLibrary] ❌ 入库响应(${materialTarget}) HTTP ${res.statusCode}: ${data}`);
-              resolve({ ok: false, msg: `HTTP ${res.statusCode}: 请求失败 (${data || '无详情'})` });
+              // COS 已传成功：带上 materialUrl 让调用方免于二次上传
+              resolve({ ok: false, msg: `HTTP ${res.statusCode}: 请求失败 (${data || '无详情'})`, materialUrl: cosResult.url });
               return;
             }
             const result = JSON.parse(data);
@@ -274,25 +275,27 @@ export async function uploadToMaterialLibrary(
               resolve({
                 ok: true,
                 materialId: created?.id || undefined,
-                materialUrl: created?.url || undefined,
+                // 服务端未回传 url 时回落到已上传的 COS 地址，避免调用方再传一次
+                materialUrl: created?.url || cosResult.url,
               });
             } else {
               console.error(`[MaterialLibrary] ❌ ${materialTarget} 创建失败:`, result);
               resolve({
                 ok: false,
                 msg: (innerData.errors?.[0]?.error) || innerData.message || "素材库保存失败",
+                materialUrl: cosResult.url,
               });
             }
           } catch (e: any) {
             console.error(`[MaterialLibrary] ❌ 入库响应解析异常(${materialTarget}): ${e?.message}`);
-            resolve({ ok: false, msg: "素材库 API 响应解析失败" });
+            resolve({ ok: false, msg: "素材库 API 响应解析失败", materialUrl: cosResult.url });
           }
         });
       });
 
       req.on("error", (err: Error) => {
         console.error(`[MaterialLibrary] ❌ 入库 API 请求网络异常(${materialTarget}): ${err.message}`);
-        resolve({ ok: false, msg: `素材库 API 请求失败: ${err.message}` });
+        resolve({ ok: false, msg: `素材库 API 请求失败: ${err.message}`, materialUrl: cosResult.url });
       });
 
       req.write(postData);
@@ -303,6 +306,8 @@ export async function uploadToMaterialLibrary(
     return {
       ok: false,
       msg: `上传到素材库失败: ${error?.message || String(error)}`,
+      // COS 可能已上传成功（异常发生在入库阶段），回传地址供调用方兜底复用
+      materialUrl: cosResult.url,
     };
   }
 }
