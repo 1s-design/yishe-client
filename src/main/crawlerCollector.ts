@@ -10,6 +10,7 @@ import fs from 'fs'
 import https from 'https'
 import { generateCosKey, uploadFileToCos } from './cos'
 import { sniffImageFormat } from './imageFormat'
+import { assertCollectImage, resolveCollectImagePolicy } from './alphaTrim'
 
 type AutoBrowserModule = typeof import('./auto-browser')
 
@@ -343,6 +344,13 @@ class CrawlerCollectorService {
           if (!imageFormat) {
             throw new Error(`下载内容不是有效图片（可能为错误页面）: ${image.url}`)
           }
+          // 上传前质量闸门：不合格图在写临时文件 / 上传 COS 之前直接丢弃。
+          // 老站点爬虫若确需保留 JPG 等非透明图，可在 config 传 imagePolicy: 'off'。
+          await assertCollectImage(
+            imageBuffer,
+            resolveCollectImagePolicy((config as any)?.imagePolicy),
+            image.url,
+          )
           const ext = `.${imageFormat}`
           const filename = `${config.site}_${Date.now()}_${i}${ext}`
 

@@ -12,6 +12,7 @@ import http from "http";
 import https from "https";
 import { URL } from "url";
 import sharp from "sharp";
+import { inspectCollectImage, resolveCollectImagePolicy } from "./alphaTrim";
 import * as imghash from "imghash";
 import { uploadFileToCos, generateCosKey, getBackendApiBase, getCurrentAccessToken } from "./cos";
 
@@ -160,6 +161,46 @@ export async function uploadToMaterialLibrary(
   if (!imgWidth || !imgHeight) {
     throw new Error("图片解析失败（宽高为 0），拒绝上传及入库");
   }
+
+  // 采集链路「上传前质量闸门·统一出口」
+  // collectEngine 在下载后已校验一次，但部分源 hook 会绕过它直接调本函数入库，
+  // 故在「上传 COS」之前对所有采集类入库再兜一道：垃圾图零上传。
+  // 仅对采集来源启用；用户主动上传的 JPG 设计稿 / 网页截图不受影响。
+  const harvestMeta = payload?.meta || {};
+  const sourceLower = String(payload?.source || "").toLowerCase();
+  const categoryLower = String(payload?.category || payload?.group || "").toLowerCase();
+  // 旧版只认 harvestBatchId / collectMethod / source 白名单，但部分源 hook 不传
+  // 这些字段就能绕过，导致 JPG / WEBP / 白底图被传到 COS。现改为「默认拦截 +
+  // 白名单豁免」：只有用户 / Agent 主动上传、名画导入、本地文件导入等明确非
+  // 采集场景才跳过；需要临时放行时可显式传 meta.skipImagePolicy = true。
+  const POLICY_EXEMPT =
+    harvestMeta.skipImagePolicy === true ||
+    ["agent", "agent-upload", "manual", "local", "webcollect-upload"].includes(sourceLower) ||
+    sourceLower.includes("upload") ||
+    sourceLower.includes("agent") ||
+    sourceLower.includes("artsandculture") ||
+    sourceLower.includes("google arts") ||
+    ["google-art", "agent-upload", "design", "user-upload"].includes(categoryLower);
+  const isCollectImage = materialTarget === "crawler_material" && !POLICY_EXEMPT;
+  if (isCollectImage) {
+    try {
+      const gateBuf = await fs.promises.readFile(localPath);
+      const verdict = await inspectCollectImage(
+        gateBuf,
+        resolveCollectImagePolicy(harvestMeta.imagePolicy, payload?.imagePolicy),
+      );
+      if (!verdict.ok) {
+        throw new Error(
+          `[图片质量闸门·统一出口] 拒绝上传: ${verdict.reason}` +
+            ` (格式=${verdict.format} 尺寸=${verdict.width}x${verdict.height} alpha=${verdict.hasAlpha})`,
+        );
+      }
+    } catch (e: any) {
+      if (String(e?.message || "").includes("[图片质量闸门")) throw e;
+      throw new Error(`图片质量闸门校验失败，拒绝上传: ${e?.message || e}`);
+    }
+  }
+
   const aspectRatio = imgWidth && imgHeight ? Number((imgWidth / imgHeight).toFixed(6)) : null;
 
   // 2. 校验通过后，上传 COS

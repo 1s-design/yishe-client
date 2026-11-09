@@ -182,3 +182,185 @@ export async function trimTransparentMarginsInDataUrl(
     info: trimmed.info,
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 采集图片「上传前质量闸门」
+//
+// 聚合源（Bing / CleanPNG 等）常混入三类垃圾图：
+//   1) JPEG / 无 alpha 的 PNG —— 白底，不能做透明印花；
+//   2) WEBP 预览图 —— 列表缩略图转码，400px 且无透明；
+//   3) PNG 带 RGBA 但 alpha 全 255 —— 「假透明」，isCutout 会被误标 true。
+// 过去这三类都是先传 COS、再人工复核淘汰，白耗上行流量与存储。
+// 现在在「下载得到 Buffer」之后、「写临时文件 / 上传 COS / 写库」之前拦截：
+// 不合格直接 throw，由采集引擎既有的单张失败处理链丢弃，云端零写入。
+//
+// 默认策略：放行常见图片格式（png/jpeg/webp），按分辨率过滤缩略图与低清垃圾图，
+// 长边 >= 400px、短边 >= 200px。不要求透明通道——高清壁纸类素材（jpeg 无 alpha）
+// 同样是合法采集目标；透明真实性检查仅在调用方显式 requireRealAlpha 时启用。
+// 逃生开关：任一调用方传 imagePolicy='off' 即关闭；传对象可覆盖阈值；
+//           传 'png,webp' 之类字符串可收窄格式白名单。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CollectImagePolicy {
+  allowedFormats?: string[]
+  requireRealAlpha?: boolean
+  minLongEdge?: number
+  minShortEdge?: number
+  /** alpha 低于该值才算透明像素；默认 250 */
+  alphaThreshold?: number
+  /** 超过此像素量跳过逐像素统计，只按 hasAlpha 判定，防内存爆炸 */
+  maxPixels?: number
+}
+
+export type CollectImagePolicyInput =
+  | CollectImagePolicy
+  | 'off'
+  | 'on'
+  | 'none'
+  | string
+  | boolean
+  | null
+  | undefined
+
+export const DEFAULT_COLLECT_IMAGE_POLICY: Required<CollectImagePolicy> = {
+  allowedFormats: ['png', 'jpeg', 'jpg', 'webp'],
+  requireRealAlpha: false,
+  minLongEdge: 400,
+  minShortEdge: 200,
+  alphaThreshold: 250,
+  maxPixels: 40_000_000,
+}
+
+const POLICY_OFF_TOKENS = new Set(['off', 'none', 'disabled', 'false'])
+
+/**
+ * 按优先级解析策略：第一个显式传入的值生效，都没传则用默认严格策略。
+ * 调用方可从 download hook 的 options.imagePolicy / collect_run 的
+ * params.imagePolicy、params.meta.imagePolicy / 源 meta.imagePolicy 处关闭或覆盖。
+ */
+export function resolveCollectImagePolicy(
+  ...candidates: CollectImagePolicyInput[]
+): CollectImagePolicy | 'off' {
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null) continue
+    if (candidate === false) return 'off'
+    if (candidate === true || candidate === 'on') return { ...DEFAULT_COLLECT_IMAGE_POLICY }
+    if (typeof candidate === 'string') {
+      const token = candidate.trim().toLowerCase()
+      if (!token || POLICY_OFF_TOKENS.has(token)) return 'off'
+      return {
+        ...DEFAULT_COLLECT_IMAGE_POLICY,
+        allowedFormats: token.split(',').map((s) => s.trim()).filter(Boolean),
+      }
+    }
+    if (typeof candidate === 'object') {
+      const defined = Object.fromEntries(
+        Object.entries(candidate).filter(([, v]) => v !== undefined),
+      )
+      return { ...DEFAULT_COLLECT_IMAGE_POLICY, ...defined }
+    }
+  }
+  return { ...DEFAULT_COLLECT_IMAGE_POLICY }
+}
+
+export interface CollectImageVerdict {
+  ok: boolean
+  reason?: string
+  format?: string
+  width?: number
+  height?: number
+  hasAlpha?: boolean
+  minAlpha?: number
+}
+
+function errorText(e: unknown): string {
+  return String((e as any)?.message || e || '').slice(0, 160)
+}
+
+function normalizePolicy(policy: CollectImagePolicy | 'off'): Required<CollectImagePolicy> {
+  const raw = { ...DEFAULT_COLLECT_IMAGE_POLICY, ...(policy || {}) }
+  return {
+    allowedFormats: Array.isArray(raw.allowedFormats)
+      ? raw.allowedFormats
+      : DEFAULT_COLLECT_IMAGE_POLICY.allowedFormats,
+    requireRealAlpha: raw.requireRealAlpha !== false,
+    minLongEdge: Number(raw.minLongEdge) || DEFAULT_COLLECT_IMAGE_POLICY.minLongEdge,
+    minShortEdge: Number(raw.minShortEdge) || DEFAULT_COLLECT_IMAGE_POLICY.minShortEdge,
+    alphaThreshold: Number(raw.alphaThreshold) || DEFAULT_COLLECT_IMAGE_POLICY.alphaThreshold,
+    maxPixels: Number(raw.maxPixels) || DEFAULT_COLLECT_IMAGE_POLICY.maxPixels,
+  }
+}
+
+/** 只做检查、不抛错；便于日志与统计复用 */
+export async function inspectCollectImage(
+  input: Buffer,
+  policy: CollectImagePolicy | 'off' = DEFAULT_COLLECT_IMAGE_POLICY,
+): Promise<CollectImageVerdict> {
+  if (policy === 'off' || !policy) return { ok: true }
+  const p = normalizePolicy(policy)
+  let meta: any
+  try {
+    meta = await sharp(input, { limitInputPixels: false, failOn: 'none' }).metadata()
+  } catch (e) {
+    return { ok: false, reason: `sharp 无法解码: ${errorText(e)}` }
+  }
+  const format = String(meta?.format || '').toLowerCase()
+  const width = Number(meta?.width || 0)
+  const height = Number(meta?.height || 0)
+  const hasAlpha = meta?.hasAlpha === true
+  const base: CollectImageVerdict = { ok: false, format, width, height, hasAlpha }
+
+  const allowed = p.allowedFormats.map((f) => String(f).toLowerCase())
+  if (!allowed.includes(format)) {
+    return { ...base, reason: `格式 ${format || '未知'} 不在白名单 [${allowed.join(',')}]` }
+  }
+  if (!width || !height) return { ...base, reason: '宽高为 0' }
+  const longEdge = Math.max(width, height)
+  const shortEdge = Math.min(width, height)
+  if (longEdge < p.minLongEdge) {
+    return { ...base, reason: `长边 ${longEdge} < ${p.minLongEdge}（疑似缩略图）` }
+  }
+  if (shortEdge < p.minShortEdge) {
+    return { ...base, reason: `短边 ${shortEdge} < ${p.minShortEdge}（疑似缩略图）` }
+  }
+  if (p.requireRealAlpha) {
+    if (!hasAlpha) return { ...base, reason: '无 alpha 通道（白底图）' }
+    if (width * height <= p.maxPixels) {
+      try {
+        // stats() 只返回每通道 min/max，不生成整图 raw Buffer，比逐像素循环省内存。
+        // ensureAlpha() 保证最后一个通道一定是 alpha。
+        const stats = await sharp(input, { limitInputPixels: false, failOn: 'none' })
+          .ensureAlpha()
+          .stats()
+        const channels: any[] = Array.isArray(stats?.channels) ? stats.channels : []
+        const alpha = channels[channels.length - 1]
+        const minAlpha = typeof alpha?.min === 'number' ? alpha.min : 255
+        if (!(minAlpha < p.alphaThreshold)) {
+          return { ...base, minAlpha, reason: `alpha 最小值 ${minAlpha}，全不透明（假透明 PNG）` }
+        }
+        return { ...base, ok: true, minAlpha }
+      } catch (e) {
+        return { ...base, reason: `alpha 检测失败: ${errorText(e)}` }
+      }
+    }
+  }
+  return { ...base, ok: true }
+}
+
+/** 采集链路统一入口：不合格直接 throw，调用方既有的单张失败处理会跳过该图 */
+export async function assertCollectImage(
+  input: Buffer,
+  policy: CollectImagePolicy | 'off',
+  sourceLabel?: string,
+): Promise<CollectImageVerdict> {
+  const verdict = await inspectCollectImage(input, policy)
+  if (!verdict.ok) {
+    const msg =
+      `[图片质量闸门] 拒绝上传: ${verdict.reason}` +
+      ` (格式=${verdict.format} 尺寸=${verdict.width}x${verdict.height} alpha=${verdict.hasAlpha})` +
+      (sourceLabel ? ` 来源=${String(sourceLabel).slice(0, 180)}` : '')
+    console.warn(msg)
+    throw new Error(msg)
+  }
+  return verdict
+}

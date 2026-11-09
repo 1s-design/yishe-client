@@ -11,7 +11,13 @@ import os from "os";
 import path from "path";
 import { uploadFileToCos } from "./cos";
 import { sniffImageFormat } from "./imageFormat";
-import { trimTransparentMargins, type AlphaTrimInfo } from "./alphaTrim";
+import {
+  trimTransparentMargins,
+  type AlphaTrimInfo,
+  assertCollectImage,
+  resolveCollectImagePolicy,
+  type CollectImagePolicyInput,
+} from "./alphaTrim";
 
 export const COLLECT_ENGINE_VERSION = 1;
 
@@ -669,6 +675,8 @@ function buildCtx(
           trimPadding?: number;
           /** alpha 阈值 0~255，低于等于该值算空白，默认 8 */
           trimAlphaThreshold?: number;
+          /** 上传前质量闸门策略：'off' 关闭；对象覆盖阈值；不传用默认严格策略 */
+          imagePolicy?: CollectImagePolicyInput;
         } = {},
       ): Promise<{ cosUrl: string; size: number; materialOk?: boolean; materialId?: string }> {
         // 统一规范：domains 白名单只约束 search/list 的抓取请求；
@@ -750,6 +758,17 @@ function buildCtx(
         } catch (trimErr: any) {
           console.warn("[CollectEngine] 透明边距裁切失败，按原图入库:", trimErr?.message || trimErr);
         }
+
+        // 上传前质量闸门：JPEG 白底 / WEBP 预览图 / 假透明 PNG 在写临时文件、
+        // 上传 COS、写库之前直接丢弃，不产生任何云端流量与脏数据。
+        // 校验对象是「裁切后的最终 buf」，即真正要上传的字节。
+        const imagePolicy = resolveCollectImagePolicy(
+          options.imagePolicy,
+          (args.params as any)?.imagePolicy,
+          (args.params as any)?.meta?.imagePolicy,
+          (args.meta as any)?.imagePolicy,
+        );
+        await assertCollectImage(buf, imagePolicy, url);
 
         // 文件名只保留 ASCII 安全字符，避免中文/特殊字符导致 ENOENT
         const rawName = String(options.filename || "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
