@@ -1992,7 +1992,10 @@ class ApiServer {
                 message: '环境已删除',
             });
         } catch (error) {
-            this.sendResponse(res, 500, { success: false, message: error.message || '删除环境失败' });
+            const message = error.message || '删除环境失败';
+            // 采集系统托管环境受保护，删除属于「不允许」而非服务端故障
+            const status = /不允许删除|采集系统托管|受保护/.test(message) ? 403 : 500;
+            this.sendResponse(res, status, { success: false, message });
         }
     }
 

@@ -52,6 +52,7 @@ import {
     createBrowserProfile,
     updateBrowserProfile,
     deleteBrowserProfile,
+    isCollectManagedProfile,
     markBrowserProfileUsed
 } from './BrowserProfileService.js';
 import {
@@ -1849,6 +1850,16 @@ export async function deleteManagedBrowserProfile(profileId) {
     const normalizedProfileId = String(profileId || '').trim();
     if (!normalizedProfileId) {
         throw new Error('缺少 profileId');
+    }
+
+    // 采集系统托管环境：必须在关闭浏览器/清理会话之前拦截，
+    // 否则一次误点删除就会把正在使用的采集专用 Chrome 关掉。
+    const existing = getBrowserProfile(normalizedProfileId);
+    if (existing?.protected === true || isCollectManagedProfile(existing || {})) {
+        throw new Error(
+            `环境 ${normalizedProfileId}（${existing?.name || ''}）为采集系统托管环境，已标记保护，不允许删除：`
+            + (existing?.protectedReason || '图片采集专用 / 历史登录态需保留'),
+        );
     }
 
     await closeManagedProfileBrowser(normalizedProfileId);

@@ -128,43 +128,135 @@ async function curlRequest(
 let browserChain: Promise<any> = Promise.resolve();
 
 /**
+ * 采集专用浏览器环境。
+ * 架构约定：所有需要真浏览器的采集源共用同一个受管理环境（系统自动创建、受保护、不可删除），
+ * 不再借用 9333/9222 上的「默认环境」（那是发布/店铺任务在用的）。
+ * 环境注册表在客户端本地 profiles.json；服务端只负责下发源代码，不持有环境。
+ */
+interface CollectBrowserProfileRef {
+  id: string;
+  debugPort: number;
+}
+let collectProfileCache: CollectBrowserProfileRef | null = null;
+let collectBrowserReady: Promise<boolean> | null = null;
+
+async function loadBrowserProfileService(): Promise<any> {
+  try {
+    return await import("./auto-browser/legacy/services/BrowserProfileService.js");
+  } catch {
+    return null;
+  }
+}
+
+/** 幂等解析采集专用环境（首次调用会自动创建，新设备因此天然拥有一个采集环境） */
+async function resolveCollectProfile(): Promise<CollectBrowserProfileRef | null> {
+  if (collectProfileCache?.debugPort) return collectProfileCache;
+  try {
+    const svc = await loadBrowserProfileService();
+    const profile = svc?.ensureCollectBrowserProfile?.();
+    if (profile?.id && Number(profile.debugPort) > 0) {
+      collectProfileCache = {
+        id: String(profile.id),
+        debugPort: Number(profile.debugPort),
+      };
+      return collectProfileCache;
+    }
+  } catch (error: any) {
+    console.warn("[CollectEngine] 采集专用环境解析失败:", error?.message || error);
+  }
+  return null;
+}
+
+function resetCollectBrowserReady() {
+  collectBrowserReady = null;
+}
+
+/** 按需拉起采集专用 Chrome（窗口可见；YISHE_COLLECT_BROWSER_HEADLESS=1 可静默） */
+async function ensureCollectBrowserReady(): Promise<boolean> {
+  if (collectBrowserReady) return collectBrowserReady;
+  collectBrowserReady = (async () => {
+    const profile = await resolveCollectProfile();
+    if (!profile) return false;
+    try {
+      const pool = await import("./auto-browser/legacy/services/ManagedProfileBrowserPool.js");
+      const svc = await loadBrowserProfileService();
+      const previousActiveId = String(svc?.listBrowserProfiles?.()?.activeProfileId || "").trim();
+      await (pool as any).getOrCreateManagedProfileBrowser({
+        profileId: profile.id,
+        allowLaunch: true,
+        headless: process.env.YISHE_COLLECT_BROWSER_HEADLESS === "1",
+        skipWindowMaximize: true,
+      });
+      // 环境池会把当前环境设为默认；采集不应抢占发布/店铺任务的默认环境
+      if (previousActiveId && previousActiveId !== profile.id) {
+        try {
+          svc?.switchBrowserProfile?.(previousActiveId);
+        } catch {
+          /* 恢复失败不影响采集 */
+        }
+      }
+      console.log(
+        `[CollectEngine] 采集专用环境已就绪: ${profile.id} port=${profile.debugPort}`,
+      );
+      return true;
+    } catch (error: any) {
+      console.warn("[CollectEngine] 采集专用环境启动失败:", error?.message || error);
+      return false;
+    }
+  })().catch(() => false);
+  return collectBrowserReady;
+}
+
+/**
  * 浏览器内下载（应对 Cloudflare 等站点 fetch/curl 均 403）。
  * 复用系统已连接的浏览器（auto-browser），页面上下文带 CF cookie，
  * 在页面内 fetch 图片 URL 取字节，再 base64 返回。
  */
 async function downloadViaBrowser(url: string): Promise<Buffer> {
-  // ── 优先：直接连接系统真实 Chrome CDP（带所有会话与 CF cookie）──
+  // ── 统一：采集专用环境 CDP（不再借用 9333/9222 的默认/发布环境）──
   try {
     const { chromium } = await import("playwright-core");
-    for (const port of [9333, 9222]) {
-      try {
-        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-        const context = browser.contexts()[0];
-        if (context) {
-          const origin = new URL(url).origin;
-          let page = context.pages().find((p: any) => p.url().startsWith(origin));
-          let created = false;
-          if (!page) {
-            page = await context.newPage();
-            created = true;
-            await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
-          }
-          const b64 = await page.evaluate(async (target: string) => {
-            const r = await fetch(target);
-            if (!r.ok) return null;
-            const buf = new Uint8Array(await r.arrayBuffer());
-            let bin = "";
-            const chunk = 0x8000;
-            for (let i = 0; i < buf.length; i += chunk) {
-              bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + chunk)) as any);
+    const profile = await resolveCollectProfile();
+    if (profile) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await ensureCollectBrowserReady().catch(() => false);
+        let browser: any = null;
+        try {
+          browser = await chromium.connectOverCDP(
+            `http://127.0.0.1:${profile.debugPort}`,
+            { timeout: 8000 },
+          );
+          const context = browser.contexts()[0];
+          if (context) {
+            const origin = new URL(url).origin;
+            let page = context.pages().find((p: any) => p.url().startsWith(origin));
+            let created = false;
+            if (!page) {
+              page = await context.newPage();
+              created = true;
+              await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
             }
-            return btoa(bin);
-          }, url);
-          if (created) await page.close().catch(() => {});
-          await browser.close().catch(() => {});
-          if (b64) return Buffer.from(b64, "base64");
+            const b64 = await page.evaluate(async (target: string) => {
+              const r = await fetch(target);
+              if (!r.ok) return null;
+              const buf = new Uint8Array(await r.arrayBuffer());
+              let bin = "";
+              const chunk = 0x8000;
+              for (let i = 0; i < buf.length; i += chunk) {
+                bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + chunk)) as any);
+              }
+              return btoa(bin);
+            }, url);
+            if (created) await page.close().catch(() => {});
+            if (b64) return Buffer.from(b64, "base64");
+          }
+        } catch {
+          // 环境可能被用户关闭：重新拉起后再试一次
+          resetCollectBrowserReady();
+        } finally {
+          await browser?.close?.().catch(() => {});
         }
-      } catch {}
+      }
     }
   } catch {}
 
@@ -172,16 +264,8 @@ async function downloadViaBrowser(url: string): Promise<Buffer> {
   try {
     const autoBrowser = await import("./auto-browser/index.js");
     const mod = autoBrowser as any;
-    // 自动发现已连接的 managed profile
-    let profileId = "";
-    try {
-      const pool = await import("./auto-browser/legacy/services/ManagedProfileBrowserPool.js");
-      const status = await (pool as any).getManagedProfileBrowserStatus?.({});
-      const connected = (status?.instances || []).find((x: any) => x?.isConnected || x?.browserStatus?.isConnected);
-      if (connected?.profileId) profileId = String(connected.profileId);
-    } catch {
-      /* legacy 路径 */
-    }
+    // 统一使用采集专用环境；不再按「第一个已连接环境」随机挑选
+    const profileId = (await resolveCollectProfile())?.id || "";
     let page = await mod.getBrowserPage?.(0, profileId ? { profileId } : {});
     if (!page) page = await mod.createBrowserPage?.(profileId ? { profileId } : {});
     if (page?.goto) {
@@ -296,44 +380,56 @@ async function renderWithBrowser(
   } = {},
 ): Promise<{ html: string; finalUrl: string; title: string }> {
   const run = async () => {
-    // ── 优先：直接连接系统真实 Chrome CDP（带所有环境与 CF cookie）──
+    // ── 统一：采集专用浏览器环境（系统自动创建/拉起，不再借默认环境 9333/9222）──
     try {
       const { chromium } = await import("playwright-core");
-      for (const port of [9333, 9222]) {
-        try {
-          const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-          const context = browser.contexts()[0] || (await browser.newContext());
-          const page = await context.newPage();
-          console.log(`[CollectEngine] browser.render(CDP port=${port}): ${url}`);
-          await page.goto(url, {
-            waitUntil: "domcontentloaded",
-            timeout: Math.min(options.timeoutMs || 60000, 180000),
-          });
-          // Cloudflare / 安全检查点轮询（最多 35 秒）
-          for (let i = 0; i < 35; i++) {
-            await new Promise((r) => setTimeout(r, 1000));
-            const t = (await page.title().catch(() => "")) || "";
-            if (/Security Checkpoint|Just a moment|请稍候|Cloudflare/i.test(t)) continue;
-            break;
-          }
-          if (options.waitFor) {
-            try {
-              await page.waitForSelector(options.waitFor, { timeout: 20000 });
-            } catch {
-              /* 选择器超时继续取 HTML */
+      const profile = await resolveCollectProfile();
+      if (profile) {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await ensureCollectBrowserReady().catch(() => false);
+          let browser: any = null;
+          try {
+            browser = await chromium.connectOverCDP(
+              `http://127.0.0.1:${profile.debugPort}`,
+              { timeout: 8000 },
+            );
+            const context = browser.contexts()[0] || (await browser.newContext());
+            const page = await context.newPage();
+            console.log(
+              `[CollectEngine] browser.render(collect profile=${profile.id} port=${profile.debugPort}): ${url}`,
+            );
+            await page.goto(url, {
+              waitUntil: "domcontentloaded",
+              timeout: Math.min(options.timeoutMs || 60000, 180000),
+            });
+            // Cloudflare / 安全检查点轮询（最多 35 秒）
+            for (let i = 0; i < 35; i++) {
+              await new Promise((r) => setTimeout(r, 1000));
+              const t = (await page.title().catch(() => "")) || "";
+              if (/Security Checkpoint|Just a moment|请稍候|Cloudflare/i.test(t)) continue;
+              break;
             }
+            if (options.waitFor) {
+              try {
+                await page.waitForSelector(options.waitFor, { timeout: 20000 });
+              } catch {
+                /* 选择器超时继续取 HTML */
+              }
+            }
+            if (options.waitMs) {
+              await new Promise((r) => setTimeout(r, Math.min(options.waitMs, 15000)));
+            }
+            const html = await page.content();
+            const finalUrl = page.url() || url;
+            const title = (await page.title().catch(() => "")) || "";
+            await page.close().catch(() => {});
+            return { html, finalUrl, title };
+          } catch (cdpErr) {
+            // 环境可能被用户关闭：重新拉起同一个采集环境后再试一次
+            resetCollectBrowserReady();
+          } finally {
+            await browser?.close?.().catch(() => {});
           }
-          if (options.waitMs) {
-            await new Promise((r) => setTimeout(r, Math.min(options.waitMs, 15000)));
-          }
-          const html = await page.content();
-          const finalUrl = page.url() || url;
-          const title = (await page.title().catch(() => "")) || "";
-          await page.close().catch(() => {});
-          await browser.close().catch(() => {});
-          return { html, finalUrl, title };
-        } catch (cdpErr) {
-          // CDP 连接失败或端口未开放，尝试下一个
         }
       }
     } catch {}
@@ -342,18 +438,8 @@ async function renderWithBrowser(
     try {
       const autoBrowser = await import("./auto-browser/index.js");
       const mod = autoBrowser as any;
-      // 先按显式 profileId 取；未传时自动发现已连接的 managed profile
-      let profileId = options.profileId || "";
-      if (!profileId) {
-        try {
-          const pool = await import("./auto-browser/legacy/services/ManagedProfileBrowserPool.js");
-          const status = await (pool as any).getManagedProfileBrowserStatus?.({});
-          const connected = (status?.instances || []).find((x: any) => x?.isConnected || x?.browserStatus?.isConnected);
-          if (connected?.profileId) profileId = String(connected.profileId);
-        } catch {
-          /* 无 managed pool 时走 legacy */
-        }
-      }
+      // 显式 profileId 作为按源 override；默认统一落到采集专用环境
+      const profileId = options.profileId || (await resolveCollectProfile())?.id || "";
       let page = await mod.getBrowserPage?.(0, profileId ? { profileId } : {});
       if (!page) page = await mod.createBrowserPage?.(profileId ? { profileId } : {});
       if (page?.goto) {
@@ -908,7 +994,7 @@ function buildCtx(
 }
 
 /** 在 vm 沙箱中执行源代码，取出 hooks */
-function loadSourceHooks(code: string): any {
+function loadSourceHooks(code: string, collectCdpPorts: number[] = []): any {
   // 超大脚本在 V8 编译阶段会耗尽原生 Zone 内存，直接 abort 进程（不是可捕获的 JS 异常）。
   // 正常采集源只有几十 KB，超过阈值基本是数据异常，提前拒绝而不是让主进程闪退。
   const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
@@ -927,6 +1013,9 @@ function loadSourceHooks(code: string): any {
     // 不注入会直接 "setTimeout is not defined"（无网络能力，注入无风险）
     setTimeout,
     clearTimeout,
+    // 采集专用环境的 CDP 端口：给少数自行直连浏览器的源使用，
+    // 避免它们再硬编码 9333/9222 跑到默认/发布环境上。纯数据常量，无网络能力。
+    __YISHE_COLLECT_CDP_PORTS__: collectCdpPorts,
   };
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox, {
@@ -944,7 +1033,14 @@ export async function runCollectSource(
     if (!args?.code) {
       return { success: false, error: "缺少源代码 code", engineVersion: COLLECT_ENGINE_VERSION };
     }
-    const hooks = loadSourceHooks(args.code);
+    const collectProfile = await resolveCollectProfile();
+    const collectCdpPorts = collectProfile ? [collectProfile.debugPort] : [];
+    // 声明了 browser 能力的源：先把共用的采集环境拉起，保证所有浏览器任务用同一个窗口
+    const capabilities = (args.meta as any)?.engine?.capabilities;
+    if (Array.isArray(capabilities) && capabilities.includes("browser")) {
+      await ensureCollectBrowserReady().catch(() => false);
+    }
+    const hooks = loadSourceHooks(args.code, collectCdpPorts);
     const action = args.action || "search";
     const hook = hooks?.[action];
     if (typeof hook !== "function") {

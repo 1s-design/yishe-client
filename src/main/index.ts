@@ -1331,6 +1331,21 @@ app.whenReady().then(() => {
   // 初始化默认工作目录（在创建窗口之前）
   initializeDefaultWorkspaceDirectory();
 
+  // 新设备默认自动建立一个「图片采集专用」浏览器环境：幂等、受保护、不可删除，
+  // 只登记环境不启动窗口；首次真正需要浏览器时由采集引擎按需拉起同一个 Chrome。
+  import("./auto-browser/legacy/services/BrowserProfileService.js")
+    .then((profileService) => {
+      const profile = profileService.ensureCollectBrowserProfile?.();
+      if (profile?.id) {
+        console.log(
+          `[App] 采集专用浏览器环境就绪: ${profile.id} port=${profile.debugPort ?? "-"}`,
+        );
+      }
+    })
+    .catch((error) => {
+      console.warn("[App] 采集专用浏览器环境初始化失败:", error?.message || error);
+    });
+
   // 注册通用客户端能力
   import("./capabilities")
     .then((m) => {

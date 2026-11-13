@@ -101,65 +101,40 @@ async function activateChromeWindowOnMac(profileId: string): Promise<void> {
   }
 }
 
+/**
+ * 采集浏览器环境统一入口：抖音精选不再单独建「专属环境」，
+ * 与所有需要浏览器的图片采集源共用同一个「【素材采集】采集专用」环境。
+ * 该环境由系统幂等创建、受保护不可删除。
+ */
 async function ensureDouyinManagedProfile(): Promise<ManagedProfile | null> {
   try {
     const profileService = await import(
       "../auto-browser/legacy/services/BrowserProfileService.js"
     );
-    const profiles = profileService.listBrowserProfiles();
-    let profile = (profiles?.items || []).find((item: any) => {
-      const platforms = Array.isArray(item?.platforms) ? item.platforms : [];
-      return (
-        platforms.some(
-          (platform: unknown) =>
-            String(platform).toLowerCase() === "douyin_jingxuan",
-        ) ||
-        String(item?.name || "").includes("抖音精选") ||
-        String(item?.remark || "").includes("抖音精选")
-      );
-    });
-
-    if (!profile) {
-      profile = profileService.createBrowserProfile({
-        name: "【素材采集】抖音精选",
-        remark: "抖音精选视频采集专属环境（系统自动创建）",
-        platforms: ["douyin_jingxuan"],
-        headless: false,
-      });
-      console.log("[DouyinJingxuan] 🌟 已创建并注册浏览器自动化专属环境:", {
-        id: profile?.id,
-        name: profile?.name,
-        userDataDir: profile?.userDataDir,
-      });
-    } else {
-      const platforms = Array.from(
-        new Set([
-          ...(Array.isArray(profile.platforms) ? profile.platforms : []),
-          "douyin_jingxuan",
-        ]),
-      );
-      profile =
-        profileService.markBrowserProfileUsed(profile.id, { platforms }) ||
-        profile;
-      console.log("[DouyinJingxuan] ♻️ 复用浏览器自动化专属环境:", {
-        id: profile?.id,
-        name: profile?.name,
-        userDataDir: profile?.userDataDir,
-      });
+    const profile = profileService.ensureCollectBrowserProfile?.();
+    if (!profile?.id) {
+      console.warn("[DouyinJingxuan] 无法获取采集专用浏览器环境");
+      return null;
     }
-
-    return profile?.id ? profile : null;
+    console.log("[DouyinJingxuan] 复用采集专用浏览器环境:", {
+      id: profile.id,
+      name: profile.name,
+      userDataDir: profile.userDataDir,
+      debugPort: profile.debugPort,
+    });
+    return {
+      id: String(profile.id),
+      name: profile.name,
+      userDataDir: profile.userDataDir,
+    };
   } catch (error: any) {
     const message = error?.message || String(error);
     if (/\b(?:EACCES|EPERM)\b/i.test(message)) {
       console.error(
-        "[DouyinJingxuan] 浏览器自动化工作目录无写权限，无法注册抖音精选环境。请修复工作目录所有权后重试",
+        "[DouyinJingxuan] 浏览器自动化工作目录无写权限，无法获取采集专用环境。请修复工作目录所有权后重试",
       );
     } else {
-      console.warn(
-        "[DouyinJingxuan] 注册/复用受管浏览器环境失败:",
-        message,
-      );
+      console.warn("[DouyinJingxuan] 获取采集专用浏览器环境失败:", message);
     }
     return null;
   }
@@ -254,7 +229,7 @@ async function searchInBrowserContext(
 ): Promise<{ items: DouyinVideo[]; total: number }> {
   const managedProfile = await ensureDouyinManagedProfile();
   if (!managedProfile?.id) {
-    throw new Error("无法初始化抖音精选专属受管环境，请检查本地环境权限");
+    throw new Error("无法初始化采集专用浏览器环境，请检查本地环境权限");
   }
 
   const {
@@ -272,7 +247,7 @@ async function searchInBrowserContext(
     targetUrl = `https://www.douyin.com/jingxuan?category=${encodeURIComponent(category)}`;
   }
 
-  console.log(`[DouyinJingxuan] 🚀 打开专属受管环境窗口 [${managedProfile.name || managedProfile.id}]:`, {
+  console.log(`[DouyinJingxuan] 🚀 打开采集专用环境窗口 [${managedProfile.name || managedProfile.id}]:`, {
     targetUrl,
   });
 

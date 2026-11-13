@@ -1497,6 +1497,12 @@ function sanitizeBrowserAutomationProfileForWs(profile: unknown) {
     userDataDir: String(source.userDataDir || "").trim() || null,
     exists: source.exists === true,
     isActive: source.isActive === true,
+    // 采集系统托管环境的保护标记：必须透传到服务端/管理端，否则 UI 无法禁用删除
+    protected: source.protected === true,
+    nonDeletable: source.nonDeletable === true,
+    managedBy: String(source.managedBy || "").trim() || null,
+    kind: String(source.kind || "").trim() || null,
+    protectedReason: String(source.protectedReason || "").trim() || null,
   };
 }
 

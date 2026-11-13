@@ -28,6 +28,7 @@ import {
   switchManagedBrowserProfile,
   updateManagedBrowserProfile,
 } from "./legacy/services/BrowserService.js";
+import { isCollectManagedProfile } from "./legacy/services/BrowserProfileService.js";
 import { PlatformLoginService } from "./legacy/services/PlatformLoginService.js";
 import {
   buildMissingLocalChromeMessage,
@@ -1218,6 +1219,14 @@ class AutoBrowserService {
 
   private async handleBrowserProfileDelete(reqPath: string) {
     const profileId = this.extractProfileIdFromPath(reqPath);
+    // 采集专用/历史采集环境：系统标记保护，任何入口都不允许删除（含 user-data 登录态目录）
+    const profile = getManagedBrowserProfile(profileId);
+    if (profile?.protected === true || profile?.nonDeletable === true || isCollectManagedProfile(profile)) {
+      return this.fail(
+        403,
+        profile?.protectedReason || "该浏览器环境为采集系统托管环境，已标记保护，不允许删除",
+      );
+    }
     const result = await deleteManagedBrowserProfile(profileId);
     return this.ok({
       success: true,
