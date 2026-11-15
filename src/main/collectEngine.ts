@@ -772,6 +772,12 @@ function buildCtx(
           ...(options.referer ? { Referer: options.referer } : {}),
           ...(options.headers || {}),
         };
+        // 媒体采集（collect_file）落的是「自媒体原料」，允许视频/音频/文档等非图片文件。
+        // 图片采集（crawler_material）保持原有 magic bytes + 质量闸门的严格校验，不受影响。
+        const collectFileTarget =
+          options.materialTarget === "collect_file" ||
+          (args.params as any)?.materialTarget === "collect_file" ||
+          (args.meta as any)?.materialTarget === "collect_file";
         let buf: Buffer;
         let fetchErr: any = null;
         let curlErr: any = null;
@@ -815,52 +821,71 @@ function buildCtx(
             }
           }
         }
-        // 校验下载内容确实是图片（magic bytes），防止 HTML 错误页/空文件混入素材库
+        // 校验下载内容确实是图片（magic bytes），防止 HTML 错误页/空文件混入素材库。
+        // collect_file 目标下，非图片文件（mp4/mp3/pdf…）是合法媒体资源，放行到上传链路。
         const imageFormat = sniffImageFormat(buf);
-        if (!imageFormat) {
+        const nonImageCollectFile = !imageFormat && collectFileTarget;
+        if (!imageFormat && !nonImageCollectFile) {
           throw new Error(`下载内容不是有效图片（可能为错误页面）: ${url}`);
         }
-
-        // 透明抠图自动去掉四周多余空白：客户端本地 sharp 处理，服务端零开销。
-        // 只有检测到 alpha 且确实存在空白边的图才会重编码；不透明壁纸走快速路径原样入库。
-        let finalFormat: typeof imageFormat = imageFormat;
-        let trimInfo: AlphaTrimInfo | null = null;
-        try {
-          const trimmed = await trimTransparentMargins(buf, imageFormat, {
-            enabled: options.trimTransparent,
-            padding: options.trimPadding,
-            alphaThreshold: options.trimAlphaThreshold,
-          });
-          if (trimmed) {
-            buf = trimmed.buffer;
-            trimInfo = trimmed.info;
-            finalFormat = "png";
-            console.log(
-              `[CollectEngine] 透明边距裁切 ${trimmed.info.from.width}x${trimmed.info.from.height}` +
-                ` -> ${trimmed.info.to.width}x${trimmed.info.to.height}` +
-                ` (省 ${(trimmed.info.reducedRatio * 100).toFixed(1)}% 面积)`,
-            );
+        // 放行非图片后，要挡住「站点返回 HTML 错误页却被当成 mp4/pdf 入库」。
+        // 只按文件头识别明显的 HTML/XML 页面，不影响 mp4/mp3/pdf/字幕/文本等合法媒体。
+        if (nonImageCollectFile) {
+          const head = buf.subarray(0, 512).toString("utf8").trimStart();
+          if (/^(?:<!doctype\s+html|<html[\s>]|<\?xml)/i.test(head)) {
+            throw new Error(`下载内容疑似 HTML 错误页面（非媒体文件）: ${url}`);
           }
-        } catch (trimErr: any) {
-          console.warn("[CollectEngine] 透明边距裁切失败，按原图入库:", trimErr?.message || trimErr);
         }
 
-        // 上传前质量闸门：JPEG 白底 / WEBP 预览图 / 假透明 PNG 在写临时文件、
-        // 上传 COS、写库之前直接丢弃，不产生任何云端流量与脏数据。
-        // 校验对象是「裁切后的最终 buf」，即真正要上传的字节。
-        const imagePolicy = resolveCollectImagePolicy(
-          options.imagePolicy,
-          (args.params as any)?.imagePolicy,
-          (args.params as any)?.meta?.imagePolicy,
-          (args.meta as any)?.imagePolicy,
-        );
-        await assertCollectImage(buf, imagePolicy, url);
+        // 透明抠图 / 图片质量闸门属于印花素材产线（crawler_material）专属审查：
+        // 媒体采集（collect_file）是自媒体原料预采，GIF / SVG / 低清预览图都要原样暂存，
+        // 不做无边框裁切、不做语义/质量判定，只保留上面的 magic bytes 错误页校验。
+        let finalFormat: typeof imageFormat = imageFormat;
+        let trimInfo: AlphaTrimInfo | null = null;
+        // 图片专属处理：透明边裁切 + 上传前质量闸门。
+        // 视频/音频/文档不做任何图片校验；collect_file 下的图片同样跳过。
+        if (imageFormat && !collectFileTarget) {
+          try {
+            const trimmed = await trimTransparentMargins(buf, imageFormat, {
+              enabled: options.trimTransparent,
+              padding: options.trimPadding,
+              alphaThreshold: options.trimAlphaThreshold,
+            });
+            if (trimmed) {
+              buf = trimmed.buffer;
+              trimInfo = trimmed.info;
+              finalFormat = "png";
+              console.log(
+                `[CollectEngine] 透明边距裁切 ${trimmed.info.from.width}x${trimmed.info.from.height}` +
+                  ` -> ${trimmed.info.to.width}x${trimmed.info.to.height}` +
+                  ` (省 ${(trimmed.info.reducedRatio * 100).toFixed(1)}% 面积)`,
+              );
+            }
+          } catch (trimErr: any) {
+            console.warn("[CollectEngine] 透明边距裁切失败，按原图入库:", trimErr?.message || trimErr);
+          }
+
+          // 上传前质量闸门：JPEG 白底 / WEBP 预览图 / 假透明 PNG 在写临时文件、
+          // 上传 COS、写库之前直接丢弃，不产生任何云端流量与脏数据。
+          // 校验对象是「裁切后的最终 buf」，即真正要上传的字节。
+          const imagePolicy = resolveCollectImagePolicy(
+            options.imagePolicy,
+            (args.params as any)?.imagePolicy,
+            (args.params as any)?.meta?.imagePolicy,
+            (args.meta as any)?.imagePolicy,
+          );
+          await assertCollectImage(buf, imagePolicy, url);
+        }
 
         // 文件名只保留 ASCII 安全字符，避免中文/特殊字符导致 ENOENT
         const rawName = String(options.filename || "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
-        // 后缀一律以真实内容为准：URL 后缀常与实际返回格式不一致（如 .jpg 实为 PNG）
-        // 裁切后统一输出无损 PNG，保证透明通道与素材库 suffix 一致
-        const ext = finalFormat;
+        // 图片：后缀一律以真实内容为准（URL 后缀常与实际格式不一致，裁切后统一 PNG）。
+        // 非图片媒体资源：沿用 URL / filename 的真实后缀，服务端据此判 image/video/audio/document。
+        const ext = imageFormat
+          ? finalFormat
+          : (String(options.filename || url).split("?")[0].split(".").pop() || "bin")
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, "") || "bin";
         // 强制把文件名后缀对齐真实格式，避免 URL 后缀污染 COS key 与素材库 suffix
         const baseName = (rawName || `collect-${Date.now()}`).replace(/\.[a-z0-9]{1,8}$/i, "");
         const safeName = `${baseName}.${ext}`;

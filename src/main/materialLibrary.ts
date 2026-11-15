@@ -128,6 +128,12 @@ export async function uploadToMaterialLibrary(
   let imgWidth = payload?.width ?? 0;
   let imgHeight = payload?.height ?? 0;
   const isSvgFile = /\.(svg|svgz)$/i.test(fileName) || /\.(svg|svgz)$/i.test(localPath);
+  // collect_file（采集文件）按设计支持 image/video/audio/document/other 五类；
+  // 非图片资源不需要 sharp 解析出宽高，也不应被图片硬闸拦住。
+  const collectFileTarget = materialTarget === "collect_file";
+  const fileNameSuffix = (fileName.split(".").pop() || "").toLowerCase();
+  let effectiveSuffix =
+    payload?.suffix || (/^[a-z0-9]{1,8}$/.test(fileNameSuffix) ? fileNameSuffix : "jpg");
   try {
     const stat = await fs.promises.stat(localPath);
     if (!fileSize) fileSize = stat.size;
@@ -153,12 +159,16 @@ export async function uploadToMaterialLibrary(
         fileName = `${fileName.replace(/\.[a-z0-9]{1,8}$/i, "")}.${realSuffix}`;
       }
       payload = { ...payload, suffix: realSuffix };
+      effectiveSuffix = realSuffix;
     }
   } catch (e: any) {
-    // sharp 解析失败说明文件不是有效图片（如 HTML 404/429 错误页或空文件），阻断上传及入库
-    throw new Error(`图片解析失败，拒绝上传及入库: ${e?.message || e}`);
+    // sharp 解析失败说明文件不是有效图片（如 HTML 404/429 错误页或空文件）。
+    // crawler_material 一律阻断；collect_file 允许视频/音频/文档，放行到 COS 上传。
+    if (!collectFileTarget) {
+      throw new Error(`图片解析失败，拒绝上传及入库: ${e?.message || e}`);
+    }
   }
-  if (!imgWidth || !imgHeight) {
+  if ((!imgWidth || !imgHeight) && !collectFileTarget) {
     throw new Error("图片解析失败（宽高为 0），拒绝上传及入库");
   }
 
@@ -227,8 +237,15 @@ export async function uploadToMaterialLibrary(
     const clean4ByteEmoji = (s: any) =>
       typeof s === "string" ? s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "").trim() : s;
 
-    // 感知哈希本地计算（服务端不下载图片算 phash）
-    const phash = await computePhashLocal(localPath, payload?.suffix || "jpg");
+    // 感知哈希本地计算（服务端不下载图片算 phash）。非图片媒体资源没有宽高，跳过。
+    let phash = "";
+    if (imgWidth && imgHeight) {
+      try {
+        phash = await computePhashLocal(localPath, effectiveSuffix);
+      } catch {
+        phash = "";
+      }
+    }
 
     const name = (
       clean4ByteEmoji(payload?.name) ||
@@ -253,7 +270,7 @@ export async function uploadToMaterialLibrary(
       // 之前只有 collect_file 分支带 keywords，crawler_material 一直写空
       keywords,
       keywordsEn,
-      suffix: payload?.suffix || "jpg",
+      suffix: effectiveSuffix,
       source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
       fileSize: fileSize || null,
       width: imgWidth || null,
