@@ -391,6 +391,15 @@ export function makeRenderQueue({
         await renderHyperframesJob({
           jobId,
           html,
+          projectFiles:
+            job.data.inputProps?.projectFiles &&
+            typeof job.data.inputProps.projectFiles === "object" &&
+            !Array.isArray(job.data.inputProps.projectFiles)
+              ? (job.data.inputProps.projectFiles as Record<string, string>)
+              : undefined,
+          assets: Array.isArray(job.data.inputProps?.assets)
+            ? (job.data.inputProps.assets as { path: string; url: string }[])
+            : undefined,
           variables:
             job.data.inputProps?.variables &&
             typeof job.data.inputProps.variables === "object" &&

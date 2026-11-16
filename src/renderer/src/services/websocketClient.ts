@@ -3683,14 +3683,31 @@ async function executeRemotionRender(command: ServiceCommandEnvelope) {
     );
     void syncServiceRuntime("video-template");
 
+    let queryFailures = 0;
     while (true) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
-      const jobRes = ensureRemotionResponseOk(
-        await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`, {
-          timeoutMs: REMOTION_RENDER_QUERY_TIMEOUT_MS,
-        }),
-        "查询本地视频渲染任务失败",
-      );
+      let jobRes;
+      try {
+        jobRes = ensureRemotionResponseOk(
+          await fetchRemotionJson(`/api/renders/${encodeURIComponent(jobId)}`, {
+            timeoutMs: REMOTION_RENDER_QUERY_TIMEOUT_MS,
+          }),
+          "查询本地视频渲染任务失败",
+        );
+        queryFailures = 0;
+      } catch (err) {
+        // 重渲染期间主进程事件 loop 可能单次卡顿 >60s，单次查询超时不应判死整条渲染
+        queryFailures += 1;
+        if (queryFailures < 3) {
+          logger.warn("[ws] remotion render query transient failure", {
+            jobId,
+            attempt: queryFailures,
+            error: String((err as Error)?.message || err),
+          });
+          continue;
+        }
+        throw err;
+      }
       const payload = jobRes?.data || jobRes || {};
       const status = normalizeRemotionQueueJobStatus(payload?.status);
       const progress = Number.isFinite(Number(payload?.progress))

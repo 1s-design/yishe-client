@@ -10,6 +10,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { EngineConfig } from "@hyperframes/engine";
 import type { ProducerLogger } from "@hyperframes/producer";
 
@@ -51,9 +53,20 @@ export interface HyperframesProgressInfo {
   totalFrames: number | null;
 }
 
+export interface HyperframesProjectAsset {
+  /** 项目内相对路径，如 assets/voice.mp3 */
+  path: string;
+  /** 远程资产直链（http/https），如 COS / 文件资源 URL */
+  url: string;
+}
+
 export interface HyperframesRenderInput {
   jobId: string;
   html: string;
+  /** 多文件工程：相对路径 → 文本文件内容（compositions 等），可选 */
+  projectFiles?: Record<string, string>;
+  /** 多文件工程：相对路径 → 远程资产 URL（字体/音频/图片/视频），可选 */
+  assets?: HyperframesProjectAsset[];
   variables?: Record<string, unknown>;
   fps?: number;
   quality?: "draft" | "standard" | "high";
@@ -168,6 +181,88 @@ function injectCaptureBeyondViewportFix(html: string): string {
   return CAPTURE_BEYOND_VIEWPORT_FIX + html;
 }
 
+const MAX_PROJECT_ASSET_BYTES = 200 * 1024 * 1024;
+
+function resolveProjectFilePath(projectDir: string, relPath: string): string {
+  const normalized = path.posix.normalize(String(relPath).replace(/\\/g, "/"));
+  if (
+    !normalized ||
+    normalized === "." ||
+    path.posix.isAbsolute(normalized) ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
+    throw new Error(`非法的工程文件路径: ${relPath}`);
+  }
+  const target = path.resolve(projectDir, normalized);
+  if (!target.startsWith(projectDir + path.sep)) {
+    throw new Error(`工程文件路径越界: ${relPath}`);
+  }
+  return target;
+}
+
+/** 多文件工程落盘：文本文件内联写入，二进制资产按 URL 下载（带大小/超时/取消约束） */
+async function materializeProjectFiles(
+  projectDir: string,
+  projectFiles: Record<string, string> | undefined,
+  assets: HyperframesProjectAsset[] | undefined,
+  abortSignal: AbortSignal,
+  onLog: (level: HyperframesLogLevel, stage: string, message: string) => void,
+): Promise<void> {
+  const textEntries = Object.entries(projectFiles || {});
+  for (const [relPath, content] of textEntries) {
+    const target = resolveProjectFilePath(projectDir, relPath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, String(content), "utf8");
+  }
+  if (textEntries.length) {
+    onLog("info", "prepare", `工程文本文件已写入 ${textEntries.length} 个`);
+  }
+
+  for (const asset of assets || []) {
+    const target = resolveProjectFilePath(projectDir, asset?.path);
+    const url = new URL(String(asset?.url || ""));
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error(`资产 URL 仅支持 http/https: ${asset.path}`);
+    }
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const response = await fetch(url, {
+      signal: AbortSignal.any([abortSignal, AbortSignal.timeout(120000)]),
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`资产下载失败（${response.status}）: ${asset.path}`);
+    }
+    let received = 0;
+    const limiter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        received += chunk.length;
+        callback(
+          received > MAX_PROJECT_ASSET_BYTES
+            ? new Error(`资产超过 200MB 上限: ${asset.path}`)
+            : null,
+          chunk,
+        );
+      },
+    });
+    try {
+      await pipeline(
+        Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+        limiter,
+        fs.createWriteStream(target),
+        { signal: AbortSignal.any([abortSignal, AbortSignal.timeout(120000)]) },
+      );
+    } catch (error) {
+      fs.rmSync(target, { force: true });
+      throw error;
+    }
+    onLog(
+      "info",
+      "prepare",
+      `资产已就绪: ${asset.path}（${(received / 1024 / 1024).toFixed(1)}MB）`,
+    );
+  }
+}
+
 function appendLibraryPath(directory: string) {
   const envKey =
     process.platform === "darwin"
@@ -251,6 +346,8 @@ export async function renderHyperframesJob(
   const {
     jobId,
     html,
+    projectFiles,
+    assets,
     variables,
     fps = 30,
     quality = "standard",
@@ -270,6 +367,13 @@ export async function renderHyperframesJob(
     path.join(projectDir, "index.html"),
     injectCaptureBeyondViewportFix(html),
     "utf8",
+  );
+  await materializeProjectFiles(
+    projectDir,
+    projectFiles,
+    assets,
+    abortSignal,
+    onLog,
   );
   fs.mkdirSync(path.dirname(outputLocation), { recursive: true });
 
