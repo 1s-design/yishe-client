@@ -18,6 +18,7 @@ import {
   resolveCollectImagePolicy,
   type CollectImagePolicyInput,
 } from "./alphaTrim";
+import { compressImage, type CompressResult } from "./imageCompress";
 
 export const COLLECT_ENGINE_VERSION = 1;
 
@@ -863,6 +864,29 @@ function buildCtx(
             }
           } catch (trimErr: any) {
             console.warn("[CollectEngine] 透明边距裁切失败，按原图入库:", trimErr?.message || trimErr);
+          }
+
+          // ─── 通用图片压缩（视觉无损） ───
+          // 所有采集源下载的图片统一过一遍，不区分源类型。
+          // 策略：JPEG 走 mozjpeg Q95+4:4:4，PNG 转 WebP lossless，WebP/AVIF 保持原格式。
+          // 有收益（省 10%+）才重编码，收益不够或失败直接用 buf，绝不丢清晰度。
+          let compressInfo: CompressResult | null = null;
+          try {
+            compressInfo = await compressImage(buf, {
+              quality: 95,
+              minSavedPercent: 10,
+              allowFormatSwitch: true,
+            });
+            if (compressInfo.actuallyCompressed) {
+              buf = compressInfo.data;
+              finalFormat = compressInfo.format;
+              console.log(`[CollectEngine] ${compressInfo.summary}`);
+            } else {
+              console.log(`[CollectEngine] compress ${compressInfo.summary}`);
+            }
+          } catch (compErr: any) {
+            console.warn("[CollectEngine] 压缩失败，按原图入库:", compErr?.message || compErr);
+            compressInfo = null;
           }
 
           // 上传前质量闸门：JPEG 白底 / WEBP 预览图 / 假透明 PNG 在写临时文件、

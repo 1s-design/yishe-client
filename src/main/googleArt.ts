@@ -10,6 +10,7 @@ import {
   uploadToMaterialLibrary as uploadToMaterialLibraryShared,
   type MaterialLibraryResult,
 } from './materialLibrary'
+import { compressImage } from './imageCompress'
 
 interface ZoomLevel {
   idx: number
@@ -421,6 +422,35 @@ export async function syncGoogleArtToMaterialLibrary(options: {
       } catch {
         resolvePromise({ ok: false, msg: '下载进程结束，但图片文件不存在' })
         return
+      }
+
+      // ─── 视觉无损压缩（和 Collect Engine 共用同一模块） ───
+      // dezoomify-rs 下载的世界名画原始文件通常 30-500MB，
+      // 走 mozjpeg Q95 / WebP lossless 可以省 60-85%，画质人眼无差。
+      let compressInfo: { before: number; after: number; saved: number } | null = null
+      try {
+        const rawBuf = fs.readFileSync(outputPath)
+        const r = await compressImage(rawBuf, { quality: 95, minSavedPercent: 5 })
+        if (r.actuallyCompressed) {
+          fs.writeFileSync(outputPath, r.data)
+          // 同步改后缀
+          const extMap: Record<string, string> = { jpeg: 'jpg', png: 'png', webp: 'webp', avif: 'avif' }
+          const newExt = extMap[r.format] || r.format
+          const newName = fileName.replace(/\.[a-z0-9]+$/i, '.' + newExt)
+          if (newName !== fileName) {
+            const newPath = outputPath.replace(fileName, newName)
+            fs.renameSync(outputPath, newPath)
+            outputPath = newPath
+            fileName = newName
+          }
+          size = r.compressedBytes
+          compressInfo = { before: r.originalBytes, after: r.compressedBytes, saved: r.savedPercent }
+          console.log(`[GoogleArt] compress ${r.summary}`)
+        } else {
+          console.log(`[GoogleArt] compress ${r.summary}`)
+        }
+      } catch (compErr: any) {
+        console.warn('[GoogleArt] 压缩失败，按原图上传:', compErr?.message || compErr)
       }
 
       const materialResult = await uploadToMaterialLibrary(outputPath, fileName, undefined, url, metadata)
