@@ -38,6 +38,9 @@ const api = {
   clearToken: () => ipcRenderer.invoke("clear-token"),
   getDeviceKey: () => ipcRenderer.invoke("get-device-key"),
   getLocalDatabaseInfo: () => ipcRenderer.invoke("local-database:get-info"),
+  // 图片裁剪审核执行引擎
+  getCropTaskStatus: () => ipcRenderer.invoke("crop-task:status"),
+  triggerCropTaskPoll: () => ipcRenderer.invoke("crop-task:poll"),
   onAppRuntimeEvent: (callback: (event: any) => void) => {
     ipcRenderer.on("app-runtime-event", (_event, payload) => callback(payload));
   },

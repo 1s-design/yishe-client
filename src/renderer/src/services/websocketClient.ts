@@ -5670,6 +5670,22 @@ function bindSocketEvents(currentSocket: Socket) {
     }
   });
 
+  // 图片裁剪审核：服务端创建批次后按 userId 推送，通知主进程执行引擎立即拉取
+  currentSocket.on("crop-task:available", (payload: any) => {
+    emitter.emit("log", {
+      level: "info",
+      message: `[ws] 收到裁剪任务推送 count=${payload?.count || 0}，通知执行引擎拉取`,
+    });
+    try {
+      const api = (window as any).api;
+      if (api && typeof api.triggerCropTaskPoll === "function") {
+        void api.triggerCropTaskPoll();
+      }
+    } catch {
+      /* 渲染层环境不可用时忽略，主进程有 60s 兜底轮询 */
+    }
+  });
+
   currentSocket.on("worker:task", async (task: any) => {
     const taskId = task?.taskId;
     const capabilityId = task?.capabilityId || "";

@@ -45,7 +45,7 @@ function isDirectoryWritable(directoryPath: string): boolean {
   }
 }
 
-function resolveAvailableDatabasePath(workspaceDirectory: string): string {
+export function resolveAvailableDatabasePath(workspaceDirectory: string): string {
   const primaryPath = resolveLocalDatabasePath(workspaceDirectory);
   const parentDirectory = dirname(primaryPath);
 

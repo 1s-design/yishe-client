@@ -51,7 +51,7 @@ export interface MaterialLibraryPayload {
   /** 平台扩展元数据（写入 meta 字段） */
   meta?: Record<string, unknown>;
   /**
-   * 入库目标：crawler_material（采集素材，默认）| collect_file（采集文件，媒体采集）
+   * 入库目标：crawler_material（采集素材，默认）| collect_file（采集文件，媒体采集）| sticker（图库贴纸）
    */
   materialTarget?: string;
   /** 文件大小（字节），不传则从本地文件自动提取 */
@@ -62,6 +62,8 @@ export interface MaterialLibraryPayload {
   height?: number;
   /** 是否抠图素材 */
   isCutout?: boolean;
+  /** 采集图片格式策略（透传给质量闸门） */
+  imagePolicy?: any;
 }
 
 export interface MaterialLibraryResult {
@@ -120,7 +122,12 @@ export async function uploadToMaterialLibrary(
   payload: MaterialLibraryPayload,
 ): Promise<MaterialLibraryResult> {
   const category = payload?.category || "uncategorized";
-  const materialTarget = payload?.materialTarget === "collect_file" ? "collect_file" : "crawler_material";
+  const materialTarget =
+    payload?.materialTarget === "collect_file"
+      ? "collect_file"
+      : payload?.materialTarget === "sticker"
+        ? "sticker"
+        : "crawler_material";
   console.log(`[MaterialLibrary] 准备入库: localPath=${localPath}, fileName=${fileName}, category=${category}, target=${materialTarget}`);
 
   // 1. 客户端本地校验图片有效性并提取宽高/大小（必须在上传 COS 前执行，防止无效/错误页文件浪费云存储）
@@ -191,6 +198,7 @@ export async function uploadToMaterialLibrary(
     sourceLower.includes("artsandculture") ||
     sourceLower.includes("google arts") ||
     ["google-art", "agent-upload", "design", "user-upload"].includes(categoryLower);
+  // sticker（图库贴纸，如裁剪审核产物）不是采集素材，不走采集质量闸门
   const isCollectImage = materialTarget === "crawler_material" && !POLICY_EXEMPT;
   if (isCollectImage) {
     try {
@@ -260,39 +268,66 @@ export async function uploadToMaterialLibrary(
     const keywordsEn = clean4ByteEmoji(payload?.keywordsEn || payload?.keywords || "").slice(0, 990);
     const group = clean4ByteEmoji(payload?.group || category).slice(0, 500);
 
-    // 入库目标：collect_file（采集文件）或 crawler_material（采集素材，默认）
-    const importItem = {
-      url: cosResult.url,
-      originUrl: (payload?.originUrl || "").slice(0, 1000),
-      name,
-      description,
-      // 关键词对两个入库目标都要带上：源标签/检索词是素材唯一的题材锚点，
-      // 之前只有 collect_file 分支带 keywords，crawler_material 一直写空
-      keywords,
-      keywordsEn,
-      suffix: effectiveSuffix,
-      source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
-      fileSize: fileSize || null,
-      width: imgWidth || null,
-      height: imgHeight || null,
-      aspectRatio,
-      phash: phash || "",
-      isCutout: payload?.isCutout ?? false,
-      meta: {
-        collectedAt: new Date().toISOString(),
-        cosKey: cosResult.key,
-        ...(payload?.meta || {}),
-      },
+    const commonMeta = {
+      collectedAt: new Date().toISOString(),
+      cosKey: cosResult.key,
+      ...(payload?.meta || {}),
     };
-    const postData = JSON.stringify({
-      items: [materialTarget === "collect_file" ? { ...importItem, keywords: clean4ByteEmoji(payload?.keywords || "").slice(0, 1000) } : importItem],
-    });
 
-    const apiUrl = new URL(
-      materialTarget === "collect_file"
+    // 入库目标：sticker（图库贴纸）| collect_file（采集文件）| crawler_material（采集素材，默认）
+    const isSticker = materialTarget === "sticker";
+    let postData: string;
+    let apiPath: string;
+    if (isSticker) {
+      // 图库贴纸：走 /sticker/create，body 是单个贴纸对象（不是 items 数组）。
+      // isPublic 默认 true，确保裁剪产物在图库列表可见；meta 保留裁剪来源快照。
+      postData = JSON.stringify({
+        url: cosResult.url,
+        originUrl: (payload?.originUrl || "").slice(0, 1000),
+        name,
+        description,
+        keywords,
+        suffix: effectiveSuffix,
+        source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
+        group,
+        width: imgWidth || null,
+        height: imgHeight || null,
+        aspectRatio,
+        phash: phash || "",
+        isPublic: payload?.isPublic ?? true,
+        isCustom: payload?.isCustom ?? false,
+        isTexture: payload?.isTexture ?? false,
+        isCutout: payload?.isCutout ?? false,
+        meta: commonMeta,
+      });
+      apiPath = `${apiBase}/sticker/create`;
+    } else {
+      const importItem = {
+        url: cosResult.url,
+        originUrl: (payload?.originUrl || "").slice(0, 1000),
+        name,
+        description,
+        keywords,
+        keywordsEn,
+        suffix: effectiveSuffix,
+        source: clean4ByteEmoji(payload?.source || "").slice(0, 500),
+        fileSize: fileSize || null,
+        width: imgWidth || null,
+        height: imgHeight || null,
+        aspectRatio,
+        phash: phash || "",
+        isCutout: payload?.isCutout ?? false,
+        meta: commonMeta,
+      };
+      postData = JSON.stringify({
+        items: [materialTarget === "collect_file" ? { ...importItem, keywords: clean4ByteEmoji(payload?.keywords || "").slice(0, 1000) } : importItem],
+      });
+      apiPath = materialTarget === "collect_file"
         ? `${apiBase}/collect-file/import-from-cos`
-        : `${apiBase}/crawler/material/import-from-cos`,
-    );
+        : `${apiBase}/crawler/material/import-from-cos`;
+    }
+
+    const apiUrl = new URL(apiPath);
     console.log(`[MaterialLibrary] 发起入库请求(${materialTarget}): ${apiUrl.toString()}, tokenPresent=${Boolean(token)}`);
     const options = {
       hostname: apiUrl.hostname,
@@ -325,8 +360,28 @@ export async function uploadToMaterialLibrary(
               return;
             }
             const result = JSON.parse(data);
-            // 后端 TransformInterceptor：{ code: 0, data: { success, failed, items, errors }, status: true }
+            // 后端 TransformInterceptor：{ code: 0, data: {...}, status: true }
             const innerData = result.data || result;
+            if (isSticker) {
+              // /sticker/create 直接返回新建贴纸实体（含 id）
+              const created = innerData?.id ? innerData : innerData?.sticker || innerData?.data;
+              if (created?.id) {
+                console.log(`[MaterialLibrary] ✅ 图库贴纸创建成功: id=${created.id}, url=${created.url}`);
+                resolve({
+                  ok: true,
+                  materialId: String(created.id),
+                  materialUrl: created.url || cosResult.url,
+                });
+              } else {
+                console.error(`[MaterialLibrary] ❌ 图库贴纸创建失败:`, result);
+                resolve({
+                  ok: false,
+                  msg: innerData?.message || "图库贴纸创建失败",
+                  materialUrl: cosResult.url,
+                });
+              }
+              return;
+            }
             if (innerData.success > 0 && innerData.items?.length > 0) {
               const created = innerData.items[0];
               console.log(`[MaterialLibrary] ✅ ${materialTarget} 创建成功: id=${created?.id}, url=${created?.url}`);

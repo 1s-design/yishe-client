@@ -30,6 +30,17 @@ declare global {
         journalMode: string;
         error?: string;
       }>;
+      // 图片裁剪审核执行引擎
+      getCropTaskStatus(): Promise<{
+        running: boolean;
+        clientId: string;
+        busy: boolean;
+        lastPollAt?: string;
+        lastError?: string;
+        activeTaskId?: string;
+        processedCount: number;
+      }>;
+      triggerCropTaskPoll(): Promise<{ ok: boolean }>;
       onAppRuntimeEvent(callback: (event: any) => void): void;
       onExtensionConnectionStatus(callback: (status: any) => void): void;
       openExternal(url: string): Promise<void>;

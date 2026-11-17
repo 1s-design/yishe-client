@@ -1378,6 +1378,28 @@ app.whenReady().then(() => {
             : error,
       });
     });
+  // 图片裁剪审核执行引擎：初始化本地台账 + 启动轮询/续跑（需要 token 时才实际领任务）
+  void (async () => {
+    try {
+      const workspaceDirectory = String(
+        store.get("workspaceDirectory", "") || "",
+      ).trim();
+      const { initCropTaskStore } = await import("./crop-task-store");
+      const { getCropTaskEngine, resumePendingTasks } = await import(
+        "./crop-task-engine"
+      );
+      initCropTaskStore(workspaceDirectory);
+      resumePendingTasks();
+      getCropTaskEngine().start();
+      console.log("[App] 图片裁剪审核执行引擎已启动");
+    } catch (error: any) {
+      console.warn(
+        "[App] 图片裁剪审核执行引擎启动失败:",
+        error?.message || error,
+      );
+    }
+  })();
+
   void ensureLocalServiceStartedForCachedToken("app-ready").catch((error) => {
     writeMainLog("ERROR", "缓存 token 自动启动 1519 服务失败", {
       scene: "app-ready",
@@ -1488,6 +1510,17 @@ app.whenReady().then(() => {
 
   ipcMain.handle("local-database:get-info", async () => {
     return getCurrentLocalDatabaseInfo();
+  });
+
+  // 图片裁剪审核：执行引擎 IPC（渲染层/socket 触发拉取与状态查询）
+  ipcMain.handle("crop-task:status", async () => {
+    const { getCropTaskEngine } = await import("./crop-task-engine");
+    return getCropTaskEngine().getStatus();
+  });
+  ipcMain.handle("crop-task:poll", async () => {
+    const { getCropTaskEngine } = await import("./crop-task-engine");
+    getCropTaskEngine().triggerPoll();
+    return { ok: true };
   });
 
   // 插件/外部进程管理 IPC
