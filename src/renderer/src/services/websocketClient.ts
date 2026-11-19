@@ -9111,7 +9111,6 @@ function registerBuiltInLocalServices() {
       throw new Error(`未实现的 Photoshop 命令: ${command.action}`);
     },
   });
-}
 
 /**
  * 构建在抖店商机中心页面上下文里执行的 fetch eval JS。
