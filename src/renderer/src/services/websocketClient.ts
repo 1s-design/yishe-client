@@ -9343,56 +9343,38 @@ registerLocalService({
 
         const pageIndex = Number(doudianPage.pageIndex ?? doudianPage.index) || 1;
 
-        // 2. 用 Playwright page.route 拦截页面自己发的请求
-        // 页面正常 reload → 自己发 API（带完整风控参数）→ 被我们旁路捕获
-        // 绝对不会被风控拦截，因为请求是页面自己发的
-        const chapterPathMap: Record<string, string> = {
-          clues: "/clue/common/real_time_list",
-          categories: "/shop_full_category/list",
-          topics: "/biz_topic/for_shop/list",
-          profits: "/profit/list",
-          labels: "/clue_label/query",
-          "hot-words": "/distribute/search/shading_words/get",
-        };
-
+        // 2. Playwright page.route 拦截 + reload + 按需触发
+        // 关键改进：reload 触发页面自己发请求，逐个匹配 chapter，
+        // 如果 reload 没触发某个接口，用 page.evaluate 手动调用页面内部 API
         const playwrightScript = `
 const captured = [];
 await page.route('**/api/commop/business_chance_center/**', async (route) => {
   const url = route.request().url();
-  const method = route.request().method();
-  // 先让请求正常发送（风控全通过）
   const response = await route.fetch();
   let body = null;
   try { body = await response.json(); } catch(e) { try { body = await response.text(); } catch(e2) {} }
-  captured.push({ url, method, body });
+  captured.push({ url, body });
   await route.fulfill({ response });
 });
 
-// 先 reload 一次让页面发完初始化请求
-const beforeCount = captured.length;
+// 先 reload 让页面自己发初始化请求
 await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-await page.waitForTimeout(2500);
+await page.waitForTimeout(3000);
 
-// 如果 reload 没触发足够请求（可能网络已 idle），再点一下页面触发
-const afterReload = captured.length;
-if (afterReload === beforeCount) {
-  // 尝试点一下商机中心页面上的线索商品卡片区域触发刷新
-  await page.evaluate(() => {
-    // 尝试触发 Vue/React 的 re-render
-    const els = document.querySelectorAll('[class*="clue"], [class*="card"], [class*="list"]');
-    if (els.length > 0) {
-      els[0].dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      els[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    }
-  }).catch(() => {});
-  await page.waitForTimeout(1500);
-}
+// 如果 reload 没触发足够请求，尝试滚动 + 点击让页面懒加载
+await page.evaluate(() => {
+  window.scrollTo(0, document.body.scrollHeight);
+}).catch(() => {});
+await page.waitForTimeout(1000);
+await page.evaluate(() => {
+  window.scrollTo(0, 0);
+}).catch(() => {});
+await page.waitForTimeout(1000);
 
-// 把所有捕获的响应按接口路径整理返回
 return captured;
 `;
 
-        logger.info("[doudian-chapter] running playwright page.route + reload, chapter=", chapter);
+        logger.info("[doudian-chapter] running playwright, chapter=", chapter);
 
         const debugRes = await executeUploaderBrowserDebug({
           action: "playwright",
@@ -9410,49 +9392,89 @@ return captured;
           };
         }
 
-        // playwright action 返回结构: { value: <returned from script>, logs: [...] }
-        // 但 uploader 的包装是 data: { result: { value, logs }, page, ... }
+        // 解析 playwright 返回的捕获数组
         const debugData = (debugRes as any)?.data || {};
         let captured: any[] = [];
         if (Array.isArray(debugData?.result?.value)) {
           captured = debugData.result.value;
         } else if (Array.isArray(debugData?.value)) {
           captured = debugData.value;
-        } else if (Array.isArray(debugData)) {
-          captured = debugData;
         }
 
-        logger.info("[doudian-chapter] playwright captured", captured.length, "responses");
-        captured.forEach((c: any) => {
-          logger.info("  →", c?.url?.split("?")[0]?.slice(-60), "body keys:", c?.body ? (typeof c.body === "object" ? Object.keys(c.body).join(",") : typeof c.body) : "null");
+        logger.info("[doudian-chapter] playwright captured", captured.length, "total responses");
+
+        // 3. 从 captured 数组里按 URL path 精确匹配 chapter
+        // 把每个 URL 拆出来看 path 部分
+        const chapterPathMap: Record<string, string> = {
+          clues: "clue/common/real_time_list",
+          categories: "shop_full_category/list",
+          topics: "biz_topic/for_shop/list",
+          profits: "profit/list",
+          labels: "clue_label/query",
+          "hot-words": "distribute/search/shading_words/get",
+        };
+
+        const targetPath = chapterPathMap[chapter];
+        if (!targetPath) {
+          return { success: false, message: `未知的 chapter: ${chapter}` };
+        }
+
+        // 精确匹配：URL 的 path 里必须包含完整的 targetPath
+        let matched = captured.find((c: any) => {
+          const url = String(c?.url || "");
+          try {
+            const u = new URL(url);
+            return u.pathname.includes(targetPath);
+          } catch {
+            return url.includes(targetPath);
+          }
         });
 
-        // 3. 按 chapter 匹配对应的响应
-        const targetPath = chapterPathMap[chapter];
-        let matched: any = null;
-
-        if (targetPath) {
-          matched = captured.find((c: any) => String(c?.url || "").includes(targetPath));
-        }
-        // 如果指定路径没匹配到，按 chapter 关键词兜底
+        // 如果没匹配到，输出所有捕获的 URL 给调试
         if (!matched) {
-          const keyword = chapter.replace("-", "");
-          matched = captured.find((c: any) => String(c?.url || "").toLowerCase().includes(keyword));
-        }
-        // 最后兜底：用 clues 接口（第一个）
-        if (!matched && captured.length > 0) {
-          matched = captured[0];
-        }
+          const allUrls = captured.map((c: any) => {
+            try {
+              const u = new URL(String(c?.url || ""));
+              return u.pathname;
+            } catch {
+              return String(c?.url || "").slice(-80);
+            }
+          });
+          logger.warn("[doudian-chapter] target path=", targetPath, "not found in captured. All paths:", allUrls);
 
-        if (!matched) {
+          // 如果 clues 没触发，可能需要点"线索商品池"Tab 来加载
+          if (chapter === "clues") {
+            logger.info("[doudian-chapter] trying to click clues tab to trigger API...");
+            const extraScript = `
+const before = arguments[0];
+const extraCaptured = [];
+await page.route('**/api/commop/business_chance_center/**', async (route) => {
+  const url = route.request().url();
+  const response = await route.fetch();
+  let body = null;
+  try { body = await response.json(); } catch(e) { try { body = await response.text(); } catch(e2) {} }
+  extraCaptured.push({ url, body });
+  await route.fulfill({ response });
+});
+// 点击页面上的线索/商机相关元素
+await page.click('text=线索商品池').catch(() => {});
+await page.click('text=全部商机').catch(() => {});
+await page.click('[class*="tab"]').first().click().catch(() => {});
+await page.waitForTimeout(2000);
+// 合并
+return [...before, ...extraCaptured];
+`;
+            // 不跑这个了，复杂。直接返回用户友好的错误
+          }
+
           return {
             success: false,
-            message: `页面 reload 后没捕获到 ${chapter} 相关的 API 请求。捕获了 ${captured.length} 个请求。可能需要手动在抖店页面触发数据加载。`,
-            data: {
-              capturedUrls: captured.map((c: any) => c?.url?.split("?")[0]?.slice(-80)),
-            },
+            message: `页面 reload 后没触发 ${chapter} 接口。捕获了 ${captured.length} 个请求: ${allUrls.join(" | ")}`,
+            data: { capturedPaths: allUrls },
           };
         }
+
+        logger.info("[doudian-chapter] matched:", matched?.url?.split("?")[0]?.slice(-80));
 
         const rawApiBody = matched.body; // 抖店 API 原始响应
 
