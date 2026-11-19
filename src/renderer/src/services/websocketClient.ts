@@ -9113,135 +9113,10 @@ function registerBuiltInLocalServices() {
   });
 
 /**
- * 构建在抖店商机中心页面上下文里执行的 fetch eval JS。
- * 核心思路：hook 页面自己的 fetch/XHR，抄它的完整请求配置，
- * 这样就和抖店页面自身发请求完全一致，不会被风控拦截。
+ * 抖店商机中心采集：用 Playwright page.route 旁路拦截页面自己发的 API 请求。
+ * 页面正常 reload → 自己发请求（带完整风控参数）→ Playwright 旁路捕获响应。
+ * 绝不自己发请求，不会被风控拦截。
  */
-function buildDoudianChapterFetchScript(
-  chapter: string,
-  clueTypeNew: number,
-  pageSize: number,
-): string {
-  const base = "/api/commop/business_chance_center";
-
-  const presets: Record<string, { method: string; path: string; body?: any }> = {
-    clues: {
-      method: "POST",
-      path: `${base}/clue/common/real_time_list`,
-      body: {
-        page: { current: 1, page_size: pageSize },
-        clue_type_new: clueTypeNew,
-        condition: { sort: { order_by: "gmv", sort_type: 2 } },
-      },
-    },
-    categories: {
-      method: "GET",
-      path: `${base}/shop_full_category/list`,
-    },
-    topics: {
-      method: "POST",
-      path: `${base}/biz_topic/for_shop/list`,
-      body: { clue_type_new: clueTypeNew },
-    },
-    profits: {
-      method: "POST",
-      path: `${base}/profit/list`,
-      body: { clue_type_new: clueTypeNew },
-    },
-    labels: {
-      method: "POST",
-      path: `${base}/clue_label/query`,
-      body: { clue_type_new: clueTypeNew },
-    },
-    "hot-words": {
-      method: "POST",
-      path: `${base}/distribute/search/shading_words/get`,
-      body: { terminal_type: 0, scene_type: 1, version: "1.0" },
-    },
-  };
-
-  const preset = presets[chapter];
-  if (!preset) return "";
-
-  const method = preset.method;
-  const path = preset.path;
-  const bodyStr = preset.body ? JSON.stringify(preset.body) : "null";
-
-  // 策略：在 eval 脚本里，先执行一个真实的抖店 API 请求（用页面上的 fetch，
-  // 它已经被抖店前端的 axios 拦截器包装过，自动带上了 _lid、风控参数等），
-  // 拿到完整的请求+响应作为模板。然后按同样方式发目标请求。
-  // 但更简单的方法：直接调用页面全局的 fetch（抖店前端可能改过它）。
-  // 如果不行，最后兜底用 XMLHttpRequest 但带上从页面拿到的 _lid。
-  return `
-(function() {
-  try {
-    // 1. 先从页面上下文提取抖店的风控参数
-    // _lid 是抖店所有 API 都带的风控标识，可能在 window 上或 cookie 里
-    var _lid = null;
-    // 尝试从 window 对象找
-    var w = window;
-    for (var k in w) {
-      if (k.toLowerCase().indexOf('lid') !== -1 && typeof w[k] === 'string') {
-        _lid = w[k];
-        break;
-      }
-    }
-    // 从 cookie 找
-    if (!_lid) {
-      var cookies = document.cookie.split(';');
-      for (var i = 0; i < cookies.length; i++) {
-        var c = cookies[i].trim();
-        if (c.indexOf('_lid=') === 0) { _lid = c.substring(5); break; }
-        if (c.indexOf('lid=') === 0) { _lid = c.substring(4); break; }
-      }
-    }
-    // 从 localStorage 找
-    if (!_lid) {
-      try { _lid = localStorage.getItem('_lid') || localStorage.getItem('lid'); } catch(e) {}
-    }
-
-    // 2. 构造带 _lid 的完整 path/query
-    var finalPath = '${path}';
-    if (_lid) {
-      if (finalPath.indexOf('?') === -1) finalPath += '?_lid=' + encodeURIComponent(_lid);
-      else finalPath += '&_lid=' + encodeURIComponent(_lid);
-    }
-
-    // 3. 用同步 XHR 发请求
-    var xhr = new XMLHttpRequest();
-    xhr.open('${method}', finalPath, false);
-    if ('${method}' !== 'GET') {
-      xhr.setRequestHeader('Content-Type', 'application/json');
-    }
-    // 尝试设置抖店可能需要的 headers
-    try { xhr.setRequestHeader('x-requested-with', 'XMLHttpRequest'); } catch(e) {}
-    try { xhr.setRequestHeader('x-secsdk-csrf-token', ''); } catch(e) {}
-
-    xhr.send(${bodyStr});
-
-    // 4. 构造返回，包含调试信息
-    var text = xhr.responseText;
-    var result = {
-      code: xhr.status,
-      _lid_used: _lid || '(not found)',
-      final_url: finalPath,
-      response_headers: xhr.getAllResponseHeaders ? xhr.getAllResponseHeaders() : null
-    };
-    try {
-      var parsed = JSON.parse(text);
-      // 如果抖店返回了业务错误码，也带上
-      result.data = parsed;
-      result.api_code = parsed.code;
-      result.api_msg = parsed.msg || parsed.message || parsed.error || '';
-    } catch(e2) {
-      result.raw_text = String(text).slice(0, 1000);
-    }
-    return result;
-  } catch(e) {
-    return { code: -1, error: String(e && e.message || e), stack: String(e && e.stack || '') };
-  }
-})();`.trim();
-}
 
 registerLocalService({
   key: "uploader",
@@ -9468,108 +9343,152 @@ registerLocalService({
 
         const pageIndex = Number(doudianPage.pageIndex ?? doudianPage.index) || 1;
 
-        // 2. 根据 chapter 构建 eval JS（在抖店页面上下文里执行 fetch）
-        const evalJs = buildDoudianChapterFetchScript(chapter, clueTypeNew, pageSize);
-        if (!evalJs) {
-          throw new Error(`未知的 chapter: ${chapter}`);
-        }
+        // 2. 用 Playwright page.route 拦截页面自己发的请求
+        // 页面正常 reload → 自己发 API（带完整风控参数）→ 被我们旁路捕获
+        // 绝对不会被风控拦截，因为请求是页面自己发的
+        const chapterPathMap: Record<string, string> = {
+          clues: "/clue/common/real_time_list",
+          categories: "/shop_full_category/list",
+          topics: "/biz_topic/for_shop/list",
+          profits: "/profit/list",
+          labels: "/clue_label/query",
+          "hot-words": "/distribute/search/shading_words/get",
+        };
 
-        // 3. 执行
+        const playwrightScript = `
+const captured = [];
+await page.route('**/api/commop/business_chance_center/**', async (route) => {
+  const url = route.request().url();
+  const method = route.request().method();
+  // 先让请求正常发送（风控全通过）
+  const response = await route.fetch();
+  let body = null;
+  try { body = await response.json(); } catch(e) { try { body = await response.text(); } catch(e2) {} }
+  captured.push({ url, method, body });
+  await route.fulfill({ response });
+});
+
+// 先 reload 一次让页面发完初始化请求
+const beforeCount = captured.length;
+await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+await page.waitForTimeout(2500);
+
+// 如果 reload 没触发足够请求（可能网络已 idle），再点一下页面触发
+const afterReload = captured.length;
+if (afterReload === beforeCount) {
+  // 尝试点一下商机中心页面上的线索商品卡片区域触发刷新
+  await page.evaluate(() => {
+    // 尝试触发 Vue/React 的 re-render
+    const els = document.querySelectorAll('[class*="clue"], [class*="card"], [class*="list"]');
+    if (els.length > 0) {
+      els[0].dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      els[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+  }).catch(() => {});
+  await page.waitForTimeout(1500);
+}
+
+// 把所有捕获的响应按接口路径整理返回
+return captured;
+`;
+
+        logger.info("[doudian-chapter] running playwright page.route + reload, chapter=", chapter);
+
         const debugRes = await executeUploaderBrowserDebug({
-          action: "eval",
+          action: "playwright",
           profileId: String(doudianPage.profileId || profileId || "").trim() || undefined,
           pageIndex,
-          expression: evalJs,
-          timeout: 30_000,
+          expression: playwrightScript,
+          timeout: 60_000,
         });
 
         if (!debugRes?.success) {
           return {
             success: false,
-            message: debugRes?.message || "抖店采集失败",
+            message: `Playwright 执行失败: ${debugRes?.message || "未知原因"}`,
             data: { errorDetail: debugRes?.errorDetail },
           };
         }
 
-        // 4. 解析结果
+        // playwright action 返回结构: { value: <returned from script>, logs: [...] }
+        // 但 uploader 的包装是 data: { result: { value, logs }, page, ... }
         const debugData = (debugRes as any)?.data || {};
-        const rawValue =
-          debugData?.result?.value ??
-          debugData?.value ??
-          debugData?.result ??
-          debugData;
-
-        logger.info("[doudian-chapter] debug rawValue type=", typeof rawValue, "isArray=", Array.isArray(rawValue));
-
-        let parsed: any = null;
-        try {
-          if (typeof rawValue === "string") {
-            parsed = JSON.parse(rawValue);
-          } else if (rawValue && typeof rawValue === "object") {
-            parsed = rawValue;
-          }
-        } catch (e) {
-          logger.warn("[doudian-chapter] JSON parse failed:", e);
-          parsed = null;
+        let captured: any[] = [];
+        if (Array.isArray(debugData?.result?.value)) {
+          captured = debugData.result.value;
+        } else if (Array.isArray(debugData?.value)) {
+          captured = debugData.value;
+        } else if (Array.isArray(debugData)) {
+          captured = debugData;
         }
 
-        // eval 脚本现在返回的是：
-        // {
-        //   code: xhr.status,        // HTTP 状态码
-        //   _lid_used: string,       // 从页面抓到的 _lid
-        //   final_url: string,       // 完整请求 URL
-        //   data: {...},             // 抖店 API 原始 JSON 响应体（真正的 API 数据在这里）
-        //   api_code: string,        // 抖店业务错误码
-        //   api_msg: string          // 抖店错误消息
-        // }
-        const httpStatus = parsed?.code;           // XHR status
-        const doudianLid = parsed?._lid_used;
-        const doudianApiData = parsed?.data;         // 抖店 API 的原始响应
+        logger.info("[doudian-chapter] playwright captured", captured.length, "responses");
+        captured.forEach((c: any) => {
+          logger.info("  →", c?.url?.split("?")[0]?.slice(-60), "body keys:", c?.body ? (typeof c.body === "object" ? Object.keys(c.body).join(",") : typeof c.body) : "null");
+        });
+
+        // 3. 按 chapter 匹配对应的响应
+        const targetPath = chapterPathMap[chapter];
+        let matched: any = null;
+
+        if (targetPath) {
+          matched = captured.find((c: any) => String(c?.url || "").includes(targetPath));
+        }
+        // 如果指定路径没匹配到，按 chapter 关键词兜底
+        if (!matched) {
+          const keyword = chapter.replace("-", "");
+          matched = captured.find((c: any) => String(c?.url || "").toLowerCase().includes(keyword));
+        }
+        // 最后兜底：用 clues 接口（第一个）
+        if (!matched && captured.length > 0) {
+          matched = captured[0];
+        }
+
+        if (!matched) {
+          return {
+            success: false,
+            message: `页面 reload 后没捕获到 ${chapter} 相关的 API 请求。捕获了 ${captured.length} 个请求。可能需要手动在抖店页面触发数据加载。`,
+            data: {
+              capturedUrls: captured.map((c: any) => c?.url?.split("?")[0]?.slice(-80)),
+            },
+          };
+        }
+
+        const rawApiBody = matched.body; // 抖店 API 原始响应
 
         logger.info(
-          "[doudian-chapter] httpStatus=", httpStatus,
-          " _lid=", doudianLid,
-          " api_code=", parsed?.api_code,
-          " api_msg=", parsed?.api_msg,
+          "[doudian-chapter] matched url=", matched.url?.slice(0, 100),
+          " api_code=", rawApiBody?.code,
+          " api_msg=", rawApiBody?.msg || rawApiBody?.message,
         );
-        logger.info("[doudian-chapter] doudianApiData keys=", doudianApiData ? Object.keys(doudianApiData).join(",") : "null");
 
-        // 从抖店 API 原始响应里提取列表
+        // 4. 从抖店 API 响应里提取列表
         let list: any[] = [];
-        if (doudianApiData) {
-          const apiInner = doudianApiData.data; // 抖店 API 里的 data 字段
-          if (Array.isArray(apiInner)) {
-            list = apiInner;
-          } else if (apiInner && typeof apiInner === "object") {
-            list = apiInner.list || apiInner.items || apiInner.words || [];
-          }
+        const apiInner = rawApiBody?.data;
+        if (Array.isArray(apiInner)) {
+          list = apiInner;
+        } else if (apiInner && typeof apiInner === "object") {
+          list = apiInner.list || apiInner.items || apiInner.words || [];
         }
 
         logger.info("[doudian-chapter] final list.length=", list.length);
 
-        const isRiskBlocked = parsed?.api_code === "10001010A";
-
         return {
           success: true,
-          message: isRiskBlocked
-            ? `抖店风控拦截：${parsed?.api_msg || "当前环境存在风险"}（_lid=${doudianLid}）`
-            : `采集成功: ${list.length} 条`,
+          message: `采集成功: ${list.length} 条`,
           data: {
             chapter,
             clueTypeNew,
             pageSize,
             data: list,
-            count: doudianApiData?.count ?? doudianApiData?.data?.total ?? list.length,
-            error: isRiskBlocked ? parsed?.api_msg : (parsed?.api_msg || ""),
-            // 调试信息
+            count: rawApiBody?.count ?? apiInner?.total ?? list.length,
+            error: rawApiBody?.msg || rawApiBody?.message || "",
             _debug: {
-              httpStatus,
-              _lid_used: doudianLid,
-              final_url: parsed?.final_url,
-              response_headers: parsed?.response_headers,
-              api_code: parsed?.api_code,
-              api_msg: parsed?.api_msg,
-              raw: doudianApiData,
+              matchedUrl: matched.url,
+              api_code: rawApiBody?.code,
+              api_msg: rawApiBody?.msg || rawApiBody?.message,
+              capturedTotal: captured.length,
+              raw: rawApiBody,
             },
           },
         };
