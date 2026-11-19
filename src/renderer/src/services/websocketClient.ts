@@ -9333,24 +9333,57 @@ registerLocalService({
           throw new Error("缺少 chapter 参数");
         }
 
-        // 1. 找抖店页面
-        const pagesRes = await getUploaderBrowserPages(profileId);
-        const pages: any[] = pagesRes?.data || [];
-        const doudianPage =
+        // 1. 确保 uploader 浏览器里有抖店页面
+        let doudianPage: any = null;
+        let pagesRes = await getUploaderBrowserPages(profileId);
+
+        if (!pagesRes?.success) {
+          return {
+            success: false,
+            message: `无法访问 uploader 浏览器（${pagesRes?.message || "服务未启动"}）。请先在工具集页面连接浏览器环境。`,
+          };
+        }
+
+        let pages: any[] = pagesRes.data || [];
+        doudianPage =
           pages.find(
             (p: any) =>
               String(p?.url || "").includes("jinritemai.com") &&
               String(p?.url || "").includes("/bu/"),
           ) || pages.find((p: any) => String(p?.url || "").includes("jinritemai.com"));
 
+        // 没有抖店页面 → 自动在 uploader 浏览器里打开商机中心
         if (!doudianPage) {
-          const sampleUrls = pages
-            .slice(0, 5)
-            .map((p: any) => String(p?.url || "").slice(0, 80))
-            .filter(Boolean);
+          const openRes = await openUploaderLink(
+            "https://fxg.jinritemai.com/ffa/bu/NewBusinessCenter",
+            profileId,
+          );
+          if (!openRes?.success) {
+            const sampleUrls = pages
+              .slice(0, 5)
+              .map((p: any) => String(p?.url || "").slice(0, 80))
+              .filter(Boolean);
+            return {
+              success: false,
+              message: `未找到抖店页面，自动打开也失败（${openRes?.message || "未知原因"}）。当前 uploader 浏览器有 ${pages.length} 个页面: [${sampleUrls.join(" | ")}]`,
+            };
+          }
+          // 等抖店页面加载
+          await new Promise((r) => setTimeout(r, 2500));
+          pagesRes = await getUploaderBrowserPages(profileId);
+          pages = pagesRes?.data || [];
+          doudianPage =
+            pages.find(
+              (p: any) =>
+                String(p?.url || "").includes("jinritemai.com") &&
+                String(p?.url || "").includes("/bu/"),
+            ) || pages.find((p: any) => String(p?.url || "").includes("jinritemai.com"));
+        }
+
+        if (!doudianPage) {
           return {
             success: false,
-            message: `未找到抖店页面（共 ${pages.length} 个页面）。示例: [${sampleUrls.join(" | ")}]`,
+            message: `已自动打开抖店页面但仍未在 uploader 浏览器中找到。请确认已在抖店登录。`,
             data: { pages },
           };
         }
