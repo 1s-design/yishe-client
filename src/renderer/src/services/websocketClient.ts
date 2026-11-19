@@ -9111,25 +9111,94 @@ function registerBuiltInLocalServices() {
       throw new Error(`未实现的 Photoshop 命令: ${command.action}`);
     },
   });
+}
 
-  registerLocalService({
-    key: "uploader",
-    pluginKey: "browser-automation",
-    label: "浏览器自动化",
-    getRuntime: getUploaderRuntime,
-    execute: async (command) => {
-      const action = command.action;
+/**
+ * 构建在抖店商机中心页面上下文里执行的 fetch eval JS。
+ * 返回的 JS 会被 CDP 注入到抖店页面里执行，天然携带登录 cookie。
+ */
+function buildDoudianChapterFetchScript(
+  chapter: string,
+  clueTypeNew: number,
+  pageSize: number,
+): string {
+  const base = "https://fxg.jinritemai.com/api/commop/business_chance_center";
 
-      if (action === "checkStatus") {
-        const runtime = await syncServiceRuntime("uploader");
-        return {
-          success: !!runtime,
-          message: runtime?.message || "浏览器自动化状态已刷新",
-          data: runtime,
-        };
-      }
+  // 各 chapter 对应的 endpoint + 请求构造
+  const presets: Record<string, { method: string; path: string; body?: any }> = {
+    clues: {
+      method: "POST",
+      path: `${base}/clue/common/real_time_list`,
+      body: {
+        page: { current: 1, page_size: pageSize },
+        clue_type_new: clueTypeNew,
+        condition: { sort: { order_by: "gmv", sort_type: 2 } },
+      },
+    },
+    categories: {
+      method: "GET",
+      path: `${base}/shop_full_category/list`,
+    },
+    topics: {
+      method: "POST",
+      path: `${base}/biz_topic/for_shop/list`,
+      body: { clue_type_new: clueTypeNew },
+    },
+    profits: {
+      method: "POST",
+      path: `${base}/profit/list`,
+      body: { clue_type_new: clueTypeNew },
+    },
+    labels: {
+      method: "POST",
+      path: `${base}/clue_label/query`,
+      body: { clue_type_new: clueTypeNew },
+    },
+    "hot-words": {
+      method: "POST",
+      path: `${base}/distribute/search/shading_words/get`,
+      body: { terminal_type: 0, scene_type: 1, version: "1.0" },
+    },
+  };
 
-      if (action === "connect") {
+  const preset = presets[chapter];
+  if (!preset) return "";
+
+  const method = preset.method;
+  const path = preset.path;
+  const bodyStr = preset.body ? JSON.stringify(preset.body) : "undefined";
+
+  return `
+(function() {
+  var headers = { 'Content-Type': 'application/json' };
+  var options = { method: '${method}', headers: headers, credentials: 'include' };
+  if (${preset.body ? "true" : "false"}) {
+    options.body = JSON.stringify(${bodyStr});
+  }
+  return fetch('${path}', options)
+    .then(function(r) { return r.json(); })
+    .catch(function(e) { return { code: -1, error: String(e && e.message || e) }; });
+})();`.trim();
+}
+
+registerLocalService({
+  key: "uploader",
+  pluginKey: "browser-automation",
+  label: "浏览器自动化",
+  getRuntime: getUploaderRuntime,
+  execute: async (command) => {
+    const action = command.action;
+
+    if (action === "checkStatus") {
+      const runtime = await syncServiceRuntime("uploader");
+      return {
+        success: !!runtime,
+        message: runtime?.message || "浏览器自动化状态已刷新",
+        data: runtime,
+      };
+    }
+
+    if (action === "connect") {
         setBrowserAutomationManualClosed(false, "connect-command");
         logger.info("[browser-automation] opening browser", {
           action,
@@ -9250,6 +9319,106 @@ function registerBuiltInLocalServices() {
             ...(response.data || {}),
             errorDetail: response.errorDetail ?? null,
             runtime,
+          },
+        };
+      }
+
+      // ============ 抖店商机中心数据采集 ============
+      if (action === "doudianChapterCollect" || action === "doudian-chapter-collect") {
+        const chapter = String(command.payload?.chapter || "").trim();
+        const clueTypeNew = Number(command.payload?.clueTypeNew) || 9;
+        const pageSize = Number(command.payload?.pageSize) || 20;
+        const profileId = String(command.payload?.profileId || "").trim() || undefined;
+
+        if (!chapter) {
+          throw new Error("缺少 chapter 参数");
+        }
+
+        // 1. 找抖店页面
+        const pagesRes = await getUploaderBrowserPages(profileId);
+        const pages: any[] = pagesRes?.data || [];
+        const doudianPage =
+          pages.find(
+            (p: any) =>
+              String(p?.url || "").includes("jinritemai.com") &&
+              String(p?.url || "").includes("/bu/"),
+          ) || pages.find((p: any) => String(p?.url || "").includes("jinritemai.com"));
+
+        if (!doudianPage) {
+          const sampleUrls = pages
+            .slice(0, 5)
+            .map((p: any) => String(p?.url || "").slice(0, 80))
+            .filter(Boolean);
+          return {
+            success: false,
+            message: `未找到抖店页面（共 ${pages.length} 个页面）。示例: [${sampleUrls.join(" | ")}]`,
+            data: { pages },
+          };
+        }
+
+        const pageIndex = Number(doudianPage.pageIndex ?? doudianPage.index) || 1;
+
+        // 2. 根据 chapter 构建 eval JS（在抖店页面上下文里执行 fetch）
+        const evalJs = buildDoudianChapterFetchScript(chapter, clueTypeNew, pageSize);
+        if (!evalJs) {
+          throw new Error(`未知的 chapter: ${chapter}`);
+        }
+
+        // 3. 执行
+        const debugRes = await executeUploaderBrowserDebug({
+          action: "eval",
+          profileId: String(doudianPage.profileId || profileId || "").trim() || undefined,
+          pageIndex,
+          expression: evalJs,
+          timeout: 30_000,
+        });
+
+        if (!debugRes?.success) {
+          return {
+            success: false,
+            message: debugRes?.message || "抖店采集失败",
+            data: { errorDetail: debugRes?.errorDetail },
+          };
+        }
+
+        // 4. 解析结果。executeUploaderBrowserDebug 返回的数据结构：
+        // { result: { value: ..., ... }, page: {...}, ... }
+        // eval 脚本返回的就是抖店 API 的 JSON 响应
+        const debugData = (debugRes as any)?.data || {};
+        const rawValue =
+          debugData?.result?.value ??
+          debugData?.value ??
+          debugData?.result ??
+          debugData;
+
+        // 抖店 API 标准结构: { code: 0, data: [...], count: N, error: "" }
+        let parsed: any = null;
+        try {
+          if (typeof rawValue === "string") {
+            parsed = JSON.parse(rawValue);
+          } else if (rawValue && typeof rawValue === "object") {
+            parsed = rawValue;
+          }
+        } catch {
+          parsed = null;
+        }
+
+        const apiData = parsed?.data;
+        const list = Array.isArray(apiData)
+          ? apiData
+          : apiData?.list || apiData?.items || [];
+
+        return {
+          success: true,
+          message: `采集成功: ${list.length} 条`,
+          data: {
+            chapter,
+            clueTypeNew,
+            pageSize,
+            pages: list,
+            count: parsed?.count ?? list.length,
+            error: parsed?.error || "",
+            raw: parsed,
           },
         };
       }
