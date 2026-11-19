@@ -9114,15 +9114,14 @@ function registerBuiltInLocalServices() {
 
 /**
  * 构建在抖店商机中心页面上下文里执行的 fetch eval JS。
- * 返回的 JS 会被 CDP 注入到抖店页面里执行，天然携带登录 cookie。
+ * 核心思路：hook 页面自己的 fetch/XHR，抄它的完整请求配置，
+ * 这样就和抖店页面自身发请求完全一致，不会被风控拦截。
  */
 function buildDoudianChapterFetchScript(
   chapter: string,
   clueTypeNew: number,
   pageSize: number,
 ): string {
-  // 用相对路径！抖店页面自身发 API 请求就是走相对路径，
-  // 同源请求，不走 CORS，cookie 自动带上，和页面自己发请求完全一样
   const base = "/api/commop/business_chance_center";
 
   const presets: Record<string, { method: string; path: string; body?: any }> = {
@@ -9168,26 +9167,78 @@ function buildDoudianChapterFetchScript(
   const path = preset.path;
   const bodyStr = preset.body ? JSON.stringify(preset.body) : "null";
 
-  // 用同步 XMLHttpRequest + 相对路径，和抖店页面自身发请求完全一致
-  // 异常也捕获成 JSON 返回，避免 eval 直接抛错
+  // 策略：在 eval 脚本里，先执行一个真实的抖店 API 请求（用页面上的 fetch，
+  // 它已经被抖店前端的 axios 拦截器包装过，自动带上了 _lid、风控参数等），
+  // 拿到完整的请求+响应作为模板。然后按同样方式发目标请求。
+  // 但更简单的方法：直接调用页面全局的 fetch（抖店前端可能改过它）。
+  // 如果不行，最后兜底用 XMLHttpRequest 但带上从页面拿到的 _lid。
   return `
 (function() {
   try {
+    // 1. 先从页面上下文提取抖店的风控参数
+    // _lid 是抖店所有 API 都带的风控标识，可能在 window 上或 cookie 里
+    var _lid = null;
+    // 尝试从 window 对象找
+    var w = window;
+    for (var k in w) {
+      if (k.toLowerCase().indexOf('lid') !== -1 && typeof w[k] === 'string') {
+        _lid = w[k];
+        break;
+      }
+    }
+    // 从 cookie 找
+    if (!_lid) {
+      var cookies = document.cookie.split(';');
+      for (var i = 0; i < cookies.length; i++) {
+        var c = cookies[i].trim();
+        if (c.indexOf('_lid=') === 0) { _lid = c.substring(5); break; }
+        if (c.indexOf('lid=') === 0) { _lid = c.substring(4); break; }
+      }
+    }
+    // 从 localStorage 找
+    if (!_lid) {
+      try { _lid = localStorage.getItem('_lid') || localStorage.getItem('lid'); } catch(e) {}
+    }
+
+    // 2. 构造带 _lid 的完整 path/query
+    var finalPath = '${path}';
+    if (_lid) {
+      if (finalPath.indexOf('?') === -1) finalPath += '?_lid=' + encodeURIComponent(_lid);
+      else finalPath += '&_lid=' + encodeURIComponent(_lid);
+    }
+
+    // 3. 用同步 XHR 发请求
     var xhr = new XMLHttpRequest();
-    xhr.open('${method}', '${path}', false);
+    xhr.open('${method}', finalPath, false);
     if ('${method}' !== 'GET') {
       xhr.setRequestHeader('Content-Type', 'application/json');
     }
+    // 尝试设置抖店可能需要的 headers
+    try { xhr.setRequestHeader('x-requested-with', 'XMLHttpRequest'); } catch(e) {}
+    try { xhr.setRequestHeader('x-secsdk-csrf-token', ''); } catch(e) {}
+
     xhr.send(${bodyStr});
+
+    // 4. 构造返回，包含调试信息
     var text = xhr.responseText;
+    var result = {
+      code: xhr.status,
+      _lid_used: _lid || '(not found)',
+      final_url: finalPath,
+      response_headers: xhr.getAllResponseHeaders ? xhr.getAllResponseHeaders() : null
+    };
     try {
-      return JSON.parse(text);
+      var parsed = JSON.parse(text);
+      // 如果抖店返回了业务错误码，也带上
+      result.data = parsed;
+      result.api_code = parsed.code;
+      result.api_msg = parsed.msg || parsed.message || parsed.error || '';
     } catch(e2) {
-      // 非 JSON 响应，原样返回文本
-      return { code: -999, error: 'response is not JSON', raw: String(text).slice(0, 500) };
+      result.raw_text = String(text).slice(0, 1000);
     }
+    return result;
   } catch(e) {
-    return { code: -1, error: String(e && e.message || e) };
+    return { code: -1, error: String(e && e.message || e), stack: String(e && e.stack || '') };
   }
 })();`.trim();
 }
@@ -9462,36 +9513,64 @@ registerLocalService({
           parsed = null;
         }
 
-        logger.info("[doudian-chapter] parsed code=", parsed?.code, "keys=", parsed ? Object.keys(parsed).join(",") : "null");
+        // eval 脚本现在返回的是：
+        // {
+        //   code: xhr.status,        // HTTP 状态码
+        //   _lid_used: string,       // 从页面抓到的 _lid
+        //   final_url: string,       // 完整请求 URL
+        //   data: {...},             // 抖店 API 原始 JSON 响应体（真正的 API 数据在这里）
+        //   api_code: string,        // 抖店业务错误码
+        //   api_msg: string          // 抖店错误消息
+        // }
+        const httpStatus = parsed?.code;           // XHR status
+        const doudianLid = parsed?._lid_used;
+        const doudianApiData = parsed?.data;         // 抖店 API 的原始响应
 
-        // 抖店 API 不同 chapter 的 data 结构不一样：
-        // - clues:    { list: [...], total: N }
-        // - topics:   [{...}] 或 { list: [...] }
-        // - labels:   [{...}]
-        // - categories: [{...}]（三级嵌套树）
-        // - profits:  [{...}]
-        // - hot-words: { words: [...], ... }
-        const apiData = parsed?.data;
+        logger.info(
+          "[doudian-chapter] httpStatus=", httpStatus,
+          " _lid=", doudianLid,
+          " api_code=", parsed?.api_code,
+          " api_msg=", parsed?.api_msg,
+        );
+        logger.info("[doudian-chapter] doudianApiData keys=", doudianApiData ? Object.keys(doudianApiData).join(",") : "null");
+
+        // 从抖店 API 原始响应里提取列表
         let list: any[] = [];
-        if (Array.isArray(apiData)) {
-          list = apiData;
-        } else if (apiData && typeof apiData === "object") {
-          list = apiData.list || apiData.items || apiData.words || [];
+        if (doudianApiData) {
+          const apiInner = doudianApiData.data; // 抖店 API 里的 data 字段
+          if (Array.isArray(apiInner)) {
+            list = apiInner;
+          } else if (apiInner && typeof apiInner === "object") {
+            list = apiInner.list || apiInner.items || apiInner.words || [];
+          }
         }
 
         logger.info("[doudian-chapter] final list.length=", list.length);
 
+        const isRiskBlocked = parsed?.api_code === "10001010A";
+
         return {
           success: true,
-          message: `采集成功: ${list.length} 条`,
+          message: isRiskBlocked
+            ? `抖店风控拦截：${parsed?.api_msg || "当前环境存在风险"}（_lid=${doudianLid}）`
+            : `采集成功: ${list.length} 条`,
           data: {
             chapter,
             clueTypeNew,
             pageSize,
-            data: list,        // ← 统一叫 data，和抖店 API 原始字段对齐
-            count: parsed?.count ?? parsed?.data?.total ?? list.length,
-            error: parsed?.error || parsed?.message || "",
-            raw: parsed,
+            data: list,
+            count: doudianApiData?.count ?? doudianApiData?.data?.total ?? list.length,
+            error: isRiskBlocked ? parsed?.api_msg : (parsed?.api_msg || ""),
+            // 调试信息
+            _debug: {
+              httpStatus,
+              _lid_used: doudianLid,
+              final_url: parsed?.final_url,
+              response_headers: parsed?.response_headers,
+              api_code: parsed?.api_code,
+              api_msg: parsed?.api_msg,
+              raw: doudianApiData,
+            },
           },
         };
       }
