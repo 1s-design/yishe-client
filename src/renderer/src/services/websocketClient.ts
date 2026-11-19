@@ -9333,19 +9333,34 @@ registerLocalService({
           throw new Error("缺少 chapter 参数");
         }
 
-        // 1. 确保 uploader 浏览器里有抖店页面
-        let doudianPage: any = null;
+        // 1. 确保 uploader Chrome 已启动 + 里面有抖店页面
         let pagesRes = await getUploaderBrowserPages(profileId);
+
+        // uploader Chrome 没启动 → 先 connect
+        if (!pagesRes?.success) {
+          logger.info("[doudian-chapter] uploader browser not ready, connecting...");
+          const connectRes = await connectUploaderBrowser(
+            profileId ? { profileId } : {},
+          );
+          if (!connectRes?.success) {
+            return {
+              success: false,
+              message: `启动 uploader 浏览器失败（${connectRes?.message || "未知原因"}）。请确认 yishe-client 已运行且客户端在线。`,
+            };
+          }
+          await new Promise((r) => setTimeout(r, 3000));
+          pagesRes = await getUploaderBrowserPages(profileId);
+        }
 
         if (!pagesRes?.success) {
           return {
             success: false,
-            message: `无法访问 uploader 浏览器（${pagesRes?.message || "服务未启动"}）。请先在工具集页面连接浏览器环境。`,
+            message: `uploader 浏览器就绪但仍无法获取页面列表（${pagesRes?.message || "未知原因"}）。`,
           };
         }
 
         let pages: any[] = pagesRes.data || [];
-        doudianPage =
+        let doudianPage: any =
           pages.find(
             (p: any) =>
               String(p?.url || "").includes("jinritemai.com") &&
@@ -9354,6 +9369,7 @@ registerLocalService({
 
         // 没有抖店页面 → 自动在 uploader 浏览器里打开商机中心
         if (!doudianPage) {
+          logger.info("[doudian-chapter] opening doudian NewBusinessCenter in uploader browser...");
           const openRes = await openUploaderLink(
             "https://fxg.jinritemai.com/ffa/bu/NewBusinessCenter",
             profileId,
@@ -9365,11 +9381,11 @@ registerLocalService({
               .filter(Boolean);
             return {
               success: false,
-              message: `未找到抖店页面，自动打开也失败（${openRes?.message || "未知原因"}）。当前 uploader 浏览器有 ${pages.length} 个页面: [${sampleUrls.join(" | ")}]`,
+              message: `uploader 浏览器里没抖店页面，自动打开也失败（${openRes?.message || "未知原因"}）。当前 ${pages.length} 个页面: [${sampleUrls.join(" | ")}]`,
             };
           }
           // 等抖店页面加载
-          await new Promise((r) => setTimeout(r, 2500));
+          await new Promise((r) => setTimeout(r, 3000));
           pagesRes = await getUploaderBrowserPages(profileId);
           pages = pagesRes?.data || [];
           doudianPage =
@@ -9383,8 +9399,7 @@ registerLocalService({
         if (!doudianPage) {
           return {
             success: false,
-            message: `已自动打开抖店页面但仍未在 uploader 浏览器中找到。请确认已在抖店登录。`,
-            data: { pages },
+            message: `已自动启动浏览器并打开抖店，但仍未找到。请检查 uploader 浏览器是否需要重新登录抖店。`,
           };
         }
 
