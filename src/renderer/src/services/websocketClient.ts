@@ -9121,9 +9121,10 @@ function buildDoudianChapterFetchScript(
   clueTypeNew: number,
   pageSize: number,
 ): string {
-  const base = "https://fxg.jinritemai.com/api/commop/business_chance_center";
+  // 用相对路径！抖店页面自身发 API 请求就是走相对路径，
+  // 同源请求，不走 CORS，cookie 自动带上，和页面自己发请求完全一样
+  const base = "/api/commop/business_chance_center";
 
-  // 各 chapter 对应的 endpoint + 请求构造
   const presets: Record<string, { method: string; path: string; body?: any }> = {
     clues: {
       method: "POST",
@@ -9165,18 +9166,29 @@ function buildDoudianChapterFetchScript(
 
   const method = preset.method;
   const path = preset.path;
-  const bodyStr = preset.body ? JSON.stringify(preset.body) : "undefined";
+  const bodyStr = preset.body ? JSON.stringify(preset.body) : "null";
 
+  // 用同步 XMLHttpRequest + 相对路径，和抖店页面自身发请求完全一致
+  // 异常也捕获成 JSON 返回，避免 eval 直接抛错
   return `
 (function() {
-  var headers = { 'Content-Type': 'application/json' };
-  var options = { method: '${method}', headers: headers, credentials: 'include' };
-  if (${preset.body ? "true" : "false"}) {
-    options.body = JSON.stringify(${bodyStr});
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('${method}', '${path}', false);
+    if ('${method}' !== 'GET') {
+      xhr.setRequestHeader('Content-Type', 'application/json');
+    }
+    xhr.send(${bodyStr});
+    var text = xhr.responseText;
+    try {
+      return JSON.parse(text);
+    } catch(e2) {
+      // 非 JSON 响应，原样返回文本
+      return { code: -999, error: 'response is not JSON', raw: String(text).slice(0, 500) };
+    }
+  } catch(e) {
+    return { code: -1, error: String(e && e.message || e) };
   }
-  return fetch('${path}', options)
-    .then(function(r) { return r.json(); })
-    .catch(function(e) { return { code: -1, error: String(e && e.message || e) }; });
 })();`.trim();
 }
 
