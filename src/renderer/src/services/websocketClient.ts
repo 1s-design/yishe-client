@@ -9428,9 +9428,7 @@ registerLocalService({
           };
         }
 
-        // 4. 解析结果。executeUploaderBrowserDebug 返回的数据结构：
-        // { result: { value: ..., ... }, page: {...}, ... }
-        // eval 脚本返回的就是抖店 API 的 JSON 响应
+        // 4. 解析结果
         const debugData = (debugRes as any)?.data || {};
         const rawValue =
           debugData?.result?.value ??
@@ -9438,7 +9436,8 @@ registerLocalService({
           debugData?.result ??
           debugData;
 
-        // 抖店 API 标准结构: { code: 0, data: [...], count: N, error: "" }
+        logger.info("[doudian-chapter] debug rawValue type=", typeof rawValue, "isArray=", Array.isArray(rawValue));
+
         let parsed: any = null;
         try {
           if (typeof rawValue === "string") {
@@ -9446,14 +9445,29 @@ registerLocalService({
           } else if (rawValue && typeof rawValue === "object") {
             parsed = rawValue;
           }
-        } catch {
+        } catch (e) {
+          logger.warn("[doudian-chapter] JSON parse failed:", e);
           parsed = null;
         }
 
+        logger.info("[doudian-chapter] parsed code=", parsed?.code, "keys=", parsed ? Object.keys(parsed).join(",") : "null");
+
+        // 抖店 API 不同 chapter 的 data 结构不一样：
+        // - clues:    { list: [...], total: N }
+        // - topics:   [{...}] 或 { list: [...] }
+        // - labels:   [{...}]
+        // - categories: [{...}]（三级嵌套树）
+        // - profits:  [{...}]
+        // - hot-words: { words: [...], ... }
         const apiData = parsed?.data;
-        const list = Array.isArray(apiData)
-          ? apiData
-          : apiData?.list || apiData?.items || [];
+        let list: any[] = [];
+        if (Array.isArray(apiData)) {
+          list = apiData;
+        } else if (apiData && typeof apiData === "object") {
+          list = apiData.list || apiData.items || apiData.words || [];
+        }
+
+        logger.info("[doudian-chapter] final list.length=", list.length);
 
         return {
           success: true,
@@ -9462,9 +9476,9 @@ registerLocalService({
             chapter,
             clueTypeNew,
             pageSize,
-            pages: list,
-            count: parsed?.count ?? list.length,
-            error: parsed?.error || "",
+            data: list,        // ← 统一叫 data，和抖店 API 原始字段对齐
+            count: parsed?.count ?? parsed?.data?.total ?? list.length,
+            error: parsed?.error || parsed?.message || "",
             raw: parsed,
           },
         };
