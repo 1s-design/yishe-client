@@ -9348,7 +9348,7 @@ try {
 return { captured, finalUrl };
 `;
 
-          logger.info("[doudian-search] opening search page, keyword=", keyword, "page=", pageNo);
+          logger.info("[doudian-search] opening search page", { keyword, page: pageNo });
 
           const debugRes = await executeUploaderBrowserDebug({
             action: "playwright",
@@ -9419,9 +9419,9 @@ return { captured, finalUrl };
           const count = Number(mixed.total ?? list.length);
 
           if (!list.length) {
-            logger.warn("[doudian-search] empty result for", keyword, "page", pageNo);
+            logger.warn("[doudian-search] empty result", { keyword, page: pageNo });
           }
-          logger.info("[doudian-search] result list.length=", list.length, "total=", count);
+          logger.info("[doudian-search] result", { length: list.length, total: count });
 
           return {
             success: true,
@@ -9646,7 +9646,7 @@ try {
 return { captured, finalUrl, matchedText, stage, filterIssues };
 `;
 
-          logger.info("[doudian-opportunity] channel=", channel, "keyword=", keyword);
+          logger.info("[doudian-opportunity] starting", { channel, keyword });
 
           const debugRes = await executeUploaderBrowserDebug({
             action: "playwright",
@@ -9756,9 +9756,9 @@ return { captured, finalUrl, matchedText, stage, filterIssues };
           const matchedCat = { path: matchedText };
 
           if (!list.length) {
-            logger.warn("[doudian-opportunity] empty list for", keyword, "channel", channel);
+            logger.warn("[doudian-opportunity] empty list", { keyword, channel });
           }
-          logger.info("[doudian-opportunity] matched=", matchedCat.path, "list.length=", list.length, "total=", count);
+          logger.info("[doudian-opportunity] result", { matched: matchedCat.path, length: list.length, total: count });
 
           const filterNote =
             channel === "all_word"
