@@ -9260,260 +9260,547 @@ registerLocalService({
         };
       }
 
-      // ============ 抖店商机中心数据采集 ============
-      if (action === "doudianChapterCollect" || action === "doudian-chapter-collect") {
-        const chapter = String(command.payload?.chapter || "").trim();
-        const clueTypeNew = Number(command.payload?.clueTypeNew) || 9;
-        const pageSize = Number(command.payload?.pageSize) || 20;
-        const profileId = String(command.payload?.profileId || "").trim() || undefined;
+      // ============ 抖店商机搜索（页面驱动：打开搜索页 → 旁路拦截列表请求） ============
+      if (action === "doudianSearchCollect" || action === "doudian-search-collect") {
+        const runDoudianSearchCollect = async (): Promise<any> => {
+          const keyword = String(command.payload?.keyword || "").trim();
+          const pageNo = Number(command.payload?.page) || 1;
+          const pageSize = Number(command.payload?.pageSize) || 32;
+          const profileId = String(command.payload?.profileId || "").trim() || undefined;
 
-        if (!chapter) {
-          throw new Error("缺少 chapter 参数");
-        }
-
-        // 1. 确保 uploader Chrome 已启动 + 里面有抖店页面
-        let pagesRes = await getUploaderBrowserPages(profileId);
-
-        // uploader Chrome 没启动 → 先 connect
-        if (!pagesRes?.success) {
-          logger.info("[doudian-chapter] uploader browser not ready, connecting...");
-          const connectRes = await connectUploaderBrowser(
-            profileId ? { profileId } : {},
-          );
-          if (!connectRes?.success) {
-            return {
-              success: false,
-              message: `启动 uploader 浏览器失败（${connectRes?.message || "未知原因"}）。请确认 yishe-client 已运行且客户端在线。`,
-            };
+          if (!keyword) {
+            throw new Error("缺少 keyword 参数");
           }
-          await new Promise((r) => setTimeout(r, 3000));
-          pagesRes = await getUploaderBrowserPages(profileId);
-        }
 
-        if (!pagesRes?.success) {
-          return {
-            success: false,
-            message: `uploader 浏览器就绪但仍无法获取页面列表（${pagesRes?.message || "未知原因"}）。`,
-          };
-        }
-
-        let pages: any[] = pagesRes.data || [];
-        let doudianPage: any =
-          pages.find(
-            (p: any) =>
-              String(p?.url || "").includes("jinritemai.com") &&
-              String(p?.url || "").includes("/bu/"),
-          ) || pages.find((p: any) => String(p?.url || "").includes("jinritemai.com"));
-
-        // 没有抖店页面 → 自动在 uploader 浏览器里打开商机中心
-        if (!doudianPage) {
-          logger.info("[doudian-chapter] opening doudian NewBusinessCenter in uploader browser...");
-          const openRes = await openUploaderLink(
-            "https://fxg.jinritemai.com/ffa/bu/NewBusinessCenter",
-            profileId,
-          );
-          if (!openRes?.success) {
-            const sampleUrls = pages
-              .slice(0, 5)
-              .map((p: any) => String(p?.url || "").slice(0, 80))
-              .filter(Boolean);
-            return {
-              success: false,
-              message: `uploader 浏览器里没抖店页面，自动打开也失败（${openRes?.message || "未知原因"}）。当前 ${pages.length} 个页面: [${sampleUrls.join(" | ")}]`,
-            };
-          }
-          // 等抖店页面加载
-          await new Promise((r) => setTimeout(r, 3000));
-          pagesRes = await getUploaderBrowserPages(profileId);
-          pages = pagesRes?.data || [];
-          doudianPage =
-            pages.find(
-              (p: any) =>
-                String(p?.url || "").includes("jinritemai.com") &&
-                String(p?.url || "").includes("/bu/"),
-            ) || pages.find((p: any) => String(p?.url || "").includes("jinritemai.com"));
-        }
-
-        if (!doudianPage) {
-          return {
-            success: false,
-            message: `已自动启动浏览器并打开抖店，但仍未找到。请检查 uploader 浏览器是否需要重新登录抖店。`,
-          };
-        }
-
-        const pageIndex = Number(doudianPage.pageIndex ?? doudianPage.index) || 1;
-
-        // 2. Playwright page.route 拦截 + reload + 按需触发
-        // 关键改进：reload 触发页面自己发请求，逐个匹配 chapter，
-        // 如果 reload 没触发某个接口，用 page.evaluate 手动调用页面内部 API
-        const playwrightScript = `
-const captured = [];
-await page.route('**/api/commop/business_chance_center/**', async (route) => {
-  const url = route.request().url();
-  const response = await route.fetch();
-  let body = null;
-  try { body = await response.json(); } catch(e) { try { body = await response.text(); } catch(e2) {} }
-  captured.push({ url, body });
-  await route.fulfill({ response });
-});
-
-// 先 reload 让页面自己发初始化请求
-await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-await page.waitForTimeout(3000);
-
-// 如果 reload 没触发足够请求，尝试滚动 + 点击让页面懒加载
-await page.evaluate(() => {
-  window.scrollTo(0, document.body.scrollHeight);
-}).catch(() => {});
-await page.waitForTimeout(1000);
-await page.evaluate(() => {
-  window.scrollTo(0, 0);
-}).catch(() => {});
-await page.waitForTimeout(1000);
-
-return captured;
-`;
-
-        logger.info("[doudian-chapter] running playwright, chapter=", chapter);
-
-        const debugRes = await executeUploaderBrowserDebug({
-          action: "playwright",
-          profileId: String(doudianPage.profileId || profileId || "").trim() || undefined,
-          pageIndex,
-          expression: playwrightScript,
-          timeout: 60_000,
-        });
-
-        if (!debugRes?.success) {
-          return {
-            success: false,
-            message: `Playwright 执行失败: ${debugRes?.message || "未知原因"}`,
-            data: { errorDetail: debugRes?.errorDetail },
-          };
-        }
-
-        // 解析 playwright 返回的捕获数组
-        const debugData = (debugRes as any)?.data || {};
-        let captured: any[] = [];
-        if (Array.isArray(debugData?.result?.value)) {
-          captured = debugData.result.value;
-        } else if (Array.isArray(debugData?.value)) {
-          captured = debugData.value;
-        }
-
-        logger.info("[doudian-chapter] playwright captured", captured.length, "total responses");
-
-        // 3. 从 captured 数组里按 URL path 精确匹配 chapter
-        // 把每个 URL 拆出来看 path 部分
-        const chapterPathMap: Record<string, string> = {
-          clues: "clue/common/real_time_list",
-          categories: "shop_full_category/list",
-          topics: "biz_topic/for_shop/list",
-          profits: "profit/list",
-          labels: "clue_label/query",
-          "hot-words": "distribute/search/shading_words/get",
-        };
-
-        const targetPath = chapterPathMap[chapter];
-        if (!targetPath) {
-          return { success: false, message: `未知的 chapter: ${chapter}` };
-        }
-
-        // 精确匹配：URL 的 path 里必须包含完整的 targetPath
-        let matched = captured.find((c: any) => {
-          const url = String(c?.url || "");
-          try {
-            const u = new URL(url);
-            return u.pathname.includes(targetPath);
-          } catch {
-            return url.includes(targetPath);
-          }
-        });
-
-        // 如果没匹配到，输出所有捕获的 URL 给调试
-        if (!matched) {
-          const allUrls = captured.map((c: any) => {
-            try {
-              const u = new URL(String(c?.url || ""));
-              return u.pathname;
-            } catch {
-              return String(c?.url || "").slice(-80);
+          // 1. 找 uploader 浏览器页面（只为借用 context 的登录 cookie）
+          let pagesRes = await getUploaderBrowserPages(profileId);
+          if (!pagesRes?.success) {
+            logger.info("[doudian-search] uploader browser not ready, connecting...");
+            const connectRes = await Promise.race([
+              connectUploaderBrowser(profileId ? { profileId } : {}),
+              new Promise<any>((resolve) =>
+                setTimeout(
+                  () =>
+                    resolve({
+                      success: false,
+                      message: "启动浏览器环境超时（15 秒），请确认客户端正在运行",
+                    }),
+                  15_000,
+                ),
+              ),
+            ]);
+            if (!connectRes?.success) {
+              return {
+                success: false,
+                message: `启动浏览器环境失败（${connectRes?.message || "未知原因"}）`,
+              };
             }
-          });
-          logger.warn("[doudian-chapter] target path=", targetPath, "not found in captured. All paths:", allUrls);
-
-          // 如果 clues 没触发，可能需要点"线索商品池"Tab 来加载
-          if (chapter === "clues") {
-            logger.info("[doudian-chapter] trying to click clues tab to trigger API...");
-            const extraScript = `
-const before = arguments[0];
-const extraCaptured = [];
-await page.route('**/api/commop/business_chance_center/**', async (route) => {
-  const url = route.request().url();
-  const response = await route.fetch();
-  let body = null;
-  try { body = await response.json(); } catch(e) { try { body = await response.text(); } catch(e2) {} }
-  extraCaptured.push({ url, body });
-  await route.fulfill({ response });
-});
-// 点击页面上的线索/商机相关元素
-await page.click('text=线索商品池').catch(() => {});
-await page.click('text=全部商机').catch(() => {});
-await page.click('[class*="tab"]').first().click().catch(() => {});
-await page.waitForTimeout(2000);
-// 合并
-return [...before, ...extraCaptured];
-`;
-            // 不跑这个了，复杂。直接返回用户友好的错误
+            await new Promise((r) => setTimeout(r, 3000));
+            pagesRes = await getUploaderBrowserPages(profileId);
+          }
+          if (!pagesRes?.success) {
+            return {
+              success: false,
+              message: `无法获取浏览器页面（${pagesRes?.message || "未知原因"}）`,
+            };
           }
 
+          const pages: any[] = pagesRes.data || [];
+          const targetPage: any =
+            pages.find((p: any) => String(p?.url || "").includes("jinritemai.com")) ||
+            pages.find((p: any) => String(p?.url || "").startsWith("http")) ||
+            pages[0];
+          if (!targetPage) {
+            return {
+              success: false,
+              message: `所选浏览器环境里没有可用页面，请在该环境的浏览器里打开抖店后台（fxg.jinritemai.com）`,
+            };
+          }
+          const rawIdx = targetPage.pageIndex ?? targetPage.index;
+          const pageIndex = Number.isFinite(Number(rawIdx)) ? Number(rawIdx) : 0;
+
+          // 2. 打开搜索页，旁路拦截页面自己发的列表请求（带完整登录态）
+          const script = `
+const captured = [];
+const handler = async (route) => {
+  const req = route.request();
+  const url = req.url();
+  let reqBody = null;
+  try { reqBody = req.postDataJSON(); } catch (e) {}
+  const response = await route.fetch();
+  let body = null;
+  try { body = await response.json(); } catch (e) { try { body = await response.text(); } catch (e2) {} }
+  captured.push({ url, method: req.method(), reqBody, status: response.status(), body });
+  await route.fulfill({ response });
+};
+await page.route('**/api/commop/business_chance_center/**', handler);
+let finalUrl = '';
+try {
+  await page.goto('https://fxg.jinritemai.com/ffa/bu/NewBusinessCenter/search?clueId=${encodeURIComponent(keyword)}', { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+  finalUrl = page.url();
+  for (let i = 0; i < 24; i++) {
+    await page.waitForTimeout(500);
+    if (captured.some((c) => String(c.url).includes('clue/mixed/real_time_list'))) break;
+  }
+} finally {
+  await page.unroute('**/api/commop/business_chance_center/**', handler).catch(() => {});
+}
+return { captured, finalUrl };
+`;
+
+          logger.info("[doudian-search] opening search page, keyword=", keyword, "page=", pageNo);
+
+          const debugRes = await executeUploaderBrowserDebug({
+            action: "playwright",
+            profileId: String(targetPage.profileId || profileId || "").trim() || undefined,
+            pageIndex,
+            expression: script,
+            timeout: 45_000,
+          });
+
+          if (!debugRes?.success) {
+            const errDetail: any = (debugRes as any)?.errorDetail || {};
+            return {
+              success: false,
+              message: `商机搜索请求失败: ${debugRes?.message || "未知原因"}${errDetail.rawMessage ? ` | 原始错误: ${errDetail.rawMessage}` : ""}`,
+              data: { errorDetail: errDetail },
+            };
+          }
+
+          const debugData = (debugRes as any)?.data || {};
+          const payload = debugData?.result?.value ?? debugData?.value ?? null;
+          const captured: any[] = Array.isArray(payload?.captured) ? payload.captured : [];
+          const finalUrl = String(payload?.finalUrl || "");
+
+          if (finalUrl.includes("login")) {
+            return {
+              success: false,
+              message: "打开搜索页后跳到了登录页。请先在所选浏览器环境里登录抖店后台（fxg.jinritemai.com）",
+              data: { finalUrl },
+            };
+          }
+
+          const matched = captured.find((c: any) => String(c?.url || "").includes("clue/mixed/real_time_list"));
+          if (!matched) {
+            const allPaths = captured.map((c: any) => {
+              try { return new URL(String(c?.url || "")).pathname; } catch { return String(c?.url || "").slice(-70); }
+            });
+            return {
+              success: false,
+              message: `页面未发起搜索数据请求。捕获 ${captured.length} 个请求: ${allPaths.slice(0, 10).join(" | ")}`,
+              data: { capturedPaths: allPaths },
+            };
+          }
+
+          const apiJson = matched.body;
+          if (!apiJson || typeof apiJson !== "object") {
+            return {
+              success: false,
+              message: "搜索接口返回异常：非 JSON 响应",
+              data: { raw: apiJson },
+            };
+          }
+
+          const apiCode = apiJson.code;
+          if (Number(apiCode) !== 0) {
+            const msg = String(apiJson.msg || apiJson.message || "-");
+            return {
+              success: false,
+              message:
+                Number(apiCode) === 10008 || msg.includes("登录")
+                  ? `抖店登录已失效（${msg}）。请在所选浏览器环境里重新登录抖店后台（fxg.jinritemai.com）后再采集`
+                  : `抖店接口返回异常 code=${apiCode} msg=${msg}`,
+              data: { _debug: { reqBody: matched.reqBody, raw: apiJson } },
+            };
+          }
+
+          const mixed = apiJson?.data?.mixed_clue_data || {};
+          const list: any[] = Array.isArray(mixed.clue_list) ? mixed.clue_list : [];
+          const count = Number(mixed.total ?? list.length);
+
+          if (!list.length) {
+            logger.warn("[doudian-search] empty result for", keyword, "page", pageNo);
+          }
+          logger.info("[doudian-search] result list.length=", list.length, "total=", count);
+
           return {
-            success: false,
-            message: `页面 reload 后没触发 ${chapter} 接口。捕获了 ${captured.length} 个请求: ${allUrls.join(" | ")}`,
-            data: { capturedPaths: allUrls },
-          };
-        }
-
-        logger.info("[doudian-chapter] matched:", matched?.url?.split("?")[0]?.slice(-80));
-
-        const rawApiBody = matched.body; // 抖店 API 原始响应
-
-        logger.info(
-          "[doudian-chapter] matched url=", matched.url?.slice(0, 100),
-          " api_code=", rawApiBody?.code,
-          " api_msg=", rawApiBody?.msg || rawApiBody?.message,
-        );
-
-        // 4. 从抖店 API 响应里提取列表
-        let list: any[] = [];
-        const apiInner = rawApiBody?.data;
-        if (Array.isArray(apiInner)) {
-          list = apiInner;
-        } else if (apiInner && typeof apiInner === "object") {
-          list = apiInner.list || apiInner.items || apiInner.words || [];
-        }
-
-        logger.info("[doudian-chapter] final list.length=", list.length);
-
-        return {
-          success: true,
-          message: `采集成功: ${list.length} 条`,
-          data: {
-            chapter,
-            clueTypeNew,
-            pageSize,
-            data: list,
-            count: rawApiBody?.count ?? apiInner?.total ?? list.length,
-            error: rawApiBody?.msg || rawApiBody?.message || "",
-            _debug: {
-              matchedUrl: matched.url,
-              api_code: rawApiBody?.code,
-              api_msg: rawApiBody?.msg || rawApiBody?.message,
-              capturedTotal: captured.length,
-              raw: rawApiBody,
+            success: true,
+            message: `搜索成功: ${list.length} 条${count !== list.length ? `（共 ${count} 条）` : ""}`,
+            data: {
+              keyword,
+              page: pageNo,
+              pageSize,
+              data: list,
+              count,
+              error: "",
+              _debug: {
+                api_code: apiCode,
+                status: matched.status,
+                reqBody: matched.reqBody,
+                raw: apiJson,
+              },
             },
-          },
+          };
         };
+        return await Promise.race([
+          runDoudianSearchCollect(),
+          new Promise<any>((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  success: false,
+                  message: "商机搜索执行超时（72 秒），请稍后重试",
+                }),
+              72_000,
+            ),
+          ),
+        ]);
+      }
+
+      // ============ 抖店商机采集（页面驱动：双通道 + 类目关键词） ============
+      // 流程与用户在页面上的操作一致：
+      //   1) 进入 clueChannel=all_product(跟潜力爆品) / all_word(追抖音热词)
+      //   2) 「请选择行业类目」输入关键词 → 下拉自动匹配
+      //   3) 点击出现的第一个类目 → 旁路拦截页面发出的商机列表请求（带完整登录态）
+      if (action === "doudianOpportunityCollect" || action === "doudian-opportunity-collect") {
+        const runDoudianOpportunityCollect = async (): Promise<any> => {
+          const channel = String(command.payload?.channel || "all_product").trim();
+          const keyword = String(command.payload?.keyword || "").trim();
+          const pageNo = Number(command.payload?.page) || 1;
+          const pageSize = Number(command.payload?.pageSize) || 21;
+          const profileId = String(command.payload?.profileId || "").trim() || undefined;
+
+          if (!keyword) {
+            throw new Error("缺少 keyword 类目关键词");
+          }
+          const channelMap: Record<string, { clueTypeNew: number; label: string }> = {
+            all_product: { clueTypeNew: 9, label: "跟潜力爆品" },
+            all_word: { clueTypeNew: 11, label: "追抖音热词" },
+          };
+          const ch = channelMap[channel];
+          if (!ch) {
+            return {
+              success: false,
+              message: `未知的 channel: ${channel}（可选 all_product=跟潜力爆品 / all_word=追抖音热词）`,
+            };
+          }
+
+          // 1. 找 uploader 浏览器页面（只为借用 context 的登录 cookie，cookie 是 context 级共享）
+          let pagesRes = await getUploaderBrowserPages(profileId);
+          if (!pagesRes?.success) {
+            logger.info("[doudian-opportunity] uploader browser not ready, connecting...");
+            const connectRes = await Promise.race([
+              connectUploaderBrowser(profileId ? { profileId } : {}),
+              new Promise<any>((resolve) =>
+                setTimeout(
+                  () =>
+                    resolve({
+                      success: false,
+                      message: "启动浏览器环境超时（15 秒），请确认客户端正在运行",
+                    }),
+                  15_000,
+                ),
+              ),
+            ]);
+            if (!connectRes?.success) {
+              return {
+                success: false,
+                message: `启动浏览器环境失败（${connectRes?.message || "未知原因"}）`,
+              };
+            }
+            await new Promise((r) => setTimeout(r, 3000));
+            pagesRes = await getUploaderBrowserPages(profileId);
+          }
+          if (!pagesRes?.success) {
+            return {
+              success: false,
+              message: `无法获取浏览器页面（${pagesRes?.message || "未知原因"}）`,
+            };
+          }
+
+          const pages: any[] = pagesRes.data || [];
+          const targetPage: any =
+            pages.find((p: any) => String(p?.url || "").includes("jinritemai.com")) ||
+            pages.find((p: any) => String(p?.url || "").startsWith("http")) ||
+            pages[0];
+          if (!targetPage) {
+            return {
+              success: false,
+              message: `所选浏览器环境里没有可用页面，请在该环境的浏览器里打开抖店后台（fxg.jinritemai.com）`,
+            };
+          }
+          const rawIdx = targetPage.pageIndex ?? targetPage.index;
+          const pageIndex = Number.isFinite(Number(rawIdx)) ? Number(rawIdx) : 0;
+
+          // 2. 页面驱动流程（按用户思路）：打开通道页 → 类目框输入关键词 → 等下拉匹配 → 点第一项 → 旁路拦截列表请求
+          const script = `
+const KEYWORD = ${JSON.stringify(keyword)};
+const APPLY_FILTERS = ${channel === "all_word" ? "true" : "false"};
+const captured = [];
+const handler = async (route) => {
+  const req = route.request();
+  const url = req.url();
+  let reqBody = null;
+  try { reqBody = req.postDataJSON(); } catch (e) {}
+  const response = await route.fetch();
+  let body = null;
+  try { body = await response.json(); } catch (e) { try { body = await response.text(); } catch (e2) {} }
+  captured.push({ url, method: req.method(), reqBody, status: response.status(), body });
+  await route.fulfill({ response });
+};
+await page.route('**/api/commop/business_chance_center/**', handler);
+let finalUrl = '';
+let matchedText = '';
+let stage = 'open';
+let filterIssues = [];
+try {
+  await page.goto('https://fxg.jinritemai.com/ffa/bu/NewBusinessCenter?clueChannel=${channel}', { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+  finalUrl = page.url();
+  await page.waitForTimeout(4000);
+
+  // 「请选择行业类目」输入关键词
+  const casc = page.locator('.aurora-cascader input, input#category').first();
+  if (!(await casc.count())) {
+    stage = 'no-cascader';
+    return { captured, finalUrl, matchedText, stage };
+  }
+  await casc.click({ timeout: 3000 }).catch(() => {});
+  await page.waitForTimeout(400);
+  await casc.pressSequentially(KEYWORD, { delay: 120 }).catch(() => {});
+  await page.waitForTimeout(1500);
+
+  // 等下拉自动匹配
+  let opt = page.locator('.aurora-cascader-menu-item', { hasText: KEYWORD }).first();
+  if (!(await opt.count())) {
+    await page.waitForTimeout(2500);
+    opt = page.locator('.aurora-cascader-menu-item', { hasText: KEYWORD }).first();
+  }
+  if (!(await opt.count())) {
+    stage = 'no-match';
+    return { captured, finalUrl, matchedText, stage };
+  }
+
+  // 点击出现的第一个
+  matchedText = (await opt.innerText().catch(() => '')).split(String.fromCharCode(10)).join(' ').trim();
+  await opt.click({ timeout: 3000 }).catch(() => {});
+  for (let i = 0; i < 24; i++) {
+    await page.waitForTimeout(500);
+    if (captured.some((c) => String(c.url).includes('clue/common/real_time_list'))) {
+      stage = 'done';
+      break;
+    }
+  }
+
+  // 追抖音热词：勾选「热度高」+「搜索扶持」筛选（用户要求的精准素材池）
+  if (APPLY_FILTERS) {
+    const lastListReqBody = () => {
+      for (let i = captured.length - 1; i >= 0; i--) {
+        if (String(captured[i].url).includes('clue/common/real_time_list')) return captured[i].reqBody;
+      }
+      return null;
+    };
+    const hasFilter = (key) => {
+      const cond = lastListReqBody() && lastListReqBody().condition;
+      const v = cond && cond[key];
+      return Array.isArray(v) && v.length > 0;
+    };
+    const clickFilter = async (text, key) => {
+      const chip = page.locator('.aurora-dorami-quick-search-item').filter({ hasText: new RegExp('^' + text + '$') }).first();
+      if (!(await chip.count())) return text + ':未找到';
+      await chip.scrollIntoViewIfNeeded().catch(() => {});
+      await chip.click({ timeout: 2500 }).catch(() => {});
+      await page.waitForTimeout(2500);
+      if (!hasFilter(key)) {
+        // 若原本已勾选，点击等于取消 → 再点一次恢复
+        await chip.click({ timeout: 2500 }).catch(() => {});
+        await page.waitForTimeout(2500);
+      }
+      return hasFilter(key) ? null : text + ':未生效';
+    };
+    filterIssues.push(await clickFilter('热度高', 'recommend_reason_list'));
+    filterIssues.push(await clickFilter('搜索扶持', 'profit_id_list'));
+
+    // 排序规则 → 增速快（按钮组：为你推荐/成交高/增速快/竞争小）
+    const sortOk = () => {
+      const b = lastListReqBody();
+      const s = b && b.condition && b.condition.sort;
+      return !!(s && s.sort_field && s.sort_field !== 'MATCH_DEGREE');
+    };
+    const sortItem = page.locator('.aurora-dorami-quick-search-item').filter({ hasText: /^增速快$/ }).first();
+    if (!(await sortItem.count())) {
+      filterIssues.push('增速快:未找到');
+    } else {
+      await sortItem.scrollIntoViewIfNeeded().catch(() => {});
+      await sortItem.click({ timeout: 2500 }).catch(() => {});
+      await page.waitForTimeout(2500);
+      if (!sortOk()) {
+        await sortItem.click({ timeout: 2500 }).catch(() => {});
+        await page.waitForTimeout(2500);
+      }
+      if (!sortOk()) filterIssues.push('增速快:未生效');
+    }
+  }
+} finally {
+  await page.unroute('**/api/commop/business_chance_center/**', handler).catch(() => {});
+}
+return { captured, finalUrl, matchedText, stage, filterIssues };
+`;
+
+          logger.info("[doudian-opportunity] channel=", channel, "keyword=", keyword);
+
+          const debugRes = await executeUploaderBrowserDebug({
+            action: "playwright",
+            profileId: String(targetPage.profileId || profileId || "").trim() || undefined,
+            pageIndex,
+            expression: script,
+            timeout: 55_000,
+          });
+
+          if (!debugRes?.success) {
+            const errDetail: any = (debugRes as any)?.errorDetail || {};
+            return {
+              success: false,
+              message: `商机采集请求失败: ${debugRes?.message || "未知原因"}${errDetail.rawMessage ? ` | 原始错误: ${errDetail.rawMessage}` : ""}`,
+              data: { errorDetail: errDetail },
+            };
+          }
+
+          const debugData = (debugRes as any)?.data || {};
+          const payload = debugData?.result?.value ?? debugData?.value ?? null;
+          const captured: any[] = Array.isArray(payload?.captured) ? payload.captured : [];
+          const finalUrl = String(payload?.finalUrl || "");
+          const matchedText = String(payload?.matchedText || "");
+          const stage = String(payload?.stage || "");
+          const filterIssues: string[] = Array.isArray(payload?.filterIssues)
+            ? payload.filterIssues.filter(Boolean)
+            : [];
+
+          if (finalUrl.includes("login")) {
+            return {
+              success: false,
+              message: "打开商机页后跳到了登录页。请先在所选浏览器环境里登录抖店后台（fxg.jinritemai.com）",
+              data: { finalUrl },
+            };
+          }
+          if (stage === "no-cascader") {
+            return {
+              success: false,
+              message: "页面上没找到「请选择行业类目」输入框，请确认商机页正常打开（可能需要登录或页面改版）",
+              data: { finalUrl, capturedPaths: captured.map((c: any) => String(c?.url || "").slice(-80)) },
+            };
+          }
+          if (stage === "no-match") {
+            return {
+              success: false,
+              message: `没匹配到类目「${keyword}」，请换个关键词（如：鼠标垫）`,
+              data: { matchedCategory: null },
+            };
+          }
+
+          // 响应优先级：带全筛选（热度高+搜索扶持）> 带类目过滤 > 最后一次
+          const listMatches = captured.filter((c: any) => String(c?.url || "").includes("clue/common/real_time_list"));
+          const condOf = (c: any) => c?.reqBody?.condition || {};
+          const hasCateFilter = (c: any) => {
+            const cate = condOf(c).categories;
+            return Array.isArray(cate) && cate.some((x: any) => x && Object.keys(x).length > 0);
+          };
+          const hasFullFilters = (c: any) => {
+            const cond = condOf(c);
+            return (
+              Array.isArray(cond.recommend_reason_list) && cond.recommend_reason_list.length > 0 &&
+              Array.isArray(cond.profit_id_list) && cond.profit_id_list.length > 0
+            );
+          };
+          // 取「最新」的全筛选响应（排序点击会再刷新一次，后发生的才是最终态）
+          const matched =
+            [...listMatches].reverse().find((c: any) => hasFullFilters(c) && hasCateFilter(c)) ||
+            [...listMatches].reverse().find(hasCateFilter) ||
+            listMatches[listMatches.length - 1] ||
+            null;
+
+          if (!matched) {
+            const allPaths = captured.map((c: any) => {
+              try { return new URL(String(c?.url || "")).pathname; } catch { return String(c?.url || "").slice(-70); }
+            });
+            return {
+              success: false,
+              message: `选中类目后页面未发起数据请求。捕获 ${captured.length} 个请求: ${allPaths.slice(0, 10).join(" | ")}`,
+              data: { capturedPaths: allPaths, matchedCategory: { path: matchedText } },
+            };
+          }
+
+          const apiJson = matched.body;
+          if (!apiJson || typeof apiJson !== "object") {
+            return {
+              success: false,
+              message: "商机列表接口返回异常：非 JSON 响应",
+              data: { matchedCategory: { path: matchedText } },
+            };
+          }
+
+          const apiCode = apiJson.code;
+          if (Number(apiCode) !== 0) {
+            const msg = String(apiJson.msg || apiJson.message || "-");
+            return {
+              success: false,
+              message:
+                Number(apiCode) === 10008 || msg.includes("登录")
+                  ? `抖店登录已失效（${msg}）。请在所选浏览器环境里重新登录抖店后台（fxg.jinritemai.com）后再采集`
+                  : `抖店接口返回异常 code=${apiCode} msg=${msg}`,
+              data: { matchedCategory: { path: matchedText }, _debug: { reqBody: matched.reqBody, raw: apiJson } },
+            };
+          }
+
+          const list: any[] = Array.isArray(apiJson?.data) ? apiJson.data : [];
+          const count = Number(apiJson?.total ?? list.length);
+          const matchedCat = { path: matchedText };
+
+          if (!list.length) {
+            logger.warn("[doudian-opportunity] empty list for", keyword, "channel", channel);
+          }
+          logger.info("[doudian-opportunity] matched=", matchedCat.path, "list.length=", list.length, "total=", count);
+
+          const filterNote =
+            channel === "all_word"
+              ? filterIssues.length
+                ? `（筛选/排序异常: ${filterIssues.join("、")}）`
+                : "（已筛选：热度高+搜索扶持，排序：增速快）"
+              : "";
+
+          return {
+            success: true,
+            message: `采集成功: ${list.length} 条（类目: ${matchedCat.path}，共 ${count} 条）${filterNote}`,
+            data: {
+              channel,
+              channelLabel: ch.label,
+              keyword,
+              matchedCategory: matchedCat,
+              page: pageNo,
+              pageSize,
+              data: list,
+              count,
+              error: "",
+              _debug: {
+                api_code: apiCode,
+                reqBody: matched.reqBody,
+                raw: apiJson,
+              },
+            },
+          };
+        };
+        return await Promise.race([
+          runDoudianOpportunityCollect(),
+          new Promise<any>((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  success: false,
+                  message: "商机采集执行超时（72 秒），请稍后重试",
+                }),
+              72_000,
+            ),
+          ),
+        ]);
       }
 
       if (action === "openPlatform" || action === "open-platform") {
