@@ -1412,8 +1412,8 @@ app.whenReady().then(() => {
 
   // 添加协议注册代码
 
-  // Set app user model id for windows
-  electronApp.setAppUserModelId("com.electron");
+  // Set app user model id for windows（与 electron-builder.yml appId 保持一致，确保 Windows Toast 通知正常弹出）
+  electronApp.setAppUserModelId("com.yishe.electron");
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
@@ -2220,17 +2220,35 @@ app.on("before-quit", (event) => {
   }
 });
 
-// 添加托盘相关的IPC监听器
+// 添加系统原生通知与托盘相关的IPC监听器
 ipcMain.handle(
   "show-tray-notification",
-  async (_, options: { title: string; body: string }) => {
-    if (tray) {
+  async (_, options: { title: string; body: string; subtitle?: string; url?: string; silent?: boolean; urgency?: "normal" | "critical" | "low" }) => {
+    const { showNativeNotification } = await import("./capabilities/notification");
+    const res = showNativeNotification({
+      title: options?.title || "衣设客户端通知",
+      body: options?.body || "",
+      subtitle: options?.subtitle,
+      url: options?.url,
+      silent: options?.silent,
+      urgency: options?.urgency,
+    });
+    if (!res.success && tray && process.platform === "win32") {
       tray.displayBalloon({
         title: options.title,
         content: options.body,
         icon: icon,
       });
     }
+    return res;
+  },
+);
+
+ipcMain.handle(
+  "notification:send",
+  async (_, options: { title: string; body: string; subtitle?: string; url?: string; silent?: boolean; urgency?: "normal" | "critical" | "low"; focusApp?: boolean }) => {
+    const { showNativeNotification } = await import("./capabilities/notification");
+    return showNativeNotification(options);
   },
 );
 

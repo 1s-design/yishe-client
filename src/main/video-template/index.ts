@@ -775,6 +775,21 @@ function sanitizeInputProps(
   };
 }
 
+function isHyperframesPackageInstalled() {
+  const candidates = [
+    path.resolve(process.cwd(), "node_modules", "@hyperframes", "engine", "package.json"),
+    path.join(app.getAppPath(), "node_modules", "@hyperframes", "engine", "package.json"),
+    path.join(
+      app.getAppPath().replace(/app\.asar$/, "app.asar.unpacked"),
+      "node_modules",
+      "@hyperframes",
+      "engine",
+      "package.json",
+    ),
+  ];
+  return candidates.some((p) => fs.existsSync(p));
+}
+
 async function getVideoTemplateStatus() {
   const directories = ensureVideoTemplateDirectories();
   const jobs = queueInstance
@@ -801,8 +816,10 @@ async function getVideoTemplateStatus() {
     engines: {
       remotion: { available: true },
       hyperframes: {
-        // HyperFrames 复用 Remotion 的 Chrome + FFmpeg 二进制，bundle 不需要
-        available: !!resolveRemotionBinariesDirectory() || !app.isPackaged,
+        // HyperFrames 需要 @hyperframes/* 依赖已安装，且复用 Chrome + FFmpeg
+        available:
+          isHyperframesPackageInstalled() &&
+          (!!resolveRemotionBinariesDirectory() || !app.isPackaged),
       },
     },
     queue: {

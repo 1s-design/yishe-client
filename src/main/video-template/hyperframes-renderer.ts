@@ -8,10 +8,14 @@
  * 渲染管线：HTML 写入项目目录 → @hyperframes/producer 驱动 headless Chrome 逐帧
  * seek 截图 → FFmpeg 编码 MP4。Chrome / FFmpeg 复用 Remotion 已解析出的本地二进制。
  */
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 import type { EngineConfig } from "@hyperframes/engine";
 import type { ProducerLogger } from "@hyperframes/producer";
 
@@ -337,6 +341,40 @@ function estimateProgress(
 }
 
 /**
+ * 自动将客户端本地内置的前端动效库（如 GSAP）拷贝到 HyperFrames 工程目录的 vendor/ 下，
+ * 让 HTML 合成可直接 `<script src="vendor/gsap.min.js"></script>`，零外网 CDN 依赖。
+ */
+function copyBundledVendorLibs(
+  projectDir: string,
+  onLog: (level: HyperframesLogLevel, stage: string, message: string) => void,
+): void {
+  const vendorDir = path.join(projectDir, "vendor");
+  const targetGsap = path.join(vendorDir, "gsap.min.js");
+  if (fs.existsSync(targetGsap)) return;
+
+  const candidates: string[] = [];
+  try {
+    candidates.push(require.resolve("gsap/dist/gsap.min.js"));
+  } catch {
+    // ignore
+  }
+  candidates.push(
+    path.resolve(process.cwd(), "node_modules/gsap/dist/gsap.min.js"),
+    path.resolve(__dirname, "../../../../node_modules/gsap/dist/gsap.min.js"),
+  );
+
+  const source = candidates.find((p) => p && fs.existsSync(p));
+  if (!source) {
+    onLog("warn", "prepare", "未找到本地内置 gsap.min.js，跳过 vendor 挂载");
+    return;
+  }
+
+  fs.mkdirSync(vendorDir, { recursive: true });
+  fs.copyFileSync(source, targetGsap);
+  onLog("info", "prepare", "本地内置动效库已就绪: vendor/gsap.min.js");
+}
+
+/**
  * 渲染一个 HyperFrames 合成（HTML 源码）为 MP4。
  * 取消通过 abortSignal；渲染成功时 outputLocation 已写入完成。
  */
@@ -375,6 +413,7 @@ export async function renderHyperframesJob(
     abortSignal,
     onLog,
   );
+  copyBundledVendorLibs(projectDir, onLog);
   fs.mkdirSync(path.dirname(outputLocation), { recursive: true });
 
   ensureHyperframesEncoderEnv(binariesDirectory);
@@ -452,5 +491,67 @@ export async function renderHyperframesJob(
 
   if (!fs.existsSync(outputLocation)) {
     throw new Error(`HyperFrames 渲染结束但未产出文件：${outputLocation}`);
+  }
+
+  await probeHyperframesOutput(outputLocation, html, onLog);
+}
+
+async function probeHyperframesOutput(
+  outputLocation: string,
+  html: string,
+  onLog: (level: HyperframesLogLevel, stage: string, message: string) => void,
+): Promise<void> {
+  const ffprobePath = process.env.HYPERFRAMES_FFPROBE_PATH;
+  const sizeMB = (fs.statSync(outputLocation).size / 1024 / 1024).toFixed(2);
+  if (!ffprobePath) {
+    onLog("info", "completed", `成片已落盘（${sizeMB}MB），未检测到 ffprobe 跳过流质检`);
+    return;
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      ffprobePath,
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type,codec_name,width,height:format=duration",
+        "-of",
+        "json",
+        outputLocation,
+      ],
+      { timeout: 10000 },
+    );
+    const parsed = JSON.parse(stdout || "{}") as {
+      streams?: Array<{
+        codec_type?: string;
+        codec_name?: string;
+        width?: number;
+        height?: number;
+      }>;
+      format?: { duration?: string };
+    };
+    const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
+    const video = streams.find((s) => s.codec_type === "video");
+    const audio = streams.find((s) => s.codec_type === "audio");
+    const duration = Number(parsed.format?.duration || 0).toFixed(2);
+    const expectsAudio = /<audio\b/i.test(html);
+    onLog(
+      expectsAudio && !audio ? "warn" : "info",
+      "completed",
+      `成片质检：${video?.width || "?"}x${video?.height || "?"} ${duration}s ${sizeMB}MB，音轨=${audio ? audio.codec_name : "无"}`,
+    );
+    if (expectsAudio && !audio) {
+      onLog(
+        "warn",
+        "completed",
+        "警告：HTML 包含 <audio> 标签但输出 MP4 无音轨，请检查音频地址或 assets 路径",
+      );
+    }
+  } catch (error) {
+    onLog(
+      "warn",
+      "completed",
+      `ffprobe 质检跳过：${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }

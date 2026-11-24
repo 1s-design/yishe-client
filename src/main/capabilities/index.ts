@@ -13,6 +13,7 @@ import { registerSystemInfoCapabilities } from "./system-info";
 import { registerScreenMediaCapabilities } from "./screen-media";
 import { registerNetworkCapabilities } from "./network";
 import { registerPrintCapabilities } from "./print";
+import { registerNotificationCapabilities } from "./notification";
 import { registerGoogleArtCapabilities } from "./googleArt";
 import { registerMaterialLibraryCapabilities } from "./materialLibrary";
 import { registerCollectCapabilities } from "./collect";
@@ -48,6 +49,7 @@ export function registerAllCapabilities(): void {
   registerScreenMediaCapabilities();
   registerNetworkCapabilities();
   registerPrintCapabilities();
+  registerNotificationCapabilities();
   registerMaterialLibraryCapabilities();
 
   // ── 定制采集能力（独立实现，保留） ──

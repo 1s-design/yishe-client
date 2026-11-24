@@ -31,7 +31,7 @@ interface PageImage {
 }
 
 /** 从 HTML 提取图片清单（含 srcset 择优、相对路径补全） */
-function extractImages(html: string, baseUrl: string, limit: number): PageImage[] {
+function extractImages(html: string, baseUrl: string, limit: number, filterIcons = true): PageImage[] {
   const results: PageImage[] = [];
   const seen = new Set<string>();
 
@@ -73,8 +73,8 @@ function extractImages(html: string, baseUrl: string, limit: number): PageImage[
     }
     const abs = absolutize(url);
     if (!abs || seen.has(abs)) continue;
-    // 过滤明显的小图标
-    if (/(favicon|logo|sprite|icon|avatar|spacer|blank)/i.test(abs)) continue;
+    // 仅过滤明显的页面占位图/雪碧图/网站图标，不误杀含 logo/icon 的业务素材（如校徽、徽章、图标素材）
+    if (filterIcons && /(favicon|sprite|spacer|blank)/i.test(abs)) continue;
     seen.add(abs);
 
     const alt = attr("alt");
@@ -175,13 +175,14 @@ async function openPage(
   return { ...res, mode: "http" };
 }
 
-/** HTTP 抓取（降级路径） */
+/** HTTP 抓取（fetch 优先，失败自动降级 curl 以绕过 Node TLS 指纹或代理差异） */
 async function httpFetch(
   url: string,
   timeoutMs: number,
 ): Promise<{ html: string; title: string; finalUrl: string }> {
+  const fetchTimeout = Math.min(Math.max(timeoutMs, 5000), 20000);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), fetchTimeout);
   try {
     const res = await fetch(url, {
       headers: {
@@ -199,6 +200,32 @@ async function httpFetch(
       title: titleM ? titleM[1].trim() : "",
       finalUrl: res.url || url,
     };
+  } catch {
+    const maxSec = String(Math.min(Math.max(Math.ceil(timeoutMs / 1000), 10), 40));
+    const html = await new Promise<string>((resolve, reject) => {
+      const { execFile } = require("child_process");
+      const args = [
+        "-sSLf",
+        "--max-time",
+        maxSec,
+        "-H",
+        `User-Agent: ${UA}`,
+        "-H",
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        url,
+      ];
+      execFile("curl", args, { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 }, (err: any, stdout: string) => {
+        if (err) reject(new Error(`HTTP/curl 抓取失败: ${err.message}`));
+        else if (!stdout?.length) reject(new Error(`HTTP/curl 抓取空响应: ${url}`));
+        else resolve(stdout);
+      });
+    });
+    const titleM = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+    return {
+      html,
+      title: titleM ? titleM[1].trim() : "",
+      finalUrl: url,
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -215,22 +242,32 @@ function isImageBuffer(buf: Buffer): boolean {
   );
 }
 
-/** 下载图片到临时文件（fetch → curl 双通道，与 collectEngine 一致） */
-async function downloadToFile(url: string, referer?: string): Promise<string> {
+/** 粗检是否误下成了 HTML 错误页 */
+function looksLikeHtmlPage(buf: Buffer): boolean {
+  const head = buf.subarray(0, 256).toString("utf8").trimStart().toLowerCase();
+  return head.startsWith("<!doctype html") || head.startsWith("<html");
+}
+
+/** 下载图片或媒体文件到临时文件（fetch 20s 优先 → curl 45s 兜底，避免卡死 MCP 60s 超时） */
+async function downloadToFile(
+  url: string,
+  referer?: string,
+  opts?: { allowNonImage?: boolean },
+): Promise<string> {
   let buf: Buffer;
   const headers: Record<string, string> = {
     "User-Agent": UA,
     ...(referer ? { Referer: referer } : {}),
   };
   try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(120000) });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     buf = Buffer.from(await res.arrayBuffer());
   } catch {
-    // TLS 指纹拦截时降级 curl（-f: HTTP 错误即失败）
+    // TLS 指纹拦截或超时时降级 curl（-f: HTTP 错误即失败）
     buf = await new Promise<Buffer>((resolve, reject) => {
       const { execFile } = require("child_process");
-      const args = ["-sSLf", "--max-time", "120"];
+      const args = ["-sSLf", "--max-time", "45"];
       for (const [k, v] of Object.entries(headers)) args.push("-H", `${k}: ${v}`);
       args.push(url);
       execFile("curl", args, { encoding: "buffer", maxBuffer: 200 * 1024 * 1024 }, (err: any, stdout: Buffer) => {
@@ -240,11 +277,18 @@ async function downloadToFile(url: string, referer?: string): Promise<string> {
       });
     });
   }
-  if (!isImageBuffer(buf)) {
+  if (opts?.allowNonImage) {
+    if (looksLikeHtmlPage(buf)) {
+      throw new Error(`下载内容为 HTML 页面而非媒体文件: ${url}`);
+    }
+  } else if (!isImageBuffer(buf)) {
     throw new Error(`下载内容不是有效图片（可能为错误页面）: ${url}`);
   }
   const extM = url.split("?")[0].split(".").pop()?.toLowerCase() || "";
-  const ext = /^(jpe?g|png|gif|webp|bmp)$/.test(extM) ? extM : "jpg";
+  const validExtRe = opts?.allowNonImage
+    ? /^(jpe?g|png|gif|webp|bmp|svg|mp4|webm|mov|mp3|wav|ogg|flac|m4a|pdf|epub|zip)$/
+    : /^(jpe?g|png|gif|webp|bmp)$/;
+  const ext = validExtRe.test(extM) ? extM : opts?.allowNonImage ? "bin" : "jpg";
   const tmpPath = path.join(
     os.tmpdir(),
     `webcollect-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`,
@@ -275,6 +319,7 @@ const browseDef: CapabilityDefinition = {
     maxImages: z.number().optional().describe("返回图片数量上限（默认 30）"),
     maxLinks: z.number().optional().describe("返回链接数量上限（默认 20）"),
     includeHtml: z.boolean().optional().describe("是否返回原始 HTML（默认否）"),
+    filterIcons: z.boolean().optional().describe("是否过滤 favicon/sprite/spacer 等页面占位图，默认 true；传 false 返回全部图片"),
     textLength: z.number().optional().describe("文本摘要长度（默认 1500）"),
   }),
   handler: async (args: {
@@ -285,6 +330,7 @@ const browseDef: CapabilityDefinition = {
     maxImages?: number;
     maxLinks?: number;
     includeHtml?: boolean;
+    filterIcons?: boolean;
     textLength?: number;
   }) => {
     try {
@@ -297,7 +343,7 @@ const browseDef: CapabilityDefinition = {
         timeoutMs: args.timeoutMs,
       });
 
-      const images = extractImages(opened.html, opened.finalUrl, maxImages);
+      const images = extractImages(opened.html, opened.finalUrl, maxImages, args.filterIcons !== false);
       const links = extractLinks(opened.html, opened.finalUrl, maxLinks);
       const text = extractText(opened.html, args.textLength ?? 1500);
 
@@ -346,10 +392,10 @@ const downloadDef: CapabilityDefinition = {
     materialTarget: z
       .string()
       .optional()
-      .describe("入库目标：crawler_material（默认）或 collect_file"),
+      .describe("入库目标：crawler_material（默认，采集素材）或 collect_file（采集媒体，支持视频/音频/文档/图片）"),
     keywords: z.string().optional().describe("关键词（逗号分隔）"),
     meta: z
-      .record(z.any())
+      .record(z.string(), z.any())
       .optional()
       .describe("附加元数据（如 harvestBatchId、auditStatus 等，合并进素材 meta）"),
   }),
@@ -375,7 +421,8 @@ const downloadDef: CapabilityDefinition = {
           }
         })();
 
-      tmpPath = await downloadToFile(args.url, referer);
+      const isCollectFile = args.materialTarget === "collect_file";
+      tmpPath = await downloadToFile(args.url, referer, { allowNonImage: isCollectFile });
 
       const { uploadToMaterialLibrary } = await import("../materialLibrary");
       const filename = args.url.split("?")[0].split("/").pop() || `webcollect-${Date.now()}.jpg`;
@@ -385,12 +432,13 @@ const downloadDef: CapabilityDefinition = {
         source: args.source || "webcollect",
         originUrl: args.originUrl || args.url,
         keywords: args.keywords || "",
-        materialTarget: args.materialTarget === "collect_file" ? "collect_file" : "crawler_material",
+        materialTarget: isCollectFile ? "collect_file" : "crawler_material",
         meta: {
           sourceImageUrl: args.url,
           importedFrom: "webcollect",
           collectMethod: "webcollect",
           collectMethodLabel: "网页采集",
+          ...(isCollectFile ? { skipImagePolicy: true } : {}),
           ...(args.meta || {}),
         },
       } as any);
