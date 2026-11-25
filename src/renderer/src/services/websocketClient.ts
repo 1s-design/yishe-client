@@ -5686,6 +5686,23 @@ function bindSocketEvents(currentSocket: Socket) {
     }
   });
 
+  // 定时采集调度配置推送：服务端 WS 推全量 schedules，转发给主进程更新本地 CronScheduler
+  currentSocket.on("cron-collect:schedules", (payload: any) => {
+    const schedules = payload?.schedules || [];
+    emitter.emit("log", {
+      level: "info",
+      message: `[ws] 收到定时采集调度推送 count=${schedules.length}`,
+    });
+    try {
+      const api = (window as any).api;
+      if (api && typeof api.updateCronSchedules === "function") {
+        void api.updateCronSchedules(schedules);
+      }
+    } catch {
+      /* 渲染层环境不可用时忽略 */
+    }
+  });
+
   currentSocket.on("worker:task", async (task: any) => {
     const taskId = task?.taskId;
     const capabilityId = task?.capabilityId || "";

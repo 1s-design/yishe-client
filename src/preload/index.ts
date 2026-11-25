@@ -41,6 +41,7 @@ const api = {
   // 图片裁剪审核执行引擎
   getCropTaskStatus: () => ipcRenderer.invoke("crop-task:status"),
   triggerCropTaskPoll: () => ipcRenderer.invoke("crop-task:poll"),
+  updateCronSchedules: (schedules: any[]) => ipcRenderer.invoke("cron-collect:update-schedules", schedules),
   onAppRuntimeEvent: (callback: (event: any) => void) => {
     ipcRenderer.on("app-runtime-event", (_event, payload) => callback(payload));
   },

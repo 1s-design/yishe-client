@@ -1348,9 +1348,42 @@ app.whenReady().then(() => {
 
   // 注册通用客户端能力
   import("./capabilities")
-    .then((m) => {
+    .then(async (m) => {
       m.registerAllCapabilities();
       console.log(`[App] 通用能力已注册: ${m.getCapabilityCount()} 个`);
+
+      // 初始化客户端本地定时采集调度器
+      try {
+        const { initCronCollectRunner } = await import("./cron-collect-runner");
+        await initCronCollectRunner({
+          execute: async (schedule) => {
+            const result = await m.callCapability("collect", "run", {
+              sourceId: schedule.sourceId,
+              action: schedule.action,
+              params: schedule.params || {},
+              ...(schedule.materialTarget ? { materialTarget: schedule.materialTarget } : {}),
+            });
+            if (result?.success === false) {
+              throw new Error(result.error || "采集执行失败");
+            }
+            const items = result?.data?.items || [];
+            return `${items.length} 条`;
+          },
+          initialSchedules: [
+            {
+              id: "cron-douyin-hot",
+              sourceId: "hotsearch-douyin",
+              action: "list",
+              params: { pageSize: 30 },
+              intervalSec: 3 * 3600, // 每 3 小时
+              enabled: true,
+              label: "抖音热搜",
+            },
+          ],
+        });
+      } catch (e: any) {
+        console.warn("[App] 定时采集调度器初始化失败:", e?.message || e);
+      }
     })
     .catch((e) => {
       console.warn("[App] 通用能力注册失败:", e?.message || e);
@@ -1521,6 +1554,18 @@ app.whenReady().then(() => {
     const { getCropTaskEngine } = await import("./crop-task-engine");
     getCropTaskEngine().triggerPoll();
     return { ok: true };
+  });
+
+  // 定时采集调度配置：renderer WS 收到推送后转给主进程 CronScheduler
+  ipcMain.handle("cron-collect:update-schedules", async (_event, schedules: any[]) => {
+    try {
+      const { updateCronSchedules } = await import("./cron-collect-runner");
+      updateCronSchedules(schedules || []);
+      return { ok: true, count: schedules?.length || 0 };
+    } catch (e: any) {
+      console.warn("[IPC:cron-collect:update-schedules]", e?.message || e);
+      return { ok: false, error: e?.message };
+    }
   });
 
   // 插件/外部进程管理 IPC

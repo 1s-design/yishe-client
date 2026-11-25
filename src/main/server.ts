@@ -461,7 +461,6 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
       { name: "hotsearch_github", description: "采集GitHub Trending" },
       { name: "hotsearch_wikipedia", description: "采集维基百科热点" },
       { name: "hotsearch_devto", description: "采集Dev.to热门文章" },
-      { name: "hotsearch_google_trends", description: "采集Google趋势" },
       { name: "hotsearch_hackernews", description: "采集Hacker News" },
       { name: "hotsearch_bbc_news", description: "采集BBC新闻" },
       { name: "hotsearch_cnn", description: "采集CNN新闻" },
@@ -895,6 +894,46 @@ async function _startServer(port: number = 1519): Promise<() => Promise<void>> {
         success: false,
         message: error?.message || "停止失败",
       });
+    }
+  });
+
+  // ── 客户端本地定时采集（cron-collect） ──
+  app.post("/api/cron-collect/schedules", requireLocalAuth, async (req, res) => {
+    try {
+      const { action = "setAll", schedules, schedule, id } = req.body || {};
+      const { getCronScheduler } = await import("./capabilities/cron-collect");
+      const s = getCronScheduler();
+      switch (action) {
+        case "setAll":
+          if (!Array.isArray(schedules)) return res.status(400).json({ success: false, message: "缺少 schedules" });
+          s.setSchedules(schedules);
+          return res.json({ success: true, count: schedules.length });
+        case "upsert":
+          if (!schedule) return res.status(400).json({ success: false, message: "缺少 schedule" });
+          s.upsertSchedule(schedule);
+          return res.json({ success: true, id: schedule.id });
+        case "remove":
+          if (!id) return res.status(400).json({ success: false, message: "缺少 id" });
+          s.removeSchedule(id);
+          return res.json({ success: true, id });
+        case "trigger":
+          if (!id) return res.status(400).json({ success: false, message: "缺少 id" });
+          await s.triggerNow(id);
+          return res.json({ success: true, id });
+        default:
+          return res.status(400).json({ success: false, message: `未知操作: ${action}` });
+      }
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error?.message || "失败" });
+    }
+  });
+
+  app.get("/api/cron-collect/schedules", requireLocalAuth, async (_req, res) => {
+    try {
+      const { getCronScheduler } = await import("./capabilities/cron-collect");
+      res.json({ success: true, schedules: getCronScheduler().listStatus() });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error?.message || "失败" });
     }
   });
 

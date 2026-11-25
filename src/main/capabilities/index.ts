@@ -17,6 +17,7 @@ import { registerNotificationCapabilities } from "./notification";
 import { registerGoogleArtCapabilities } from "./googleArt";
 import { registerMaterialLibraryCapabilities } from "./materialLibrary";
 import { registerCollectCapabilities } from "./collect";
+import { registerCronCollectCapabilities } from "./cron-collect";
 import { registerWebCollectCapabilities } from "./web-collect";
 import { startCollectToolSyncLoop } from "./dynamic-tool-surface";
 import { registerShopifyCapabilities } from "./shopify";
@@ -59,6 +60,7 @@ export function registerAllCapabilities(): void {
   // ── 采集引擎 + 采集能力规格表（工具面；实现走 source-bridge → 服务端源定义）──
   registerCollectCapabilities();
   registerWebCollectCapabilities();
+  registerCronCollectCapabilities(); // 客户端本地定时采集调度
   startCollectToolSyncLoop(); // 采集工具面由服务端源清单动态生成
 
   initialized = true;

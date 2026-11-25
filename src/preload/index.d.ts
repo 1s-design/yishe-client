@@ -41,6 +41,7 @@ declare global {
         processedCount: number;
       }>;
       triggerCropTaskPoll(): Promise<{ ok: boolean }>;
+      updateCronSchedules(schedules: any[]): Promise<{ ok: boolean; count?: number }>;
       onAppRuntimeEvent(callback: (event: any) => void): void;
       onExtensionConnectionStatus(callback: (status: any) => void): void;
       openExternal(url: string): Promise<void>;
