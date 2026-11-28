@@ -559,6 +559,7 @@ const RUNTIME_REPORTING_SERVICE_KEYS = new Set([
   "mcp-server",
   "local-service",
   "douyin_jingxuan",
+  "client-agent",
 ]);
 
 function shouldReportServiceRuntime(serviceKey: string): boolean {
@@ -8658,6 +8659,62 @@ function registerBuiltInLocalServices() {
   }
 
   registerLocalService({
+    key: "client-agent",
+    pluginKey: "client-agent",
+    label: "客户端 Agent",
+    getRuntime: async (): Promise<Partial<ClientServiceStatus>> => {
+      const nativeApi = getNativeApi() as any;
+      const getRuntimeStatus = nativeApi?.agent?.getRuntimeStatus;
+      if (typeof getRuntimeStatus !== "function") {
+        return {
+          label: "客户端 Agent",
+          status: "unavailable",
+          state: "offline",
+          available: false,
+          connected: false,
+          message: "未检测到客户端 Agent 运行时",
+        };
+      }
+      try {
+        const runtime = await getRuntimeStatus();
+        const enabled = Boolean(runtime?.enabled);
+        const activeCount = Number(runtime?.activeCount || 0);
+        const queuedCount = Number(runtime?.queuedCount || 0);
+        const maxConcurrency = Number(runtime?.maxConcurrency || 4);
+        const model = String(runtime?.model || "");
+        const state = !enabled
+          ? "disabled"
+          : activeCount > 0
+            ? "running"
+            : "idle";
+        const message = !enabled
+          ? "未绑定客户端 Agent 模型"
+          : activeCount > 0
+            ? `${model || "已就绪"} · 并发 ${activeCount}/${maxConcurrency}${queuedCount > 0 ? `（排队 ${queuedCount}）` : ""}`
+            : `${model || "已就绪"} · 空闲（支持 ${maxConcurrency} 并发）`;
+        return {
+          label: "客户端 Agent",
+          status: enabled ? "ready" : "disabled",
+          state,
+          available: enabled,
+          connected: enabled,
+          message,
+          details: runtime,
+        };
+      } catch (err: any) {
+        return {
+          label: "客户端 Agent",
+          status: "error",
+          state: "error",
+          available: false,
+          connected: false,
+          message: err?.message || "读取客户端 Agent 状态失败",
+        };
+      }
+    },
+  });
+
+  registerLocalService({
     key: "mediaCollect",
     pluginKey: "media-collect",
     label: "媒体采集",
@@ -16588,6 +16645,7 @@ async function syncBoundClientAgentConfig() {
     clientAgentConfig.baseUrl = config.baseUrl || "";
     clientAgentConfig.enabled = !!config.enabled;
     clientAgentConfig.loaded = true;
+    void syncServiceRuntime("client-agent");
   }
 }
 

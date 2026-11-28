@@ -428,7 +428,7 @@ const downloadDef: CapabilityDefinition = {
       const filename = args.url.split("?")[0].split("/").pop() || `webcollect-${Date.now()}.jpg`;
       const matRes: any = await uploadToMaterialLibrary(tmpPath, filename, {
         name: args.title || filename,
-        category: "uncategorized",
+        category: isCollectFile ? "collect-file" : "crawler-material",
         source: args.source || "webcollect",
         originUrl: args.originUrl || args.url,
         keywords: args.keywords || "",
@@ -518,7 +518,7 @@ const uploadDef: CapabilityDefinition = {
       const { uploadToMaterialLibrary } = await import("../materialLibrary");
       const matRes: any = await uploadToMaterialLibrary(filePath, filename, {
         name: args.title || filename,
-        category: "uncategorized",
+        category: args.materialTarget === "collect_file" ? "collect-file" : "crawler-material",
         source: args.source || "webcollect-upload",
         originUrl: args.originUrl || "",
         keywords: args.keywords || "",

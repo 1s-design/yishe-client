@@ -237,6 +237,7 @@ interface ServerChatMessage {
       >;
   attachments?: AttachmentData[];
   reasoning_content?: string;
+  toolCalls?: ToolCallItem[];
   tool_call_id?: string;
   name?: string;
 }
@@ -259,6 +260,7 @@ function serverMessageToChatMessage(
     role: msg.role === "tool" ? "assistant" : msg.role,
     content,
     reasoning: msg.reasoning_content,
+    toolCalls: Array.isArray(msg.toolCalls) ? msg.toolCalls : undefined,
     timestamp: Date.now(),
     attachments: msg.attachments,
     isStreaming: false,
@@ -449,22 +451,52 @@ async function refreshSessions() {
   try {
     const remote = await loadSessionsFromApi();
     if (remote.length > 0) {
-      sessions.value = sessions.value.map((local) => {
-        const remoteSession = remote.find((r) => r.id === local.id);
-        if (remoteSession && local.messages.length > 0) {
-          return { ...remoteSession, messages: local.messages };
+      const localMap = new Map(sessions.value.map((s) => [s.id, s]));
+      const merged: ChatSession[] = remote.map((r) => {
+        const local = localMap.get(r.id);
+        if (local && local.messages.length > 0 && local.updatedAt >= r.updatedAt) {
+          return { ...r, messages: local.messages };
         }
-        return remoteSession || local;
+        return r;
       });
-      for (const r of remote) {
-        if (!sessions.value.some((s) => s.id === r.id)) {
-          sessions.value.push(r);
+      for (const local of sessions.value) {
+        if (!remote.some((r) => r.id === local.id)) {
+          merged.push(local);
         }
       }
+      merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      sessions.value = merged;
     }
   } catch {
     // 忽略刷新失败
   }
+}
+
+let sessionsUpdatedSubscribed = false;
+function subscribeSessionsUpdated() {
+  if (sessionsUpdatedSubscribed) return;
+  const onSessionsUpdated = (window as any)?.api?.agent?.onSessionsUpdated;
+  if (typeof onSessionsUpdated !== "function") return;
+  sessionsUpdatedSubscribed = true;
+  onSessionsUpdated(async (payload?: { sessionId?: string }) => {
+    await refreshSessions();
+    if (
+      payload?.sessionId &&
+      activeSessionId.value === payload.sessionId &&
+      !isStreaming.value
+    ) {
+      const detail = await loadSessionDetail(payload.sessionId);
+      if (detail) {
+        const idx = sessions.value.findIndex((s) => s.id === detail.id);
+        if (idx >= 0) {
+          sessions.value[idx] = {
+            ...sessions.value[idx],
+            messages: detail.messages,
+          };
+        }
+      }
+    }
+  });
 }
 
 // ── 公开方法 ──────────────────────────────────────────────
@@ -709,6 +741,7 @@ async function refreshSessionsManual() {
 }
 
 export function useAgent() {
+  subscribeSessionsUpdated();
   if (sessions.value.length === 0) {
     initSessions();
   }

@@ -16,11 +16,14 @@ import { registerPrintCapabilities } from "./print";
 import { registerNotificationCapabilities } from "./notification";
 import { registerGoogleArtCapabilities } from "./googleArt";
 import { registerMaterialLibraryCapabilities } from "./materialLibrary";
+import { registerCosUploadCapabilities } from "./cosUpload";
 import { registerCollectCapabilities } from "./collect";
 import { registerCronCollectCapabilities } from "./cron-collect";
 import { registerWebCollectCapabilities } from "./web-collect";
 import { startCollectToolSyncLoop } from "./dynamic-tool-surface";
 import { registerShopifyCapabilities } from "./shopify";
+import { registerClientAgentCapabilities } from "./client-agent";
+import { registerImageTransformCapabilities } from "./image-transform";
 import { CapabilityRegistry } from "./registry";
 import type { CapabilityResult, RegisteredCapability } from "./types";
 
@@ -52,10 +55,13 @@ export function registerAllCapabilities(): void {
   registerPrintCapabilities();
   registerNotificationCapabilities();
   registerMaterialLibraryCapabilities();
+  registerCosUploadCapabilities(); // 纯 COS 直传，只返回 URL，不写素材表
 
   // ── 定制采集能力（独立实现，保留） ──
   registerGoogleArtCapabilities();
   registerShopifyCapabilities();
+  registerClientAgentCapabilities();
+  registerImageTransformCapabilities();
 
   // ── 采集引擎 + 采集能力规格表（工具面；实现走 source-bridge → 服务端源定义）──
   registerCollectCapabilities();

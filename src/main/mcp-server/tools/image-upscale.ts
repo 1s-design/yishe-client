@@ -52,11 +52,15 @@ async function registerRecord(params: {
   sourceUrl: string;
 }) {
   try {
-    const { uploadFileToCos } = await import('../../cos');
+    const { generateCosKey, uploadFileToCos } = await import('../../cos');
     const { DynamicCapabilityManager } = await import('../dynamic-capability-manager');
     const serverUrl = await DynamicCapabilityManager.resolveServerUrl();
 
-    const upload = await uploadFileToCos(params.localPath);
+    const cosKey = generateCosKey({
+      category: 'image-processing-record',
+      filename: params.fileName || 'upscaled.png',
+    });
+    const upload = await uploadFileToCos(params.localPath, cosKey);
     if (!upload.ok) {
       const message = 'msg' in upload ? upload.msg : '结果上传失败';
       return { ok: false, message };

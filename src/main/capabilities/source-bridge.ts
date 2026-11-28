@@ -35,6 +35,10 @@ const KEEP_LEGACY = new Set([
   // 通用采集能力命名空间（collect.discover / collect.run / collect.status）由
   // CapabilityRegistry 自己处理；不能被当成源 id 去拉源代码（否则 status 会 404）
   "collect",
+  // 客户端自研 LangGraph Agent 控制能力（clientAgent.status / run / stop）
+  "clientAgent",
+  // 客户端本地图像处理并直传 COS（PNG 去白边 / SVG 转 PNG / 旋转）
+  "imageTransform",
 ]);
 
 /** 数据工具命名空间（→ 源 data-tools，params.tool = 命名空间） */

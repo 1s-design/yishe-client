@@ -121,13 +121,21 @@ export async function uploadToMaterialLibrary(
   fileName: string,
   payload: MaterialLibraryPayload,
 ): Promise<MaterialLibraryResult> {
-  const category = payload?.category || "uncategorized";
   const materialTarget =
     payload?.materialTarget === "collect_file"
       ? "collect_file"
       : payload?.materialTarget === "sticker"
         ? "sticker"
         : "crawler_material";
+  const defaultCategory =
+    materialTarget === "collect_file"
+      ? "collect-file"
+      : materialTarget === "sticker"
+        ? "sticker"
+        : "crawler-material";
+  const rawCategory = String(payload?.category || "").trim();
+  const category =
+    rawCategory && rawCategory !== "uncategorized" ? rawCategory : defaultCategory;
   console.log(`[MaterialLibrary] 准备入库: localPath=${localPath}, fileName=${fileName}, category=${category}, target=${materialTarget}`);
 
   // 1. 客户端本地校验图片有效性并提取宽高/大小（必须在上传 COS 前执行，防止无效/错误页文件浪费云存储）

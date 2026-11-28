@@ -836,7 +836,15 @@ const api = {
       messages: any[];
       config?: any;
     }) => ipcRenderer.send("agent:send-message", payload),
-    stop: () => ipcRenderer.invoke("agent:stop"),
+    stop: (payload?: { runId?: string }) =>
+      ipcRenderer.invoke("agent:stop", payload),
+    getRuntimeStatus: () => ipcRenderer.invoke("agent:runtime-status"),
+    onSessionsUpdated: (callback: (data: { sessionId?: string }) => void) => {
+      const listener = (_event: any, data: any) => callback(data || {});
+      ipcRenderer.on("agent:sessions-updated", listener);
+      return () =>
+        ipcRenderer.removeListener("agent:sessions-updated", listener);
+    },
     resolveToolApproval: (payload: { callId: string; approved: boolean }) =>
       ipcRenderer.invoke("agent:resolve-tool-approval", payload),
     getConfig: () => ipcRenderer.invoke("agent:get-config"),

@@ -15,7 +15,12 @@ import type { Router } from "express";
 import { randomUUID } from "crypto";
 import { sessionStore } from "./session-store";
 import { clientLangGraphAgent } from "./langgraph-agent";
-import type { AgentChatMessage, AgentSelectedTool } from "./langgraph-agent";
+import { listAgentProfiles } from "./profiles";
+import type {
+  AgentChatMessage,
+  AgentProfileId,
+  AgentSelectedTool,
+} from "./langgraph-agent";
 
 export function createAgentApiRouter(): Router {
   // 动态 import express 避免循环依赖
@@ -85,10 +90,30 @@ export function createAgentApiRouter(): Router {
     res.json({ success: ok, data: { deleted: ok } });
   });
 
-  // ── 停止生成 ──────────────────────────────────────────────
-  router.post("/stop", (_req, res) => {
-    clientLangGraphAgent.abort();
-    res.json({ success: true, data: { stopped: true } });
+  // ── 可用场景 Profile 与实时多 Agent 运行态 ───────────────────
+  router.get("/profiles", (_req, res) => {
+    res.json({
+      success: true,
+      data: {
+        profiles: listAgentProfiles(),
+        activeRuns: clientLangGraphAgent.getActiveRunCount(),
+      },
+    });
+  });
+
+  router.get("/runtime-status", (_req, res) => {
+    res.json({
+      success: true,
+      data: clientLangGraphAgent.getRuntimeStatus(),
+    });
+  });
+
+
+  // ── 停止生成（支持按 runId 精准中止，不误杀其他并发任务） ───
+  router.post("/stop", (req, res) => {
+    const runId = typeof req.body?.runId === "string" ? req.body.runId : undefined;
+    clientLangGraphAgent.abort(runId);
+    res.json({ success: true, data: { stopped: true, runId: runId || null } });
   });
 
   // ── 审批工具调用（手动模式） ──────────────────────────────
@@ -158,8 +183,14 @@ export function createAgentApiRouter(): Router {
   // ── 发送消息（SSE 流式） ──────────────────────────────────
   router.post("/sessions/:id/messages", async (req, res) => {
     const sessionId = req.params.id;
-    const { text, attachments, selectedTools, toolSelectionOnly, autoApprove } =
-      req.body ?? {};
+    const {
+      text,
+      attachments,
+      selectedTools,
+      toolSelectionOnly,
+      autoApprove,
+      profile,
+    } = req.body ?? {};
 
     if (!text || typeof text !== "string") {
       res.status(400).json({ success: false, error: "缺少 text 参数" });
@@ -204,12 +235,17 @@ export function createAgentApiRouter(): Router {
 
     const runId = randomUUID();
 
-    try {
-      // 使用现有的完整消息历史
-      const historyMessages: AgentChatMessage[] = [...session.messages];
+    // 仅在 SSE 响应流未正常结束前客户端主动断开时，才中止本条 runId
+    // 注意：Express 5 / Node 22+ 下 req 的 close 事件在请求体读完即触发，必须监听 res 的 close。
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        clientLangGraphAgent.abort(runId);
+      }
+    });
 
-      // 根据请求参数决定是否自动审批（UI 手动模式传 autoApprove=false）
-      clientLangGraphAgent.autoApproveWrite = Boolean(autoApprove);
+    try {
+      const historyMessages: AgentChatMessage[] = [...session.messages];
+      const recordedToolCalls: NonNullable<AgentChatMessage["toolCalls"]> = [];
 
       await clientLangGraphAgent.run(
         historyMessages,
@@ -224,42 +260,62 @@ export function createAgentApiRouter(): Router {
             sendEvent("tool_approval", toolCall);
           },
           onToolStart: (toolCall) => {
+            recordedToolCalls.push({
+              id: toolCall.id,
+              name: toolCall.name,
+              args: toolCall.args || {},
+              status: "running",
+            });
             sendEvent("tool_start", toolCall);
           },
           onToolEnd: (toolResult) => {
+            const target = recordedToolCalls.find(
+              (t) => t.id === toolResult.id,
+            );
+            if (target) {
+              target.result = toolResult.result;
+              target.durationMs = toolResult.durationMs;
+              target.error = toolResult.error;
+              target.status = toolResult.error ? "error" : "success";
+            }
             sendEvent("tool_end", toolResult);
           },
-          onComplete: (fullText, fullReasoning) => {
-            // 保存助手回复到会话
+          onUsage: (usage) => {
+            sendEvent("usage", usage);
+          },
+          onComplete: (fullText, fullReasoning, usage) => {
             const assistantMsg: AgentChatMessage = {
               role: "assistant",
               content: fullText,
               reasoning_content: fullReasoning || undefined,
+              toolCalls: recordedToolCalls.length
+                ? recordedToolCalls
+                : undefined,
             };
             sessionStore.appendMessage(sessionId, assistantMsg);
-            sendEvent("complete", { fullText, fullReasoning });
-            clientLangGraphAgent.autoApproveWrite = false; // 恢复
+            sendEvent("complete", { fullText, fullReasoning, usage });
             res.end();
           },
           onError: (error) => {
-            clientLangGraphAgent.autoApproveWrite = false; // 恢复
             sendEvent("error", { error });
             res.end();
           },
         },
         undefined,
         { runId, sessionId },
+        {
+          profile:
+            typeof profile === "string"
+              ? (profile as AgentProfileId)
+              : undefined,
+          autoApproveWrite: Boolean(autoApprove),
+        },
       );
     } catch (error: any) {
       const message = error?.message || "Agent 执行异常";
       sendEvent("error", { error: message });
       res.end();
     }
-
-    // 客户端断开时停止 agent
-    req.on("close", () => {
-      clientLangGraphAgent.abort();
-    });
   });
 
   return router;

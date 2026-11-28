@@ -9,7 +9,7 @@ import vm from "vm";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { uploadFileToCos } from "./cos";
+import { generateCosKey, uploadFileToCos } from "./cos";
 import { sniffImageFormat } from "./imageFormat";
 import {
   trimTransparentMargins,
@@ -975,7 +975,12 @@ function buildCtx(
               };
               const matRes: any = await uploadToMaterialLibrary(tmpPath, safeName, {
                 name: options.title || safeName,
-                category: "uncategorized",
+                category:
+                  materialTarget === "collect_file"
+                    ? "collect-file"
+                    : materialTarget === "sticker"
+                      ? "sticker"
+                      : "crawler-material",
                 source: options.source || args.sourceId,
                 originUrl,
                 // 图文说明/关键词：优先调用方显式传入，其次复用 item 里源抓到的文本
@@ -1011,7 +1016,13 @@ function buildCtx(
           const result: any =
             materialCosUrl
               ? { ok: true, url: materialCosUrl }
-              : await uploadFileToCos(tmpPath);
+              : await uploadFileToCos(
+                  tmpPath,
+                  generateCosKey({
+                    category: "crawler-material",
+                    filename: path.basename(tmpPath),
+                  }),
+                );
           if (!result?.ok || !result?.url) {
             throw new Error(`上传 COS 失败: ${result?.msg || JSON.stringify(result)?.slice(0, 200)}`);
           }

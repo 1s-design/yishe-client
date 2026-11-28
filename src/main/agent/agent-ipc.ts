@@ -1,6 +1,10 @@
 /** Agent 专用 IPC。所有流式事件都带 runId/sessionId，避免旧请求污染当前会话。 */
 import { ipcMain, type IpcMainEvent } from "electron";
-import { clientLangGraphAgent, type AgentChatMessage } from "./langgraph-agent";
+import {
+  clientLangGraphAgent,
+  type AgentChatMessage,
+  type AgentProfileId,
+} from "./langgraph-agent";
 import { writeClientLog } from "../clientLogger";
 import {
   getActiveAgentConfig,
@@ -14,11 +18,13 @@ import {
   invalidateServerCatalog,
 } from "./server-capabilities";
 
+
 interface AgentRequest {
   runId: string;
   sessionId: string;
   messages: AgentChatMessage[];
   config?: Partial<ClientAgentConfig>;
+  profile?: AgentProfileId;
 }
 
 /** Renderer 只需要模型状态，不应获得服务端绑定的 API Key。 */
@@ -61,10 +67,13 @@ export function setupAgentIpc(): void {
     clearServerEndpoint();
     return { success: true };
   });
-  ipcMain.handle("agent:stop", () => {
-    clientLangGraphAgent.abort();
+  ipcMain.handle("agent:stop", (_event, payload?: { runId?: string }) => {
+    clientLangGraphAgent.abort(payload?.runId);
     return { success: true };
   });
+  ipcMain.handle("agent:runtime-status", () =>
+    clientLangGraphAgent.getRuntimeStatus(),
+  );
   ipcMain.handle(
     "agent:resolve-tool-approval",
     (_event, payload: { callId?: string; approved?: boolean }) => ({
@@ -96,8 +105,8 @@ export function setupAgentIpc(): void {
               send("agent:stream:tool_start", toolCall),
             onToolEnd: (toolResult) =>
               send("agent:stream:tool_end", toolResult),
-            onComplete: (fullText, fullReasoning) =>
-              send("agent:stream:complete", { fullText, fullReasoning }),
+            onComplete: (fullText, fullReasoning, usage) =>
+              send("agent:stream:complete", { fullText, fullReasoning, usage }),
             onError: (error) => {
               writeClientLog({
                 level: "ERROR",
@@ -110,6 +119,7 @@ export function setupAgentIpc(): void {
           },
           request.config,
           { runId, sessionId },
+          { profile: request.profile },
         );
       } catch (error: any) {
         const message = error?.message || "Agent 执行发生异常";
